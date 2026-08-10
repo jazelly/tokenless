@@ -34,6 +34,8 @@ import { ManagedProfileRegistry } from './profiles/registry.js'
 import { checkpointIndicatesExternalMutation } from './submission-certainty.js'
 import { readTokenlessConfig } from '../job-store.js'
 import { PROVIDER_CAPABILITIES, TASK_CAPABILITIES, getProviderInstanceById } from '../providers/registry.js'
+import { sendDirectChatGptMessage } from '../providers/direct/chatgpt.js'
+import { sendDirectPerplexityMessage } from '../providers/direct/perplexity.js'
 import type {
   ManagedBrowserContext,
   ManagedBrowserProfile,
@@ -46,6 +48,7 @@ import type { ProviderCapabilityId, TaskCapabilityId, TaskCapabilityRoute } from
 import type { BrowserVisibility } from '../browser-visibility.js'
 import type { VisibleAction, VisibleActionRequest } from './actions.js'
 import type { VisibleActionResponse } from './actions.js'
+import type { VisibleActionResult } from './actions.js'
 import type { VisibleBlocker } from './actions.js'
 import type { NativeWorkspaceEnsureResult } from './actions.js'
 import type { ProviderActionPreparation } from '../providers/contracts.js'
@@ -567,7 +570,11 @@ export class ManagedPlaywrightRunnerService {
 
     try {
       const request = this.validateClaimedJob(profile, job)
-      if (job.provider_submitted_at === null && !checkpointIndicatesExternalMutation(job.checkpoint_json)) {
+      if (
+        request.executionMode === 'browser' &&
+        job.provider_submitted_at === null &&
+        !checkpointIndicatesExternalMutation(job.checkpoint_json)
+      ) {
         const subscription = rateLimitSubscription(profile, job.provider)
         const projection = await this.daemonClient.projectJobProviderCapacity({
           jobId: job.job_id,
@@ -743,6 +750,9 @@ export class ManagedPlaywrightRunnerService {
     isCanceled: () => boolean,
     renewalError: () => unknown,
   ): Promise<ManagedPlaywrightExecutionOutcome> {
+    if (request.executionMode === 'direct') {
+      return await this.executeDirectChatActions(profile, job, request, signal, isCanceled, renewalError)
+    }
     const outputSavingsEnabled = await this.outputSavingsEnabled()
     const outputSavingsWorkByRequestId = new Map<string, string>()
     const resumeVisibility = validateResumeVisibility(job.resume_json)
@@ -1043,6 +1053,142 @@ export class ManagedPlaywrightRunnerService {
         response_request_id,
         source_text,
       })),
+    }
+  }
+
+  private async executeDirectChatActions(
+    profile: ManagedBrowserProfile,
+    job: DaemonClaimedJob,
+    request: ManagedPlaywrightJobRequest,
+    signal: AbortSignal,
+    isCanceled: () => boolean,
+    renewalError: () => unknown,
+  ): Promise<ManagedPlaywrightExecutionOutcome> {
+    const restoredCheckpoint = validateRunnerCheckpoint(job.checkpoint_json, profile, job, request)
+    const state = executionStateFromCheckpoint(restoredCheckpoint)
+    if (state.actionCursor > 1 || state.submitted !== null) {
+      throw tokenlessError(
+        'direct_protocol_resume_unsupported',
+        'A direct provider submission cannot be replayed after runner interruption; start a new direct request.',
+      )
+    }
+    const promptAction = request.actions[0]
+    if (promptAction?.action !== VISIBLE_ACTIONS.PROMPT_INPUT || typeof promptAction.payload.text !== 'string') {
+      throw tokenlessError('direct_action_unsupported', 'Direct execution requires one text prompt.')
+    }
+    const prompt = promptAction.payload.text
+    const claimBrowserVisibility = requestedVisibilityForClaim(
+      request.browserVisibility,
+      validateResumeVisibility(job.resume_json),
+    )
+    const provider = getProviderInstanceById(request.provider)
+    if (!provider || (provider.id !== 'chatgpt' && provider.id !== 'perplexity')) {
+      throw tokenlessError('direct_provider_unsupported', 'Direct execution currently supports only the ChatGPT and Perplexity providers.')
+    }
+
+    const responses = await this.contextManager.runWithProfile(profile, claimBrowserVisibility, async (managedContext) => {
+      const providerPageLease = await managedContext.acquireProviderPage({
+        provider: provider.id,
+        taskKey: managedPageKey(job, request),
+        policy: request.pagePolicy,
+        matchesExistingPage: (candidate) => providerOwnsPage(provider, candidate),
+        isAvailablePage: (candidate) => providerPageAvailable(provider, candidate),
+      })
+      const page = providerPageLease.page
+      let directResult: Awaited<ReturnType<typeof sendDirectChatGptMessage>> | null = null
+      try {
+        await navigateToTarget(page, provider, request.target.url, signal, false)
+        for (let actionIndex = state.actionCursor; actionIndex < request.actions.length; actionIndex += 1) {
+          const action = request.actions[actionIndex]
+          if (!action) throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner action cursor is invalid.')
+          throwIfStopped(signal, isCanceled, renewalError)
+          await this.checkpointJob(
+            profile,
+            job,
+            request,
+            state,
+            checkpointPhaseForAction('started', actionIndex, action, page, provider),
+          )
+
+          let response: VisibleActionResponse
+          if (action.action === VISIBLE_ACTIONS.PROMPT_INPUT) {
+            response = directActionSuccess(action, {
+              visible: true,
+              inputProof: 'direct-protocol-prompt-cached-in-memory',
+            })
+          } else if (action.action === VISIBLE_ACTIONS.PROMPT_SUBMIT) {
+            const preparation = await provider.prepareAction(page, action)
+            if (!preparation) {
+              throw tokenlessError('direct_response_preparation_failed', 'Direct response preparation is unavailable.')
+            }
+            state.preparation = preparation
+            const sendDirectMessage = provider.id === 'chatgpt'
+              ? sendDirectChatGptMessage
+              : sendDirectPerplexityMessage
+            directResult = await sendDirectMessage({
+              page,
+              browserContext: managedContext.browserContext,
+              prompt,
+              ...(profile.proxy?.server ? { proxy: profile.proxy.server } : {}),
+              signal,
+            })
+            response = directActionSuccess(action, {
+              visible: true,
+              submissionProof: 'direct-protocol-conversation-request-completed',
+            })
+            state.submitted = {
+              actionIndex,
+              requestId: action.requestId,
+              providerUrl: validatedCurrentProviderUrl(page, provider, request.target.url),
+              preparation,
+            }
+            await this.daemonClient.recordProviderSubmission({
+              jobId: job.job_id,
+              claimToken: job.claim_token,
+              signal,
+            })
+          } else if (action.action === VISIBLE_ACTIONS.RESPONSE_READ) {
+            if (!directResult) {
+              throw tokenlessError('direct_response_unavailable', 'Direct response is unavailable in the current runner process.')
+            }
+            response = directActionSuccess(action, {
+              text: directResult.text,
+              citations: directResult.citations,
+              visibleProof: 'direct-protocol-sse-response',
+              decisionDiagnostics: {
+                selected: null,
+                visibleAnswerCount: 0,
+                visibleBusyCount: 0,
+                generationStopVisible: false,
+              },
+            })
+            state.preparation = null
+          } else {
+            throw tokenlessError('direct_action_unsupported', `Direct execution does not support action '${action.action}'.`)
+          }
+
+          state.responses.push(response)
+          state.actionCursor = actionIndex + 1
+          await this.checkpointJob(
+            profile,
+            job,
+            request,
+            state,
+            checkpointPhaseForAction('completed', actionIndex, action, page, provider),
+          )
+        }
+        return state.responses
+      } finally {
+        await providerPageLease.release()
+      }
+    })
+    return {
+      result: {
+        protocol: MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID,
+        provider: request.provider,
+        responses,
+      },
+      outputSavingsWork: [],
     }
   }
 
@@ -1349,6 +1495,21 @@ export function serializeRunnerError(error: unknown) {
     message: response.message,
     retryable: response.retryable,
     ...(response.details === undefined ? {} : { details: response.details }),
+  }
+}
+
+function directActionSuccess(
+  action: VisibleActionRequest,
+  result: VisibleActionResult,
+): VisibleActionResponse {
+  return {
+    protocol: action.protocol,
+    requestId: action.requestId,
+    provider: action.provider,
+    action: action.action,
+    ok: true,
+    result,
+    error: null,
   }
 }
 

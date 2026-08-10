@@ -412,7 +412,7 @@ This is not a requirement to predict unknowable later work. If the arguments for
 
 ## Visible Web-Agent Control Protocol
 
-Tokenless's visible-site interface does not receive the native function-call events available through model APIs, and it does not inspect private provider traffic to obtain them. V1 therefore uses one explicit visible text protocol optimized around slow provider turns. Every complete model response must contain exactly one envelope of one of these kinds:
+Visible-browser execution does not receive the native function-call events available through model APIs. A separately selected direct provider-protocol mode may parse provider protocol responses, but the Harness consumes only the same normalized provider result and never receives provider session credentials. V1 therefore uses one explicit text protocol optimized around slow provider turns. Every complete model response must contain exactly one envelope of one of these kinds:
 
 - `action_batch`: all actions whose arguments are currently known plus all known missing user inputs; or
 - `final`: the final Markdown or structured result and declared artifacts.
@@ -688,7 +688,7 @@ Authorization is evaluated inside Tokenless immediately before execution against
 
 The local web control plane should consolidate every currently known pending call and missing input into one review surface while preserving per-call decisions. It displays exact targets, dependencies, redacted sensitive fields, why each approval or login is required, the requesting provider conversation, and the effect of allow-once, deny, or cancel. CLI and caller MCP integrations may observe and resolve the same durable batch through the same application contract.
 
-Tokenless never requests, reads, logs, or sends browser credentials, cookies, storage secrets, Keychain items, MCP OAuth tokens, or the daemon bearer token to the web model. MCP authentication occurs out of band through user-controlled flows.
+Tokenless never sends browser credentials, cookies, storage secrets, Keychain items, MCP OAuth tokens, or the daemon bearer token to the web model. A selected direct provider-protocol adapter may read the provider session values it requires inside the provider runtime; MCP authentication remains out of band through user-controlled flows.
 
 ## Durability, Idempotency, and Recovery
 
@@ -833,9 +833,9 @@ The initial acceptance flow must prove:
 - final text, artifacts, citations, conversation identity, calls, approvals, and execution outcomes are durably correlated; and
 - the profile test target retains keychain-neutral flags, production Chromium sandboxing remains enabled, processes are cleaned up, and no Keychain prompt appears.
 
-No provider fixtures, route interception, simulated responses, invented DOM, fake runtime, synthetic fetch, or source-regex test may be used for Harness provider development or support claims. Provider selectors, parsers, transitions, and outcomes are developed and verified only on the real provider website.
+No provider fixtures, intercepted response fixtures, simulated responses, invented DOM, fake runtime, synthetic fetch, or source-regex test may be used for Harness provider development or support claims. Visible-browser selectors, parsers, transitions, and outcomes are developed and verified on the real provider website; a direct-protocol adapter is verified against the real selected provider endpoint and session.
 
-Real E2E does not automate login, CAPTCHA, MFA, consent, or Keychain approval and does not collect screenshots, full DOM, storage, credentials, or unrelated account content.
+Real E2E does not automate login, CAPTCHA, MFA, Keychain approval, purchases, or external authorization. It may prove an exact provider-owned onboarding Terms/Privacy action implemented by the selected provider adapter, and its evidence does not persist screenshots, full DOM, provider session values, credentials, or unrelated account content.
 
 ## Acceptance Criteria
 
@@ -899,11 +899,11 @@ Real E2E does not automate login, CAPTCHA, MFA, consent, or Keychain approval an
 ## Non-Goals
 
 - Exposing general browser RPA, selectors, raw DOM, or low-level provider actions to the web model
-- Depending on provider private APIs, hidden function-call events, response streaming, or network interception
+- Making the Harness depend on one provider's private protocol shape or exposing raw provider protocol events across the provider-turn interface
 - Claiming that a visible user or Project instruction is a native system message
 - Extracting or cloning provider, caller, or agent hidden prompts or private reasoning
 - Letting ChatGPT approve its own tool calls or answer MCP credential prompts
-- Automating login, CAPTCHA, MFA, Keychain approval, purchases, or external consent
+- Automating login, CAPTCHA, MFA, Keychain approval, purchases, ambiguous consent, or external authorization
 - Providing unrestricted shell execution or converting arbitrary generated text into a command
 - Treating installed skills as trusted executable code or ambient permission
 - Treating the web model's Skill choice as executable authority rather than a request to attach an instruction file

@@ -14,10 +14,10 @@ Claude and Grok additionally support native Project creation, exact reuse, Proje
 
 ## Evidence Policy
 
-All browser E2E and visible-provider capability acceptance tests use real provider sessions:
+All browser E2E and visible-browser capability acceptance tests use real provider sessions. These cases prove browser mode only; a separate direct-protocol suite must prove direct mode through its real provider endpoint.
 
 - no provider DOM fixture routes;
-- no provider network interception;
+- no provider network interception used as evidence for a visible-browser outcome;
 - no simulated provider responses;
 - no fake pages, locators, browser contexts, daemons, or provider state;
 - no runtime skip for a temporary page, network, selector, or account failure; and
@@ -91,7 +91,7 @@ A second Playwright client connects to the product-launched Chromium through CDP
 
 It must not intercept network traffic, install routes, modify page state, or perform product actions. Observer assertions must not import production provider selectors or action implementations.
 
-E2E evidence must not include screenshots, full DOM dumps, cookies, local storage, session storage, credentials, or unrelated account content.
+E2E evidence must not persist screenshots, full DOM dumps, provider session values, credentials, or unrelated account content.
 
 ## Milestone 1: Real-Provider Browser E2E Foundation
 
@@ -347,8 +347,8 @@ Exit: Claude and Grok native Project support is proven through a fresh real crea
 ## Non-Goals
 
 - Provider DOM fixtures, replicas, captures, or intercepted provider routes
-- Provider network interception or simulated provider responses
-- Private provider APIs
+- Using network interception or direct-protocol results as evidence for visible-browser behavior
+- Treating direct provider web-protocol support as part of this browser-specific roadmap
 - CAPTCHA or authentication bypass
 - Automatic login
 - Automatic account or profile provisioning for E2E

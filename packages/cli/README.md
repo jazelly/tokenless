@@ -1,6 +1,6 @@
 # Tokenless CLI
 
-`tokenless` gives agents local CLI access to visible AI websites by attaching Playwright to the user's running Google Chrome or Brave Browser. Provider credentials and browser state stay in the selected browser on the user's machine.
+`tokenless` currently gives agents local CLI access to visible AI websites by attaching Playwright to the user's running Google Chrome or Brave Browser. In this visible-browser mode, provider credentials and browser state stay in the selected browser on the user's machine.
 
 [中文](README.zh-CN.md) · [Commands](https://github.com/jazelly/tokenless/blob/main/COMMANDS.md) · [Capability Matrix](https://github.com/jazelly/tokenless/blob/main/docs/capability-matrix.md) · [Capability Matrix 中文](https://github.com/jazelly/tokenless/blob/main/docs/capability-matrix.zh-CN.md) · [中文命令参考](https://github.com/jazelly/tokenless/blob/main/COMMANDS.zh-CN.md) · [Privacy](https://github.com/jazelly/tokenless/blob/main/PRIVACY.md)
 
@@ -46,6 +46,21 @@ tokenless run \
   --json
 ```
 
+Opt into the direct protocol for one new ChatGPT or Perplexity text chat:
+
+```bash
+tokenless run \
+  --profile default \
+  --provider chatgpt \
+  --execution-mode direct \
+  --prompt "Review this proposal." \
+  --json
+```
+
+Use `--provider perplexity` with the same command for a guest or signed-in Perplexity session.
+
+Direct mode reads only the selected provider session into process memory and sends it only to approved `chatgpt.com` or `www.perplexity.ai` endpoints through Chrome impersonation. Its first request may download the native `curl-impersonate` library pinned by `impers`. It does not expose or persist session values, and it rejects attachments, continuation, model or effort selection, search/media, Projects, other providers, and fallback. Omitting `--execution-mode direct` keeps the existing visible-browser behavior.
+
 If no provider is explicit, Tokenless uses the first configured provider with a cached guest or signed-in observation. If none is usable, it fails before creating a job and reports how to refresh access.
 
 List canonical task outcomes and their evidence-backed provider routes:
@@ -83,6 +98,7 @@ Implicit normal runs persist compatible provider alternatives. Before prompt sub
 | Perplexity | Experimental | Guest supported |
 | Z.ai / GLM | Experimental | Guest supported |
 | Doubao / 豆包 | Experimental | Sign-in required |
+| Arena | Supported | Sign-in required |
 
 Prompt submission and response reading are the shared baseline. Files, citations, model or effort controls, conversation continuation, and Workspaces depend on the visible provider, profile, and account state. Doubao text-file selection is experimentally routeable; its advanced modes and Web skills are exposed as provider controls without advertising their still-unclosed outcome lifecycles.
 
@@ -140,12 +156,12 @@ tokenless profiles open --profile work --provider claude
 tokenless profiles status --profile work --provider claude --json
 ```
 
-Tokenless profiles organize provider tabs and configuration; they do not create separate browser identities. Tokenless does not inspect or expose individual cookies, tokens, browser storage, Keychain data, or authentication values.
+Tokenless profiles organize provider tabs and configuration; they do not create separate browser identities. The currently shipped visible-browser mode does not inspect individual cookies, tokens, browser storage, Keychain data, or authentication values, and no mode exposes those values to agents.
 
 ## Browser and Local Runtime
 
 Native mode is headed-only because it controls the Chrome or Brave instance the user already opened. Stopping or restarting the daemon disconnects Playwright without closing the browser.
 
-Every request uses the authenticated loopback daemon and Tokenless-owned tabs in the user's selected browser. Credentials remain opaque to agents. Sign-in, CAPTCHA, consent, payment, plan, and confirmation steps remain under user control.
+Every visible-browser request uses the authenticated loopback daemon and Tokenless-owned tabs in the user's selected browser. Provider credentials are never exposed to agents. Sign-in, CAPTCHA, payment, plan, and ambiguous or external confirmations remain under user control; a provider adapter may accept an exact, known onboarding Terms/Privacy dialog for a provider the user selected.
 
 See the [command reference](https://github.com/jazelly/tokenless/blob/main/COMMANDS.md) for all commands and options, and [Architecture](https://github.com/jazelly/tokenless/blob/main/docs/architecture.md) for runtime details.

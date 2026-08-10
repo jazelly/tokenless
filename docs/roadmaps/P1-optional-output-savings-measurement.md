@@ -7,7 +7,7 @@ Last reviewed: 2026-08-07
 
 ## Outcome
 
-Give users an honest, durable estimate of the output tokens Tokenless avoided returning through an upstream agent, without intercepting private provider APIs, estimating input context, or imposing tokenizer cost during setup, status checks, dashboard reads, or disabled runs.
+Give users an honest, durable estimate of the output tokens Tokenless avoided returning through an upstream agent, without estimating input context or imposing tokenizer cost during setup, status checks, dashboard reads, or disabled runs.
 
 ## Product Decisions
 
@@ -18,7 +18,7 @@ Give users an honest, durable estimate of the output tokens Tokenless avoided re
 - Keep collection enabled by default but out of setup. Lazily download the tokenizer on the first visible response that needs measurement; status checks and dashboard reads remain download-free, and users can opt out at any time.
 - Complete the provider job and return its public result without awaiting tokenizer installation or measurement. The successful job transaction durably hands any measurement work to a private queue; statistics are an eventual, failure-tolerant side effect.
 - Keep a prominent savings section on the main dashboard in every state. When measurement is disabled, hide the saved total, gray the section, and explain how to turn it back on.
-- Do not call private provider backend APIs. Provider adapters continue to own visible DOM extraction; metering is injected once at the provider-neutral response boundary.
+- Keep measurement independent of provider execution mode. Provider adapters own response extraction, and metering is injected once at the provider-neutral response boundary.
 
 ## Runtime Envelope
 

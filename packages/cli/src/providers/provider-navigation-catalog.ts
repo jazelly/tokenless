@@ -4,6 +4,7 @@ import type {
 } from './navigation-policy.js'
 
 export type ProviderNavigationCatalogId =
+  | 'arena'
   | 'chatgpt'
   | 'claude'
   | 'gemini'
@@ -36,6 +37,16 @@ function navigation(definition: ProviderNavigationDefinition): ProviderNavigatio
 // Page patterns are declared only from current adapter routes or redacted real-session provenance.
 // A missing pattern means the route shape is not yet known; it does not broaden the origin allowlist.
 export const PROVIDER_NAVIGATION_CATALOG = Object.freeze({
+  arena: navigation({
+    entryUrl: 'https://arena.ai/',
+    homeUrl: 'https://arena.ai/',
+    origins: ['https://arena.ai'],
+    pagePatterns: pages(
+      { kind: 'entry', urlPattern: 'https://arena.ai/' },
+      { kind: 'conversation', urlPattern: 'https://arena.ai/c/:conversationId' },
+    ),
+    trustedSignInOrigins: [],
+  }),
   chatgpt: navigation({
     entryUrl: 'https://chatgpt.com/',
     homeUrl: 'https://chatgpt.com/',

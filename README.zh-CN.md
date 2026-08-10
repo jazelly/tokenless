@@ -28,7 +28,7 @@
 
 ## 10 家 provider，一个本地接口
 
-目前有 4 家 provider 受支持，另外 7 家处于实验阶段；未经验证的工作流会明确停止。
+目前有 5 家 provider 受支持，另外 7 家处于实验阶段；未经验证的工作流会明确停止。
 
 <table>
   <tr>
@@ -47,6 +47,7 @@
   </tr>
   <tr>
     <td align="center" width="20%"><img src="https://sf-flow-web-cdn.ciciai.com/obj/ocean-flow-web-sg/dola_web/favicon-dola.png" alt="Dola" width="32" height="32"><br><strong>Dola</strong><br><sub>实验性</sub></td>
+    <td align="center" width="20%"><img src="https://arena.ai/favicon.ico" alt="Arena" width="32" height="32"><br><strong>Arena</strong><br><sub>已支持</sub></td>
   </tr>
 </table>
 
@@ -66,6 +67,13 @@ tokenless setup
 tokenless run --provider chatgpt --prompt "Review this proposal."
 ```
 
+现在也可显式选择 direct mode，完成一次新的 ChatGPT 或 Perplexity 文本聊天。它只在内存中桥接所选 provider session，并使用模拟 Chrome 指纹的 Node.js transport；Perplexity 支持 guest 或 signed-in session。附件、续聊、model control、Project 和 fallback 暂不支持：
+
+```bash
+tokenless run --provider chatgpt --execution-mode direct --prompt "Review this proposal." --json
+# 或：tokenless run --provider perplexity --execution-mode direct --prompt "Review this proposal." --json
+```
+
 Setup 会先询问是否使用 Anti-Detect mode。若选择不使用，再选择 Google Chrome 或 Brave；Tokenless 随后创建逻辑 profile、连接正在运行的 headed 浏览器、检查已启用的 provider 并打开本地控制台。之后可用 `tokenless dashboard` 再次打开。
 
 Native mode 目前只支持 headed。停止或重启 Tokenless daemon 只会断开自动化连接，不会关闭所选浏览器。
@@ -77,7 +85,7 @@ Native mode 目前只支持 headed。停止或重启 Tokenless daemon 只会断�
 - 通过真实 provider 网站发送 prompt，并读取可见 response 和 citation。
 - 上传文件，并使用已验证的 model、reasoning 和 provider-specific controls。
 - 保留稳定的 provider tab、task continuity 和受支持的 native Project。
-- Browser state 和 credential 留在你的 Chrome 中；job history 与 token 节省估算保留在本机。
+- 在当前 visible-browser mode 中，browser state 和 credential 留在你的 Chrome；job history 与 token 节省估算保留在本机。
 
 ## 可选的 Codex 集成
 

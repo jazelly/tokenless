@@ -1,6 +1,6 @@
 # Tokenless CLI
 
-`tokenless` 让 agent 通过本机 CLI 使用你正在运行的 Google Chrome 或 Brave Browser 中可见的 AI 网站。Provider 凭据和浏览器状态始终保留在本机所选浏览器中。
+`tokenless` 目前让 agent 通过本机 CLI 使用你正在运行的 Google Chrome 或 Brave Browser 中可见的 AI 网站。在该 visible-browser mode 中，provider 凭据和浏览器状态保留在本机所选浏览器中。
 
 [English](README.md) · [命令参考](https://github.com/jazelly/tokenless/blob/main/COMMANDS.zh-CN.md) · [Capability Matrix](https://github.com/jazelly/tokenless/blob/main/docs/capability-matrix.zh-CN.md) · [隐私](https://github.com/jazelly/tokenless/blob/main/PRIVACY.zh-CN.md)
 
@@ -48,6 +48,21 @@ tokenless run \
   --json
 ```
 
+显式启用 direct protocol，完成一次新的 ChatGPT 或 Perplexity 文本聊天：
+
+```bash
+tokenless run \
+  --profile default \
+  --provider chatgpt \
+  --execution-mode direct \
+  --prompt "Review this proposal." \
+  --json
+```
+
+Guest 或 signed-in Perplexity session 使用同一条命令并改为 `--provider perplexity`。
+
+Direct mode 只把所选 provider session 读入当前进程内存，并通过 Chrome impersonation 发送到获准的 `chatgpt.com` 或 `www.perplexity.ai` endpoint。首次请求可能会下载由 `impers` 固定版本的 native `curl-impersonate` library。它不会暴露或持久化 session value，并会拒绝附件、续聊、model/effort 选择、search/media、Project、其他 provider 和 fallback。不传 `--execution-mode direct` 时保持现有 visible-browser 行为。
+
 如未显式指定 provider，Tokenless 会使用第一个已配置且有 guest 或 signed-in 观测的 provider；没有可用项时会在创建 job 前失败。
 
 使用 `tokenless capabilities list --json` 查看有证据支持的 task outcome 与 provider route。`--capability` 可重复提供；附件和 workspace intent 也会推导 capability，一个 provider 必须满足合并后的全部要求。
@@ -75,6 +90,7 @@ tokenless run \
 | Perplexity | 实验性 | 支持 guest |
 | Z.ai / GLM | 实验性 | 支持 guest |
 | Doubao / 豆包 | 实验性 | 需要登录 |
+| Arena | 已支持 | 需要登录 |
 
 Prompt 提交与 response 读取是共同 baseline。File、citation、model/effort control、continuation 和 Workspace 支持取决于 provider、profile 和 account state。不受支持、有歧义或未证明的行为会 fail closed。
 
@@ -113,12 +129,12 @@ tokenless profiles open --profile work --provider claude
 tokenless profiles status --profile work --provider claude --json
 ```
 
-Tokenless profile 只组织 provider tab 与配置，不创建独立 browser identity。Tokenless 不检查或暴露 cookie、token、browser storage、Keychain data 或 authentication value。
+Tokenless profile 只组织 provider tab 与配置，不创建独立 browser identity。当前已发布的 visible-browser mode 不检查单个 cookie、token、browser storage、Keychain data 或 authentication value；任何 mode 都不会把这些值暴露给 agent。
 
 ## Browser 与本地 Runtime
 
 Native mode 只支持 headed，因为它控制用户已打开的 Chrome 或 Brave。停止或重启 daemon 只会断开 Playwright，不会关闭所选浏览器。
 
-每个请求都使用经过认证的 loopback daemon 和所选浏览器中的 Tokenless-owned tab。凭据对 agent 保持 opaque；登录、CAPTCHA、同意、付款、plan 和确认步骤始终由用户控制。
+每个 visible-browser 请求都使用经过认证的 loopback daemon 和所选浏览器中的 Tokenless-owned tab。Provider 凭据绝不会暴露给 agent；登录、CAPTCHA、付款、plan 以及含义不明确或涉及外部授权的确认始终由用户控制。对于用户已选择的 provider，provider adapter 可以接受内容明确且已知的 onboarding Terms/Privacy 对话框。
 
 所有命令和 option 见[命令参考](https://github.com/jazelly/tokenless/blob/main/COMMANDS.zh-CN.md)；完整 capability 语义见 [Capability Matrix](https://github.com/jazelly/tokenless/blob/main/docs/capability-matrix.zh-CN.md)。

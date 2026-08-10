@@ -49,16 +49,18 @@ Provider selection 前会展开所有 implication。同一家 provider 必须满
 
 下表概括 checked-in routes；CLI 输出是当前列表的权威来源。
 
-| Canonical capability | ChatGPT | Claude | Gemini | Grok | Qwen | DeepSeek | Perplexity | Z.ai | Doubao | Kimi | Dola |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `conversation.chat` | Supported | Supported | Supported | Supported | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | — |
-| `file.upload` | Supported | Supported | Experimental | Supported | — | Experimental | — | Experimental | Experimental | Experimental | — |
-| `search.web` | — | — | — | — | — | — | — | — | — | Experimental | — |
-| `response.citations` | — | — | — | — | — | — | — | — | — | Experimental | — |
+| Canonical capability | ChatGPT | Claude | Gemini | Grok | Qwen | DeepSeek | Perplexity | Z.ai | Doubao | Kimi | Dola | Arena |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `conversation.chat` | Supported | Supported | Supported | Supported | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | — | Supported |
+| `file.upload` | Supported | Supported | Experimental | Supported | — | Experimental | — | Experimental | Experimental | Experimental | — | — |
+| `search.web` | — | — | — | — | — | — | — | — | — | Experimental | — | — |
+| `response.citations` | — | — | — | — | — | — | — | — | — | Experimental | — | — |
 
 `—` 表示目前没有公开 route，不一定代表 provider 产品没有该功能；也可能是 implementation 或真实 provider evidence 尚未完成。
 
 Route 会按完整 requirement set 评估。例如 image attachment 同时要求 `file.upload` 与 `image.input`；仅有 `file.upload` 这一行并不代表图片上传已经 routeable。
+
+Arena `conversation.chat` 已支持选定的已登录 profile。Built CLI 与 packaged daemon 通过 headed Cloak `web-ai` 和真实 `arena.ai` network boundary，闭环了 readiness、prompt drafting、关联完成回复、持久化 `/c/:conversationId` mapping，以及同会话 continuation。Adapter 也会在输入 prompt 前处理 provider 自身提供、内容精确的 **Terms of Use & Privacy Policy** → **Agree** onboarding 对话框；由于当前所选账号已经接受过条款，新账号重复验证仍待完成。File upload、model selection、Battle variants、Search、Code、Agent、Image 与 Video outcome 在各自完整 lifecycle 独立闭环前均不公开。
 
 Gemini Markdown `file.upload` 已作为 experimental route 对外提供，但仅适用于选定的已登录 profile。Gemini 会从卡片文本与 accessibility metadata 中移除文件名后缀，因此其 provider-specific acceptance proof 要求三张新增且物理可见的 `gem-attachment` 卡片，同时保留 caller 已验证的选定文件扩展名；generic detector 与其他 provider 仍要求可见扩展名 evidence。上传路径依次选择 **Upload & tools** 与 **Upload files**，并通过 **Cancel** 关闭可选 MMGen disclaimer，不代替用户接受该声明。
 

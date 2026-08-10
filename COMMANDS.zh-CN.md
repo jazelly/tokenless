@@ -376,7 +376,7 @@ tokenless profiles open -P work --json
 tokenless profiles open -P work -p claude --json
 ```
 
-无 provider 形式适合用户维护浏览器、切换账号或检查 managed profile。provider 形式适合处理登录、CAPTCHA、MFA、consent 或 provider 相关账号切换。它不能替代 `profiles status`；操作完成后应再次运行 status 命令，保存最新 observation。
+无 provider 形式适合用户维护浏览器、切换账号或检查 managed profile。provider 形式适合处理登录、CAPTCHA、MFA、含义不明确或涉及外部授权的 consent，以及 provider 相关账号切换。内容明确且由 provider 自身提供的 onboarding Terms/Privacy 对话框，可以由所选 provider adapter 处理。它不能替代 `profiles status`；操作完成后应再次运行 status 命令，保存最新 observation。
 
 ### `tokenless profiles set-default`
 

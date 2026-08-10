@@ -43,7 +43,7 @@
 
 ## Testing
 
-- Test externally observable behavior through real boundaries: built CLI, packaged TypeScript daemon, filesystem, local Google Chrome controlled through Playwright, or provider website.
+- Test externally observable behavior through real boundaries: built CLI, packaged TypeScript daemon, filesystem, local Google Chrome controlled through Playwright, provider website, or the real provider web endpoint selected by an explicit direct-protocol mode.
 - Use focused integration or browser E2E for cross-runner/runtime/provider behavior. Prefer browser proof when feasible.
 - Keep default browser E2E to representative core flows. Cover rare crash/restart or failure injection only when required, reproduced, or visibly material; otherwise use focused real-boundary integration.
 - No unit tests, mocks, fakes, stubs, spies, synthetic fetches, fake runtime/browser objects, injected test doubles, or source/doc regex tests.
@@ -59,10 +59,12 @@
 - Browser tests must never test profile deletion, browser crash/kill, explicit browser/context/page close, forced relaunch, runtime replacement/repair, visibility-switch relaunch, or corruption of `DevToolsActivePort`, PID, CDP endpoint, or runtime-session metadata.
 - Browser tests may create provider-side conversations or other ordinary functional artifacts. Teardown detaches only CDP clients and leaves the profile, resident browser, runtime, pages, and browser metadata intact.
 
-### Credential and macOS Keychain Safety
+### Provider Session and macOS Keychain Safety
 
-- Browser auth stays opaque in the user's running Google Chrome. Tokenless must not copy or import browser profiles.
-- Tokenless code, tests, and tooling must never directly inspect, export, log, transmit, decrypt, or dump passwords, cookies, tokens, keys, hidden auth headers, Keychain items, or browser-storage secrets, and must never call `security`, Keychain APIs, or equivalent tools. Chrome's normal local Keychain use is not secret extraction by Tokenless.
+- Visible-browser mode keeps provider authentication in the user's selected browser and must not copy or import a complete browser profile.
+- An explicitly selected direct provider-protocol mode may locally inspect, extract, store, and use the provider cookies, tokens, hidden authentication headers, and browser-storage values required to call that provider's web endpoints. This access must be limited to the selected provider and profile and must never be enabled implicitly.
+- Provider session values may be sent to the selected provider as required by that mode. Never print them, include them in logs, errors, telemetry, evidence, or UI responses, expose them to callers or web models, or send them to a Tokenless-operated service.
+- Do not extract passwords, Keychain items, or unrelated account credentials, and do not call `security`, Keychain APIs, or equivalent tools. Chrome's normal local Keychain use is not secret extraction by Tokenless.
 - On macOS, production native mode uses the running Chrome's normal Keychain access. Never add `--password-store=basic` or `--use-mock-keychain` to production browser control.
 - Keychain approval remains a user-controlled security decision. Tokenless may explain why the expected browser is asking and the user may approve it, but tests and automation must never click the prompt, enter a password, or weaken the prompt on the user's behalf.
 - Installer smoke checks may stay keychain-neutral because they do not become reusable test profiles. Browser-surface and real-provider E2E use the configured persistent profile and the production credential-storage policy; they may pause for manual user approval.
@@ -70,12 +72,13 @@
 - For browser-launch changes, verify native credential storage on the configured persistent profile, keychain neutrality only for installer smoke checks, enabled Chromium sandboxing, CDP detach, profile preservation, resident-browser preservation, and focused real-boundary completion.
 - Regression guard: production native Chrome control must remain free of `--password-store=basic` and `--use-mock-keychain`.
 
-### Provider Website Boundary
+### Provider Boundary Verification
 
-- Do not create, capture, store, generate, promote, or test against provider DOM fixtures, reduced DOM snapshots, provider replicas, locally hosted provider pages, route interception, or simulated provider responses.
-- Develop and verify provider selectors, parsers, blockers, controls, transitions, and outcomes only against the real provider website in the configured persistent browser profile.
-- A provider behavior change requires a focused real-provider integration or browser E2E case through the built CLI and packaged daemon. If the real site cannot currently prove the behavior, fail or leave the capability unadvertised; do not substitute fixture evidence.
-- Local daemon, API, filesystem, installer, and control-plane tests may use their real local boundaries, but they must not impersonate a provider website or claim provider behavior.
+- Do not create, capture, store, generate, promote, or test against provider DOM fixtures, reduced DOM snapshots, provider replicas, locally hosted provider pages, intercepted response fixtures, or simulated provider responses.
+- Develop and verify visible-browser selectors, parsers, blockers, controls, transitions, and outcomes only against the real provider website in the configured persistent browser profile.
+- Develop and verify an explicit direct-protocol adapter against the real selected provider web endpoint and account session. Bounded inspection of provider traffic and the required session values is allowed for that mode; credentials must not appear in test evidence or diagnostics.
+- A provider behavior change requires a focused real-provider integration or E2E case through the built CLI and packaged daemon using the affected execution mode. If the real provider cannot currently prove the behavior, fail or leave the capability unadvertised; do not substitute fixture evidence.
+- Local daemon, API, filesystem, installer, and control-plane tests may use their real local boundaries, but they must not impersonate a provider website or endpoint or claim provider behavior.
 
 ### Real Provider Browser E2E
 
@@ -85,5 +88,5 @@
 - Invoked suites never skip required cases or retry internally. Sole exception: Claude may skip only for durable provider `claude` jobs blocked by `visible_cloudflare_turnstile` or `visible_cloudflare_interstitial`, as declared in `test/live-provider-capability-matrix.json`. All other unmet prerequisites fail clearly; retry manually.
 - Use the explicitly selected setup-managed profile. Never create test accounts, automate login, or switch profiles silently.
 - Real messages, conversations, Projects, attachments, retained artifacts, and provider cost are allowed; mark them uniquely per run. Cost never justifies fixtures.
-- Assert semantic commands, durable state, visible outcomes, and real protocol results. Never collect screenshots, full DOM, storage, credentials, or unrelated account content.
+- Assert semantic commands, durable state, visible outcomes, and real protocol results. Test evidence and reports must never persist screenshots, full DOM, provider session values, credentials, or unrelated account content.
 - Gate unsafe external integrations behind explicit real integration/E2E tests; never simulate them.

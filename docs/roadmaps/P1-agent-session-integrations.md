@@ -216,7 +216,7 @@ Official MCP references:
 - Resolve file inputs against declared MCP roots or explicit absolute paths and apply the existing regular-file, size, count, staging, and provenance rules.
 - Bind calls to explicit agent session metadata when the host supplies it. Missing binding may reduce routing features but must not silently guess another session.
 - Treat tool descriptions, annotations, and client-provided metadata as untrusted inputs at the daemon boundary.
-- Preserve existing manual-user handoff for sign-in, CAPTCHA, MFA, plan upgrade, consent, and confirmation.
+- Preserve manual-user handoff for sign-in, CAPTCHA, MFA, plan upgrade, ambiguous consent, and external confirmation. Exact provider-owned onboarding Terms/Privacy dialogs may be handled inside the selected provider adapter.
 
 ## Stable Agent Session Binding
 

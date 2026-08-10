@@ -1,3 +1,4 @@
+import { ArenaProvider } from './arena-provider.js'
 import { ChatGptProvider } from './chatgpt-provider.js'
 import { ClaudeProvider } from './claude-provider.js'
 import { DeepSeekProvider } from './deepseek-provider.js'
@@ -162,6 +163,7 @@ export const providerInstances = Object.freeze([
   new DoubaoProvider(),
   new KimiProvider(),
   new DolaProvider(),
+  new ArenaProvider(),
 ] satisfies readonly ProviderInstance[])
 
 export const providerRegistry = ProviderRegistry.create(providerInstances)

@@ -28,7 +28,7 @@
 
 ## 10 providers. One local interface.
 
-Four providers are supported today; seven more are experimental and fail closed when a workflow is not verified.
+Five providers are supported today; seven more are experimental and fail closed when a workflow is not verified.
 
 <table>
   <tr>
@@ -47,6 +47,7 @@ Four providers are supported today; seven more are experimental and fail closed 
   </tr>
   <tr>
     <td align="center" width="20%"><img src="https://sf-flow-web-cdn.ciciai.com/obj/ocean-flow-web-sg/dola_web/favicon-dola.png" alt="Dola" width="32" height="32"><br><strong>Dola</strong><br><sub>Experimental</sub></td>
+    <td align="center" width="20%"><img src="https://arena.ai/favicon.ico" alt="Arena" width="32" height="32"><br><strong>Arena</strong><br><sub>Supported</sub></td>
   </tr>
 </table>
 
@@ -66,6 +67,13 @@ tokenless setup
 tokenless run --provider chatgpt --prompt "Review this proposal."
 ```
 
+An explicit direct mode is also available for one new ChatGPT or Perplexity text chat. It bridges the selected provider session in memory and uses a Chrome-impersonating Node.js transport; Perplexity works with guest or signed-in sessions. Attachments, continuation, model controls, Projects, and fallback remain unavailable:
+
+```bash
+tokenless run --provider chatgpt --execution-mode direct --prompt "Review this proposal." --json
+# Or: tokenless run --provider perplexity --execution-mode direct --prompt "Review this proposal." --json
+```
+
 Setup asks about Anti-Detect mode first. If you decline, choose Google Chrome or Brave; Tokenless then creates a logical profile, connects to that running headed browser, checks enabled providers, and opens the local dashboard. Reopen it later with `tokenless dashboard`.
 
 Native mode is headed-only for now. Stopping or restarting the Tokenless daemon disconnects automation but does not close the selected browser.
@@ -77,7 +85,7 @@ Explicit Anti-Detect setup can instead install a checksum-pinned CloakBrowser fr
 - Prompts, visible responses, and citations through real provider websites.
 - File uploads plus verified model, reasoning, and provider-specific controls.
 - Stable provider tabs, task continuity, and supported native Projects.
-- Browser state and credentials remain in your Chrome; job history and token-savings estimates remain local.
+- In the current visible-browser mode, browser state and credentials remain in your Chrome; job history and token-savings estimates remain local.
 
 ## Optional Codex integration
 

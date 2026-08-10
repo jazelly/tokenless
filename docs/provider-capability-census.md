@@ -1,12 +1,12 @@
 # Provider Capability Census
 
-Last reviewed: 2026-08-04
+Last reviewed: 2026-08-10
 
 This is a product reconnaissance record, not a Tokenless support declaration. Official provider documentation establishes that a product feature exists. Tokenless advertises a route only after the provider adapter implements the complete visible lifecycle and real-provider browser E2E closes the required evidence. The normative naming, mapping, support, and extension rules live in the [Capability Matrix](capability-matrix.md).
 
 The checked-in runtime catalog and provider routing matrix live in `packages/cli/src/providers/task-capabilities.ts`. `tokenless capabilities list --json` exposes that versioned catalog without opening a browser. The current V2 routeable outcomes are:
 
-- `conversation.chat`: ChatGPT, Claude, Gemini, Grok, experimental Qwen, experimental Perplexity, experimental Z.ai, experimental Doubao, and experimental Kimi;
+- `conversation.chat`: ChatGPT, Claude, Gemini, Grok, Arena, experimental Qwen, experimental Perplexity, experimental Z.ai, experimental Doubao, and experimental Kimi;
 - `file.upload`: ChatGPT, Claude, Grok, experimental Doubao, and experimental Kimi;
 - `search.web`: experimental Kimi; and
 - `response.citations`: experimental Kimi search.
@@ -42,6 +42,7 @@ The product surface is broader than the current Tokenless evidence. The middle c
 | Doubao / 豆包 | Signed-in Chinese web chat; visible free-account discrimination; Fast, Expert, and Work Task modes; writing, presentation, image, video, deep-research, podcast, music, problem-solving, and spreadsheet Web skills; broad file input; desktop-only recording transcription entry | Experimental signed-in adapter with built-CLI managed-Cloak closure for readiness, prompt drafting, account-name and free-tier inspection, file acceptance, exact mode/skill selection, unavailable-state reporting, and restoration. Text-file `file.upload` is routeable. Advanced skill outcomes remain unadvertised until their full lifecycles close; the chat mutation gate remains release-blocked by a visible provider verification iframe |
 | Kimi | Signed-in web chat; Instant, K3, and K3 Swarm models; Standard/High thinking effort; files, Web search, Plugins, Skills, Projects, and broader research/agent/artifact surfaces | Experimental signed-in `conversation.chat`, text-file `file.upload`, `search.web`, and search-backed `response.citations` routes with built-CLI managed-Cloak closure. Exact Plugin/Skill inspection and selection are implemented and control-closed. Their submitted outcomes are capacity-blocked; Projects, research, agent, and artifact lifecycles remain gate-pending and unadvertised |
 | Dola | Signed-in web chat; Fast and Pro choices; file input; Create Image, Writing, Create Video, Translate, and Homework entries; a separate Seedream image-creation surface; no observed Project, file library, or persistent knowledge-management surface | Experimental signed-in adapter and release gates are registered from the user-selected managed profile. Visible controls, exact public skill keys, and numeric conversation routes were observed. Writing is not classified as file creation without a completed document artifact; built-product readiness, selection, file acceptance, response, continuation, and generation closure remain pending, so no canonical route is advertised |
+| Arena | Signed-in Battle, Direct, and Side-by-Side chat; model selection; file input; Search, Code, Agent, Image, and Video surfaces | Supported signed-in baseline chat route with built-CLI managed-Cloak closure for readiness, prompt drafting, completed response, durable conversation mapping, and same-conversation continuation. Exact provider-owned Terms/Privacy onboarding handling is implemented from a real observed dialog; all non-chat surfaces remain unadvertised until their terminal outcomes close independently |
 
 Official references:
 
@@ -57,6 +58,7 @@ Official references:
 - [Doubao paid service agreement](https://www.doubao.com/legal/ey01)
 - [Kimi web product](https://www.kimi.com/)
 - [Dola web product](https://www.dola.com/chat)
+- [Arena model selection](https://help.arena.ai/articles/1858200927-arena-experiments-new-model-selector), [file upload](https://help.arena.ai/articles/5595418316-arena-how-to-file-upload), and [Agent Mode](https://help.arena.ai/articles/5432423882-how-to-use-agent-mode)
 
 ## Candidate Web Providers
 

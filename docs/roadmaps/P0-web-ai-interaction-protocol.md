@@ -167,7 +167,7 @@ cancelled
 
 Initial waiting reasons include `authentication`, `mfa`, `captcha`, `consent`, `provider_blocker`, `ambiguous_submission`, and `manual_intervention`. The exact vocabulary is versioned in the protocol error and state registries.
 
-`waiting_for_user` is durable and inspectable. It does not authorize automation of login, CAPTCHA, MFA, consent, Keychain approval, or another user-controlled security boundary.
+`waiting_for_user` is durable and inspectable. It does not authorize automation of login, CAPTCHA, MFA, Keychain approval, purchases, external authorization, or another user-controlled security boundary. A provider adapter may automatically accept an exact, known onboarding Terms/Privacy dialog for the provider and profile the user already selected; ambiguous consent remains `waiting_for_user`.
 
 ### Dispatch Certainty and Idempotency
 

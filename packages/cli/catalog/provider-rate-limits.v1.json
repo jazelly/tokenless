@@ -26,6 +26,10 @@
     "minimumBurstUnits": 2,
     "maximumBurstUnits": 8,
     "providerDefaults": {
+      "arena": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
       "chatgpt": {
         "modelFamily": "gpt-5.5-instant",
         "promptAction": "prompt.submit"
@@ -73,6 +77,13 @@
     }
   },
   "sources": {
+    "arena-consumer-web": {
+      "publisher": "Arena",
+      "title": "Arena AI consumer web chat",
+      "url": "https://arena.ai/",
+      "authority": "official",
+      "retrievedAt": "2026-08-10"
+    },
     "dola-consumer-web": {
       "publisher": "Dola",
       "title": "Dola consumer web chat",
@@ -2103,6 +2114,62 @@
             {
               "kind": "unknown",
               "sourceIds": ["dola-consumer-web"]
+            }
+          ],
+          "notes": [
+            "The observed signed-in consumer Web surface did not publish an exact numeric allowance or reset window.",
+            "Runtime visible limits remain authoritative and fail closed."
+          ]
+        }
+      ]
+    },
+    "arena": {
+      "label": "Arena",
+      "plans": [
+        {
+          "id": "signed_in_unknown",
+          "family": "unknown",
+          "labels": []
+        },
+        {
+          "id": "unknown",
+          "family": "unknown",
+          "labels": []
+        }
+      ],
+      "usageDrivers": [
+        "selected_mode",
+        "system_capacity"
+      ],
+      "runtimeSignals": [],
+      "rules": [
+        {
+          "id": "arena.consumer-web.numeric-limits-unknown",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["signed_in_unknown", "unknown"],
+            "accessClasses": ["signed_in_unknown", "unknown"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "unknown",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "unknown"
+          },
+          "allowance": {
+            "kind": "unknown"
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "unknown",
+              "sourceIds": ["arena-consumer-web"]
             }
           ],
           "notes": [

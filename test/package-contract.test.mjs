@@ -662,11 +662,23 @@ test('pure JS CLI packs, installs, and exposes executable runtime artifacts', ()
   const installDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-pack-install-'))
   let universalTarball
   let playwrightCoreTarball
+  let impersTarball
+  let koffiTarball
+  let koffiPlatformTarball
   try {
     const universalPack = npmPack(cliDir, packDir)
     const playwrightCorePack = npmPack(path.join(root, 'node_modules', 'playwright-core'), packDir)
+    const impersPack = npmPack(path.join(root, 'node_modules', 'impers'), packDir)
+    const koffiPack = npmPack(path.join(root, 'node_modules', 'koffi'), packDir)
+    const koffiPlatformPack = npmPack(
+      path.join(root, 'node_modules', '@koromix', `koffi-${process.platform}-${process.arch}`),
+      packDir,
+    )
     universalTarball = path.join(packDir, universalPack.filename)
     playwrightCoreTarball = path.join(packDir, playwrightCorePack.filename)
+    impersTarball = path.join(packDir, impersPack.filename)
+    koffiTarball = path.join(packDir, koffiPack.filename)
+    koffiPlatformTarball = path.join(packDir, koffiPlatformPack.filename)
     assert.ok(universalPack.files.some((file) => file.path === 'dist/src/playwright/index.js'))
     assert.ok(universalPack.files.some((file) => file.path === 'dist/src/playwright/index.d.ts'))
     assert.ok(universalPack.files.some((file) => file.path === 'dist/src/daemon/daemon-entry.mjs'))
@@ -692,6 +704,9 @@ test('pure JS CLI packs, installs, and exposes executable runtime artifacts', ()
       'install',
       universalTarball,
       playwrightCoreTarball,
+      impersTarball,
+      koffiTarball,
+      koffiPlatformTarball,
       '--prefix',
       installDir,
       '--omit=optional',

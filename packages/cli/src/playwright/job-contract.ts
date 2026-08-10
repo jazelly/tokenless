@@ -35,6 +35,8 @@ export {
 } from '../schema-ids.js'
 export const MANAGED_PLAYWRIGHT_JOB_ACTION = 'visible_provider_actions' as const
 export const PLAYWRIGHT_EXECUTION_BACKEND = 'playwright' as const
+export const PLAYWRIGHT_EXECUTION_MODES = ['browser', 'direct'] as const
+export type PlaywrightExecutionMode = typeof PLAYWRIGHT_EXECUTION_MODES[number]
 
 export type ManagedPlaywrightSafeTarget = {
   kind: 'provider_home'
@@ -49,6 +51,7 @@ export type ManagedPlaywrightJobRequest = {
   capabilityRoute: TaskCapabilityRoute | null
   fallback: ManagedPlaywrightFallbackPlan | null
   context: ContextEnvelope
+  executionMode: PlaywrightExecutionMode
   browserVisibility: BrowserVisibility
   userHandoff: boolean
   pagePolicy?: ManagedPagePolicy | undefined
@@ -77,6 +80,7 @@ export type CreateManagedPlaywrightJobRequestInput = {
   context?: ContextEnvelope | null | undefined
   contextLanguage?: 'en' | 'zh-CN' | null | undefined
   contextUpstream?: ContextEnvelope['upstream'] | undefined
+  executionMode?: unknown
   browserVisibility?: unknown
   userHandoff?: unknown
   pagePolicy?: unknown
@@ -128,6 +132,7 @@ export function createManagedPlaywrightJobRequest(
       language: input.contextLanguage,
       upstream: input.contextUpstream,
     }),
+    executionMode: validateExecutionMode(input.executionMode ?? 'browser'),
     browserVisibility: validateJobBrowserVisibility(input.browserVisibility ?? 'auto'),
     userHandoff: validateUserHandoff(input.userHandoff ?? false),
     ...(input.pagePolicy === undefined ? {} : { pagePolicy: validateManagedPagePolicy(input.pagePolicy) }),
@@ -142,7 +147,7 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
   requireKeys(
     input,
     ['protocol', 'provider', 'target', 'taskId', 'browserVisibility', 'actions'],
-    ['capabilityRoute', 'fallback', 'context', 'pagePolicy', 'userHandoff'],
+    ['capabilityRoute', 'fallback', 'context', 'executionMode', 'pagePolicy', 'userHandoff'],
     'invalid_playwright_job_request',
   )
   if (input.protocol !== MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID) {
@@ -200,8 +205,12 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
   const browserVisibility = validateJobBrowserVisibility(input.browserVisibility)
   const userHandoff = validateUserHandoff(input.userHandoff ?? false)
   const pagePolicy = input.pagePolicy === undefined ? undefined : validateManagedPagePolicy(input.pagePolicy)
+  const executionMode = validateExecutionMode(input.executionMode ?? 'browser')
   if (fallback && actions.some((action) => !AUTOMATIC_FALLBACK_ACTIONS.has(action.action))) {
     throw tokenlessError('invalid_playwright_job_fallback', 'Automatic provider fallback accepts only portable conversation actions.')
+  }
+  if (executionMode === 'direct') {
+    validateDirectChatRequest({ provider, target, taskId, capabilityRoute, fallback, userHandoff, actions })
   }
   return {
     protocol: MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID,
@@ -211,10 +220,48 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
     capabilityRoute,
     fallback,
     context,
+    executionMode,
     browserVisibility,
     userHandoff,
     ...(pagePolicy === undefined ? {} : { pagePolicy }),
     actions,
+  }
+}
+
+function validateExecutionMode(value: unknown): PlaywrightExecutionMode {
+  if (value !== 'browser' && value !== 'direct') {
+    throw tokenlessError('invalid_playwright_job_execution_mode', 'Managed Playwright job executionMode must be browser or direct.')
+  }
+  return value
+}
+
+function validateDirectChatRequest(input: {
+  provider: ProviderInstance
+  target: ManagedPlaywrightSafeTarget
+  taskId: string | null
+  capabilityRoute: TaskCapabilityRoute | null
+  fallback: ManagedPlaywrightFallbackPlan | null
+  userHandoff: boolean
+  actions: readonly VisibleActionRequest[]
+}) {
+  if (input.provider.id !== 'chatgpt' && input.provider.id !== 'perplexity') {
+    throw tokenlessError('direct_provider_unsupported', 'Direct execution currently supports only the ChatGPT and Perplexity providers.')
+  }
+  if (!isProviderHomeTarget(input.target, input.provider) || input.taskId !== null) {
+    throw tokenlessError('direct_conversation_unsupported', 'Direct execution currently supports only a new provider conversation.')
+  }
+  if (input.fallback !== null || input.userHandoff) {
+    throw tokenlessError('direct_fallback_unsupported', 'Direct execution does not support provider fallback or user handoff.')
+  }
+  if (
+    input.capabilityRoute &&
+    (input.capabilityRoute.requirements.length !== 1 || input.capabilityRoute.requirements[0] !== TASK_CAPABILITIES.CONVERSATION_CHAT)
+  ) {
+    throw tokenlessError('direct_capability_unsupported', 'Direct execution currently supports only conversation.chat.')
+  }
+  const expected = [VISIBLE_ACTIONS.PROMPT_INPUT, VISIBLE_ACTIONS.PROMPT_SUBMIT, VISIBLE_ACTIONS.RESPONSE_READ]
+  if (input.actions.length !== expected.length || input.actions.some((action, index) => action.action !== expected[index])) {
+    throw tokenlessError('direct_action_unsupported', 'Direct execution requires exactly prompt.input, prompt.submit, and response.read.')
   }
 }
 

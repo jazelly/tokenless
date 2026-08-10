@@ -394,6 +394,35 @@
     }
   },
   "providers": {
+    "arena": {
+      "stage": "supported",
+      "account": "signed_in_selected_setup_profile",
+      "required": [
+        "session-readiness",
+        "prompt-draft",
+        "workspace-response-baseline"
+      ],
+      "unavailable": {
+        "model-choice": "no_real_selection_closure",
+        "effort-choice": "no_real_selection_closure",
+        "file-selection": "real_file_acceptance_not_proven",
+        "conversation-workflow": "file_and_citation_closure_not_proven",
+        "workspace-response-citations": "real_visible_citation_closure_not_proven",
+        "qwen-mode-workspace": "provider_specific_capability",
+        "deepseek-controls": "provider_specific_capability",
+        "deepseek-search-reasoning": "provider_specific_capability",
+        "deepseek-vision-input": "provider_specific_capability",
+        "doubao-controls": "provider_specific_capability",
+        "native-project": "native_project_not_proven",
+        "kimi-library-controls": "provider_specific_capability",
+        "kimi-search": "provider_specific_capability",
+        "kimi-deep-research": "provider_specific_capability",
+        "kimi-artifacts": "provider_specific_capability",
+        "kimi-long-running": "provider_specific_capability",
+        "kimi-agent-swarm": "provider_specific_capability",
+        "kimi-library-workflows": "provider_specific_capability"
+      }
+    },
     "chatgpt": {
       "stage": "supported",
       "account": "signed_in_selected_setup_profile",

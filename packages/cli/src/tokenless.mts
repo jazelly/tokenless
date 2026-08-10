@@ -246,7 +246,7 @@ const COMMAND_CONTRACT_BY_KEY = new Map(COMMAND_CONTRACTS.map((contract) => [com
 const TOP_LEVEL_USAGE = [
   'tokenless <command> [options]',
   'tokenless setup [--install-codex [--codex-home <dir>]]',
-  `tokenless run --provider ${VISIBLE_PROVIDER_USAGE} --prompt <text> --json`,
+  `tokenless run --provider ${VISIBLE_PROVIDER_USAGE} [--execution-mode browser|direct] --prompt <text> --json`,
   'tokenless capabilities list --json',
   'tokenless limits inspect --profile <slug> --provider <provider> --json',
   'tokenless replay --agent-kind <kind> --agent-session-id <id> --json',
@@ -1590,6 +1590,7 @@ async function executeDaemonJob({
 }) {
   const homeDir = tokenlessHome(args.home)
   const config = await readTokenlessConfig(homeDir)
+  const executionMode = normalizeExecutionMode(args.executionMode)
   const explicitProvider = args.provider || process.env.TOKENLESS_PROVIDER
   const explicitProviderId = explicitProvider ? normalizeProvider(explicitProvider) : undefined
   const taskCapabilities = taskCapabilityRequirementsForExecution(args, action, visibleAction)
@@ -1617,13 +1618,19 @@ async function executeDaemonJob({
   const providerControls = visibleAction
     ? {}
     : explicitProviderControls ?? resolveProviderControls({ args, provider, action, requirements: taskCapabilities })
-  const projectName = args.projectName || process.env.TOKENLESS_PROJECT_NAME
-  const chatName = args.chatName || process.env.TOKENLESS_CHAT_NAME || (action === 'snapshot_dom' ? 'DOM snapshot' : undefined)
-  const taskId = deriveTaskId({
-    projectName,
-    chatName,
-    idempotencyKey: args.taskId || args.idempotencyKey || process.env.TOKENLESS_TASK_ID || process.env.TOKENLESS_IDEMPOTENCY_KEY,
-  })
+  const projectName = executionMode === 'direct'
+    ? undefined
+    : args.projectName || process.env.TOKENLESS_PROJECT_NAME
+  const chatName = executionMode === 'direct'
+    ? undefined
+    : args.chatName || process.env.TOKENLESS_CHAT_NAME || (action === 'snapshot_dom' ? 'DOM snapshot' : undefined)
+  const taskId = executionMode === 'direct'
+    ? undefined
+    : deriveTaskId({
+        projectName,
+        chatName,
+        idempotencyKey: args.taskId || args.idempotencyKey || process.env.TOKENLESS_TASK_ID || process.env.TOKENLESS_IDEMPOTENCY_KEY,
+      })
   const requestId = visibleRequestId(visibleAction ? (taskId ?? randomUUID()) : (taskId ?? randomUUID()))
   const managedJobId = managedPlaywrightJobId()
   const workspaceMode = args.workspaceMode === undefined
@@ -1704,6 +1711,7 @@ async function executeDaemonJob({
       capabilityRoute: recordedCapabilityRoute,
       contextLanguage: config.language,
       contextUpstream: agentContextEnvelopeFromEnvironment(),
+      executionMode,
       fallback: fallbackAlternatives.length === 0 ? null : {
         protocol: 'tokenless.provider-fallback.v1',
         mode: 'automatic',
@@ -1816,6 +1824,7 @@ async function executeDaemonJob({
       jobId: job.job_id,
       taskId,
       provider: resolvedProvider,
+      executionMode,
       capabilityRoute: resolvedCapabilityRoute,
       providerAttempts: resolvedJob.provider_attempts_json ?? [],
       profile: publicManagedProfile(submitted.profile, submitted.profile.slug),
@@ -1923,6 +1932,7 @@ async function executeManagedPlaywrightJob({
           ...request.context,
           taskId: effectiveTaskId,
         },
+        executionMode: request.executionMode,
         browserVisibility: request.browserVisibility,
         userHandoff: request.userHandoff,
         ...(request.pagePolicy === undefined ? {} : { pagePolicy: request.pagePolicy }),
@@ -2653,7 +2663,7 @@ function applyBoundAgentContext(args: CliArgs): CliArgs {
       )
     }
   }
-  return {
+  const boundArgs: CliArgs = {
     ...args,
     taskId: required.taskId,
     projectName: required.projectName,
@@ -2663,6 +2673,11 @@ function applyBoundAgentContext(args: CliArgs): CliArgs {
     agentKind: required.agentKind,
     agentSessionId: required.agentSessionId,
   }
+  Object.defineProperty(boundArgs, CLI_ARG_FLAGS, {
+    value: args[CLI_ARG_FLAGS] ?? {},
+    enumerable: false,
+  })
+  return boundArgs
 }
 
 async function applyCodexInvocationContext(args: CliArgs): Promise<CliArgs> {
@@ -4722,6 +4737,7 @@ function assertDaemonRequestSize(value: unknown) {
 function createCommandContracts(): CommandContract[] {
   const visibleJobOptions = [
     'home', 'json', 'quiet', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'browserVisibility',
+    'executionMode',
     'runnerHeartbeatTimeoutMs', 'timeoutMs', 'cancelTimeoutMs', 'targetUrl', 'taskId', 'idempotencyKey',
     'projectName', 'chatName', 'workspaceMode', 'projectInstructions', 'projectInstructionsFile',
     'model', 'modelFallbacks', 'effort', 'thinkingEffort', 'qwenMode', 'qwenModeVariant',
@@ -4746,7 +4762,7 @@ function createCommandContracts(): CommandContract[] {
   const contracts: CommandContract[] = [
     { command: 'help', usage: ['tokenless help'], options: [] },
     { command: 'version', usage: ['tokenless --version', 'tokenless -V', 'tokenless version'], options: [] },
-    { command: 'run', usage: [`tokenless run [--capability <capability>] --provider ${VISIBLE_PROVIDER_USAGE} --prompt <text> --json`], options: runOptions },
+    { command: 'run', usage: [`tokenless run [--capability <capability>] --provider ${VISIBLE_PROVIDER_USAGE} [--execution-mode browser|direct] --prompt <text> --json`], options: runOptions },
     { command: 'capabilities', subcommand: 'list', usage: ['tokenless capabilities list --json'], options: ['json'] },
     { command: 'limits', subcommand: 'inspect', usage: ['tokenless limits inspect --profile <slug> --provider <provider> --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'savings', subcommand: 'status', usage: ['tokenless savings status --json'], options: ['home', 'json'] },
@@ -4842,6 +4858,7 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--browser': 'browser',
     '--browser-executable-path': 'browserExecutablePath',
     '--browser-visibility': 'browserVisibility',
+    '--execution-mode': 'executionMode',
     '--proxy-server': 'proxyServer',
     '--proxy-bypass': 'proxyBypass',
     '--browsers': 'browsers',
@@ -5176,6 +5193,11 @@ function selectedArgumentFlags(args: CliArgs, keys: string[]) {
   ))
 }
 
+function explicitlySelectedArgumentFlags(args: CliArgs, keys: string[]) {
+  const flags = args[CLI_ARG_FLAGS] ?? {}
+  return keys.flatMap((key) => flags[key] ?? [])
+}
+
 function assertVisibleRunArguments(args: CliArgs) {
   if (args.attachFiles.length > 100) {
     throw usageError('too_many_attachments', '--attach-file accepts at most 100 files per visible request.')
@@ -5184,6 +5206,42 @@ function assertVisibleRunArguments(args: CliArgs) {
   if (args.attachFiles.length > 0 && !['submit', 'submit_and_read'].includes(action)) {
     throw usageError('attachment_action_unsupported', '--attach-file requires the submit or submit_and_read visible action.')
   }
+  if (normalizeExecutionMode(args.executionMode) !== 'direct') return
+
+  const provider = args.provider ?? process.env.TOKENLESS_PROVIDER
+  const directProvider = provider === undefined ? undefined : normalizeProvider(provider)
+  if (directProvider !== 'chatgpt' && directProvider !== 'perplexity') {
+    throw usageError('unsupported_provider', '--execution-mode direct currently requires --provider chatgpt or perplexity.')
+  }
+  if (action !== 'submit_and_read') {
+    throw usageError('unsupported_visible_action', '--execution-mode direct currently supports only the default submit_and_read action.')
+  }
+  if (args.attachFiles.length > 0) {
+    throw usageError('attachment_action_unsupported', '--execution-mode direct does not support attachments.')
+  }
+  if (args.capabilities.some((capability) => capability !== TASK_CAPABILITIES.CONVERSATION_CHAT)) {
+    throw usageError('task_capability_action_unsupported', '--execution-mode direct currently supports only conversation.chat.')
+  }
+  const unsupported = explicitlySelectedArgumentFlags(args, [
+    'targetUrl', 'taskId', 'idempotencyKey', 'projectName', 'chatName', 'workspaceMode',
+    'projectInstructions', 'projectInstructionsFile', 'model', 'modelFallbacks', 'effort',
+    'thinkingEffort', 'qwenMode', 'qwenModeVariant', 'deepSeekMode', 'deepSeekDeepThink',
+    'deepSeekSearch', 'kimiSearch', 'kimiPlugin', 'kimiSkill', 'chatSurface', 'longRunning',
+  ])
+  if (unsupported.length > 0) {
+    throw usageError(
+      'controls_unsupported_for_action',
+      `--execution-mode direct does not support: ${unsupported.join(', ')}.`,
+    )
+  }
+}
+
+function normalizeExecutionMode(value: unknown): 'browser' | 'direct' {
+  const normalized = value === undefined ? 'browser' : String(value).trim().toLowerCase()
+  if (normalized !== 'browser' && normalized !== 'direct') {
+    throw usageError('unsupported_visible_action', '--execution-mode must be browser or direct.')
+  }
+  return normalized
 }
 
 function taskCapabilityRequirementsForExecution(

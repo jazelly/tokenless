@@ -49,16 +49,18 @@ Implications are expanded before provider selection. One provider must satisfy t
 
 This table summarizes checked-in routes. The CLI output is the authoritative current list.
 
-| Canonical capability | ChatGPT | Claude | Gemini | Grok | Qwen | DeepSeek | Perplexity | Z.ai | Doubao | Kimi | Dola |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `conversation.chat` | Supported | Supported | Supported | Supported | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | — |
-| `file.upload` | Supported | Supported | Experimental | Supported | — | Experimental | — | Experimental | Experimental | Experimental | — |
-| `search.web` | — | — | — | — | — | — | — | — | — | Experimental | — |
-| `response.citations` | — | — | — | — | — | — | — | — | — | Experimental | — |
+| Canonical capability | ChatGPT | Claude | Gemini | Grok | Qwen | DeepSeek | Perplexity | Z.ai | Doubao | Kimi | Dola | Arena |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `conversation.chat` | Supported | Supported | Supported | Supported | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | — | Supported |
+| `file.upload` | Supported | Supported | Experimental | Supported | — | Experimental | — | Experimental | Experimental | Experimental | — | — |
+| `search.web` | — | — | — | — | — | — | — | — | — | Experimental | — | — |
+| `response.citations` | — | — | — | — | — | — | — | — | — | Experimental | — | — |
 
 `—` means no route is advertised. It does not necessarily mean the provider product lacks the feature; the implementation or real-provider evidence may still be incomplete.
 
 Routes are evaluated as a complete requirement set. For example, an image attachment requires both `file.upload` and `image.input`; the `file.upload` row alone does not make image upload routeable.
+
+Arena `conversation.chat` is supported for a selected signed-in profile. The built CLI and packaged daemon closed readiness, prompt drafting, a correlated completed response, durable `/c/:conversationId` mapping, and same-conversation continuation through headed Cloak `web-ai` and the real `arena.ai` network boundary. The adapter also handles the exact provider-owned **Terms of Use & Privacy Policy** → **Agree** onboarding dialog before prompt input; fresh-account repetition remains pending because the selected account has already accepted it. File upload, model selection, Battle variants, Search, Code, Agent, Image, and Video outcomes remain unadvertised until each lifecycle closes independently.
 
 Gemini Markdown `file.upload` is experimental and routeable from an authenticated selected profile. Gemini removes filename suffixes from card text and accessibility metadata, so its provider-specific acceptance proof requires three newly visible physical `gem-attachment` cards while retaining the validated caller-selected extensions; the generic detector and other providers still require visible extension evidence. The upload path selects **Upload & tools** then **Upload files**, and dismisses the optional MMGen disclaimer with **Cancel** rather than accepting it for the user.
 

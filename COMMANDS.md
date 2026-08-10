@@ -376,7 +376,7 @@ tokenless profiles open -P work --json
 tokenless profiles open -P work -p claude --json
 ```
 
-Use the provider-less form for user-controlled browser maintenance, account switching, or inspecting the managed profile. Use the provider form for sign-in, CAPTCHA, MFA, consent, or provider-specific account switching. It does not replace `profiles status`; run the status command afterward to save a fresh observation.
+Use the provider-less form for user-controlled browser maintenance, account switching, or inspecting the managed profile. Use the provider form for sign-in, CAPTCHA, MFA, ambiguous or external consent, or provider-specific account switching. Exact provider-owned onboarding Terms/Privacy dialogs may instead be handled by the selected provider adapter. It does not replace `profiles status`; run the status command afterward to save a fresh observation.
 
 ### `tokenless profiles set-default`
 

@@ -36,6 +36,7 @@ Every roadmap filename must begin with its product priority (`P0-`, `P1-`, `P2-`
 
 | Roadmap | Outcome | Current priority |
 | --- | --- | --- |
+| [Provider Direct Protocol and Browser Session Bridge](P0-direct-provider-protocol.md) | Add an explicit direct mode that reuses a selected browser profile's provider session and proves ChatGPT text chat through a browser-impersonating Node.js HTTP transport. | P0 |
 | [Real Provider Browser E2E and Native Projects](P0-real-provider-browser-e2e-and-native-projects.md) | Prove every advertised visible capability against real provider websites and add real Claude and Grok native Project creation, reuse, and continuation. | P0 |
 | [Provider Expansion and Parity](P0-provider-expansion.md) | Add high-value AI web providers and maintain an evidence-backed capability catalog and routing matrix across them. | P0 |
 | [Context Delivery and Workspace Alignment](P0-context-delivery-and-workspace-alignment.md) | Carry authorized task, repository, instruction, and file context into the exact provider Project or conversation, including a new chat. | P0 |
@@ -110,14 +111,14 @@ The shared contracts should be built before provider-specific shortcuts:
 7. Make the local daemon the durable authority for idempotency, admission, scheduling lanes, conversation identity, and recovery.
 8. Specify the minimal Web AI Interaction Protocol slice for capability negotiation, exact workspace and conversation identity, one durable provider turn, waiting, recovery, results, and evidence; adopt it on the current Provider side before treating the Harness dependency as stable.
 9. Build the ChatGPT-first web agent harness as one independently buildable deep module exposed through package, authenticated daemon HTTP, and CLI adapters; require existing `conversation.chat` plus `file.upload`, compile and upload one System Prompt Bundle containing the global Skill registry and event protocol, accept upstream Skill preselections and batched web-model `skillLoads`, deliver individual `SKILL.md` revisions on a best-effort basis, and add durable checkpoints, strict output validation, complete action batches, consolidated user interactions, rooted filesystem operations, resumable MCP tool execution, aggregate results, and finite loop limits; defer repository extraction until the interface is stable.
-10. Expand provider coverage using the same visible-session and evidence requirements as the existing providers; agent-harness eligibility closes independently from normal QA support.
+10. Expand provider coverage using the same mode-specific real-session and evidence requirements as the existing providers; agent-harness eligibility closes independently from normal QA support.
 11. Add Codex guided delegation through a reversible inline `AGENTS.md` policy and native lifecycle hooks; bind exact project, thread, turn, and tool-call identity in normally launched Codex sessions, and use bounded App Server reads only to enrich session-tree and lineage while leaving ordinary Codex model traffic unchanged.
 12. Produce a local project graph and synchronize bounded, reviewable context artifacts into the bound provider workspace.
 
 ## Shared Product Principles
 
-- **Visible provider boundary:** operate provider websites through visible controls and visible postconditions. Do not depend on private provider APIs.
-- **Harness-owned agency:** provider websites supply verified model turns; Tokenless owns instruction precedence, tool authorization, execution, durable looping, and termination.
+- **Explicit provider execution modes:** keep visible-browser automation and direct provider web-protocol access as separate, user-selected modes. A direct mode may locally use the selected profile's required provider session values; neither mode exposes credentials to callers, web models, the control-plane frontend, logs, or telemetry.
+- **Harness-owned agency:** provider integrations supply verified model turns; Tokenless owns instruction precedence, tool authorization, execution, durable looping, and termination.
 - **Registry-driven Skill selection:** upstream Agent preselections are a fast path, while the uploaded System Prompt Bundle exposes every valid global Skill's bounded metadata so the web model can request additional Skills by name on any turn.
 - **Hard bootstrap, soft Skill bodies:** every Harness route requires `conversation.chat` and `file.upload`, and the System Prompt Bundle must arrive before the first task Prompt; individual `SKILL.md` resolution or upload failures are recorded and omitted without terminating the bootstrapped chat.
 - **Web-turn efficiency:** upload the System Prompt Bundle and initial preselections in one first attachment action, then batch-upload every later requested Skill before the next Prompt; require each non-final model response to contain all currently needed Skills, knowable actions, and missing inputs; return one aggregate batch result; spend another provider turn only when new instructions or prior results reveal a genuinely new dependency.
@@ -131,7 +132,7 @@ The shared contracts should be built before provider-specific shortcuts:
 - **Local-first and consent-based:** indexing, session binding, and staging happen locally. Upload only the bounded artifacts a user or authorized agent has approved.
 - **Provenance-preserving context:** every instruction and source must retain its origin, scope, freshness, and sharing policy.
 - **No hidden-prompt extraction:** Tokenless may carry instructions explicitly supplied or exported by the caller. It must not scrape concealed platform, developer, or provider prompts.
-- **Real-boundary testing:** provider and Agent integrations require focused integration or browser E2E evidence through the built CLI, daemon, filesystem, supported Agent control surface, and real visible provider session.
+- **Real-boundary testing:** provider and Agent integrations require focused integration or E2E evidence through the built CLI, daemon, filesystem, supported Agent control surface, and the real provider boundary used by the selected execution mode.
 - **Honest degradation:** when a provider cannot represent a system instruction, Project, graph artifact, or other semantic layer natively, report the fallback instead of claiming parity.
 
 ## Roadmap Maintenance

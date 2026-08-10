@@ -6,7 +6,7 @@ Depends on: completed [Provider Architecture and Registry](archived/P0-provider-
 
 ## Outcome
 
-Tokenless supports a broader set of high-value AI web providers while preserving one honest capability catalog and provider-neutral contract. Adding a provider must improve user choice without weakening session isolation, visible verification, failure behavior, or maintainability.
+Tokenless supports a broader set of high-value AI web providers while preserving one honest capability catalog and provider-neutral contract. Adding a provider must improve user choice without weakening session isolation, execution-mode-specific verification, failure behavior, or maintainability.
 
 ## Current Implementation State
 
@@ -37,6 +37,7 @@ As of 2026-08-09:
 - Kimi is registered as an experimental sign-in-required provider. Its built-CLI managed-Cloak gates close readiness, prompt drafting, Instant/K3/K3 Swarm model selection, Standard/High effort selection, text-file acceptance, attachment-grounded output, exact Web search selection with visible citations, exact Plugin/Skill control selection, second-process same-conversation continuation, restoration, and durable mapping. `conversation.chat`, text-file `file.upload`, `search.web`, and search-backed `response.citations` are experimental and routeable; Plugin/Skill submitted outcomes are capacity-blocked, while Projects, research, agent, and artifact lifecycles remain gate-pending and unadvertised; and
 - Microsoft Copilot remains unregistered because both Cloak checks exposed a sign-in surface and no guest composer, and no login was attempted under the authentication-skip policy.
 - Dola is registered as an experimental signed-in provider from the user-selected `web-ai` managed profile. The visible session confirmed the chat composer, file picker, Fast/Pro menu, numeric conversation URLs, and image, writing, video, translation, and homework entry points. The adapter and readiness/draft/model/file/two-turn real-provider release gates are implemented; no route is advertised until the built-product gates close.
+- Arena is registered as a supported signed-in provider on its current `https://arena.ai/` surface. The built CLI, packaged daemon, headed `web-ai` Cloak profile, and real provider network closed readiness, prompt drafting, a correlated completed response, durable `/c/:conversationId` mapping, and same-conversation continuation. The adapter handles the exact provider-owned Terms/Privacy onboarding dialog before prompt input; model selection, files, Battle variants, Search, Code, Agent, Image, and Video remain unadvertised until independently closed.
 
 | Qwen capability | Current state | Evidence boundary |
 | --- | --- | --- |
@@ -137,12 +138,12 @@ Candidates are ranked from current, real-session evidence. Model popularity alon
 | --- | --- |
 | User value | Strong current models or agent workflows that complement existing providers |
 | Web availability | A stable user-facing web product in the target regions |
-| Session viability | Authentication can remain opaque inside an isolated managed profile |
-| Core workflow | A visible composer, submission action, stable result, and safe continuation path |
-| Context capability | Visible file upload, long-context handling, native project or memory surfaces, or an honest fallback |
+| Session viability | Authentication can stay browser-managed in visible mode or be locally accessed within an explicitly selected direct mode |
+| Core workflow | A proven prompt submission, stable result, and safe continuation path through the selected execution mode |
+| Context capability | Proven file upload, long-context handling, native project or memory surfaces, or an honest fallback |
 | Coding utility | Useful visible workflows for repository analysis, implementation, or web development |
-| Testability | Sanitized real-session evidence can prove selectors and postconditions without exposing user data |
-| Policy fit | The intended visible automation can be operated responsibly under applicable product constraints |
+| Testability | Sanitized real-session evidence can prove mode-specific requests and postconditions without exposing user data |
+| Policy fit | The intended execution mode can be operated responsibly under applicable product constraints |
 | Operational quality | Rate-limit, sign-in, CAPTCHA, interruption, and long-running states can be detected and surfaced |
 
 Development cost is not a deciding advantage. Prefer robust, high-value integrations even when they require deeper adapter work.
@@ -152,14 +153,14 @@ Development cost is not a deciding advantage. Prefer robust, high-value integrat
 A provider does not become generally supported until it closes the baseline:
 
 - approved origins and canonical target validation;
-- managed-profile launch and visible session status;
-- `prompt.input`, `prompt.submit`, and stable visible answer reading;
-- conversation URL capture and same-scope continuation;
+- selected profile and execution-mode readiness;
+- `prompt.input`, `prompt.submit`, and stable normalized answer reading;
+- stable conversation identity and same-scope continuation;
 - cancellation, timeout, waiting-for-user, and long-running behavior;
-- normalized result and visible citations when the provider exposes them;
+- normalized result and citations when the provider exposes them;
 - explicit capability inspection;
 - safe model or mode preservation, with verified selection only where proven; and
-- real integration or browser E2E coverage through the built product.
+- real integration or E2E coverage through the built product and selected provider boundary.
 
 File upload, native Project creation, generated-media lifecycles, deep research final-report orchestration, agent mode, and other advanced controls remain capability-gated. Qwen Deep Research mode selection is provider-specific and proves the first correlated visible response, which may be a clarification phase; it does not make the full multi-turn research lifecycle provider-neutral. A provider may ship the baseline while an advanced capability remains `unknown` or `unavailable`.
 
@@ -169,10 +170,10 @@ File upload, native Project creation, generated-media lifecycles, deep research 
 
 - Record canonical origins, route classes, account states, model or mode surfaces, composer behavior, result structure, attachment controls, and workspace-like concepts.
 - Review product and automation constraints before implementation.
-- Inspect candidate states only on the real provider website through the configured persistent profile; do not store DOM captures or replicas.
+- Inspect candidate states only against the real provider website or, for an explicitly selected direct mode, its real web endpoint through the configured account session; do not store DOM or response fixtures.
 - Publish a scorecard and select one provider for the first implementation slice.
 
-Exit: the candidate has an approved origin model, an evidence plan, and no unresolved boundary that would require credentials, private APIs, or invented fixtures.
+Exit: the candidate has an approved origin model, an evidence plan, and no unresolved credential scope, endpoint-validation, or invented-fixture boundary.
 
 ### Phase 1: Shared Registry Extraction — completed 2026-07-27
 
@@ -199,7 +200,7 @@ Exit: a real managed browser session can complete and continue a prompt through 
 
 - Repeat the baseline for the remaining first-wave providers.
 - Compare differences and evolve shared contracts only where the concept is genuinely provider-neutral.
-- Add file acceptance, model or mode selection, and workspace behavior independently when visible proof exists.
+- Add file acceptance, model or mode selection, and workspace behavior independently when proof exists through the affected execution mode.
 
 Exit: Kimi, Z.ai, Perplexity, Mistral Le Chat, and DeepSeek each have an explicit support state and evidence-backed capability matrix, even when the correct state is unavailable or parked.
 
@@ -216,9 +217,9 @@ Exit: support is an ongoing evidence process rather than a one-time adapter merg
 
 - Provider identity is normalized through a single registry.
 - Every supported origin, navigation target, and returned conversation URL is validated.
-- Each advertised action has a visible success postcondition proven by a real-provider built-product journey.
+- Each advertised action has a mode-appropriate success postcondition proven by a real-provider built-product journey.
 - Unsupported or ambiguous controls fail closed with actionable machine-readable reasons.
-- No test introduces provider DOM fixtures, local provider replicas, route interception, or simulated provider responses.
+- No test introduces provider DOM fixtures, local provider replicas, intercepted response fixtures, or simulated provider responses.
 - Documentation distinguishes provider support from model availability and from advanced capability support.
 - Existing providers continue to pass the same baseline contract after each expansion.
 
@@ -229,13 +230,13 @@ Exit: support is an ongoing evidence process rather than a one-time adapter merg
 | Fast UI and product drift | Required live cases, bounded diagnostics, isolated adapters, and rapid capability disablement |
 | Region, account, or plan variation | Account-state capability matrix and `unknown` when evidence is incomplete |
 | Model names change faster than adapters | Discover visible labels at runtime and avoid hard-coding marketing names as capability guarantees |
-| Candidate lacks a safe automation surface | Park the candidate and preserve the scorecard; do not bypass the visible boundary |
+| Candidate lacks a viable real provider boundary | Park the candidate and preserve the scorecard; do not substitute a simulated boundary |
 | Shared abstraction becomes ChatGPT-shaped | Require multiple-provider evidence before promoting behavior into the shared contract |
 
 ## Non-Goals
 
-- Calling model APIs instead of the provider's visible web product
+- Treating official model APIs as equivalent to the provider's consumer web product
 - Guaranteeing a specific model name, entitlement, quota, or release schedule
-- Reaching parity by using hidden endpoints or exporting browser credentials
+- Enabling direct protocol access implicitly or exposing provider session credentials outside its selected local provider/profile scope
 - Treating a visible control as proof that the resulting mutation succeeded
 - Shipping all listed candidates simultaneously

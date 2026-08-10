@@ -30,7 +30,7 @@ The first release must let a user answer these questions without opening a termi
 - **One local source of truth:** the UI and CLI call shared application services. The daemon must not spawn the CLI or maintain a second configuration model.
 - **Visible and honest state:** show exact durable states and observation timestamps. Do not invent percentages, token streaming, provider health, or account capabilities.
 - **Local-first:** serve only from a verified loopback origin. Do not introduce a hosted account, telemetry dependency, or remote administration surface.
-- **Credentials remain opaque:** never expose provider cookies, browser storage, Keychain contents, daemon bearer tokens, or hidden provider data to browser JavaScript.
+- **Credentials stay outside the frontend:** never expose provider cookies, browser storage, Keychain contents, daemon bearer tokens, or hidden provider data to browser JavaScript. A backend direct-protocol mode may use provider session values without returning them to the control plane.
 - **Safe browser ownership:** the control-plane tab is a reserved browser resource and can never be claimed, replaced, or navigated by a provider job.
 - **Simple first release:** use ordinary HTTP and bounded polling before adding SSE or WebSockets.
 
@@ -38,10 +38,10 @@ The first release must let a user answer these questions without opening a termi
 
 The first control-plane release does not:
 
-- automate provider sign-in, CAPTCHA, MFA, payment, consent, or account creation;
+- automate provider sign-in, CAPTCHA, MFA, payment, account creation, or ambiguous/external consent in the control-plane frontend; provider adapters may handle exact provider-owned onboarding Terms/Privacy dialogs during execution;
 - detect whether a user is in mainland China or any other region;
 - install, start, configure, or inspect Clash, V2Ray, Xray, sing-box, VPN software, or proxy subscriptions;
-- read browser credentials, cookies, local storage, session storage, or Keychain data;
+- read or display provider credentials, cookies, local storage, session storage, or Keychain data in the control-plane frontend;
 - parse, display, or extract authentication values from a copied browser profile;
 - expose the daemon on the LAN or public Internet;
 - replace provider websites with embedded iframes;
@@ -162,7 +162,7 @@ The provider area is a profile-scoped matrix. Each provider card shows:
 - current technical or user-resolvable blocker; and
 - actions to open the provider, perform a live readiness check, inspect visible controls, or disable routing.
 
-Opening a provider is a user-visible navigation action. A live check must never submit a prompt, upload a file, change a model, or accept consent.
+Opening a provider is a user-visible navigation action. A live check must never submit a prompt, upload a file, or change a model. It may invoke the selected provider adapter's exact onboarding Terms/Privacy handler; ambiguous or external consent remains a user handoff.
 
 ### Capabilities
 
@@ -227,7 +227,7 @@ Machine-oriented `setup --json`, non-interactive environments, and explicit no-o
 3. The UI offers an implicit live readiness check that starts or reuses a resident headless browser when the profile is idle, or reuses an existing headed context without replacing it, closing its tabs, or foregrounding the check.
 4. If the page is ready, Tokenless records the access and account observation.
 5. If user action is required, the UI records the exact handoff without opening a visible browser; the user explicitly opens the provider before acting.
-6. After the user finishes, they explicitly recheck; Tokenless does not poll credentials or scrape hidden browser state.
+6. After the user finishes, they explicitly recheck; this visible-browser readiness flow does not poll credentials or scrape hidden browser state.
 7. Technical failure remains distinct from sign-in-required and does not silently disable the provider.
 
 ### Waiting Job Handoff
