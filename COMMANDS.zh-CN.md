@@ -528,6 +528,7 @@ Provider 控件：
 Identity 与 continuity：
 
 - `--task-id <id>` 提供持久化 task identity。
+- `--page-ref <ref>` 提供由调用方控制的 provider tab identity。只有必须在同一 tab 中继续的工作才复用同一个 Ref；独立工作应使用不同 Ref。省略时会生成独立 Ref。
 - `--idempotency-key <id>` 在没有 task ID 时提供相同 identity。
 - `--project-name <name>` 和 `--chat-name <name>` 会参与推导 task identity，但不会请求 Workspace 处理。
 - `--workspace-mode <auto|native|conversation>` 显式请求 Workspace 处理，并要求同时提供 `--project-name`。

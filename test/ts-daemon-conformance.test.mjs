@@ -707,7 +707,31 @@ test('built Playwright validators enforce the current internal schema IDs', {
     ],
   })
   assert.equal(created.protocol, runtime.MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID)
-  assert.equal(created.protocol, runtime.MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID_V3)
+  assert.equal(created.protocol, runtime.MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID_V4)
+  assert.match(created.pageRef, /^page:[0-9a-f-]{36}$/u)
+  assert.notEqual(created.pageRef, created.taskId)
+
+  const explicitPageRef = playwright.createManagedPlaywrightJobRequest({
+    provider: 'qwen',
+    pageRef: 'page:explicit:qwen',
+    actions: [{ action: playwright.VISIBLE_ACTIONS.AUTH_STATUS, payload: {} }],
+  })
+  assert.equal(explicitPageRef.pageRef, 'page:explicit:qwen')
+
+  const jobScopedPageRef = playwright.createManagedPlaywrightJobRequest({
+    provider: 'qwen',
+    pageRef: null,
+    actions: [{ action: playwright.VISIBLE_ACTIONS.AUTH_STATUS, payload: {} }],
+  })
+  assert.equal(jobScopedPageRef.pageRef, null)
+  assert.throws(
+    () => playwright.createManagedPlaywrightJobRequest({
+      provider: 'qwen',
+      pageRef: 'invalid\npage-ref',
+      actions: [{ action: playwright.VISIBLE_ACTIONS.AUTH_STATUS, payload: {} }],
+    }),
+    (error) => error.code === 'invalid_playwright_job_page_ref',
+  )
   assert.equal(created.provider, 'qwen')
   assert.equal(created.target.url, 'https://chat.qwen.ai/')
   assert.equal(created.capabilityRoute, null)
@@ -782,6 +806,26 @@ test('built Playwright validators enforce the current internal schema IDs', {
   assert.equal(v3Validated.userHandoff, false)
   assert.equal(v3Validated.actions[0].provider, 'qwen')
 
+  assert.equal(v3Validated.protocol, runtime.MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID_V4)
+  assert.equal(v3Validated.pageRef, null)
+  assert.throws(
+    () => playwright.validateManagedPlaywrightJobRequest({
+      protocol: runtime.MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID_V3,
+      provider: 'qwen',
+      target: { kind: 'provider_home', url: 'https://chat.qwen.ai/' },
+      taskId: 'legacy-v3-with-page-ref',
+      pageRef: 'page:not-valid-in-v3',
+      browserVisibility: 'headless',
+      actions: [{
+        protocol: runtime.VISIBLE_ACTION_SCHEMA_ID_V3,
+        requestId: 'legacy-v3-page-ref-action',
+        provider: 'qwen',
+        action: playwright.VISIBLE_ACTIONS.AUTH_STATUS,
+        payload: {},
+      }],
+    }),
+    (error) => error.code === 'invalid_playwright_job_request',
+  )
   const routeDecision = playwright.resolveTaskCapabilityRoute({
     requirements: [playwright.TASK_CAPABILITIES.CONVERSATION_CHAT],
     candidates: [{ provider: 'chatgpt', runtimeEligibility: 'unchecked' }],
@@ -961,6 +1005,7 @@ test('SQLite atomically preserves provider fallback attempts under one durable j
     const baseRequest = playwright.createManagedPlaywrightJobRequest({
       provider: 'chatgpt',
       taskId: 'fallback-store-task',
+      pageRef: 'page:fallback-store',
       capabilityRoute: chatgptRoute.route,
       fallback: {
         protocol: 'tokenless.provider-fallback.v1',
@@ -1017,6 +1062,7 @@ test('SQLite atomically preserves provider fallback attempts under one durable j
     assert.deepEqual(queued.request_json.context, request.context)
     const fallbackClaim = store.claimJob(queued.job_id, queued.claim_token)
     store.markRunning(fallbackClaim.job_id, fallbackClaim.claim_token)
+    assert.equal(queued.request_json.pageRef, request.pageRef)
     store.completeJob(fallbackClaim.job_id, fallbackClaim.claim_token, { result_json: { provider: 'claude' } })
     store.close()
     store = await JobStore.open(homeDir)
@@ -1027,6 +1073,7 @@ test('SQLite atomically preserves provider fallback attempts under one durable j
       ['chatgpt', 'blocked'],
       ['claude', 'succeeded'],
     ])
+    assert.equal(completed.request_json.pageRef, request.pageRef)
   } finally {
     store.close()
     fs.rmSync(homeDir, { recursive: true, force: true })
@@ -1081,6 +1128,34 @@ test('TS daemon browser runtime control is authenticated, quiesces queued work, 
     await delay(1_500)
     const stillQueued = await daemonRequest(daemon.url, token, 'GET', `/jobs/${encodeURIComponent(pausedJobId)}`)
     assert.equal(stillQueued.status, 'queued')
+    const playwright = await importPlaywright()
+    const roundtripPageRef = `page:http-roundtrip:${randomUUID()}`
+    const roundtripRequest = playwright.createManagedPlaywrightJobRequest({
+      provider: 'chatgpt',
+      pageRef: roundtripPageRef,
+      actions: [{ action: playwright.VISIBLE_ACTIONS.AUTH_STATUS, payload: {} }],
+    })
+    const roundtripJobId = randomUUID()
+    const roundtripCreated = await daemonRequest(daemon.url, token, 'POST', '/jobs', {
+      provider: 'chatgpt',
+      action: managedPlaywrightJobAction,
+      execution_backend: 'playwright',
+      profile_id: profileId,
+      job_id: roundtripJobId,
+      request_json: roundtripRequest,
+    })
+    assert.equal(roundtripCreated.request_json.pageRef, roundtripPageRef)
+    const roundtripRead = await daemonRequest(
+      daemon.url,
+      token,
+      'GET',
+      `/jobs/${encodeURIComponent(roundtripJobId)}`,
+    )
+    assert.equal(roundtripRead.request_json.pageRef, roundtripPageRef)
+    await daemonRequest(daemon.url, token, 'POST', `/jobs/${encodeURIComponent(roundtripJobId)}/cancel`, {
+      reason: { code: 'test_roundtrip_complete' },
+    })
+
     const profile = createReadyManagedProfile(homeDir, { profileId })
     assertProfileDirectoryEmpty(profile.directory)
 

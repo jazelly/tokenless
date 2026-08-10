@@ -528,6 +528,7 @@ Provider controls:
 Identity and continuity:
 
 - `--task-id <id>` supplies durable task identity.
+- `--page-ref <ref>` supplies caller-controlled provider-tab identity. Reuse one Ref only for work that must continue in the same tab; independent work should use distinct Refs. Omit it to generate an independent Ref.
 - `--idempotency-key <id>` supplies the same identity when no task ID is used.
 - `--project-name <name>` and `--chat-name <name>` contribute to derived task identity without requesting Workspace handling.
 - `--workspace-mode <auto|native|conversation>` explicitly requests Workspace handling and requires `--project-name`.

@@ -75,10 +75,15 @@ export function validateLiveProviderCapabilityMatrix(matrix) {
   )
   assert.equal(matrix.schema, schema)
   assert.deepEqual(matrix.journey, {
-    scope: 'provider_capability',
-    pagePolicy: 'one_managed_page',
+    scope: 'provider_capability_case',
+    pagePolicy: 'caller_page_ref_per_case',
     caseOrder: 'providers.required',
-    identityProof: ['stable_task_id', 'stable_chromium_target_id'],
+    identityProof: [
+      'distinct_page_ref_per_case',
+      'distinct_chromium_target_id_per_case',
+      'stable_page_ref_within_case',
+      'stable_chromium_target_id_within_case',
+    ],
   })
   assert.equal(isRecord(matrix.cases), true, 'live capability matrix cases must be an object')
   assert.equal(isRecord(matrix.providers), true, 'live capability matrix providers must be an object')

@@ -56,7 +56,7 @@
 - Playwright browser tests must use `test/helpers/configured-browser-profile.mjs` and Tokenless's production CDP path.
 - Browser tests must not create disposable user-data directories or delete a browser profile or config home during teardown. Reuse the configured profile across runs; profile deletion requires an explicit user request naming that profile.
 - Direct `chromium.launch()`, `chromium.launchPersistentContext()`, and ad hoc browser process launches are forbidden in test files. Tests must not resize browser windows or emulate a viewport.
-- Browser tests must never test profile deletion, browser crash/kill, explicit browser/context/page close, forced relaunch, runtime replacement/repair, visibility-switch relaunch, or corruption of `DevToolsActivePort`, PID, CDP endpoint, or runtime-session metadata.
+- Browser tests must never directly invoke browser/context/page close or test profile deletion, browser crash/kill, forced relaunch, runtime replacement/repair, visibility-switch relaunch, or corruption of `DevToolsActivePort`, PID, CDP endpoint, or runtime-session metadata.
 - Browser tests may create provider-side conversations or other ordinary functional artifacts. Teardown detaches only CDP clients and leaves the profile, resident browser, runtime, pages, and browser metadata intact.
 
 ### Provider Session and macOS Keychain Safety

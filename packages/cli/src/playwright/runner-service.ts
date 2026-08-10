@@ -198,8 +198,6 @@ export class ManagedPlaywrightRunnerService {
   private readonly homeDir: string | undefined
   private readonly protocolRouter: ProviderProtocolRouter
   private readonly g4fClient: G4fServiceClient | undefined
-  private readonly providerTabsByProfile = new Map<string, Map<string, Page>>()
-  private readonly pendingProviderTabsByProfile = new Map<string, Set<string>>()
   private readonly inFlightProfiles = new Set<string>()
   private readonly inFlightJobs = new Set<Promise<void>>()
   private stopped = false
@@ -297,95 +295,31 @@ export class ManagedPlaywrightRunnerService {
       return provider
     })
     const managedContext = await this.contextManager.ensureContext(profile, browserVisibility)
-    const existingPages = managedContext.browserContext.pages()
-    const claimedPages = new Set<Page>()
-    const knownProviderTabs = this.providerTabsByProfile.get(profile.id) ?? new Map<string, Page>()
-    const pendingProviderTabs = this.pendingProviderTabsByProfile.get(profile.id) ?? new Set<string>()
-    this.providerTabsByProfile.set(profile.id, knownProviderTabs)
-    this.pendingProviderTabsByProfile.set(profile.id, pendingProviderTabs)
     const tabs: ManagedProviderTabsOpenResult['tabs'][number][] = []
-    const missing: RunnerProvider[] = []
-    for (const provider of providers) {
-      const known = knownProviderTabs.get(provider.id)
-      if (known?.isClosed()) knownProviderTabs.delete(provider.id)
-      const existing = known && !known.isClosed()
-        ? known
-        : existingPages.find((page) => !claimedPages.has(page) && providerOwnsPage(provider, page))
-      if (existing) {
-        claimedPages.add(existing)
-        knownProviderTabs.set(provider.id, existing)
-        tabs.push({ provider: provider.id, url: provider.descriptor.navigation.entryUrl, reused: true })
-      } else if (pendingProviderTabs.has(provider.id)) {
-        tabs.push({ provider: provider.id, url: provider.descriptor.navigation.entryUrl, reused: true })
-      } else {
-        missing.push(provider)
-      }
-    }
-
     const failures: ManagedProviderTabsOpenResult['failures'][number][] = []
-    const initialBlankPage = existingPages.find((page) => (
-      !page.isClosed() && !claimedPages.has(page) && page.url() === 'about:blank'
-    ))
-    const initialProvider = initialBlankPage ? missing.shift() : undefined
-    if (initialProvider && initialBlankPage) {
-      claimedPages.add(initialBlankPage)
-      knownProviderTabs.set(initialProvider.id, initialBlankPage)
-      pendingProviderTabs.add(initialProvider.id)
+    for (const provider of providers) {
+      let lease: ManagedProviderPageLease | null = null
       try {
-        await initialBlankPage.goto(initialProvider.descriptor.navigation.entryUrl, { waitUntil: 'commit' })
+        lease = await managedContext.acquireProviderPage({
+          provider: provider.id,
+          pageRef: providerHomePageRef(provider.id),
+          policy: 'preserve',
+          matchesExistingPage: (page) => providerOwnsPage(provider, page),
+          isAvailablePage: (page) => providerPageAvailable(provider, page),
+        })
+        const alreadyOnProvider = providerOwnsPage(provider, lease.page)
+        if (!alreadyOnProvider) {
+          await lease.page.goto(provider.descriptor.navigation.entryUrl, { waitUntil: 'commit' })
+        }
         tabs.push({
-          provider: initialProvider.id,
-          url: initialProvider.descriptor.navigation.entryUrl,
-          reused: false,
+          provider: provider.id,
+          url: provider.descriptor.navigation.entryUrl,
+          reused: lease.reused || alreadyOnProvider,
         })
       } catch (error) {
-        knownProviderTabs.delete(initialProvider.id)
-        failures.push(providerTabOpenFailure(initialProvider.id, error))
+        failures.push(providerTabOpenFailure(provider.id, error))
       } finally {
-        pendingProviderTabs.delete(initialProvider.id)
-      }
-    }
-    if (missing.length > 0) {
-      const browser = managedContext.browserContext.browser()
-      if (!browser) throw tokenlessError('playwright_browser_closed', 'Managed browser is no longer connected.')
-      const session = await browser.newBrowserCDPSession()
-      const requests = missing.map(async (provider) => {
-        pendingProviderTabs.add(provider.id)
-        try {
-          const created = await session.send('Target.createTarget', {
-            url: provider.descriptor.navigation.entryUrl,
-            background: true,
-            focus: false,
-          })
-          const createdPages = await waitForChromiumTargetPages(
-            managedContext.browserContext,
-            new Set([created.targetId]),
-            10_000,
-          )
-          const page = createdPages.get(created.targetId)
-          if (!page) {
-            throw tokenlessError(
-              'playwright_background_page_unavailable',
-              `Chromium created the ${provider.id} tab but Playwright did not expose its page.`,
-              { retryable: true, details: { provider: provider.id, targetId: created.targetId } },
-            )
-          }
-          knownProviderTabs.set(provider.id, page)
-          tabs.push({ provider: provider.id, url: provider.descriptor.navigation.entryUrl, reused: false })
-        } catch (error) {
-          knownProviderTabs.delete(provider.id)
-          failures.push(providerTabOpenFailure(provider.id, error))
-        } finally {
-          pendingProviderTabs.delete(provider.id)
-        }
-      })
-      await Promise.all(requests)
-      await session.detach().catch(() => undefined)
-    }
-    if (pendingProviderTabs.size === 0) {
-      this.pendingProviderTabsByProfile.delete(profile.id)
-      if (knownProviderTabs.size === 0) {
-        this.providerTabsByProfile.delete(profile.id)
+        await lease?.release()
       }
     }
     const providerOrder = new Map(providerIds.map((provider, index) => [provider, index]))
@@ -778,14 +712,14 @@ export class ManagedPlaywrightRunnerService {
     const automaticAuthObservation = isAutomaticAuthObservation(request, claimBrowserVisibility)
     const operation = async (initialManagedContext: ManagedBrowserContext) => {
       let managedContext = initialManagedContext
-      const pageKey = managedPageKey(job, request)
+      const pageRef = managedPageRef(job, request)
       const provider = getProviderInstanceById(request.provider)
       if (!provider) throw tokenlessError('unknown_playwright_job_provider', 'Managed Playwright job provider is not supported.')
       const temporaryPage = automaticAuthObservation ? await managedContext.acquireTemporaryPage() : null
       let providerPageLease = temporaryPage === null
         ? await managedContext.acquireProviderPage({
             provider: provider.id,
-            taskKey: pageKey,
+            pageRef,
             policy: request.pagePolicy,
             matchesExistingPage: (candidate) => providerOwnsPage(provider, candidate),
             isAvailablePage: (candidate) => providerPageAvailable(provider, candidate),
@@ -841,6 +775,8 @@ export class ManagedPlaywrightRunnerService {
         await waitForE2EBrowserObserver({
           config: this.e2eInspection,
           jobId: job.job_id,
+          pageRefHash: createHash('sha256').update(JSON.stringify([request.provider, pageRef])).digest('base64url').slice(0, 20),
+          reusedPageBinding: providerPageLease?.reused ?? false,
           profileId: profile.id,
           profileDirectory: profile.directory,
           provider: request.provider,
@@ -868,7 +804,7 @@ export class ManagedPlaywrightRunnerService {
           profile,
           job,
           request,
-          pageKey,
+          pageRef,
           providerPageLease,
           claimBrowserVisibility,
           provider,
@@ -1106,7 +1042,7 @@ export class ManagedPlaywrightRunnerService {
     const responses = await this.contextManager.runWithProfile(profile, claimBrowserVisibility, async (managedContext) => {
       const providerPageLease = await managedContext.acquireProviderPage({
         provider: provider.id,
-        taskKey: managedPageKey(job, request),
+        pageRef: managedPageRef(job, request),
         policy: request.pagePolicy,
         matchesExistingPage: (candidate) => providerOwnsPage(provider, candidate),
         isAvailablePage: (candidate) => providerPageAvailable(provider, candidate),
@@ -1378,7 +1314,7 @@ export class ManagedPlaywrightRunnerService {
     profile: ManagedBrowserProfile
     job: DaemonClaimedJob
     request: ManagedPlaywrightJobRequest
-    pageKey: string
+    pageRef: string
     providerPageLease: ManagedProviderPageLease | null
     claimBrowserVisibility: BrowserVisibility
     provider: RunnerProvider
@@ -1493,7 +1429,7 @@ export class ManagedPlaywrightRunnerService {
       managedContext = await managedContext.switchVisibility('headed')
       providerPageLease = await managedContext.acquireProviderPage({
         provider: options.provider.id,
-        taskKey: options.pageKey,
+        pageRef: options.pageRef,
         policy: options.request.pagePolicy,
         matchesExistingPage: (candidate) => providerOwnsPage(options.provider, candidate),
         isAvailablePage: (candidate) => providerPageAvailable(options.provider, candidate),
@@ -1622,32 +1558,6 @@ async function chromiumTargetId(browserContext: BrowserContext, page: Page) {
   }
 }
 
-async function waitForChromiumTargetPages(
-  browserContext: BrowserContext,
-  targetIds: ReadonlySet<string>,
-  timeoutMs: number,
-) {
-  const pagesByTargetId = new Map<string, Page>()
-  const inspectedPages = new Set<Page>()
-  const deadline = Date.now() + timeoutMs
-  while (pagesByTargetId.size < targetIds.size && Date.now() <= deadline) {
-    for (const page of browserContext.pages()) {
-      if (page.isClosed() || inspectedPages.has(page)) continue
-      try {
-        const targetId = await chromiumTargetId(browserContext, page)
-        inspectedPages.add(page)
-        if (targetIds.has(targetId)) pagesByTargetId.set(targetId, page)
-      } catch {
-        if (page.isClosed()) inspectedPages.add(page)
-      }
-    }
-    if (pagesByTargetId.size < targetIds.size) {
-      await delay(Math.min(25, Math.max(1, deadline - Date.now())))
-    }
-  }
-  return pagesByTargetId
-}
-
 export function serializeRunnerError(error: unknown) {
   const response = errorResponse(error)
   return {
@@ -1762,6 +1672,7 @@ function safeFallbackRequest(
     provider: alternative.provider,
     target: alternative.target,
     taskId: request.taskId,
+    pageRef: request.pageRef,
     capabilityRoute: alternative.capabilityRoute,
     fallback: remaining.length === 0 ? null : { ...plan, alternatives: remaining },
     context: request.context,
@@ -2527,12 +2438,12 @@ function taskIdFromRequest(value: unknown) {
   return typeof record.taskId === 'string' ? record.taskId : null
 }
 
-function managedPageKey(job: DaemonClaimedJob, request: ManagedPlaywrightJobRequest) {
-  return JSON.stringify([
-    request.provider,
-    request.taskId === null ? 'job' : 'task',
-    request.taskId ?? job.job_id,
-  ])
+function managedPageRef(job: DaemonClaimedJob, request: ManagedPlaywrightJobRequest) {
+  return request.pageRef ?? `job:${job.job_id}`
+}
+
+function providerHomePageRef(provider: string) {
+  return `provider:${provider}:home`
 }
 
 function providerOwnsPage(

@@ -11,14 +11,17 @@ import { getProviderInstanceForUrl } from '../../packages/cli/dist/src/playwrigh
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const cliEntry = path.join(root, 'packages/cli/dist/src/tokenless.mjs')
-const protocol = 'tokenless.e2e-browser-inspection.v2'
+const daemonEntry = path.join(root, 'packages/cli/dist/src/daemon/daemon-entry.mjs')
+const protocol = 'tokenless.e2e-browser-inspection.v3'
 const pollMs = 50
 const daemonStopTimeoutMs = 60_000
+const defaultDaemonUrl = 'http://127.0.0.1:7331'
 
 export async function createLiveBrowserInspectionSession(options) {
   const homeDir = path.resolve(requiredString(options.homeDir, 'homeDir'))
   const profileSlug = requiredString(options.profileSlug, 'profileSlug')
-  const daemonUrl = options.daemonUrl === undefined ? undefined : requiredString(options.daemonUrl, 'daemonUrl')
+  const requestedDaemonUrl = options.daemonUrl === undefined ? undefined : requiredString(options.daemonUrl, 'daemonUrl')
+  const daemonUrl = requestedDaemonUrl ?? await configuredDaemonUrl(homeDir) ?? defaultDaemonUrl
   const runId = `e2e-${randomUUID()}`
   const nonce = randomBytes(32).toString('base64url')
   const env = {
@@ -44,6 +47,14 @@ export async function createLiveBrowserInspectionSession(options) {
   const observerBrowsers = new Map()
 
   await stopExistingDaemons({ homeDir, daemonUrl })
+  const daemon = spawnInspectionDaemon({ homeDir, daemonUrl, env })
+  const daemonOutput = collectChildOutput(daemon)
+  try {
+    await waitForInspectionDaemon({ homeDir, daemonUrl, daemonOutput })
+  } catch (error) {
+    await stopInspectionDaemon(daemon, daemonOutput)
+    throw error
+  }
 
   const observeNextAttempt = async (observeOptions = {}) => {
     const waiting = await waitForWaitingBarrier({
@@ -131,6 +142,7 @@ export async function createLiveBrowserInspectionSession(options) {
         '--timeout-ms', String(daemonStopTimeoutMs),
         '--json',
       ], env)
+      await stopInspectionDaemon(daemon, daemonOutput)
       await fs.rm(barrierRoot, { recursive: true, force: true }).catch(() => undefined)
       assertCliSuccess(result, 'stop the E2E inspection daemon')
       for (const canceled of canceledJobs) {
@@ -190,6 +202,9 @@ async function waitForWaitingBarrier(options) {
     if (waiting) {
       assert.equal(waiting.protocol, protocol)
       assert.equal(waiting.nonce, options.nonce)
+      assert.equal(Number.isSafeInteger(waiting.daemonPid), true)
+      assert.match(waiting.pageRefHash ?? '', /^[A-Za-z0-9_-]{20}$/)
+      assert.equal(typeof waiting.reusedPageBinding, 'boolean')
       assert.equal(typeof waiting.jobId, 'string')
       assert.equal(typeof waiting.profileId, 'string')
       assert.equal(typeof waiting.profileDirectory, 'string')
@@ -308,6 +323,78 @@ async function configuredDaemonUrl(homeDir) {
     if (isMissingFileError(error) || error instanceof SyntaxError) return undefined
     throw error
   }
+}
+
+function spawnInspectionDaemon({ homeDir, daemonUrl, env }) {
+  const address = localDaemonAddress(daemonUrl)
+  return spawn(process.execPath, [
+    daemonEntry,
+    '--home', homeDir,
+    'serve',
+    '--host', address.host,
+    '--port', String(address.port),
+  ], {
+    cwd: root,
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+}
+
+function localDaemonAddress(daemonUrl) {
+  const parsed = new URL(daemonUrl)
+  const host = parsed.hostname
+  const port = parsed.port === '' ? 80 : Number(parsed.port)
+  if (
+    parsed.protocol !== 'http:' ||
+    !['127.0.0.1', 'localhost'].includes(host) ||
+    parsed.pathname !== '/' ||
+    parsed.search !== '' ||
+    parsed.hash !== '' ||
+    !Number.isSafeInteger(port) ||
+    port < 1 ||
+    port > 65_535
+  ) {
+    throw new Error('Live browser inspection requires a loopback HTTP daemon URL.')
+  }
+  return { host, port }
+}
+
+async function waitForInspectionDaemon({ homeDir, daemonUrl, daemonOutput }) {
+  const deadline = Date.now() + 10_000
+  let latestError
+  while (Date.now() <= deadline) {
+    const exited = daemonOutput.settled()
+    if (exited) {
+      throw new Error(`E2E inspection daemon exited before readiness:\n${summarizeProcess(exited)}`)
+    }
+    try {
+      const challenge = randomBytes(32).toString('base64url')
+      const response = await fetch(`${daemonUrl}/ready?challenge=${challenge}`)
+      const body = await response.json().catch(() => null)
+      if (response.ok && body?.ready === true && body?.home_dir === homeDir) return
+    } catch (error) {
+      latestError = error
+    }
+    await delay(pollMs)
+  }
+  throw new Error(`E2E inspection daemon did not become ready: ${latestError?.message ?? latestError ?? 'unknown'}`)
+}
+
+async function stopInspectionDaemon(child, daemonOutput) {
+  if (daemonOutput.settled()) return
+  const graceful = await Promise.race([
+    daemonOutput.exit.then(() => true),
+    delay(5_000).then(() => false),
+  ])
+  if (graceful) return
+  child.kill('SIGTERM')
+  const terminated = await Promise.race([
+    daemonOutput.exit.then(() => true),
+    delay(5_000).then(() => false),
+  ])
+  if (terminated) return
+  child.kill('SIGKILL')
+  await daemonOutput.exit
 }
 
 function collectChildOutput(child) {

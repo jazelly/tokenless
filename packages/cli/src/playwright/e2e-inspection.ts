@@ -6,7 +6,7 @@ import process from 'node:process'
 
 import { tokenlessError } from './errors.js'
 
-export const E2E_BROWSER_INSPECTION_PROTOCOL = 'tokenless.e2e-browser-inspection.v2' as const
+export const E2E_BROWSER_INSPECTION_PROTOCOL = 'tokenless.e2e-browser-inspection.v3' as const
 
 export type E2EBrowserInspectionConfig = {
   protocol: typeof E2E_BROWSER_INSPECTION_PROTOCOL
@@ -116,6 +116,8 @@ export function createE2EInspectionJobId(env: NodeJS.ProcessEnv = process.env) {
 export async function waitForE2EBrowserObserver(options: {
   config: E2EBrowserInspectionConfig
   jobId: string
+  pageRefHash: string
+  reusedPageBinding: boolean
   profileId: string
   profileDirectory: string
   provider: string
@@ -134,6 +136,9 @@ export async function waitForE2EBrowserObserver(options: {
     runId: config.runId,
     jobId,
     nonce: config.nonce,
+    daemonPid: process.pid,
+    pageRefHash: options.pageRefHash,
+    reusedPageBinding: options.reusedPageBinding,
     profileId: options.profileId,
     profileDirectory: options.profileDirectory,
     provider: options.provider,

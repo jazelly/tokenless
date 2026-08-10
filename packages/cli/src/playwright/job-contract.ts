@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { normalizeBrowserVisibility } from '../browser-visibility.js'
 import {
   MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID,
+  MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID_V3,
 } from '../schema-ids.js'
 import {
   VISIBLE_ACTIONS,
@@ -50,6 +51,7 @@ export type ManagedPlaywrightJobRequest = {
   provider: ProviderId
   target: ManagedPlaywrightSafeTarget
   taskId: string | null
+  pageRef: string | null
   capabilityRoute: TaskCapabilityRoute | null
   fallback: ManagedPlaywrightFallbackPlan | null
   context: ContextEnvelope
@@ -79,6 +81,7 @@ export type CreateManagedPlaywrightJobRequestInput = {
   provider: ProviderId
   target?: Partial<ManagedPlaywrightSafeTarget> | undefined
   taskId?: string | null | undefined
+  pageRef?: string | null | undefined
   capabilityRoute?: TaskCapabilityRoute | null | undefined
   fallback?: ManagedPlaywrightFallbackPlan | null | undefined
   context?: ContextEnvelope | null | undefined
@@ -124,15 +127,17 @@ export function createManagedPlaywrightJobRequest(
       provider: provider.id,
     })
   })
+  const taskId = validateTaskId(input.taskId ?? null)
   return validateManagedPlaywrightJobRequest({
     protocol: MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID,
     provider: provider.id,
     target,
-    taskId: validateTaskId(input.taskId ?? null),
+    taskId,
+    pageRef: validatePageRef(input.pageRef === undefined ? `page:${randomUUID()}` : input.pageRef),
     capabilityRoute: input.capabilityRoute ?? null,
     fallback: input.fallback ?? null,
     context: input.context ?? createContextEnvelope({
-      taskId: validateTaskId(input.taskId ?? null),
+      taskId,
       requirements: input.capabilityRoute?.requirements ?? deriveTaskCapabilityRequirements(actions),
       actions,
       language: input.contextLanguage,
@@ -154,22 +159,33 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
   }
   requireKeys(
     input,
-    ['protocol', 'provider', 'target', 'taskId', 'browserVisibility', 'actions'],
-    ['capabilityRoute', 'fallback', 'context', 'executionMode', 'providerBackend', 'authContextId', 'pagePolicy', 'userHandoff'],
+    ['protocol'],
+    ['provider', 'target', 'taskId', 'pageRef', 'capabilityRoute', 'fallback', 'context', 'executionMode', 'providerBackend', 'authContextId', 'browserVisibility', 'pagePolicy', 'userHandoff', 'actions'],
     'invalid_playwright_job_request',
   )
-  if (input.protocol !== MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID) {
+
+  const protocol = input.protocol
+  if (protocol !== MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID && protocol !== MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID_V3) {
     throw tokenlessError(
       'invalid_playwright_job_protocol',
-      `Managed Playwright job protocol '${String(input.protocol)}' is not supported; expected '${MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID}'.`,
+      `Managed Playwright job protocol '${String(protocol)}' is not supported; expected '${MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID}' or legacy '${MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID_V3}'.`,
       {
         details: {
           expected: MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID,
-          received: typeof input.protocol === 'string' ? input.protocol : null,
+          received: typeof protocol === 'string' ? protocol : null,
         },
       },
     )
   }
+  const legacyV3 = protocol === MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID_V3
+  requireKeys(
+    input,
+    legacyV3
+      ? ['protocol', 'provider', 'target', 'taskId', 'browserVisibility', 'actions']
+      : ['protocol', 'provider', 'target', 'taskId', 'pageRef', 'browserVisibility', 'actions'],
+    ['capabilityRoute', 'fallback', 'context', 'executionMode', 'providerBackend', 'authContextId', 'pagePolicy', 'userHandoff'],
+    'invalid_playwright_job_request',
+  )
   const provider = getProviderInstanceById(input.provider)
   if (!provider) throw tokenlessError('unknown_playwright_job_provider', 'Managed Playwright job provider is not supported.')
   const target = validateSafeTarget(input.target, provider)
@@ -180,7 +196,7 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
   const actions = input.actions.map((action) => validateVisibleActionRequest(action))
   for (const action of actions) {
     if (action.protocol !== VISIBLE_ACTION_SCHEMA_ID) {
-      throw tokenlessError('invalid_playwright_job_action', 'Managed Playwright job v3 requires visible action v3.')
+      throw tokenlessError('invalid_playwright_job_action', 'Managed Playwright job requires visible action v3.')
     }
     if (action.provider !== provider.id) {
       throw tokenlessError('invalid_playwright_job_provider', 'All visible actions must target the job provider.')
@@ -199,6 +215,7 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
     }
   }
   const derivedRequirements = deriveTaskCapabilityRequirements(actions)
+  const pageRef = legacyV3 ? null : validatePageRef(input.pageRef)
   const capabilityRoute = input.capabilityRoute === undefined || input.capabilityRoute === null
     ? null
     : validateJobCapabilityRoute(input.capabilityRoute, provider.id)
@@ -230,6 +247,7 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
     provider: provider.id,
     target,
     taskId,
+    pageRef,
     capabilityRoute,
     fallback,
     context,
@@ -473,6 +491,14 @@ function validateTaskId(value: unknown): string | null {
   if (value === null) return null
   if (typeof value !== 'string' || value.length === 0 || Buffer.byteLength(value, 'utf8') > 256 || /[\u0000-\u001f\u007f]/.test(value)) {
     throw tokenlessError('invalid_playwright_job_task_id', 'Managed Playwright job taskId must be null or a non-empty string without control characters.')
+  }
+  return value
+}
+
+function validatePageRef(value: unknown): string | null {
+  if (value === null) return null
+  if (typeof value !== 'string' || value.length === 0 || Buffer.byteLength(value, 'utf8') > 256 || /[\u0000-\u001f\u007f]/.test(value)) {
+    throw tokenlessError('invalid_playwright_job_page_ref', 'Managed Playwright job pageRef must be null or a non-empty string without control characters.')
   }
   return value
 }

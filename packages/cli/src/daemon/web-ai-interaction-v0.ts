@@ -155,6 +155,7 @@ export class WebAiInteractionV0Adapter {
     const requestJson = createManagedPlaywrightJobRequest({
       provider: binding.provider,
       taskId: deriveTaskId({ chatName: turnRef }),
+      pageRef: conversationRef,
       capabilityRoute: route.route,
       fallback: null,
       browserVisibility: 'auto',

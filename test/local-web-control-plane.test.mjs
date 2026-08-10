@@ -400,6 +400,11 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     assert.equal(new Set(readinessBatchPrefixes).size, 1)
     const readinessTaskBatches = readinessBody.jobs.map((job) => job.taskId.split(':').slice(0, 3).join(':'))
     assert.equal(new Set(readinessTaskBatches).size, 1)
+    const readinessPageRefs = readinessBody.jobs.map((job) => (
+      daemon.store.getJob(job.jobId).request_json.pageRef
+    ))
+    assert.equal(readinessPageRefs.every((pageRef) => /^page:ui:readiness:/u.test(pageRef)), true)
+    assert.equal(new Set(readinessPageRefs).size, readinessPageRefs.length)
     await Promise.all(readinessBody.jobs.map((job) => (
       daemon.store.cancelJob(job.jobId, { source: 'test-cleanup' }).catch(() => undefined)
     )))

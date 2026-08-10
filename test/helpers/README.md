@@ -19,3 +19,10 @@ The test submits one real ChatGPT job through that profile, then verifies the co
 Provider selectors, blockers, controls, transitions, and outcomes are developed and verified only through the configured persistent browser profile on the real provider website. The repository does not capture, store, generate, promote, or test against provider DOM fixtures or local provider replicas.
 
 Declare required cases in `test/live-provider-capability-matrix.json`, implement their journeys in `test/live-managed-playwright.e2e.mjs`, and run them through the built CLI and packaged daemon.
+
+## Live Capability Case Isolation
+
+The live capability suite reuses the configured profile, browser process, context, and authentication. Each independent matrix case passes a distinct Page Ref and gets a distinct managed Chromium target.
+One explicit test daemon owns the full suite, so separate CLI processes preserve the runtime's Page Ref binding.
+
+Actions and turns inside one case keep the same Page Ref and target. This preserves conversation and native Project continuity without leaking composer, attachment, model, or effort state into the next case.

@@ -399,6 +399,7 @@ export class TokenlessApplicationServices {
       provider,
       browserVisibility: action === 'readiness' ? 'auto' : 'headed',
       userHandoff: action === 'open',
+      pageRef: `page:ui:${action}:${randomUUID()}`,
       taskId: identity?.taskId ?? `ui:${action}:${randomUUID()}`,
       actions,
     })
@@ -437,6 +438,7 @@ export class TokenlessApplicationServices {
       provider: provider.id,
       browserVisibility: 'headed',
       taskId: `ui:${kind}-select:${randomUUID()}`,
+      pageRef: `page:ui:${kind}-select:${randomUUID()}`,
       actions: [{
         action: kind === 'model' ? VISIBLE_ACTIONS.MODEL_SELECT : VISIBLE_ACTIONS.EFFORT_SELECT,
         payload: { label },

@@ -119,21 +119,22 @@ for (const { provider, declaration, caseIds } of selectedProviders) {
   test(`real provider ${provider}: ${gate} journey`, { timeout: 1_200_000 }, async (t) => {
     const session = sharedSession
     assert.ok(session, 'shared live E2E browser session must be initialized')
-    const journey = createProviderJourney(session, provider)
+    const providerState = createProviderState()
     for (const caseId of caseIds) {
       await t.test(`${provider}: ${caseId}`, { timeout: 1_200_000 }, async (step) => {
         const caseStartedAt = Date.now()
-        if (journey.skipReason) {
+        if (providerState.skipReason) {
           recordLiveProviderCapability(suiteReport, {
             provider,
             capability: caseId,
             status: 'known_issue',
-            error: e2eSkip('e2e_known_issue_provider_blocker', journey.skipReason),
+            error: e2eSkip('e2e_known_issue_provider_blocker', providerState.skipReason),
             durationMs: Date.now() - caseStartedAt,
           })
-          step.skip(journey.skipReason)
+          step.skip(providerState.skipReason)
           return
         }
+        const journey = createCapabilityJourney(session, provider, caseId, providerState)
         const handler = handlers[caseId]
         assert.equal(typeof handler, 'function', `missing real E2E handler for ${caseId}`)
         submissionTrackers.set(journey, {
@@ -145,7 +146,7 @@ for (const { provider, declaration, caseIds } of selectedProviders) {
           if (
             matrix.cases[caseId].gate !== 'non_submission' &&
             declaration.account === 'signed_in_selected_setup_profile' &&
-            !journey.authenticated
+            !providerState.authenticated
           ) {
             await requireSignedInSelectedProfile(journey)
           }
@@ -159,7 +160,7 @@ for (const { provider, declaration, caseIds } of selectedProviders) {
           })
         } catch (error) {
           if (isKnownIssueSkip(error)) {
-            journey.skipReason = `${caseId}: ${error.message}`
+            providerState.skipReason = `${caseId}: ${error.message}`
             recordLiveProviderCapability(suiteReport, {
               provider,
               capability: caseId,
@@ -167,7 +168,7 @@ for (const { provider, declaration, caseIds } of selectedProviders) {
               error,
               durationMs: Date.now() - caseStartedAt,
             })
-            step.skip(journey.skipReason)
+            step.skip(providerState.skipReason)
             return
           }
           recordLiveProviderCapability(suiteReport, {
@@ -198,7 +199,7 @@ async function requireSignedInSelectedProfile(journey) {
       `${journey.provider} selected setup profile is not authenticated`,
     )
   }
-  journey.authenticated = true
+  journey.providerState.authenticated = true
 }
 
 async function sessionReadiness({ provider, declaration, journey }) {
@@ -226,7 +227,7 @@ async function sessionReadiness({ provider, declaration, journey }) {
       `${provider} selected setup profile does not satisfy ${declaration.account}`,
     )
   }
-  journey.authenticated = signedIn
+  journey.providerState.authenticated = signedIn
 }
 
 async function promptDraft({ provider, journey }) {
@@ -1477,16 +1478,41 @@ async function projectChoice(provider, journey, targetUrl, kind) {
   }
 }
 
-function createProviderJourney(session, provider) {
+function createProviderState() {
+  return {
+    authenticated: false,
+    skipReason: null,
+    taskIds: new Set(),
+    targetIds: new Set(),
+    pageRefs: new Set(),
+  }
+}
+
+function createCapabilityJourney(session, provider, caseId, providerState) {
   const journey = {
     session,
     provider,
+    caseId,
+    providerState,
     taskId: markerFor(provider, 'JOURNEY_TASK'),
+    pageRef: `page:${markerFor(provider, 'JOURNEY_PAGE')}`,
     targetId: null,
+    daemonPid: null,
+    pageRefHash: null,
     actionDocumentTimeOrigin: null,
-    authenticated: false,
-    skipReason: null,
   }
+  assert.equal(
+    providerState.taskIds.has(journey.taskId),
+    false,
+    `${provider} capability cases must use distinct task ids`,
+  )
+  providerState.taskIds.add(journey.taskId)
+  assert.equal(
+    providerState.pageRefs.has(journey.pageRef),
+    false,
+    `${provider} capability cases must use distinct page refs`,
+  )
+  providerState.pageRefs.add(journey.pageRef)
   journey.action = (visibleAction, args = [], timeoutMs = 120_000, observeAfterRelease, observeBeforeRelease) => (
     action(journey, visibleAction, args, timeoutMs, observeAfterRelease, observeBeforeRelease)
   )
@@ -1504,11 +1530,13 @@ async function action(
   observeAfterRelease,
   observeBeforeRelease,
 ) {
+  assert.equal(args.includes('--page-ref'), false, 'provider journey owns the stable page ref')
   assert.equal(args.includes('--task-id'), false, 'provider journey owns the stable task id')
   const operation = await journey.session.startCli([
     'provider-action',
     '--provider', journey.provider,
     '--task-id', journey.taskId,
+    '--page-ref', journey.pageRef,
     '--action', visibleAction,
     ...args,
     '--browser-visibility', 'headed',
@@ -1532,6 +1560,7 @@ async function action(
 }
 
 async function cliRun(journey, args, timeoutMs = 300_000, observeAfterRelease) {
+  assert.equal(args.includes('--page-ref'), false, 'provider journey owns the stable page ref')
   assert.equal(args.includes('--task-id'), false, 'provider journey owns the stable task id')
   recordSubmissionAttempt(journey)
   journey.actionDocumentTimeOrigin = null
@@ -1539,6 +1568,7 @@ async function cliRun(journey, args, timeoutMs = 300_000, observeAfterRelease) {
     'run',
     '--provider', journey.provider,
     '--task-id', journey.taskId,
+    '--page-ref', journey.pageRef,
     ...args,
     '--browser-visibility', 'headed',
     '--timeout-ms', String(timeoutMs),
@@ -1562,7 +1592,24 @@ async function cliRun(journey, args, timeoutMs = 300_000, observeAfterRelease) {
 async function assertJourneyPage(journey, waiting, page, preserveActionDocument) {
   assert.equal(waiting.provider, journey.provider)
   assert.equal(canonicalPageUrl(waiting.url), canonicalPageUrl(page.url()))
-  if (journey.targetId === null) journey.targetId = waiting.targetId
+  if (journey.daemonPid === null) journey.daemonPid = waiting.daemonPid
+  assert.equal(waiting.daemonPid, journey.daemonPid, `${journey.provider} capability journey must stay on one daemon`)
+  if (journey.pageRefHash === null) journey.pageRefHash = waiting.pageRefHash
+  assert.equal(waiting.pageRefHash, journey.pageRefHash, `${journey.provider} capability journey must keep one page ref`)
+  assert.equal(
+    waiting.reusedPageBinding,
+    journey.targetId !== null,
+    `${journey.provider} capability journey must reuse its managed page binding after the first action`,
+  )
+  if (journey.targetId === null) {
+    assert.equal(
+      journey.providerState.targetIds.has(waiting.targetId),
+      false,
+      `${journey.provider} capability case ${journey.caseId} must use a distinct Chromium page target`,
+    )
+    journey.providerState.targetIds.add(waiting.targetId)
+    journey.targetId = waiting.targetId
+  }
   assert.equal(
     waiting.targetId,
     journey.targetId,

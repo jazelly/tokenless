@@ -224,6 +224,7 @@ test('canonical start conformance rejects the same adversarial corpus at core, c
       assert.equal(turnMapping.conversation_ref, turn.conversationRef)
       const job = daemon.store.getJob(turnMapping.job_id)
       assert.equal(job.request_json.taskId, `chat:${turn.turnRef}`)
+      assert.equal(job.request_json.pageRef, turn.conversationRef)
       assert.equal(Object.hasOwn(turn, 'jobId'), false)
       assert.equal(Object.hasOwn(turn, 'url'), false)
     } finally {

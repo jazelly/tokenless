@@ -539,6 +539,7 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
         provider,
         target: { kind: 'provider_home', url: managedProviderExplicitTargetUrl(provider, args.targetUrl) },
         userHandoff: subcommand === 'open',
+        pageRef: args.pageRef,
         actions: [{ action: visibleAction, payload: {} }],
       }),
       taskId: args.taskId || `profile:${subcommand}:${randomUUID()}`,
@@ -1736,6 +1737,7 @@ async function executeDaemonJob({
         url: primaryTarget.url,
       },
       taskId: taskId ?? null,
+      pageRef: args.pageRef,
       capabilityRoute: recordedCapabilityRoute,
       contextLanguage: config.language,
       contextUpstream: agentContextEnvelopeFromEnvironment(),
@@ -1958,6 +1960,7 @@ async function executeManagedPlaywrightJob({
         provider: request.provider,
         target: request.target,
         taskId: effectiveTaskId,
+        pageRef: request.pageRef,
         capabilityRoute: request.capabilityRoute,
         fallback: request.fallback,
         context: {
@@ -3827,6 +3830,7 @@ async function runSetupAuthCheck({
         provider,
         target: { kind: 'provider_home', url: managedProviderExplicitTargetUrl(provider, args.targetUrl) },
         actions: [{ action: VISIBLE_ACTIONS.AUTH_STATUS, payload: {} }],
+        pageRef: `page:setup-review:${reviewSessionId}:${provider}`,
       }),
       taskId: `setup-review:${reviewSessionId}:${provider}`,
       statusEventAction: 'setup.auth',
@@ -4665,6 +4669,7 @@ function publicDaemonJobState(job: Record<string, any>) {
   return {
     jobId: job.job_id,
     taskId: daemonTaskId(job),
+    pageRef: request.pageRef ?? null,
     backend: job.execution_backend ?? 'playwright',
     profile: job.profile_id === undefined || job.profile_id === null
       ? null
@@ -4970,7 +4975,7 @@ function createCommandContracts(): CommandContract[] {
   const visibleJobOptions = [
     'home', 'json', 'quiet', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'browserVisibility',
     'executionMode', 'providerBackend', 'authContextId',
-    'runnerHeartbeatTimeoutMs', 'timeoutMs', 'cancelTimeoutMs', 'targetUrl', 'taskId', 'idempotencyKey',
+    'runnerHeartbeatTimeoutMs', 'timeoutMs', 'cancelTimeoutMs', 'targetUrl', 'taskId', 'pageRef', 'idempotencyKey',
     'projectName', 'chatName', 'workspaceMode', 'projectInstructions', 'projectInstructionsFile',
     'model', 'modelFallbacks', 'effort', 'thinkingEffort', 'qwenMode', 'qwenModeVariant',
     'arenaMode', 'arenaModality',
@@ -4985,7 +4990,7 @@ function createCommandContracts(): CommandContract[] {
   const providerInspectOptions = [
     'home', 'json', 'quiet', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs',
     'browserVisibility', 'runnerHeartbeatTimeoutMs', 'timeoutMs', 'cancelTimeoutMs', 'targetUrl',
-    'taskId', 'idempotencyKey', 'noWait', 'agentKind', 'agentSessionId',
+    'taskId', 'pageRef', 'idempotencyKey', 'noWait', 'agentKind', 'agentSessionId',
   ] as const
   const providerConfigureOptions = [
     ...providerInspectOptions, 'model', 'modelFallbacks', 'effort', 'thinkingEffort', 'chatSurface',
@@ -5031,8 +5036,8 @@ function createCommandContracts(): CommandContract[] {
     { command: 'profiles', subcommand: 'add', usage: ['tokenless profiles add --profile <slug> [--browser <managed-chromium|cloak>] [--set-default] --json'], options: ['home', 'json', 'profile', 'browser', 'providerWhitelist', 'setDefault'] },
     { command: 'profiles', subcommand: 'clear', usage: ['tokenless profiles clear (--profile <slug>|--all)'], options: ['home', 'profile', 'allProfiles'] },
     { command: 'profiles', subcommand: 'list', usage: ['tokenless profiles list --json'], options: ['home', 'json'] },
-    { command: 'profiles', subcommand: 'status', usage: ['tokenless profiles status [--profile <slug>] [--provider <provider>] --json'], options: ['home', 'json', 'quiet', 'profile', 'provider', 'browserVisibility', 'daemonStartTimeoutMs', 'daemonUrl', 'runnerHeartbeatTimeoutMs', 'targetUrl', 'taskId', 'timeoutMs', 'cancelTimeoutMs'] },
-    { command: 'profiles', subcommand: 'open', usage: ['tokenless profiles open [--profile <slug>] [--provider <provider>] --json'], options: ['home', 'json', 'quiet', 'profile', 'provider', 'daemonStartTimeoutMs', 'daemonUrl', 'runnerHeartbeatTimeoutMs', 'targetUrl', 'taskId', 'timeoutMs', 'cancelTimeoutMs'] },
+    { command: 'profiles', subcommand: 'status', usage: ['tokenless profiles status [--profile <slug>] [--provider <provider>] --json'], options: ['home', 'json', 'quiet', 'profile', 'provider', 'browserVisibility', 'daemonStartTimeoutMs', 'daemonUrl', 'runnerHeartbeatTimeoutMs', 'targetUrl', 'taskId', 'pageRef', 'timeoutMs', 'cancelTimeoutMs'] },
+    { command: 'profiles', subcommand: 'open', usage: ['tokenless profiles open [--profile <slug>] [--provider <provider>] --json'], options: ['home', 'json', 'quiet', 'profile', 'provider', 'daemonStartTimeoutMs', 'daemonUrl', 'runnerHeartbeatTimeoutMs', 'targetUrl', 'taskId', 'pageRef', 'timeoutMs', 'cancelTimeoutMs'] },
     { command: 'profiles', subcommand: 'set-default', usage: ['tokenless profiles set-default --profile <slug> --json'], options: ['home', 'json', 'profile'] },
     { command: 'profiles', subcommand: 'remove', usage: ['tokenless profiles remove --profile <slug> --confirm-delete --json'], options: ['home', 'json', 'profile', 'confirmDelete'] },
     { command: 'daemon', subcommand: 'stop', usage: ['tokenless daemon stop [--daemon-url <loopback-url>] [--timeout-ms <ms>] --json'], options: ['home', 'json', 'daemonUrl', 'timeoutMs'] },
@@ -5092,6 +5097,7 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--agent-kind': 'agentKind',
     '--agent-session-id': 'agentSessionId',
     '--limit': 'limit',
+    '--page-ref': 'pageRef',
     '--browser': 'browser',
     '--browser-executable-path': 'browserExecutablePath',
     '--browser-visibility': 'browserVisibility',
@@ -6615,6 +6621,7 @@ function optionUsageLabel(option: string) {
     timeoutMs: '--timeout-ms <ms>',
     turnContextFile: '--turn-context-file <path>',
     verbose: '-v, --verbose',
+    pageRef: '--page-ref <page-ref>',
     workspaceMode: '--workspace-mode <auto|native|conversation>',
   } as Record<string, string>)[option] ?? `--${option.replace(/[A-Z]/g, (character) => `-${character.toLowerCase()}`)}`
 }

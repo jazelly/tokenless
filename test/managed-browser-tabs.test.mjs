@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import test from 'node:test'
 
 import {
@@ -75,33 +76,55 @@ test('CDP managed browser preserves independent logical tabs in one profile', as
   })
 })
 
-test('CDP provider soft leases reuse released tabs without sharing concurrent work', async () => {
+test('CDP provider Page Refs reuse stable live bindings without sharing independent work', async () => {
   await withManager(async ({ manager, profile }) => {
     const context = await manager.ensureContext(profile, 'auto')
-    const first = await context.acquireProviderPage({ provider: 'chatgpt', taskKey: 'task:first' })
-    const generic = await context.acquirePage({ key: 'provider:generic:task:claim-guard' })
-    const reserved = await context.acquireReservedPage({ key: 'tokenless:control-plane:provider-lease-guard' })
-    assert.notEqual(generic, first.page)
-    assert.notEqual(reserved, first.page)
+    const pageRefA = `page:test:a:${randomUUID()}`
+    const pageRefB = `page:test:b:${randomUUID()}`
+    const pageRefC = `page:test:c:${randomUUID()}`
+
+    const first = await context.acquireProviderPage({ provider: 'chatgpt', pageRef: pageRefA })
+    assert.equal(first.reused, false)
+    await assert.rejects(
+      context.acquireProviderPage({ provider: 'chatgpt', pageRef: pageRefA }),
+      (error) => error?.code === 'managed_provider_page_busy',
+    )
     await first.release()
 
-    const [reused, concurrent] = await Promise.all([
-      context.acquireProviderPage({ provider: 'chatgpt', taskKey: 'task:second' }),
-      context.acquireProviderPage({ provider: 'chatgpt', taskKey: 'task:third' }),
+    const continued = await context.acquireProviderPage({ provider: 'chatgpt', pageRef: pageRefA })
+    assert.equal(continued.page, first.page)
+    assert.equal(continued.reused, true)
+    await continued.release()
+
+    const independent = await context.acquireProviderPage({ provider: 'chatgpt', pageRef: pageRefB })
+    assert.notEqual(independent.page, first.page)
+    await independent.release()
+
+    const independentContinued = await context.acquireProviderPage({ provider: 'chatgpt', pageRef: pageRefB })
+    assert.equal(independentContinued.page, independent.page)
+    assert.equal(independentContinued.reused, true)
+    await independentContinued.release()
+
+    const concurrentFirstAcquires = await Promise.allSettled([
+      context.acquireProviderPage({ provider: 'chatgpt', pageRef: pageRefC }),
+      context.acquireProviderPage({ provider: 'chatgpt', pageRef: pageRefC }),
     ])
-    assert.equal(reused.page, first.page)
-    assert.notEqual(concurrent.page, reused.page)
+    const acquired = concurrentFirstAcquires.filter((result) => result.status === 'fulfilled')
+    const rejected = concurrentFirstAcquires.filter((result) => result.status === 'rejected')
+    assert.equal(acquired.length, 1)
+    assert.equal(rejected.length, 1)
+    assert.equal(rejected[0].reason?.code, 'managed_provider_page_busy')
+    await acquired[0].value.release()
 
-    await reused.release()
-    await concurrent.release()
-
-    const replacement = await context.acquireProviderPage({
+    const replaced = await context.acquireProviderPage({
       provider: 'chatgpt',
-      taskKey: 'task:second',
+      pageRef: pageRefA,
       policy: 'replace',
     })
-    assert.equal(replacement.page, concurrent.page)
-    await replacement.release()
+    assert.notEqual(replaced.page, first.page)
+    assert.equal(replaced.reused, false)
+    assert.equal(first.page.isClosed(), true)
+    await replaced.release()
   })
 })
 
