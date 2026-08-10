@@ -74,6 +74,8 @@ import {
   upsertTokenlessProfileConfig,
   waitDaemonJobResult,
   writeTokenlessConfig,
+  API_PROXY_CONVERSATION_MODES,
+  type ApiProxyConversationMode,
 } from './index.js'
 import type { TokenlessConfig } from './job-store.js'
 import {
@@ -283,7 +285,7 @@ try {
   } else {
     command = argv[0]?.startsWith('-') ? 'prompt' : (argv.shift() ?? 'help')
   }
-  const subcommand = (command === 'profiles' || command === 'daemon' || command === 'capabilities' || command === 'limits' || command === 'savings' || command === 'agents') && argv[0] && !argv[0].startsWith('-')
+  const subcommand = (command === 'profiles' || command === 'daemon' || command === 'capabilities' || command === 'limits' || command === 'savings' || command === 'api-proxy' || command === 'agents') && argv[0] && !argv[0].startsWith('-')
     ? argv.shift()
     : undefined
   const agentTarget = command === 'agents' && argv[0] && !argv[0].startsWith('-')
@@ -332,6 +334,8 @@ try {
     await limitsCommand(subcommand, args)
   } else if (command === 'savings') {
     await savingsCommand(subcommand, args)
+  } else if (command === 'api-proxy') {
+    await apiProxyCommand(subcommand, args)
   } else if (command === 'replay') {
     await replayCommand(args)
   } else if (command === 'provider-status' || command === 'provider-auth-status') {
@@ -3026,6 +3030,7 @@ async function setupCommand(args: CliArgs) {
       prompt,
       presenter,
     })
+    const apiProxy = await selectSetupApiProxy({ args, config, prompt })
     await presenter.withProgress(t('setupSavingConfiguration'), async () => {
       const current = await readTokenlessConfig(homeDir)
       await upsertTokenlessProfileConfig({
@@ -3045,6 +3050,7 @@ async function setupCommand(args: CliArgs) {
         browserVisibility: 'headed',
         daemonUrl: configuredDaemonUrl,
         language: config.language,
+        apiProxy,
       })
     })
     const codexIntegration = await setupCodexIntegration({ args, homeDir, presenter })
@@ -3576,6 +3582,37 @@ function createSetupPrompt(colorEnabled = false) {
       terminal.close()
     },
   }
+}
+
+/**
+ * The API proxy stays off unless a person turns it on here or through
+ * `tokenless api-proxy enable`: it accepts local API traffic, so enabling it by
+ * default would widen what the daemon answers without anyone asking.
+ */
+async function selectSetupApiProxy({
+  args,
+  config,
+  prompt,
+}: {
+  args: CliArgs
+  config: Awaited<ReturnType<typeof readTokenlessConfig>>
+  prompt: ReturnType<typeof createSetupPrompt> | null
+}) {
+  if (args.conversationMode !== undefined) {
+    return { enabled: true, conversationMode: requiredApiProxyConversationMode(args.conversationMode) }
+  }
+  if (!prompt || args.setupDefaults === true) return config.apiProxy
+  const enabled = await prompt.confirm(t('setupApiProxyPrompt'), config.apiProxy.enabled)
+  if (!enabled) return { enabled: false, conversationMode: config.apiProxy.conversationMode }
+  const conversationMode = await prompt.select<ApiProxyConversationMode>(
+    t('setupApiProxyModePrompt'),
+    [
+      { label: t('setupApiProxyNewConversation'), value: 'new-conversation' },
+      { label: t('setupApiProxyContinueConversation'), value: 'continue-conversation' },
+    ],
+    config.apiProxy.conversationMode === 'continue-conversation' ? 1 : 0,
+  )
+  return { enabled: true, conversationMode }
 }
 
 async function selectSetupProviders({
@@ -4320,6 +4357,63 @@ async function savingsCommand(subcommand: string | undefined, args: CliArgs) {
   }, args)
 }
 
+async function apiProxyCommand(subcommand: string | undefined, args: CliArgs) {
+  const homeDir = tokenlessHome(args.home)
+  if (subcommand === 'enable') {
+    await writeTokenlessConfig({
+      homeDir,
+      apiProxy: {
+        enabled: true,
+        conversationMode: args.conversationMode === undefined
+          ? (await readTokenlessConfig(homeDir)).apiProxy.conversationMode
+          : requiredApiProxyConversationMode(args.conversationMode),
+      },
+    })
+  } else if (subcommand === 'disable') {
+    await writeTokenlessConfig({
+      homeDir,
+      apiProxy: { enabled: false, conversationMode: (await readTokenlessConfig(homeDir)).apiProxy.conversationMode },
+    })
+  } else if (subcommand !== 'status') {
+    throw usageError(
+      'invalid_api_proxy_command',
+      'Usage: tokenless api-proxy <status|enable|disable> [--conversation-mode <new-conversation|continue-conversation>] --json',
+    )
+  }
+  const config = await readTokenlessConfig(homeDir)
+  const baseUrl = config.daemonUrl ?? DEFAULT_DAEMON_URL
+  // Provider enablement is per managed profile, so report the profile the proxy
+  // will actually resolve rather than an installation-wide list.
+  const profile = await new ManagedProfileRegistry(homeDir)
+    .resolveProfile(args.profile === undefined ? undefined : String(args.profile))
+    .catch(() => null)
+  printPayload({
+    ok: true,
+    apiProxy: {
+      enabled: config.apiProxy.enabled,
+      conversationMode: config.apiProxy.conversationMode,
+      endpoints: {
+        openai: `${baseUrl}/v1/openai`,
+        anthropic: `${baseUrl}/v1/anthropic`,
+      },
+      modelNaming: 'tokenless/<provider>',
+      profile: profile?.slug ?? null,
+      providers: profile ? config.profiles[profile.slug]?.enabledProviders ?? [] : [],
+    },
+  }, args)
+}
+
+function requiredApiProxyConversationMode(value: unknown): ApiProxyConversationMode {
+  const normalized = typeof value === 'string' ? value.trim() : ''
+  if (!API_PROXY_CONVERSATION_MODES.includes(normalized as ApiProxyConversationMode)) {
+    throw usageError(
+      'invalid_api_proxy_conversation_mode',
+      'Conversation mode must be new-conversation or continue-conversation.',
+    )
+  }
+  return normalized as ApiProxyConversationMode
+}
+
 async function promptFromArgs(args: CliArgs) {
   const userPrompt = args.promptFile ? await fs.readFile(args.promptFile, 'utf8') : args.prompt
   if (!userPrompt) {
@@ -4770,6 +4864,9 @@ function createCommandContracts(): CommandContract[] {
     { command: 'savings', subcommand: 'disable', usage: ['tokenless savings disable --json'], options: ['home', 'json'] },
     { command: 'savings', subcommand: 'uninstall', usage: ['tokenless savings uninstall --confirm-delete --json'], options: ['home', 'json', 'confirmDelete'] },
     { command: 'savings', subcommand: 'clear', usage: ['tokenless savings clear --confirm-delete --json'], options: ['home', 'json', 'confirmDelete'] },
+    { command: 'api-proxy', subcommand: 'status', usage: ['tokenless api-proxy status [--profile <slug>] --json'], options: ['home', 'json', 'profile', 'daemonUrl'] },
+    { command: 'api-proxy', subcommand: 'enable', usage: ['tokenless api-proxy enable [--conversation-mode <new-conversation|continue-conversation>] --json'], options: ['home', 'json', 'conversationMode', 'daemonUrl'] },
+    { command: 'api-proxy', subcommand: 'disable', usage: ['tokenless api-proxy disable --json'], options: ['home', 'json'] },
     { command: 'replay', usage: ['tokenless replay --agent-kind <kind> --agent-session-id <id> [--limit <count>] --json'], options: ['home', 'json', 'daemonUrl', 'daemonStartTimeoutMs', 'agentKind', 'agentSessionId', 'limit'] },
     { command: 'provider-status', usage: ['tokenless provider-status --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
     { command: 'provider-auth-status', usage: ['tokenless provider-auth-status --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
@@ -4834,6 +4931,7 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--project-instructions': 'projectInstructions',
     '--project-instructions-file': 'projectInstructionsFile',
     '--workspace-mode': 'workspaceMode',
+    '--conversation-mode': 'conversationMode',
     '--chat-name': 'chatName',
     '--context': 'context',
     '--context-file': 'contextFile',
@@ -6078,6 +6176,7 @@ function optionUsageLabel(option: string) {
     chatId: '--chat-id <id>',
     chatSurface: '--chat-surface <surface>',
     confirmDelete: '--confirm-delete',
+    conversationMode: '--conversation-mode <new-conversation|continue-conversation>',
     context: '--context <text>',
     contextFile: '--context-file <path>',
     codexHome: '--codex-home <dir>',

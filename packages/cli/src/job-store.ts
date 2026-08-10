@@ -30,10 +30,20 @@ export type TokenlessConfig = {
   daemonUrl: string | null
   language: TokenlessLanguage
   outputSavings: OutputSavingsConfig
+  apiProxy: ApiProxyConfig
 }
 
 export type OutputSavingsConfig = {
   enabled: boolean
+}
+
+export const API_PROXY_CONVERSATION_MODES = Object.freeze(['new-conversation', 'continue-conversation'] as const)
+
+export type ApiProxyConversationMode = (typeof API_PROXY_CONVERSATION_MODES)[number]
+
+export type ApiProxyConfig = {
+  enabled: boolean
+  conversationMode: ApiProxyConversationMode
 }
 
 export type ManagedProfileConfig = {
@@ -146,6 +156,9 @@ async function readTokenlessConfigUnlocked(homeDir: string) {
   if (payload.outputSavings !== undefined && !isOutputSavingsConfig(payload.outputSavings)) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
+  if (payload.apiProxy !== undefined && !isApiProxyConfig(payload.apiProxy)) {
+    throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
+  }
   const normalizedBrowser = normalizeBrowserId(payload.browser)
   const browser = normalizedBrowser === 'brave' ? 'brave' : 'chrome'
   const browserExecutablePath = normalizedBrowser === 'chrome' || normalizedBrowser === 'brave'
@@ -162,6 +175,7 @@ async function readTokenlessConfigUnlocked(homeDir: string) {
     daemonUrl: normalizeDaemonUrl(payload.daemonUrl),
     language: normalizeTokenlessLanguage(payload.language) ?? 'en',
     outputSavings: normalizeOutputSavingsConfig(payload.outputSavings),
+    apiProxy: normalizeApiProxyConfig(payload.apiProxy),
   }
   return { config, needsWrite: JSON.stringify(payload) !== JSON.stringify(config) }
 }
@@ -175,6 +189,7 @@ export async function writeTokenlessConfig({
   daemonUrl,
   language,
   outputSavings,
+  apiProxy,
 }: {
   homeDir?: string
   profiles?: unknown
@@ -184,6 +199,7 @@ export async function writeTokenlessConfig({
   daemonUrl?: unknown
   language?: unknown
   outputSavings?: unknown
+  apiProxy?: unknown
 } = {}) {
   return await withConfigWriterLock(homeDir, async () => {
     const current = (await readTokenlessConfigUnlocked(homeDir)).config
@@ -218,6 +234,9 @@ export async function writeTokenlessConfig({
       outputSavings: outputSavings === undefined
         ? current.outputSavings
         : validateOutputSavingsConfig(outputSavings),
+      apiProxy: apiProxy === undefined
+        ? current.apiProxy
+        : validateApiProxyConfig(apiProxy),
     }
     await writeJsonAtomic(configPath(homeDir), config, 0o600)
     return config
@@ -288,7 +307,32 @@ function emptyTokenlessConfig(): TokenlessConfig {
     daemonUrl: null,
     language: 'en',
     outputSavings: { enabled: true },
+    apiProxy: defaultApiProxyConfig(),
   }
+}
+
+function defaultApiProxyConfig(): ApiProxyConfig {
+  return { enabled: false, conversationMode: 'new-conversation' }
+}
+
+function isApiProxyConfig(value: unknown): value is ApiProxyConfig {
+  return isJsonRecord(value) &&
+    Object.keys(value).length === 2 &&
+    typeof value.enabled === 'boolean' &&
+    API_PROXY_CONVERSATION_MODES.includes(value.conversationMode as ApiProxyConversationMode)
+}
+
+function normalizeApiProxyConfig(value: unknown): ApiProxyConfig {
+  return isApiProxyConfig(value)
+    ? { enabled: value.enabled, conversationMode: value.conversationMode }
+    : defaultApiProxyConfig()
+}
+
+function validateApiProxyConfig(value: unknown): ApiProxyConfig {
+  if (!isApiProxyConfig(value)) {
+    throw configError('tokenless_config_invalid', 'Invalid Tokenless API proxy configuration.')
+  }
+  return { enabled: value.enabled, conversationMode: value.conversationMode }
 }
 
 function isOutputSavingsConfig(value: unknown): value is OutputSavingsConfig {

@@ -13,6 +13,7 @@ import {
   allManagedBrowserCatalogEntries,
   currentBrowserRuntimePlatform,
   managedBrowserCatalogEntry,
+  type ManagedBrowserArchiveFormat,
   type ManagedBrowserCatalogEntry,
 } from './catalog.js'
 import {
@@ -493,11 +494,18 @@ export async function verifyAndExtractManagedBrowserArtifact(options: {
 
   options.onPhase?.('extract')
   await fs.mkdir(payloadDirectory, { recursive: false, mode: 0o700 })
-  await validateArchivePaths(archivePath)
-  await runCommand('tar', ['-xf', archivePath, '-C', payloadDirectory], {
-    timeoutMs: ARCHIVE_TIMEOUT_MS,
-    maxOutputBytes: MAX_ARCHIVE_LIST_BYTES,
-  })
+  await validateArchivePaths(archivePath, entry.archiveFormat)
+  const extractWithUnzip = usesUnzip(entry.archiveFormat)
+  await runCommand(
+    extractWithUnzip ? 'unzip' : 'tar',
+    extractWithUnzip
+      ? ['-qq', '-o', archivePath, '-d', payloadDirectory]
+      : ['-xf', archivePath, '-C', payloadDirectory],
+    {
+      timeoutMs: ARCHIVE_TIMEOUT_MS,
+      maxOutputBytes: MAX_ARCHIVE_LIST_BYTES,
+    },
+  )
   await normalizeCloakWindowsArchive(entry, payloadDirectory)
   if (process.platform !== 'win32') await fs.chmod(executablePath, 0o755)
   await assertExecutableInside(payloadDirectory, executablePath)
@@ -589,6 +597,20 @@ async function systemBrowserExecutable(
         'MacOS',
         executableNames[browserId],
       )
+      if (await isExecutable(executablePath)) return executablePath
+    }
+    return null
+  }
+
+  if (platform === 'linux-x64') {
+    const absoluteExecutables: Record<SystemBrowserId, readonly string[]> = {
+      chrome: ['/opt/google/chrome/chrome', '/usr/bin/google-chrome-stable', '/usr/bin/google-chrome'],
+      brave: ['/opt/brave.com/brave/brave', '/usr/bin/brave-browser', '/usr/bin/brave'],
+      edge: ['/opt/microsoft/msedge/msedge', '/usr/bin/microsoft-edge-stable', '/usr/bin/microsoft-edge'],
+      chromium: ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/snap/bin/chromium'],
+      'chrome-for-testing': ['/opt/chrome-for-testing/chrome'],
+    }
+    for (const executablePath of absoluteExecutables[browserId]) {
       if (await isExecutable(executablePath)) return executablePath
     }
     return null
@@ -700,11 +722,27 @@ async function sha256File(file: string) {
   return hash.digest('hex')
 }
 
-async function validateArchivePaths(archivePath: string) {
-  const listing = await runCommand('tar', ['-tf', archivePath], {
-    timeoutMs: ARCHIVE_TIMEOUT_MS,
-    maxOutputBytes: MAX_ARCHIVE_LIST_BYTES,
-  })
+/**
+ * GNU tar cannot read zip archives, so Linux needs unzip for the zip catalog
+ * entries. The bsdtar that ships with macOS and Windows reads both formats.
+ */
+function usesUnzip(archiveFormat: ManagedBrowserArchiveFormat) {
+  return archiveFormat === 'zip' && process.platform === 'linux'
+}
+
+async function validateArchivePaths(
+  archivePath: string,
+  archiveFormat: ManagedBrowserArchiveFormat,
+) {
+  const listWithUnzip = usesUnzip(archiveFormat)
+  const listing = await runCommand(
+    listWithUnzip ? 'unzip' : 'tar',
+    listWithUnzip ? ['-Z1', archivePath] : ['-tf', archivePath],
+    {
+      timeoutMs: ARCHIVE_TIMEOUT_MS,
+      maxOutputBytes: MAX_ARCHIVE_LIST_BYTES,
+    },
+  )
   const entries = listing.stdout.split(/\r?\n/).filter(Boolean)
   if (entries.length === 0) {
     throw tokenlessError('browser_runtime_archive_invalid', 'Browser archive is empty.')

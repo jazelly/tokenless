@@ -43,6 +43,18 @@ const MANAGED_BROWSER_CATALOG = Object.freeze({
     archiveFormat: 'zip',
     executableRelativePath: 'chrome-win64/chrome.exe',
   },
+  'managed-chromium:linux-x64': {
+    family: 'managed-chromium',
+    browserId: 'managed-chromium',
+    displayName: 'Tokenless-managed Chrome for Testing',
+    platform: 'linux-x64',
+    artifactVersion: '146.0.7680.165',
+    browserVersion: '146.0.7680.165',
+    downloadUrl: 'https://storage.googleapis.com/chrome-for-testing-public/146.0.7680.165/linux64/chrome-linux64.zip',
+    sha256: '0436ed08838d35a05ef0b0f20b07cca5fddb88ec6a0c76c143d6c137d6f70ed1',
+    archiveFormat: 'zip',
+    executableRelativePath: 'chrome-linux64/chrome',
+  },
   'cloak:darwin-arm64': {
     family: 'cloak',
     browserId: 'cloak',

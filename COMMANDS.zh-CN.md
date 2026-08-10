@@ -27,6 +27,7 @@
 | `tokenless capabilities list` | 列出 canonical task capabilities 和已有证据闭环的 provider routes。 | 否 |
 | `tokenless limits inspect` | 根据 packaged catalog 和本地 job 历史查看下一次 prompt 的 provider/profile 容量估算。 | 否 |
 | `tokenless savings <status\|enable\|disable\|clear\|uninstall>` | 管理可选的本地输出节省计量及其 lazy-download tokenizer。 | 否 |
+| `tokenless api-proxy <status\|enable\|disable>` | 管理 OpenAI/Anthropic 兼容的本地 API proxy 及其 conversation mode。 | 否 |
 | `tokenless run` | 通过可见 provider session 发送 prompt 和可选文件。 | 是 |
 | `tokenless replay` | 为一个 agent recipient 报告此前未见过的 daemon outcome 摘要。 | 否 |
 | `tokenless state` | 查询 daemon 中持久化的 job 状态。 | 否 |
@@ -448,6 +449,32 @@ tokenless savings uninstall --confirm-delete --json
 `enable` 会先下载并验证固定版本的 `o200k_base` WASM tokenizer，再把 `outputSavings.enabled` 设为 `true`。正常的默认开启流程则会等到第一个 provider job 已经完成、并把计量工作持久交接给 daemon 后，才在后台懒安装。`disable` 会丢弃排队文本、阻止进行中的结果被保存，并保留历史和 runtime。`clear` 会丢弃清空前的工作并删除持久化计量历史；`uninstall` 会停用计量、丢弃工作并移除 runtime；这两个破坏性操作都必须提供 `--confirm-delete`。`status` 对配置和 tokenizer 安装状态都是只读的。所有这些命令都不会打开 provider 页面。
 
 计量范围仅包括经过规范化的可见 assistant 输出，并归属到触发它的 durable job 和 response。它是稳定的跨 provider estimate，不是 provider billing 数值；input token、隐藏推理和私有 backend traffic 都不在范围内。
+
+### `tokenless api-proxy`
+
+管理本地 API proxy：daemon 上一个 OpenAI 与 Anthropic 兼容的接口，把普通 API 调用转换成可见 provider 工作。默认关闭，需要显式开启。
+
+```bash
+tokenless api-proxy status --json
+tokenless api-proxy enable --conversation-mode new-conversation --json
+tokenless api-proxy enable --conversation-mode continue-conversation --json
+tokenless api-proxy disable --json
+```
+
+把客户端指向 daemon，并使用 daemon control token 作为 API key：
+
+| 客户端 | Base URL | 路由 |
+| --- | --- | --- |
+| OpenAI 兼容 | `http://127.0.0.1:7331/v1/openai` | `POST /chat/completions`、`GET /models` |
+| Anthropic 兼容 | `http://127.0.0.1:7331/v1/anthropic` | `POST /messages` |
+
+`model` 必须以 `tokenless/<provider>` 显式指明 provider，例如 `tokenless/chatgpt`。无法映射的 model 会被拒绝，而不会被改写到调用方没有选择的 provider。`GET /v1/openai/models` 会列出全部可用名称。
+
+`--conversation-mode new-conversation` 会把整段对话打平成一条 prompt，每个请求都新建一个 provider 会话，因此相同请求不依赖任何本地既有状态。`--conversation-mode continue-conversation` 会用除最后一条 user message 之外的全部消息推导线程标识，并复用同一个 provider 会话；如果调用方裁剪或修改了历史，它会新建会话，而不是把内容追加到 provider 已经不再共享的对话里。
+
+`tools`、`tool_choice`、`functions`、`function_call` 和 `response_format` 会被拒绝，因为可见 provider 页面没有对应控件。`stream: true` 会返回该方言约定的事件序列，但作为一个终态 chunk 一次性下发，因为可见 response 只有渲染完成后才可读。返回的 `usage` 计数恒为 0：Tokenless 不计量 provider token，该 response 由你自己的网页版订阅承担。
+
+Response 中附带一个 `tokenless` 对象，包含 provider、持久 `job_id`、conversation mode 以及可见 citations。
 
 ### `tokenless run`
 
