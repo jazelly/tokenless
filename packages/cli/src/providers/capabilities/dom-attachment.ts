@@ -25,9 +25,17 @@ type AttachmentAction = typeof VISIBLE_ACTIONS.FILE_UPLOAD
 type VisibleAttachmentEvidence = {
   id: string
   extensions: readonly string[]
+  name?: string
   ready?: boolean
   failed?: boolean
 }
+
+type VisibleAttachmentProof = {
+  visibleProof: 'visible-attachment-evidence'
+  evidence: readonly VisibleAttachmentEvidence[]
+}
+
+const QWEN_ATTACHMENT_STABILITY_WINDOW_MS = 2_000
 
 export class DomAttachmentCapability implements ProviderActionCapability<AttachmentAction> {
   readonly capability = PROVIDER_CAPABILITIES.FILE_UPLOAD
@@ -99,6 +107,13 @@ async function uploadFiles(
     context.signal,
   )
   if (!acceptedProof) {
+    if (provider.id === 'perplexity' && await perplexityFreeDocumentAnalysisPlanGateVisible(page)) {
+      throw providerCapabilityFailure(
+        'provider_plan_limited',
+        'Perplexity is visibly requiring an upgrade for additional document analysis on the selected Free plan.',
+        { retryable: false },
+      )
+    }
     throw providerCapabilityFailure(
       'file_upload_not_visibly_accepted',
       `The provider did not visibly accept and finish processing the selected attachments within ${provider.interactionTimings.attachmentReadyTimeoutMs}ms.`,
@@ -122,6 +137,12 @@ async function uploadFiles(
       visible: true as const,
     })),
   }
+}
+
+async function perplexityFreeDocumentAnalysisPlanGateVisible(page: Page) {
+  return await page.getByText('Upgrade for additional document analysis', { exact: true })
+    .isVisible({ timeout: 250 })
+    .catch(() => false)
 }
 
 async function dismissGeminiFileDisclaimer(page: Page) {
@@ -256,13 +277,14 @@ async function visibleAttachmentEvidence(
 ) {
   const evaluate = (page as Page & {
     evaluate?: (
-      callback: (input: { expectedExtensions: string[]; providerId: string }) => VisibleAttachmentEvidence[],
-      input: { expectedExtensions: string[]; providerId: string },
+      callback: (input: { expectedExtensions: string[]; expectedNames: string[]; providerId: string }) => VisibleAttachmentEvidence[],
+      input: { expectedExtensions: string[]; expectedNames: string[]; providerId: string },
     ) => Promise<unknown>
   }).evaluate
   if (typeof evaluate !== 'function') return []
   const extensions = [...new Set(attachments.map((attachment) => extname(basename(attachment.name)).toLowerCase()).filter(Boolean))]
-  const result = await evaluate.call(page, ({ expectedExtensions, providerId }) => {
+  const names = attachments.map((attachment) => basename(attachment.name))
+  const result = await evaluate.call(page, ({ expectedExtensions, expectedNames, providerId }) => {
     const isVisibleElement = (element: Element | null): element is HTMLElement | SVGElement => {
       if (!element || !(element instanceof HTMLElement || element instanceof SVGElement)) return false
       let node: Element | null = element
@@ -280,31 +302,44 @@ async function visibleAttachmentEvidence(
       return rect.width > 0 && rect.height > 0
     }
     if (providerId === 'dola') {
-      return Array.from(document.querySelectorAll('.carousel-row'))
-        .flatMap((row, rowIndex) => Array.from(row.children).flatMap((item, itemIndex) => {
-          const card = item.querySelector(':scope > .flex > [class*="attachment-node-"]')
-          if (!isVisibleElement(card)) return []
-          const visibleType = (card.children.item(1)?.children.item(1)?.textContent ?? '')
-            .split('·')[0]
-            ?.trim()
-            .toLowerCase()
-          const extensions = expectedExtensions.filter((extension) => (
-            extension === '.md' && visibleType === 'markdown'
-          ))
-          if (expectedExtensions.length > 0 && extensions.length === 0) return []
-          return [{
-            id: `dola-card|${rowIndex}|${itemIndex}`,
-            extensions,
-          }]
-        }))
+      const cards = Array.from(document.querySelectorAll('[class*="attachment-node-"]'))
+        .filter(isVisibleElement)
+        .filter((card, _index, candidates) => !candidates.some((candidate) => candidate !== card && candidate.contains(card)))
+      return cards.flatMap((card) => {
+        const details = card.children.item(1)
+        const visibleName = (details?.children.item(0)?.textContent ?? '').replace(/\s+/g, ' ').trim().toLowerCase()
+        const visibleMetadata = (details?.children.item(1)?.textContent ?? '').replace(/\s+/g, ' ').trim().toLowerCase()
+        if (!visibleName || !expectedNames.some((name) => name.replace(/\s+/g, ' ').trim().toLowerCase() === visibleName)) return []
+        const lastDot = visibleName.lastIndexOf('.')
+        if (lastDot <= 0 || lastDot === visibleName.length - 1) return []
+        const extension = visibleName.slice(lastDot).toLowerCase()
+        const typeCorroboratesExtension = (
+          (extension === '.md' && /\bmarkdown\b/i.test(visibleMetadata)) ||
+          ((extension === '.doc' || extension === '.docx') && /\bword\b/i.test(visibleMetadata))
+        )
+        if (!typeCorroboratesExtension) return []
+        return [{
+          id: `dola-card|${visibleName}|${visibleMetadata}`,
+          extensions: [extension],
+          name: visibleName,
+        }]
+      })
     }
     if (providerId === 'qwen') {
       return Array.from(document.querySelectorAll('.fileitem-btn'))
         .flatMap((card, index) => {
           if (!isVisibleElement(card)) return []
+          const visibleName = (card.querySelector('.fileitem-file-name-text')?.textContent ?? '')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .toLowerCase()
           const visibleExtension = (card.querySelector('.fileitem-file-name-ext')?.textContent ?? '')
             .trim()
             .toLowerCase()
+          const name = `${visibleName}${visibleExtension}`
+          if (expectedNames.length > 0 && !expectedNames.some((expectedName) => (
+            expectedName.replace(/\s+/g, ' ').trim().toLowerCase() === name
+          ))) return []
           const extensions = expectedExtensions.filter((extension) => extension === visibleExtension)
           if (expectedExtensions.length > 0 && extensions.length === 0) return []
           const statusCard = card.cloneNode(true) as Element
@@ -314,8 +349,9 @@ async function visibleAttachmentEvidence(
           const failed = /\b(?:failed|error|unsupported)\b/.test(statusText)
           const pending = /\b(?:parsing|processing|uploading)\b\s*(?:\.{3})?/.test(statusText)
           return [{
-            id: `qwen-card|${index}`,
+            id: `qwen-card|${name}|${index}`,
             extensions,
+            name,
             ready: !pending && !failed,
             failed,
           }]
@@ -412,7 +448,7 @@ async function visibleAttachmentEvidence(
     return evidenceCandidates
       .filter(({ element }) => !evidenceCandidates.some((candidate) => candidate.element !== element && element.contains(candidate.element)))
       .map(({ evidence }) => evidence)
-  }, { expectedExtensions: extensions, providerId: provider.id }).catch(() => [])
+  }, { expectedExtensions: extensions, expectedNames: names, providerId: provider.id }).catch(() => [])
   return Array.isArray(result)
     ? result.filter((entry): entry is VisibleAttachmentEvidence => (
       typeof entry === 'object' &&
@@ -420,6 +456,7 @@ async function visibleAttachmentEvidence(
       typeof entry.id === 'string' &&
       Array.isArray(entry.extensions) &&
       entry.extensions.every((extension: unknown) => typeof extension === 'string') &&
+      (entry.name === undefined || typeof entry.name === 'string') &&
       (entry.ready === undefined || typeof entry.ready === 'boolean') &&
       (entry.failed === undefined || typeof entry.failed === 'boolean')
     ))
@@ -453,6 +490,22 @@ async function visibleAttachmentProof(
   if (newEvidence.length < attachments.length) return null
   if (newEvidence.some((entry) => entry.ready === false)) return null
 
+  if (provider.id === 'dola') {
+    const requiredNames = new Map<string, number>()
+    for (const attachment of attachments) {
+      const name = basename(attachment.name).replace(/\s+/g, ' ').trim().toLowerCase()
+      requiredNames.set(name, (requiredNames.get(name) ?? 0) + 1)
+    }
+    for (const entry of newEvidence) {
+      if (!entry.name) return null
+      const count = requiredNames.get(entry.name) ?? 0
+      if (count > 0) requiredNames.set(entry.name, count - 1)
+    }
+    if ([...requiredNames.values()].some((count) => count > 0)) return null
+  }
+
+  if (provider.id === 'qwen' && !qwenEvidenceMatchesAttachmentNames(newEvidence, attachments)) return null
+
   const requiredExtensions = new Map<string, number>()
   for (const attachment of attachments) {
     const extension = extname(basename(attachment.name)).toLowerCase()
@@ -465,8 +518,59 @@ async function visibleAttachmentProof(
     }
   }
   return [...requiredExtensions.values()].every((count) => count === 0)
-    ? 'visible-attachment-evidence'
+    ? {
+        visibleProof: 'visible-attachment-evidence' as const,
+        evidence: newEvidence,
+      }
     : null
+}
+
+function attachmentEvidenceAddedSince(
+  evidence: readonly VisibleAttachmentEvidence[],
+  evidenceBeforeUpload: readonly VisibleAttachmentEvidence[],
+) {
+  const priorEvidence = new Map<string, number>()
+  for (const entry of evidenceBeforeUpload) {
+    priorEvidence.set(entry.id, (priorEvidence.get(entry.id) ?? 0) + 1)
+  }
+  return evidence.filter((entry) => {
+    const priorCount = priorEvidence.get(entry.id) ?? 0
+    if (priorCount === 0) return true
+    priorEvidence.set(entry.id, priorCount - 1)
+    return false
+  })
+}
+
+function qwenEvidenceMatchesAttachmentNames(
+  evidence: readonly VisibleAttachmentEvidence[],
+  attachments: readonly AttachmentInput[],
+) {
+  if (evidence.length !== attachments.length) return false
+  const requiredNames = new Map<string, number>()
+  for (const attachment of attachments) {
+    const name = basename(attachment.name).replace(/\s+/g, ' ').trim().toLowerCase()
+    requiredNames.set(name, (requiredNames.get(name) ?? 0) + 1)
+  }
+  for (const entry of evidence) {
+    if (!entry.name) return false
+    const count = requiredNames.get(entry.name) ?? 0
+    if (count < 1) return false
+    requiredNames.set(entry.name, count - 1)
+  }
+  return [...requiredNames.values()].every((count) => count === 0)
+}
+
+function qwenReadyEvidenceSignature(evidence: readonly VisibleAttachmentEvidence[]) {
+  return evidence
+    .map((entry) => JSON.stringify([
+      entry.id,
+      entry.name ?? null,
+      [...entry.extensions].sort(),
+      entry.ready ?? null,
+      entry.failed ?? null,
+    ]))
+    .sort()
+    .join('|')
 }
 
 async function waitForVisibleAttachmentProof(
@@ -478,10 +582,48 @@ async function waitForVisibleAttachmentProof(
 ) {
   const deadline = Date.now() + provider.interactionTimings.attachmentReadyTimeoutMs
   let attempt = 0
+  let qwenPendingObserved = false
+  const qwenStability: { ready: { signature: string, observedAt: number } | null } = { ready: null }
   while (Date.now() <= deadline) {
     assertNotAborted(signal)
+    if (provider.id === 'qwen') {
+      const evidence = attachmentEvidenceAddedSince(
+        await visibleAttachmentEvidence(page, provider, attachments),
+        evidenceBeforeUpload,
+      )
+      const exactCardsVisible = qwenEvidenceMatchesAttachmentNames(evidence, attachments)
+      if (evidence.some((entry) => entry.failed)) {
+        throw providerCapabilityFailure(
+          'file_upload_processing_failed',
+          'The provider visibly reported that an attachment could not be processed.',
+          { retryable: true },
+        )
+      }
+      if (!exactCardsVisible || evidence.some((entry) => entry.ready === false)) {
+        qwenStability.ready = null
+      }
+      if (
+        exactCardsVisible &&
+        evidence.some((entry) => entry.ready === false && !entry.failed)
+      ) qwenPendingObserved = true
+    }
     const proof = await visibleAttachmentProof(page, provider, attachments, evidenceBeforeUpload)
-    if (proof) return proof
+    if (proof) {
+      if (provider.id !== 'qwen') return proof.visibleProof
+      if (qwenPendingObserved) {
+        const observedAt = Date.now()
+        const signature = qwenReadyEvidenceSignature(proof.evidence)
+        if (qwenStability.ready?.signature !== signature) {
+          qwenStability.ready = { signature, observedAt }
+        }
+        const stableUntil = qwenStability.ready.observedAt + QWEN_ATTACHMENT_STABILITY_WINDOW_MS
+        if (stableUntil > deadline) break
+        if (observedAt >= stableUntil) return proof.visibleProof
+        await waitForNextDomObservation(page, stableUntil, 0, signal)
+        continue
+      }
+    }
+    qwenStability.ready = null
     if (Date.now() >= deadline) break
     await waitForNextDomObservation(page, deadline, attempt, signal)
     attempt += 1

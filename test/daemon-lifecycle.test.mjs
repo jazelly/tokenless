@@ -485,7 +485,13 @@ test('daemon shutdown endpoint uses bearer authentication', async () => {
     const acceptedBody = await accepted.json()
     assert.equal(acceptedBody.status, 'shutting_down')
     assert.equal(await pidExited(pid), true)
-    assert.notEqual(readRuntimeStateRow(homeDir)?.state, 'running')
+    assert.equal(await tcpReachable(daemonUrl), false)
+    const stoppedState = readRuntimeStateRow(homeDir)
+    assert.equal(stoppedState?.state, 'starting')
+    assert.equal(stoppedState?.origin, null)
+    assert.equal(stoppedState?.pid, null)
+    const daemonLog = fs.readFileSync(path.join(homeDir, 'daemon.log'), 'utf8')
+    assert.doesNotMatch(daemonLog, /database is locked/i)
     pid = undefined
   } finally {
     if (pid) await stopPid(pid)

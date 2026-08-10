@@ -435,6 +435,8 @@ const PROVIDER_TASK_CAPABILITY_ROUTES = Object.freeze([
   route('kimi', TASK_CAPABILITIES.FILE_UPLOAD, 'experimental', 'visible-file-attachment', ['file-selection']),
   route('kimi', TASK_CAPABILITIES.SEARCH_WEB, 'experimental', 'kimi-web-search-auto', ['kimi-search']),
   route('kimi', TASK_CAPABILITIES.RESPONSE_CITATIONS, 'experimental', 'kimi-visible-citations', ['kimi-search']),
+  route('dola', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['conversation-workflow']),
+  route('dola', TASK_CAPABILITIES.FILE_UPLOAD, 'experimental', 'visible-file-attachment', ['file-selection']),
 ] satisfies readonly ProviderTaskCapabilityRoute[])
 
 const DEFINITION_BY_ID = new Map(TASK_CAPABILITY_CATALOG.map((definition) => [definition.id, definition]))

@@ -25,6 +25,7 @@ const SAFE_PRE_SUBMIT_PROVIDER_CODES = new Set([
   'provider_page_unavailable_pre_submit',
   'provider_region_unavailable',
   'provider_maintenance',
+  'provider_plan_limited',
   'provider_surface_not_ready',
   'visible_action_unavailable',
   'file_upload_unavailable',

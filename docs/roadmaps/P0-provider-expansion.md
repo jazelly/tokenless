@@ -36,7 +36,7 @@ As of 2026-08-09:
 - Doubao is registered as an experimental sign-in-required provider. Its built-CLI managed-Cloak non-submission gate closes readiness, prompt drafting, visible file acceptance, exact Fast/Expert/Work Task mode selection, nine coding-relevant Web skill selections, unavailable-state reporting, and restoration. Text-file `file.upload` is experimental and routeable. The same anti-detect configuration completed two direct correlated marker responses, while the built-product chat mutation release gate remains blocked by a visible provider verification iframe and fails closed as `visible_provider_blocker`; and
 - Kimi is registered as an experimental sign-in-required provider. Its built-CLI managed-Cloak gates close readiness, prompt drafting, Instant/K3/K3 Swarm model selection, Standard/High effort selection, text-file acceptance, attachment-grounded output, exact Web search selection with visible citations, exact Plugin/Skill control selection, second-process same-conversation continuation, restoration, and durable mapping. `conversation.chat`, text-file `file.upload`, `search.web`, and search-backed `response.citations` are experimental and routeable; Plugin/Skill submitted outcomes are capacity-blocked, while Projects, research, agent, and artifact lifecycles remain gate-pending and unadvertised; and
 - Microsoft Copilot remains unregistered because both Cloak checks exposed a sign-in surface and no guest composer, and no login was attempted under the authentication-skip policy.
-- Dola is registered as an experimental signed-in provider from the user-selected `web-ai` managed profile. The visible session confirmed the chat composer, file picker, Fast/Pro menu, numeric conversation URLs, and image, writing, video, translation, and homework entry points. The adapter, sanitized-capture probes, and readiness/draft/model/file/two-turn release gates are implemented; no route is advertised until the built-product gates close.
+- Dola is an experimental signed-in `conversation.chat` and `file.upload` provider from the user-selected `web-ai` managed profile. The visible session confirmed the chat composer, file picker, Fast/Pro menu, numeric conversation URLs, and image, writing, video, translation, and homework entry points; built-product runs closed three-Markdown selection, three-real-Word selection, and a three-Markdown attachment-grounded response. Continuation, generation, and specialist outcomes remain gate-pending.
 
 | Qwen capability | Current state | Evidence boundary |
 | --- | --- | --- |
@@ -86,10 +86,10 @@ As of 2026-08-09:
 
 | Dola capability | Current state | Evidence boundary |
 | --- | --- | --- |
-| Signed-in composer | Live observed; implementation available | User-selected runtime-bound Cloak profile; built-product gate pending |
+| Signed-in composer | Experimental, routeable chat | Three-file attachment-grounded visible response passed through the built CLI, packaged daemon, headed selected profile, and real provider network |
 | Fast / Pro model menu | Live observed; exact-selection gate declared | Visible menu in the signed-in chat surface; selection and restoration pending |
-| File input | Visible picker; acceptance gate declared | Native file dialog opened from the signed-in composer; accepted-file postcondition pending |
-| Conversation and continuation | Adapter and gate declared | Numeric `/chat/:conversationId` routes were observed; correlated two-turn CLI closure pending |
+| File input | Experimental, routeable upload | Three physical Markdown cards and three physical real-Word cards passed visible acceptance through the built CLI and packaged daemon |
+| Conversation and continuation | Experimental chat route; continuation pending | The three-file attachment-grounded response passed on numeric `/chat/:conversationId`; correlated two-turn CLI continuation closure remains pending |
 | Image generation | `image.generation` candidate | Create Image and the Seedream model/ratio/style/template surface are visible; completed image artifact pending |
 | Writing | `document.generation` or chat candidate | `write_assistant` is visible, but no completed document or downloadable file is proven |
 | Video generation | `video.generation` candidate | `video_generation` is visible; progress and terminal artifact pending |

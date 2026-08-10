@@ -1610,6 +1610,7 @@ async function executeDaemonJob({
     : undefined
   const registry = new ManagedProfileRegistry(homeDir)
   const profileForTarget = await registry.resolveProfile(args.profile)
+  assertPerplexityFreeAttachmentLimit(profileForTarget, explicitProviderId ?? '', args.attachFiles.length)
   const capabilityRoutes = resolveDaemonJobCapabilityRoutes({
     config,
     profile: profileForTarget,
@@ -5070,6 +5071,32 @@ function taskCapabilityRequirementsForExecution(
     inferred.push(TASK_CAPABILITIES.WORKSPACE_NATIVE)
   }
   return normalizeTaskCapabilityRequirements([...explicit, ...inferred])
+}
+
+function assertPerplexityFreeAttachmentLimit(
+  profile: Awaited<ReturnType<ManagedProfileRegistry['resolveProfile']>>,
+  provider: string,
+  attachmentCount: number,
+) {
+  if (provider !== 'perplexity' || attachmentCount <= 2) return
+  const observed = profile.lastObservedAuth.perplexity
+  if (observed?.account?.tier.class !== 'signed_in_free') return
+  const error = usageError(
+    'perplexity_free_attachment_limit',
+    'Perplexity Free accepts at most two attachments per request. Remove files before selecting or submitting them.',
+  )
+  error.context = {
+    provider,
+    attachmentCount,
+    attachmentLimit: 2,
+    account: {
+      access: observed.access,
+      subscription: observed.account.subscription,
+      tier: observed.account.tier,
+      source: 'cached_managed_profile_observation',
+    },
+  }
+  throw error
 }
 
 function requiredChatGptProvider(args: CliArgs) {

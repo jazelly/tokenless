@@ -145,6 +145,7 @@ export const ERROR_SUMMARIES_ZH = {
   provider_not_enabled: '请先为该 profile 启用 provider。',
   provider_not_supported: '该 provider 暂不受支持。',
   provider_required: '请提供 --provider。',
+  perplexity_free_attachment_limit: '当前 Perplexity Free plan 每次请求最多支持两个附件；请先移除多余文件。',
   provider_selection_invalid: '选择类型必须是 model 或 effort。',
   qwen_mode_unsupported: '该 Qwen mode action 只能用于 Qwen provider。',
   qwen_mode_variant_requires_mode: '--qwen-mode-variant 需要同时提供 --qwen-mode。',

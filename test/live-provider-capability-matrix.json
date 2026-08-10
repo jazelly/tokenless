@@ -582,8 +582,8 @@
         "deepseek-controls": "provider_specific_capability",
         "deepseek-search-reasoning": "provider_specific_capability",
         "deepseek-vision-input": "provider_specific_capability",
-        "file-selection": "selected_free_plan_third_document_visible_upgrade_gate_2026_08_09",
-        "conversation-workflow": "no_real_attachment_or_continuation_closure",
+        "file-selection": "visible_free_plan_document_analysis_quota_gate_2026_08_10",
+        "conversation-workflow": "visible_free_plan_document_analysis_quota_gate_2026_08_10",
         "workspace-response-baseline": "covered_by_workspace_response_citations",
         "qwen-mode-workspace": "provider_specific_capability",
         "doubao-controls": "provider_specific_capability",
@@ -690,12 +690,12 @@
       "required": [
         "session-readiness",
         "prompt-draft",
-        "model-choice"
+        "model-choice",
+        "file-selection",
+        "conversation-workflow"
       ],
       "unavailable": {
         "effort-choice": "no_independent_effort_control_declared",
-        "file-selection": "selected_setup_profile_multi_document_and_sequential_selection_only_one_visible_card_2026_08_09",
-        "conversation-workflow": "no_real_submitted_response_closure",
         "deepseek-controls": "provider_specific_capability",
         "deepseek-search-reasoning": "provider_specific_capability",
         "deepseek-vision-input": "provider_specific_capability",

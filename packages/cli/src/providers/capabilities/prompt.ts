@@ -78,6 +78,9 @@ export async function submitDomPrompt(
     answerCount: await countVisibleLocators(page, provider.answerSelectors),
     url: page.url(),
   }
+  const qwenDraftBeforeFirstClick = provider.id === 'qwen'
+    ? await normalizedVisibleComposerText(provider, page)
+    : null
   try {
     await button.click({ timeout: 5000 })
   } catch (error) {
@@ -88,26 +91,122 @@ export async function submitDomPrompt(
     )
   }
   const acceptanceTimeoutMs = provider.interactionTimings.submissionAcceptanceTimeoutMs
-  const deadline = Date.now() + acceptanceTimeoutMs
-  let attempt = 0
-  do {
-    assertNotAborted(signal)
-    if (await submissionTransitionIsVisible(provider, page, button, baseline)) {
-      return {
-        visible: true as const,
-        submissionProof: 'visible-submission-transition',
+  if (await waitForVisibleSubmissionTransition(provider, page, button, baseline, acceptanceTimeoutMs, signal)) {
+    return {
+      visible: true as const,
+      submissionProof: 'visible-submission-transition',
+    }
+  }
+  if (
+    provider.id === 'qwen' &&
+    qwenDraftBeforeFirstClick !== null &&
+    qwenDraftBeforeFirstClick.length > 0 &&
+    await qwenRetryStateIsUnchanged(provider, page, baseline, qwenDraftBeforeFirstClick, signal)
+  ) {
+    const retryButton = await waitForActionableSubmitControl(provider, page, signal)
+    if (
+      retryButton &&
+      await qwenRetryStateIsUnchanged(provider, page, baseline, qwenDraftBeforeFirstClick, signal)
+    ) {
+      try {
+        await retryButton.click({ timeout: 5000 })
+      } catch (error) {
+        throw tokenlessError(
+          'prompt_submit_failed',
+          'The visible Qwen prompt submit control could not be clicked again.',
+          { retryable: false, cause: error },
+        )
+      }
+      if (await waitForVisibleSubmissionTransition(provider, page, retryButton, baseline, acceptanceTimeoutMs, signal)) {
+        return {
+          visible: true as const,
+          submissionProof: 'visible-submission-transition',
+        }
       }
     }
-    if (Date.now() < deadline) {
-      await waitForNextDomObservation(page, deadline, attempt, signal)
-      attempt += 1
-    }
-  } while (Date.now() < deadline)
+  }
   throw tokenlessError(
     'prompt_submit_not_accepted',
     `No visible provider submission transition followed the click within ${acceptanceTimeoutMs}ms.`,
     { retryable: false },
   )
+}
+
+async function waitForVisibleSubmissionTransition(
+  provider: ProviderDomDefinition,
+  page: Page,
+  button: Locator,
+  baseline: { answerCount: number, url: string },
+  timeoutMs: number,
+  signal: AbortSignal | undefined,
+) {
+  const deadline = Date.now() + timeoutMs
+  let attempt = 0
+  do {
+    assertNotAborted(signal)
+    if (await submissionTransitionIsVisible(provider, page, button, baseline)) return true
+    if (Date.now() < deadline) {
+      await waitForNextDomObservation(page, deadline, attempt, signal)
+      attempt += 1
+    }
+  } while (Date.now() < deadline)
+  return false
+}
+
+async function qwenRetryStateIsUnchanged(
+  provider: ProviderDomDefinition,
+  page: Page,
+  baseline: { answerCount: number, url: string },
+  expectedDraft: string,
+  signal: AbortSignal | undefined,
+) {
+  assertNotAborted(signal)
+  const observed = await page.evaluate(({ answerSelectors, busySelectors, composerSelectors }) => {
+    const isVisible = (element: Element) => {
+      const style = window.getComputedStyle(element)
+      const rect = element.getBoundingClientRect()
+      return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0
+    }
+    const normalizedText = (element: Element) => {
+      const text = element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement
+        ? element.value
+        : element.textContent ?? ''
+      return text.replace(/[\s\u00a0\u200b-\u200d\u2060\ufeff]/gu, '')
+    }
+    const visibleCount = (selectors: readonly string[]) => selectors.reduce(
+      (total, selector) => total + Array.from(document.querySelectorAll(selector)).filter(isVisible).length,
+      0,
+    )
+    const composer = composerSelectors
+      .flatMap((selector) => Array.from(document.querySelectorAll(selector)))
+      .find(isVisible)
+    return {
+      url: window.location.href,
+      answerCount: visibleCount(answerSelectors),
+      busy: visibleCount(busySelectors) > 0,
+      draft: composer ? normalizedText(composer) : null,
+    }
+  }, {
+    answerSelectors: provider.answerSelectors,
+    busySelectors: provider.busySelectors,
+    composerSelectors: provider.composerSelectors,
+  }).catch(() => null)
+  return observed !== null &&
+    observed.url === baseline.url &&
+    observed.answerCount === baseline.answerCount &&
+    !observed.busy &&
+    observed.draft === expectedDraft
+}
+
+async function normalizedVisibleComposerText(provider: ProviderDomDefinition, page: Page) {
+  const composer = await firstVisibleLocator(page, provider.composerSelectors, 50)
+  if (!composer) return null
+  return await composer.evaluate((element) => {
+    const text = element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement
+      ? element.value
+      : element.textContent ?? ''
+    return text.replace(/[\s\u00a0\u200b-\u200d\u2060\ufeff]/gu, '')
+  }).catch(() => null)
 }
 
 async function waitForActionableSubmitControl(

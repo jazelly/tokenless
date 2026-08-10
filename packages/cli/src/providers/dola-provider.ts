@@ -47,7 +47,7 @@ export class DolaProvider extends BaseProvider<'dola'> {
         '[data-render-engine="node"]:not(.justify-end) [data-streaming].md-box-root',
       ]),
       fileInputSelectors: Object.freeze([
-        'input[type="file"][multiple][accept*=".md"]',
+        'input[type="file"][multiple]',
       ]),
       fileUploadTriggerSelectors: Object.freeze([
         'div.max-w-full.min-w-0.flex-1.relative.flex.items-center.h-36 > div:first-child button[data-dbx-name="button"]',
