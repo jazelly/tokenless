@@ -9,11 +9,8 @@ import {
 import { PROVIDER_NAVIGATION_CATALOG } from './provider-navigation-catalog.js'
 import {
   KimiEffortChoiceCapability,
-  KimiLibraryChoiceCapability,
-  KimiModelChoiceCapability,
   KimiSearchChoiceCapability,
 } from './capabilities/kimi-controls.js'
-import { NativeProjectWorkspaceCapability } from './capabilities/native-project-workspace.js'
 
 export class KimiProvider extends BaseProvider<'kimi'> {
   constructor() {
@@ -69,9 +66,7 @@ export class KimiProvider extends BaseProvider<'kimi'> {
         '[role="menuitem"]:has-text("Upload")',
         'button:has-text("Upload")',
       ]),
-      modelControlSelectors: Object.freeze([
-        '.current-model',
-      ]),
+      modelControlSelectors: Object.freeze([]),
       effortControlSelectors: Object.freeze([
         '.current-model .current-effort',
       ]),
@@ -98,45 +93,12 @@ export class KimiProvider extends BaseProvider<'kimi'> {
         'button[aria-label*="Stop" i]',
       ]),
       choiceAvailability: DEFAULT_CHOICE_AVAILABILITY,
-      capabilities: providerCapabilities({ nativeWorkspace: true, kimiControls: true }),
+      capabilities: providerCapabilities({ kimiSearchControl: true }),
     })
     super(provider, {
-      modelChoice: new KimiModelChoiceCapability(provider),
       effortChoice: new KimiEffortChoiceCapability(provider),
-      workspace: new NativeProjectWorkspaceCapability(provider, {
-        createTriggerActivation: 'dom',
-        instructionActivation: 'dom',
-        listUrl: 'https://www.kimi.com/',
-        projectPath: /^\/project\/(?<resourceId>[A-Za-z0-9_-]+)\/?$/u,
-        projectLinkSelectors: Object.freeze([
-          'a.next-sidebar-project-item[href^="/project/"]',
-        ]),
-        createTriggerSelectors: Object.freeze([
-          'button.next-sidebar-project-list__create',
-        ]),
-        nameInputSelectors: Object.freeze([
-          'input.project-create-input[placeholder="Give it a name"]',
-        ]),
-        instructionsInputSelectors: Object.freeze([
-          '.project-prompt-edit-modal textarea.prompt-editor',
-        ]),
-        createSubmitSelectors: Object.freeze([
-          'button.project-create-submit',
-        ]),
-        instructionOpenSelectors: Object.freeze([
-          '.project-knowledge .knowledge-action',
-        ]),
-        instructionSaveSelectors: Object.freeze([
-          '.project-prompt-edit-modal button.confirm-btn',
-        ]),
-        stableUnavailableSelectors: Object.freeze([
-          'text=/Projects are unavailable|Project is unavailable/i',
-        ]),
-      }),
       extensions: Object.freeze([
         new KimiSearchChoiceCapability(),
-        new KimiLibraryChoiceCapability('kimi.plugin'),
-        new KimiLibraryChoiceCapability('kimi.skill'),
       ]),
     })
   }

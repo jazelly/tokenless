@@ -582,7 +582,7 @@ export async function stopDaemon({
     )
   }
   if (pid !== undefined) await removePidIfOwned(ready.actualHome ?? expectedHome, pid)
-  await clearPersistedEndpointIfOwned(homeDir, { url, pid })
+  await clearPersistedEndpointIfOwned(homeDir, { url, pid }, stopTimeoutMs)
   return {
     ok: true,
     status: 'stopped',
@@ -953,14 +953,23 @@ function daemonReadyResult(
 
 async function clearPersistedEndpointIfOwned(
   homeDir: string,
-  { url, pid }: { url: string; pid?: number | undefined }
+  { url, pid }: { url: string; pid?: number | undefined },
+  timeoutMs = 1_000
 ) {
-  const runtimeState = await DaemonRuntimeState.openIfExists(homeDir)
-  try {
-    runtimeState?.clearEndpoint({ origin: url, pid })
-  } finally {
-    runtimeState?.close()
-  }
+  const deadline = Date.now() + timeoutMs
+  do {
+    let runtimeState: DaemonRuntimeState | null = null
+    try {
+      runtimeState = await DaemonRuntimeState.openIfExists(homeDir)
+      runtimeState?.clearEndpoint({ origin: url, pid })
+      return
+    } catch (error) {
+      if (!isTransientRuntimeStateConflict(error) || Date.now() >= deadline) throw error
+      await delay(25)
+    } finally {
+      runtimeState?.close()
+    }
+  } while (true)
 }
 
 function daemonPidFromReady(probe: DaemonReadyProbe) {
@@ -1013,6 +1022,16 @@ function pidIsAlive(pid: number) {
     if (code === 'ESRCH') return false
     return false
   }
+}
+
+function isTransientRuntimeStateConflict(error: unknown) {
+  const code = (error as { code?: unknown }).code
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase()
+  return code === 'daemon_runtime_state_sqlite_failed' && (
+    message.includes('database is locked') ||
+    message.includes('database table is locked') ||
+    message.includes('busy')
+  )
 }
 
 function isReplaceableDaemonCompatibilityMismatch(probe: DaemonReadyProbe) {

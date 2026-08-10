@@ -784,7 +784,7 @@ test('built Playwright validators enforce the current internal schema IDs', {
 
   const routeDecision = playwright.resolveTaskCapabilityRoute({
     requirements: [playwright.TASK_CAPABILITIES.CONVERSATION_CHAT],
-    candidates: [{ provider: 'qwen', runtimeEligibility: 'unchecked' }],
+    candidates: [{ provider: 'chatgpt', runtimeEligibility: 'unchecked' }],
   })
   assert.equal(routeDecision.ok, true)
   const rankedRoutes = playwright.resolveTaskCapabilityRoutes({
@@ -795,10 +795,10 @@ test('built Playwright validators enforce the current internal schema IDs', {
     ],
   })
   assert.equal(rankedRoutes.ok, true)
-  assert.deepEqual(rankedRoutes.routes.map((route) => route.provider), ['chatgpt', 'qwen'])
+  assert.deepEqual(rankedRoutes.routes.map((route) => route.provider), ['chatgpt'])
   assert.deepEqual(
     rankedRoutes.evaluated.map((evaluation) => [evaluation.provider, evaluation.rank, evaluation.support]),
-    [['qwen', 2, 'experimental'], ['chatgpt', 1, 'supported']],
+    [['qwen', null, null], ['chatgpt', 1, 'supported']],
   )
   const completeSetRoutes = playwright.resolveTaskCapabilityRoutes({
     requirements: [
@@ -814,9 +814,9 @@ test('built Playwright validators enforce the current internal schema IDs', {
   assert.deepEqual(completeSetRoutes.routes.map((route) => route.provider), ['chatgpt', 'gemini'])
   assert.deepEqual(completeSetRoutes.evaluated[0].missingCapabilities, [])
   const routed = playwright.createManagedPlaywrightJobRequest({
-    provider: 'qwen',
-    target: { kind: 'provider_home', url: 'https://chat.qwen.ai/' },
-    taskId: 'v3-qwen-capability-route',
+    provider: 'chatgpt',
+    target: { kind: 'provider_home', url: 'https://chatgpt.com/' },
+    taskId: 'v3-chatgpt-capability-route',
     capabilityRoute: routeDecision.route,
     browserVisibility: 'headless',
     actions: [

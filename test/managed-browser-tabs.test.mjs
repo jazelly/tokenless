@@ -75,6 +75,36 @@ test('CDP managed browser preserves independent logical tabs in one profile', as
   })
 })
 
+test('CDP provider soft leases reuse released tabs without sharing concurrent work', async () => {
+  await withManager(async ({ manager, profile }) => {
+    const context = await manager.ensureContext(profile, 'auto')
+    const first = await context.acquireProviderPage({ provider: 'chatgpt', taskKey: 'task:first' })
+    const generic = await context.acquirePage({ key: 'provider:generic:task:claim-guard' })
+    const reserved = await context.acquireReservedPage({ key: 'tokenless:control-plane:provider-lease-guard' })
+    assert.notEqual(generic, first.page)
+    assert.notEqual(reserved, first.page)
+    await first.release()
+
+    const [reused, concurrent] = await Promise.all([
+      context.acquireProviderPage({ provider: 'chatgpt', taskKey: 'task:second' }),
+      context.acquireProviderPage({ provider: 'chatgpt', taskKey: 'task:third' }),
+    ])
+    assert.equal(reused.page, first.page)
+    assert.notEqual(concurrent.page, reused.page)
+
+    await reused.release()
+    await concurrent.release()
+
+    const replacement = await context.acquireProviderPage({
+      provider: 'chatgpt',
+      taskKey: 'task:second',
+      policy: 'replace',
+    })
+    assert.equal(replacement.page, concurrent.page)
+    await replacement.release()
+  })
+})
+
 async function withManager(operation) {
   const primary = await resolveConfiguredBrowserTarget()
   const runtime = primary.runtime

@@ -838,7 +838,7 @@ async function nativeProject({ provider, journey }) {
     ? `TLP_KIMI_PROJECT_${randomUUID().slice(0, 8)}`
     : markerFor(provider, 'PROJECT')
   const instructionMarker = markerFor(provider, 'PROJECT_INSTRUCTION')
-  const instructions = `Include this exact marker in every response: ${instructionMarker}`
+  const instructions = `Fully answer each request, then append this exact marker on a new final line: ${instructionMarker}`
   const created = await journey.action('workspace.ensure', [
     '--project-name', projectName,
     '--workspace-mode', 'native',
@@ -884,7 +884,7 @@ async function nativeProject({ provider, journey }) {
       '--workspace-mode', 'native',
       '--attach-file', attachment,
       ...controls.flatMap((control) => [control.option, control.alternate]),
-      '--prompt', `Read the attached file and report its exact marker.`,
+      '--prompt', `Read the Project file named ${attachmentName}, report the exact marker it contains, and follow the Project instructions. Return both markers.`,
     ], 360_000, ({ page }) => waitForExactText(
       page,
       provider === 'kimi' ? path.parse(attachmentName).name : attachmentName,

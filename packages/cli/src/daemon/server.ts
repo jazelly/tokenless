@@ -60,12 +60,14 @@ export async function serveHttp({
   port,
   runtimeController,
   beforeClose,
+  afterStoreClose,
 }: {
   store: JobStore
   host: string
   port: number
   runtimeController?: BrowserRuntimeController | undefined
   beforeClose?: (() => Promise<void>) | undefined
+  afterStoreClose?: (() => Promise<void>) | undefined
 }) {
   validateLoopbackHost(host)
   let active = false
@@ -78,7 +80,7 @@ export async function serveHttp({
   const outputSavingsProcessor = new OutputSavingsProcessor(store)
   let closePromise: Promise<void> | undefined
   const close = () => {
-    closePromise ??= closeServer(server, store, outputSavingsProcessor, beforeClose)
+    closePromise ??= closeServer(server, store, outputSavingsProcessor, beforeClose, afterStoreClose)
     return closePromise
   }
   const startedAt = Date.now()
@@ -769,7 +771,8 @@ async function closeServer(
   server: http.Server,
   store: JobStore,
   outputSavingsProcessor: OutputSavingsProcessor,
-  beforeClose: (() => Promise<void>) | undefined
+  beforeClose: (() => Promise<void>) | undefined,
+  afterStoreClose: (() => Promise<void>) | undefined
 ) {
   const results = await Promise.allSettled([
     outputSavingsProcessor.stop(),
@@ -782,6 +785,7 @@ async function closeServer(
     })
   })]))
   store.close()
+  results.push(...await Promise.allSettled([afterStoreClose?.() ?? Promise.resolve()]))
   const failed = results.find((result) => result.status === 'rejected')
   if (failed?.status === 'rejected') throw failed.reason
 }

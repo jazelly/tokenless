@@ -19,6 +19,7 @@ type WorkspaceAction = typeof VISIBLE_ACTIONS.WORKSPACE_ENSURE
 
 export type NativeProjectWorkspaceStrategy = Readonly<{
   createTriggerActivation?: 'pointer' | 'dom'
+  createSubmitActivation?: 'pointer' | 'dom'
   instructionActivation?: 'pointer' | 'dom'
   listUrl: string
   projectPath: RegExp
@@ -116,7 +117,7 @@ export class NativeProjectWorkspaceCapability implements ProviderActionCapabilit
       instructionOutcome = payload.instructions === undefined ? 'not_requested' : 'skipped_on_reuse'
     } else {
       await navigate(page, this.strategy.listUrl, context.signal)
-      const matches = await exactProjectLinks(page, this.strategy.projectLinkSelectors, payload.name)
+      const matches = await exactProjectLinks(page, this.strategy.projectLinkSelectors, payload.name, 3_000)
       if (matches.length > 1) {
         throw providerCapabilityFailure(
           'workspace_native_ambiguous_identity',
@@ -187,7 +188,7 @@ export class NativeProjectWorkspaceCapability implements ProviderActionCapabilit
     let nameVisible = await waitForExactVisibleText(page, payload.name, 10_000)
     if (!nameVisible && this.strategy.createTriggerActivation === 'dom') {
       await navigate(page, this.strategy.listUrl, context.signal)
-      const matches = await exactProjectLinks(page, this.strategy.projectLinkSelectors, payload.name)
+      const matches = await exactProjectLinks(page, this.strategy.projectLinkSelectors, payload.name, 3_000)
       if (matches.length === 1) {
         await clickAndWaitForProject(page, matches[0] as Locator, this.provider, this.strategy, context.signal)
         nameVisible = true
@@ -264,24 +265,28 @@ export class NativeProjectWorkspaceCapability implements ProviderActionCapabilit
   }
 }
 
-async function exactProjectLinks(page: Page, selectors: readonly string[], name: string) {
-  const matches: Locator[] = []
-  const hrefs = new Set<string>()
-  for (const selector of selectors) {
-    const locator = page.locator(selector)
-    for (let index = 0; index < await locator.count(); index += 1) {
-      const candidate = locator.nth(index)
-      if (!await candidate.isVisible({ timeout: 100 }).catch(() => false)) continue
-      const exactName = candidate.getByText(name, { exact: true })
-      const exactCandidateText = (await candidate.textContent().catch(() => null))?.trim() === name
-      if (!exactCandidateText && await exactName.count() === 0) continue
-      const href = await candidate.getAttribute('href')
-      if (!href || hrefs.has(href)) continue
-      hrefs.add(href)
-      matches.push(candidate)
+async function exactProjectLinks(page: Page, selectors: readonly string[], name: string, timeoutMs = 0) {
+  const deadline = Date.now() + timeoutMs
+  do {
+    const matches: Locator[] = []
+    const hrefs = new Set<string>()
+    for (const selector of selectors) {
+      const locator = page.locator(selector)
+      for (let index = 0; index < await locator.count(); index += 1) {
+        const candidate = locator.nth(index)
+        if (!await candidate.isVisible({ timeout: 100 }).catch(() => false)) continue
+        const exactName = candidate.getByText(name, { exact: true })
+        const exactCandidateText = (await candidate.textContent().catch(() => null))?.trim() === name
+        if (!exactCandidateText && await exactName.count() === 0) continue
+        const href = await candidate.getAttribute('href')
+        if (!href || hrefs.has(href)) continue
+        hrefs.add(href)
+        matches.push(candidate)
+      }
     }
-  }
-  return matches
+    if (matches.length > 0 || Date.now() >= deadline) return matches
+    await page.waitForTimeout(100)
+  } while (true)
 }
 
 async function submitProjectCreation(
@@ -305,8 +310,20 @@ async function submitProjectCreation(
         { retryable: true },
       )
     }
-    await click(submit, 'workspace_native_create_failed')
-    await page.waitForTimeout(500)
+    const pagesBeforeSubmit = new Set(page.context().pages())
+    await click(submit, 'workspace_native_create_failed', strategy.createSubmitActivation)
+    const transitionDeadline = Date.now() + 3_000
+    do {
+      if (projectIdentity(page.url(), provider, strategy)) return
+      const openedProject = page.context().pages().find((candidate) => (
+        !pagesBeforeSubmit.has(candidate) && projectIdentity(candidate.url(), provider, strategy) !== null
+      ))
+      if (openedProject) {
+        await navigate(page, openedProject.url(), signal)
+        return
+      }
+      await page.waitForTimeout(100)
+    } while (Date.now() < transitionDeadline)
   }
   if (!projectIdentity(page.url(), provider, strategy)) {
     throw providerCapabilityFailure(

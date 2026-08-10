@@ -480,6 +480,9 @@ test('daemon stop uses bearer-authenticated self-shutdown for a verified daemon'
     assert.equal(payload.pid, pid)
     assert.equal(fs.existsSync(path.join(homeDir, 'daemon.pid.json')), false)
     assert.equal(await pidExited(pid), true)
+    const repeated = runCli(['daemon', 'stop', '--home', homeDir, '--daemon-url', daemonUrl, '--json'])
+    assert.equal(repeated.status, 0, repeated.stderr || repeated.stdout)
+    assert.equal(JSON.parse(repeated.stdout).status, 'not_running')
     pid = undefined
   } finally {
     if (pid) await stopPid(pid)

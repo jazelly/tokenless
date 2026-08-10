@@ -37,6 +37,7 @@ import { PROVIDER_CAPABILITIES, TASK_CAPABILITIES, getProviderInstanceById } fro
 import type {
   ManagedBrowserContext,
   ManagedBrowserProfile,
+  ManagedProviderPageLease,
   PersistentContextManager as PersistentContextManagerType,
 } from './browser/context-manager.js'
 import type { DaemonClaimedJob, DaemonJob, ManagedDaemonClient } from './daemon-client.js'
@@ -157,6 +158,7 @@ type RunnerExecutionState = {
 type ClearBlockerResult = {
   managedContext: ManagedBrowserContext
   page: Page
+  providerPageLease: ManagedProviderPageLease | null
   waitedMs: number
 }
 
@@ -750,11 +752,24 @@ export class ManagedPlaywrightRunnerService {
     const operation = async (initialManagedContext: ManagedBrowserContext) => {
       let managedContext = initialManagedContext
       const pageKey = managedPageKey(job, request)
+      const provider = getProviderInstanceById(request.provider)
+      if (!provider) throw tokenlessError('unknown_playwright_job_provider', 'Managed Playwright job provider is not supported.')
       const temporaryPage = automaticAuthObservation ? await managedContext.acquireTemporaryPage() : null
-      let page = temporaryPage?.page ?? await managedContext.acquirePage({ key: pageKey, policy: request.pagePolicy ?? 'preserve' })
+      let providerPageLease = temporaryPage === null
+        ? await managedContext.acquireProviderPage({
+            provider: provider.id,
+            taskKey: pageKey,
+            policy: request.pagePolicy,
+            matchesExistingPage: (candidate) => providerOwnsPage(provider, candidate),
+            isAvailablePage: (candidate) => providerPageAvailable(provider, candidate),
+          })
+        : null
+      const acquiredPage = temporaryPage?.page ?? providerPageLease?.page
+      if (!acquiredPage) {
+        throw tokenlessError('playwright_provider_page_unavailable', 'Managed provider page is unavailable.', { retryable: true })
+      }
+      let page: Page = acquiredPage
       try {
-        const provider = getProviderInstanceById(request.provider)
-        if (!provider) throw tokenlessError('unknown_playwright_job_provider', 'Managed Playwright job provider is not supported.')
         const state = executionStateFromCheckpoint(restoredCheckpoint)
       if (state.submitted !== null && job.provider_submitted_at === null) {
         await this.daemonClient.recordProviderSubmission({
@@ -827,6 +842,7 @@ export class ManagedPlaywrightRunnerService {
           job,
           request,
           pageKey,
+          providerPageLease,
           claimBrowserVisibility,
           provider,
           state,
@@ -838,6 +854,7 @@ export class ManagedPlaywrightRunnerService {
         })
         managedContext = cleared.managedContext
         page = cleared.page
+        providerPageLease = cleared.providerPageLease
         return cleared.waitedMs
       }
       if (request.capabilityRoute && state.actionCursor === 0 && state.submitted === null) {
@@ -1010,6 +1027,7 @@ export class ManagedPlaywrightRunnerService {
         return state.responses
       } finally {
         await temporaryPage?.close()
+        await providerPageLease?.release()
       }
     }
     const responses = await (automaticAuthObservation
@@ -1055,6 +1073,7 @@ export class ManagedPlaywrightRunnerService {
     job: DaemonClaimedJob
     request: ManagedPlaywrightJobRequest
     pageKey: string
+    providerPageLease: ManagedProviderPageLease | null
     claimBrowserVisibility: BrowserVisibility
     provider: RunnerProvider
     state: RunnerExecutionState
@@ -1072,7 +1091,12 @@ export class ManagedPlaywrightRunnerService {
       options.state.submitted !== null,
     )
     if (!initial.blocked) {
-      return { managedContext: options.managedContext, page: options.page, waitedMs: 0 }
+      return {
+        managedContext: options.managedContext,
+        page: options.page,
+        providerPageLease: options.providerPageLease,
+        waitedMs: 0,
+      }
     }
     const failure = classifyVisibleProviderBlocker(initial.primary)
     const fallbackRequest = safeFallbackRequest(options.request, options.state, failure)
@@ -1151,14 +1175,24 @@ export class ManagedPlaywrightRunnerService {
         },
         checkpoint,
       })
+      await options.providerPageLease?.protect()
       throw new ParkedPlaywrightJob()
     }
     let managedContext = options.managedContext
     let page = options.page
+    let providerPageLease = options.providerPageLease
     if (options.claimBrowserVisibility === 'auto' && managedContext.effectiveBrowserVisibility === 'headless') {
       const url = trustedSwitchUrl(page, options.provider, options.request.target.url)
+      await providerPageLease?.release()
       managedContext = await managedContext.switchVisibility('headed')
-      page = await managedContext.acquirePage({ key: options.pageKey, policy: options.request.pagePolicy ?? 'preserve' })
+      providerPageLease = await managedContext.acquireProviderPage({
+        provider: options.provider.id,
+        taskKey: options.pageKey,
+        policy: options.request.pagePolicy,
+        matchesExistingPage: (candidate) => providerOwnsPage(options.provider, candidate),
+        isAvailablePage: (candidate) => providerPageAvailable(options.provider, candidate),
+      })
+      page = providerPageLease.page
       await navigateToTarget(page, options.provider, url, options.signal, true)
       if (!options.state.submitted) {
         await reconstructCompletedPreSubmitActions(page, {
@@ -1239,7 +1273,7 @@ export class ManagedPlaywrightRunnerService {
           jobId: options.job.job_id,
           claimToken: options.job.claim_token,
         })
-        return { managedContext, page, waitedMs: Date.now() - startedAt }
+        return { managedContext, page, providerPageLease, waitedMs: Date.now() - startedAt }
       }
     }
     throw tokenlessError(
@@ -2145,6 +2179,14 @@ function providerOwnsPage(
 ) {
   const classification = provider.navigation.classify(page.url())
   return classification.kind === 'approved' || classification.kind === 'trusted_sign_in'
+}
+
+async function providerPageAvailable(provider: RunnerProvider, page: Page) {
+  try {
+    return !(await provider.observeResponse(page)).busy
+  } catch {
+    return false
+  }
 }
 
 function providerTabOpenFailure(provider: string, error: unknown) {

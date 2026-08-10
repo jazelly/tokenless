@@ -6,7 +6,6 @@ import {
 } from './provider-definition.js'
 import { GrokEntitlementAccountInspector } from './grok-account-inspector.js'
 import { GrokChoiceAvailability } from './grok-choice-availability.js'
-import { NativeProjectWorkspaceCapability } from './capabilities/native-project-workspace.js'
 import { PROVIDER_NAVIGATION_CATALOG } from './provider-navigation-catalog.js'
 
 export class GrokProvider extends BaseProvider<'grok'> {
@@ -82,47 +81,8 @@ export class GrokProvider extends BaseProvider<'grok'> {
       ]),
       busySelectors: Object.freeze([]),
       choiceAvailability: new GrokChoiceAvailability(),
-      capabilities: providerCapabilities({ nativeWorkspace: true }),
+      capabilities: providerCapabilities(),
     })
-    super(provider, {
-      workspace: new NativeProjectWorkspaceCapability(provider, {
-        listUrl: 'https://grok.com/',
-        projectPath: /^\/(?:project|projects)\/(?<resourceId>[A-Za-z0-9_-]+)(?:\/|$)/u,
-        projectLinkSelectors: Object.freeze([
-          'a[href*="/project/"]',
-          'a[href*="/projects/"]',
-        ]),
-        createTriggerSelectors: Object.freeze([
-          'button:has-text("New Project")',
-          'button:has-text("Create Project")',
-          'a:has-text("New Project")',
-        ]),
-        nameInputSelectors: Object.freeze([
-          'input[aria-label="Project name"]',
-        ]),
-        instructionsInputSelectors: Object.freeze([
-          'textarea[aria-label="Project Instructions"]',
-          'textarea[placeholder*="instructions" i]',
-        ]),
-        createSubmitSelectors: Object.freeze([
-          '[role="dialog"][aria-label="New Project"] button:has-text("Next")',
-          '[role="dialog"] button:has-text("Create Project")',
-          '[role="dialog"] button:has-text("Create")',
-        ]),
-        instructionOpenSelectors: Object.freeze([
-          'button:has-text("Project Instructions")',
-          'button:has-text("Add instructions")',
-          'button:has-text("Edit instructions")',
-        ]),
-        instructionSaveSelectors: Object.freeze([
-          '[role="dialog"] button:has-text("Save")',
-          'button:has-text("Save instructions")',
-        ]),
-        stableUnavailableSelectors: Object.freeze([
-          'text=/projects (?:are )?(?:not available|unavailable) on your plan/i',
-          'text=/upgrade to (?:create|use) projects/i',
-        ]),
-      }),
-    })
+    super(provider)
   }
 }

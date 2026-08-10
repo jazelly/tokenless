@@ -1,4 +1,4 @@
-import { firstVisibleLocator } from '../dom-locators.js'
+import { firstVisibleLocator, waitForVisibleLocator } from '../dom-locators.js'
 import { PROVIDER_CAPABILITIES } from '../provider-identity.js'
 import type { Locator, Page } from 'playwright-core'
 import type { ProviderActionCapability } from '../capability-set.js'
@@ -114,7 +114,7 @@ async function inspectChoices(
     }
   }
   await waitForProviderChoiceSurface(page, provider)
-  const trigger = await firstVisibleLocator(page, selectors)
+  const trigger = await waitForVisibleLocator(page, selectors, 10_000)
   if (!trigger) {
     return {
       supported: false as const,

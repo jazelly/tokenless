@@ -51,6 +51,8 @@ export async function startDaemon({
       runtimeController,
       beforeClose: async () => {
         await runtimeController.shutdown()
+      },
+      afterStoreClose: async () => {
         if (daemon) {
           runtimeState.clearEndpoint({ origin: daemon.origin, pid: process.pid })
         }
@@ -104,12 +106,14 @@ async function serveHttpWithDynamicPort({
   startPort,
   runtimeController,
   beforeClose,
+  afterStoreClose,
 }: {
   store: JobStore
   host: string
   startPort: number
   runtimeController: BrowserRuntimeController
   beforeClose: () => Promise<void>
+  afterStoreClose: () => Promise<void>
 }) {
   let port = startPort
   while (port <= 65535) {
@@ -120,6 +124,7 @@ async function serveHttpWithDynamicPort({
         port,
         runtimeController,
         beforeClose,
+        afterStoreClose,
       })
     } catch (error) {
       if (!isAddressInUse(error) || port === 0) throw error

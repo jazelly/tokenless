@@ -8,7 +8,6 @@ import {
 } from './provider-definition.js'
 import { MenuTextAccountInspector } from './account-inspectors.js'
 import { tokenlessError } from '../playwright/errors.js'
-import { QwenModeCapability } from './capabilities/qwen-mode.js'
 import type { Locator, Page } from 'playwright-core'
 import type { ProviderExecutionContext } from './execution-context.js'
 import type { ProviderDomDefinition } from './provider-definition.js'
@@ -85,13 +84,9 @@ export class QwenProvider extends BaseProvider<'qwen'> {
         submissionAcceptanceTimeoutMs: 30_000,
       }),
       choiceAvailability: DEFAULT_CHOICE_AVAILABILITY,
-      capabilities: providerCapabilities({ qwenMode: true }),
+      capabilities: providerCapabilities(),
     })
-    super(provider, {
-      extensions: Object.freeze([
-        new QwenModeCapability(provider),
-      ]),
-    })
+    super(provider)
   }
 
   protected override async inputPrompt(page: Page, text: string, context: ProviderExecutionContext) {

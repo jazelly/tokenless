@@ -20,7 +20,7 @@ test('capabilities list exposes canonical outcomes and only evidence-backed rout
   assert.equal(byId.get('conversation.chat').routeable, true)
   assert.deepEqual(
     byId.get('conversation.chat').routes.map((route) => route.provider),
-    ['chatgpt', 'claude', 'gemini', 'grok', 'qwen', 'perplexity', 'zai', 'doubao', 'kimi'],
+    ['chatgpt', 'claude', 'gemini', 'grok', 'perplexity', 'zai', 'doubao', 'kimi'],
   )
   assert.deepEqual(
     byId.get('file.upload').routes.map((route) => route.provider),
@@ -28,8 +28,11 @@ test('capabilities list exposes canonical outcomes and only evidence-backed rout
   )
   assert.deepEqual(byId.get('search.web').routes.map((route) => route.provider), ['kimi'])
   assert.deepEqual(byId.get('response.citations').routes.map((route) => route.provider), ['kimi'])
-  assert.equal(byId.get('workspace.native').routeable, false)
-  assert.deepEqual(byId.get('workspace.native').routes, [])
+  assert.equal(byId.get('workspace.native').routeable, true)
+  assert.deepEqual(
+    byId.get('workspace.native').routes.map((route) => route.provider),
+    ['claude'],
+  )
   assert.equal(byId.get('research.deep').routeable, false)
   assert.deepEqual(byId.get('research.deep').routes, [])
   assert.equal(byId.get('audio.transcription').routeable, false)

@@ -130,7 +130,7 @@ test('built Harness rejects a static-ineligible route before it stages a bootstr
     const fixture = await createHarnessFixture(homeDir)
     try {
       const { ManagedProfileRegistry } = await import(profileRegistry)
-      const profile = await new ManagedProfileRegistry(homeDir).addProfile({ slug: 'harness-qwen', lifecycle: 'ready' })
+      const profile = await new ManagedProfileRegistry(homeDir).addProfile({ slug: 'harness-perplexity', lifecycle: 'ready' })
       const token = (await fs.readFile(path.join(homeDir, 'daemon.token'), 'utf8')).trim()
       const { startHarnessLocalHttpBootstrap } = await import(harnessModule)
 
@@ -160,7 +160,7 @@ test('built Harness rejects a static-ineligible route before it stages a bootstr
         startHarnessLocalHttpBootstrap({
           baseUrl: daemon.origin,
           token,
-          provider: 'qwen',
+          provider: 'perplexity',
           profileId: profile.id,
           runId: 'ineligible-bootstrap',
           stagingRoot: fixture.stagingRoot,

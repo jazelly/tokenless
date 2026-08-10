@@ -1651,6 +1651,18 @@ async function executeDaemonJob({
     if (attachments && attachments.some((attachment) => attachment.bundleId !== stagedAttachmentBundleId)) {
       throw usageError('attachment_bundle_invalid', 'Visible attachments must be staged into one private bundle.')
     }
+    const primaryTarget = await managedProviderTarget({
+      provider,
+      taskCapabilities,
+      explicitTargetUrl: args.targetUrl,
+      workspaceMode,
+      taskId,
+      projectName,
+      homeDir,
+      daemonUrl: configuredDaemonUrl,
+      daemonStartTimeoutMs: optionalNumber(args.daemonStartTimeoutMs),
+      profileId: profileForTarget.id,
+    })
     const fallbackAlternatives = automaticProviderFallbackAllowed({
       args,
       action,
@@ -1660,22 +1672,23 @@ async function executeDaemonJob({
     })
       ? await Promise.all(capabilityRoutes.slice(1, 6).map(async (route) => {
           const alternateProvider = route.provider
+          const target = await managedProviderTarget({
+            provider: alternateProvider,
+            taskCapabilities: route.requirements,
+            explicitTargetUrl: undefined,
+            workspaceMode,
+            taskId,
+            projectName,
+            homeDir,
+            daemonUrl: configuredDaemonUrl,
+            daemonStartTimeoutMs: optionalNumber(args.daemonStartTimeoutMs),
+            profileId: profileForTarget.id,
+          })
           return {
             provider: alternateProvider,
             target: {
               kind: 'provider_home' as const,
-              url: await managedProviderTargetUrl({
-                provider: alternateProvider,
-                taskCapabilities: route.requirements,
-                explicitTargetUrl: undefined,
-                workspaceMode,
-                taskId,
-                projectName,
-                homeDir,
-                daemonUrl: configuredDaemonUrl,
-                daemonStartTimeoutMs: optionalNumber(args.daemonStartTimeoutMs),
-                profileId: profileForTarget.id,
-              }),
+              url: target.url,
             },
             capabilityRoute: route,
           }
@@ -1685,18 +1698,7 @@ async function executeDaemonJob({
       provider,
       target: {
         kind: 'provider_home',
-        url: await managedProviderTargetUrl({
-          provider,
-          taskCapabilities,
-          explicitTargetUrl: args.targetUrl,
-          workspaceMode,
-          taskId,
-          projectName,
-          homeDir,
-          daemonUrl: configuredDaemonUrl,
-          daemonStartTimeoutMs: optionalNumber(args.daemonStartTimeoutMs),
-          profileId: profileForTarget.id,
-        }),
+        url: primaryTarget.url,
       },
       taskId: taskId ?? null,
       capabilityRoute: recordedCapabilityRoute,
@@ -1716,7 +1718,7 @@ async function executeDaemonJob({
         attachments,
         providerControls,
         visibleAction,
-        workspace,
+        workspace: primaryTarget.resumesConversation ? undefined : workspace,
       }),
     })
 
@@ -2183,7 +2185,7 @@ function managedVisibleActions({
   return actions
 }
 
-async function managedProviderTargetUrl({
+async function managedProviderTarget({
   provider,
   taskCapabilities,
   explicitTargetUrl,
@@ -2211,10 +2213,10 @@ async function managedProviderTargetUrl({
     const parsed = new URL(candidate)
     parsed.search = ''
     parsed.hash = ''
-    return parsed.toString()
+    return { url: parsed.toString(), resumesConversation: false }
   }
   const kimiSurface = provider === 'kimi' ? kimiCapabilitySurface(taskCapabilities) : null
-  if (kimiSurface) return new URL(kimiSurface, 'https://www.kimi.com').toString()
+  if (kimiSurface) return { url: new URL(kimiSurface, 'https://www.kimi.com').toString(), resumesConversation: false }
   if ((workspaceMode === 'auto' || workspaceMode === 'native') && projectName) {
     const daemon = await ensureDaemonReady({ homeDir, daemonUrl, timeoutMs: daemonStartTimeoutMs, requiredProvider: provider })
     const mapped = await mappedDaemonTarget({
@@ -2237,13 +2239,13 @@ async function managedProviderTargetUrl({
       taskId,
     })
     const candidate = resolved.mapping?.canonical_url
-    if (candidate) return providerWakeUrl(provider, candidate)
+    if (candidate) return { url: providerWakeUrl(provider, candidate), resumesConversation: true }
   }
   const candidate = requireProviderHomeUrl(provider)
   const parsed = new URL(candidate)
   parsed.search = ''
   parsed.hash = ''
-  return parsed.toString()
+  return { url: parsed.toString(), resumesConversation: false }
 }
 
 function kimiCapabilitySurface(requirements: readonly TaskCapabilityId[]) {
@@ -4344,11 +4346,14 @@ async function mappedDaemonTarget({
     projectName,
     ...(taskId ? { taskId } : {}),
   })
-  const candidate = resolved.mapping?.conversation?.canonical_url ??
-    resolved.mapping?.project.canonical_url
+  const conversation = resolved.mapping?.conversation?.canonical_url
+  const candidate = conversation ?? resolved.mapping?.project.canonical_url
   if (!candidate) return null
   try {
-    return providerWakeUrl(provider, candidate)
+    return {
+      url: providerWakeUrl(provider, candidate),
+      resumesConversation: Boolean(conversation),
+    }
   } catch {
     throw usageError(
       'provider_mapping_invalid',
