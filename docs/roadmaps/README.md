@@ -1,6 +1,6 @@
 # Tokenless Roadmaps
 
-Status: active product direction | Last reviewed: 2026-08-09
+Status: active product direction | Last reviewed: 2026-08-10
 
 This directory contains long-horizon product and engineering roadmaps. It is separate from `plans/`, which contains bounded implementation plans for individual pieces of work.
 
@@ -47,6 +47,7 @@ Every roadmap filename must begin with its product priority (`P0-`, `P1-`, `P2-`
 | [Agent Session Integrations](P1-agent-session-integrations.md) | Expose current Web Provider and later Harness operations through a caller-facing local MCP interface, then bind jobs to exact Agent projects, threads, and turns with Codex as the first exact identity integration. | P1 |
 | [Project Knowledge Graph and Provider Mirroring](P1-project-knowledge-graph-and-provider-mirroring.md) | Build a local project graph and maintain an approved, provider-ready project context mirror for web-based coding agents. | P1 |
 | [Optional Output Savings Measurement](P1-optional-output-savings-measurement.md) | Attribute versioned estimates of visible assistant output to durable jobs through a default-on, opt-out, lazily downloaded, low-duty-cycle local tokenizer. | P1 |
+| [Token Savings Real-Project Test Matrix](P1-token-savings-evidence-across-adoption-paths.md) | Run one reviewed real-project prompt across all enabled providers and three adoption paths, then extend the same evidence into Harness context, System Prompt, Skill, Bash, MCP, and multi-turn behavior. | P1 |
 
 Priority describes product importance, not a promise that all work proceeds serially.
 
