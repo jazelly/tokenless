@@ -12,8 +12,8 @@
 </p>
 
 <p align="center">
-  <strong>通过浏览器使用你已有的 AI provider，无需 provider API Key。</strong><br>
-  Tokenless 为 Agent 提供统一的本地可见 AI 工作流接口，同时减少 Agent 侧 token 消耗。
+  <strong>使用你已有的 Web AI provider，无需 provider API Key。</strong><br>
+  Tokenless 正在为 visible-browser workflow 与显式 direct provider protocol 构建统一的本地接口。
 </p>
 
 <p align="center">
@@ -25,6 +25,13 @@
 </p>
 
 <p align="center"><sub>截图来自真实本地浏览器 session；token 总量与任务状态均为真实本地数据，不是 benchmark。</sub></p>
+
+## 两条并列 P0 产品线
+
+| 产品线 | 能力 | 当前状态 |
+| --- | --- | --- |
+| **Web Provider** | 在用户选择的浏览器中自动操作可见 provider 网站，包括已验证的 control、upload、Project 与 response。 | 当前主要受支持路径；具体可用性仍取决于 capability 与 provider。 |
+| **Web AI → API** | 通过 Tokenless 经过认证的 local API 与 OpenAI-compatible proxy 暴露真实 provider Web protocol；`direct` 始终是用户显式选择的 execution mode。 | 正在推进的 P0 方向。以 gpt4free provider 能力面作为 parity baseline，不代表 parity 已完成。当前 ChatGPT 与 Perplexity route 都只是实验性的 new-text-only PoC。 |
 
 ## 13 家 provider，一个本地接口
 
@@ -68,7 +75,7 @@ tokenless setup
 tokenless run --provider chatgpt --prompt "Review this proposal."
 ```
 
-现在也可显式选择 direct mode，完成一次新的 ChatGPT 或 Perplexity 文本聊天。它只在内存中桥接所选 provider session，并使用模拟 Chrome 指纹的 Node.js transport；Perplexity 支持 guest 或 signed-in session。附件、续聊、model control、Project 和 fallback 暂不支持：
+显式 direct mode 目前提供实验性的 ChatGPT 与 Perplexity new-text-only PoC。这些 route 正在修复并接受真实 endpoint 验证，不应视为已支持的 parity。附件、续聊、model control、Project 和 fallback 暂不支持：
 
 ```bash
 tokenless run --provider chatgpt --execution-mode direct --prompt "Review this proposal." --json
@@ -79,7 +86,7 @@ Setup 会先询问是否使用 Anti-Detect mode。若选择不使用，再选择
 
 Native mode 目前只支持 headed。停止或重启 Tokenless daemon 只会断开自动化连接，不会关闭所选浏览器。
 
-可选开启的本地 [API proxy](docs/api-proxy-integration.zh-CN.md) 会用选定的浏览器 profile 处理 OpenAI 与 Anthropic 形态的请求，既有客户端只需改动 base URL 即可访问 provider 网站。它默认关闭，用 `tokenless api-proxy enable` 开启。
+可选开启的本地 [API proxy](docs/api-proxy-integration.zh-CN.md) 会通过经过认证的 local API 处理 OpenAI 与 Anthropic 形态的请求，既有客户端只需改动 base URL 即可访问 provider 网站。它默认关闭，用 `tokenless api-proxy enable` 开启。每项 direct provider-protocol capability 验证完成后也会复用同一本地边界；当前 PoC 不代表 API parity。
 
 显式启用 Anti-Detect setup 时，也可以在 macOS arm64/x64、Linux arm64/x64 或 Windows x64 上从 CloakBrowser 官方 GitHub release 安装经过 checksum 固定的版本。这些 catalog 路径不代表已在每类真实 host 上完成 provider 验收；Tokenless 不会捆绑或再分发 CloakBrowser。
 
@@ -89,6 +96,7 @@ Native mode 目前只支持 headed。停止或重启 Tokenless daemon 只会断�
 - 上传文件，并使用已验证的 model、reasoning 和 provider-specific controls。
 - 保留稳定的 provider tab、task continuity 和受支持的 native Project。
 - 在当前 visible-browser mode 中，browser state 和 credential 留在你的 Chrome；job history 与 token 节省估算保留在本机。
+- 在显式 direct mode 中，只可从用户显式选择的 auth source 获取所选 provider 必需的 session value；它们绝不会返回给 agent 或 UI client、写入日志，或发送给无关服务。
 
 ## 可选的 Codex 集成
 

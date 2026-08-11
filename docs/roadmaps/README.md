@@ -6,6 +6,15 @@ This directory contains long-horizon product and engineering roadmaps. It is sep
 
 Roadmaps describe intended outcomes, sequencing, evidence, and acceptance criteria. They are not release promises, fixed dates, or compatibility guarantees. A capability becomes supported only after the implementation and real-boundary verification required by the relevant roadmap are complete.
 
+## Two Parallel P0 Product Lines
+
+| Product line | Owning roadmaps | Outcome |
+| --- | --- | --- |
+| **Web Provider / visible-browser automation** | [Real Provider Browser E2E and Native Projects](P0-real-provider-browser-e2e-and-native-projects.md) and [Provider Expansion and Parity](P0-provider-expansion.md) | Operate verified capabilities on real provider websites in the user-selected visible browser. |
+| **Web AI → API / direct provider protocol** | [Web AI → API: Provider Direct Protocol](P0-direct-provider-protocol.md) | Expose real provider Web protocols through the existing authenticated local API and OpenAI-compatible proxy, using gpt4free's provider surface as the parity baseline without claiming completed parity. |
+
+The two lines are peers. Visible-browser support does not imply direct-protocol support, and a direct capability is exposed to the API only after its own real-endpoint proof.
+
 ## Lifecycle and Directory Structure
 
 The roadmap's directory is the source of truth for its lifecycle:
@@ -36,10 +45,10 @@ Every roadmap filename must begin with its product priority (`P0-`, `P1-`, `P2-`
 
 | Roadmap | Outcome | Current priority |
 | --- | --- | --- |
+| [Real Provider Browser E2E and Native Projects](P0-real-provider-browser-e2e-and-native-projects.md) | Advance the Web Provider line by proving every advertised visible capability against real provider websites and adding real Claude and Grok native Project creation, reuse, and continuation. | P0 |
+| [Provider Expansion and Parity](P0-provider-expansion.md) | Advance the Web Provider line with high-value AI websites and an evidence-backed visible capability catalog and routing matrix. | P0 |
+| [Web AI → API: Provider Direct Protocol](P0-direct-provider-protocol.md) | Advance the Web AI → API line through the existing authenticated local API and OpenAI-compatible proxy; repair the experimental ChatGPT new-text PoC, define auth sources, add a minimal pinned gpt4free gap adapter, then deliver its parity matrix capability by capability. | P0 |
 | [FeatureBench Agent Runtime Evaluation](P0-featurebench-agent-runtime-evaluation.md) | Run Tokenless as a FeatureBench scaffold across the pinned 200-task full split, using real provider turns, container tools, patches, and the official evaluator. | P0 |
-| [Provider Direct Protocol and Browser Session Bridge](P0-direct-provider-protocol.md) | Select a high-fidelity browser session and impersonating transport combination, then add explicit direct-provider protocol capabilities against real endpoints. | P0 |
-| [Real Provider Browser E2E and Native Projects](P0-real-provider-browser-e2e-and-native-projects.md) | Prove every advertised visible capability against real provider websites and add real Claude and Grok native Project creation, reuse, and continuation. | P0 |
-| [Provider Expansion and Parity](P0-provider-expansion.md) | Add high-value AI web providers and maintain an evidence-backed capability catalog and routing matrix across them. | P0 |
 | [Context Delivery and Workspace Alignment](P0-context-delivery-and-workspace-alignment.md) | Carry authorized task, repository, instruction, and file context into the exact provider Project or conversation, including a new chat. | P0 |
 | [Web AI Interaction Protocol](P0-web-ai-interaction-protocol.md) | Define the versioned, provider-neutral turn interface through which the Web Agent Harness drives durable visible-provider work without importing browser or daemon internals. | P0 |
 | [Web Agent Harness](P0-web-agent-harness.md) | Own Agent adapters and context persistence, then build a ChatGPT-first file-based web Harness with a compiled System Prompt Bundle, Skill registry, validated model output, complete action batches, consolidated user input, rooted filesystem work, and resumable MCP tool execution. | P0 |
@@ -51,7 +60,7 @@ Every roadmap filename must begin with its product priority (`P0-`, `P1-`, `P2-`
 | [Optional Output Savings Measurement](P1-optional-output-savings-measurement.md) | Attribute versioned estimates of visible assistant output to durable jobs through a default-on, opt-out, lazily downloaded, low-duty-cycle local tokenizer. | P1 |
 | [Token Savings Real-Project Test Matrix](P1-token-savings-evidence-across-adoption-paths.md) | Run one reviewed real-project prompt across all enabled providers and three adoption paths, then extend the same evidence into Harness context, System Prompt, Skill, Bash, MCP, and multi-turn behavior. | P1 |
 
-Priority describes product importance, not a promise that all work proceeds serially.
+The two product-line owners are listed first. Priority describes product importance, not a promise that all work proceeds serially.
 
 ## Backlog and Archive
 
@@ -64,7 +73,7 @@ Priority describes product importance, not a promise that all work proceeds seri
 flowchart LR
   Caller["Trusted local caller<br/>HTTP create + polling"]
   UI["Local web control plane<br/>profiles + providers + jobs"]
-  API["Local daemon API<br/>auth + schemas + job reads"]
+  API["Authenticated local API + proxy<br/>OpenAI-shaped requests + job reads"]
   Session["Agent session binding<br/>session tree + thread + working directory"]
   Codex["Codex guided delegation<br/>AGENTS + hooks + App Server enrichment"]
   Scheduler["Durable scheduler<br/>identity + lanes + backpressure"]
@@ -74,7 +83,10 @@ flowchart LR
   Tools["Tool runtime<br/>batched filesystem + MCP execution"]
   Graph["Project knowledge graph<br/>rules + architecture + symbols"]
   Browser["Browser connection<br/>native Chrome or Brave + explicit Cloak"]
-  Provider["Provider adapters<br/>visible capabilities"]
+  Provider["Web Provider adapters<br/>visible capabilities"]
+  Auth["Explicit direct auth source<br/>ephemeral or user-persisted"]
+  Direct["Web AI → API adapters<br/>Node first + pinned Python gaps"]
+  Endpoint["Real provider Web endpoint"]
   Workspace["Provider workspace mirror<br/>Project or conversation"]
   Task["Web-agent task<br/>exact session and project context"]
 
@@ -96,12 +108,20 @@ flowchart LR
   Context --> Provider
   Browser --> Provider
   Provider --> Scheduler
+  Scheduler --> Direct
+  Auth --> Direct
+  Direct --> Endpoint
   Scheduler --> Workspace
   Graph --> Workspace
   Workspace --> Task
 ```
 
-The shared contracts should be built before provider-specific shortcuts:
+The two product lines can proceed in parallel; their first tangible slices are:
+
+1. For Web Provider, keep visible-browser automation on the real provider evidence path and expand only verified capabilities.
+2. For Web AI → API, repair the real ChatGPT same-origin PoC and exact-marker/secret-leak E2E, define explicit auth sources and lifetimes, add only the minimal pinned gpt4free Python gap adapter, then expose verified direct capabilities through the existing authenticated local API and OpenAI-compatible proxy.
+
+Shared substrate and later product work follow:
 
 1. Use the completed typed provider registry, `BaseProvider` execution skeleton, and provider-owned capability classes documented in the archived [Provider Architecture and Registry](archived/P0-provider-architecture-and-registry.md) roadmap.
 2. Connect the user-selected native Chrome or Brave browser through its browser-managed CDP endpoint; keep Cloak as an explicit Anti-Detect path.
@@ -118,7 +138,7 @@ The shared contracts should be built before provider-specific shortcuts:
 
 ## Shared Product Principles
 
-- **Explicit provider execution modes:** keep visible-browser automation and direct provider web-protocol access as separate, user-selected modes. A direct mode may locally use the selected profile's required provider session values; neither mode exposes credentials to callers, web models, the control-plane frontend, logs, or telemetry.
+- **Explicit provider execution modes:** keep visible-browser automation and direct provider web-protocol access as separate, user-selected modes. Direct mode may locally use only the selected provider and explicitly selected auth source; a user may explicitly import/save HAR, cookies, or tokens with `user-persisted` lifetime, while all other sources remain ephemeral. Neither mode exposes credentials to callers, web models, the control-plane frontend, stdout/stderr, jobs, checkpoints, logs, or telemetry.
 - **Harness-owned agency:** provider integrations supply verified model turns; Tokenless owns instruction precedence, tool authorization, execution, durable looping, and termination.
 - **Registry-driven Skill selection:** upstream Agent preselections are a fast path, while the uploaded System Prompt Bundle exposes every valid global Skill's bounded metadata so the web model can request additional Skills by name on any turn.
 - **Hard bootstrap, soft Skill bodies:** every Harness route requires `conversation.chat` and `file.upload`, and the System Prompt Bundle must arrive before the first task Prompt; individual `SKILL.md` resolution or upload failures are recorded and omitted without terminating the bootstrapped chat.
