@@ -15,6 +15,10 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
 
+import { getCodeBenchmarkTask, getVendoredCodeBenchmarkPrompt } from '../../test/provider-prompts/code/collection.mjs'
+import { evaluateCodeBenchmarkResponse } from '../../test/provider-prompts/code/evaluator.mjs'
+import { materializeCodeBenchmarkTask } from '../../test/provider-prompts/code/materialize.mjs'
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const artifactRoot = path.join(root, 'test-results', 'cloakbrowser-spike')
 const runtimeCache = path.join(artifactRoot, 'runtime-cache')
@@ -26,6 +30,8 @@ const wrapperVersion = '0.5.3'
 const observeMs = parseDurationArg(process.argv.slice(2), '--observe-ms=')
 const googleObserveMs = parseDurationArg(process.argv.slice(2), '--observe-google-ms=')
 const providers = Object.freeze(['chatgpt', 'claude', 'gemini', 'grok', 'qwen', 'deepseek'])
+const providerBenchmarkTaskId = 'bigcodebench:v0.1.4:4'
+let benchmarkPreparation
 
 const legacyBrowserVersion = '145.0.7632.109.2'
 const supportedLegacyPlatforms = new Set([
@@ -243,15 +249,17 @@ async function runProviderAction(cliEntry, browserPath, provider, action, extraA
 }
 
 async function runProviderConversation(cliEntry, browserPath, provider) {
-  const marker = `TOKENLESS_CLOAK_${provider.toUpperCase()}_E2E_${Date.now()}`
-  const taskId = `cloak-${provider}-e2e-${Date.now()}`
+  const benchmark = getCodeBenchmarkTask(providerBenchmarkTaskId)
+  await (benchmarkPreparation ??= materializeCodeBenchmarkTask(benchmark.id))
+  const prompt = getVendoredCodeBenchmarkPrompt(benchmark.id)
+  const taskId = `${benchmark.id}:${provider}`
   const command = await run(process.execPath, [
     cliEntry,
     'run',
     '--provider', provider,
     '--profile', profileSlug,
     '--task-id', taskId,
-    '--prompt', `Reply with exactly ${marker} and no other text.`,
+    '--prompt', prompt,
     '--home', tokenlessHome,
     '--browser-visibility', 'headed',
     '--timeout-ms', '300000',
@@ -269,7 +277,7 @@ async function runProviderConversation(cliEntry, browserPath, provider) {
   if (!payload) {
     return {
       taskId,
-      marker,
+      benchmarkTaskId: benchmark.id,
       exitCode: command.code,
       status: 'failed',
       succeeded: false,
@@ -279,7 +287,7 @@ async function runProviderConversation(cliEntry, browserPath, provider) {
   if (payload.status !== 'succeeded' || typeof payload.jobId !== 'string') {
     return {
       taskId,
-      marker,
+      benchmarkTaskId: benchmark.id,
       jobId: payload.jobId ?? null,
       exitCode: command.code,
       status: payload.status ?? 'failed',
@@ -290,7 +298,17 @@ async function runProviderConversation(cliEntry, browserPath, provider) {
   }
 
   const response = responseResult(payload, 'response.read')
-  const responseMatched = typeof response?.text === 'string' && response.text.includes(marker)
+  let evaluation
+  try {
+    evaluation = typeof response?.text === 'string'
+      ? await evaluateCodeBenchmarkResponse(benchmark.id, response.text)
+      : { passed: false, detail: 'missing_response_text' }
+  } catch (error) {
+    evaluation = {
+      passed: false,
+      detail: error instanceof Error ? error.message : String(error),
+    }
+  }
   const durableCommand = await run(process.execPath, [
     cliEntry,
     'state',
@@ -309,12 +327,12 @@ async function runProviderConversation(cliEntry, browserPath, provider) {
   const durablePayload = parseOptionalJsonOutput(durableCommand.stdout)
   return {
     taskId,
-    marker,
+    benchmarkTaskId: benchmark.id,
     jobId: payload.jobId,
     exitCode: command.code,
     status: payload.status,
-    succeeded: responseMatched && durablePayload?.latest?.status === 'succeeded',
-    responseMatched,
+    succeeded: evaluation.passed === true && durablePayload?.latest?.status === 'succeeded',
+    evaluation,
     durableStatus: durablePayload?.latest?.status ?? null,
   }
 }

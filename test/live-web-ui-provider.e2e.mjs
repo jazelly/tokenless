@@ -8,6 +8,7 @@ import { promisify } from 'node:util'
 
 import { createLiveBrowserInspectionSession } from './helpers/live-browser-observer.mjs'
 import { resolveConfiguredBrowserTarget } from './helpers/configured-browser-profile.mjs'
+import { providerCodeSmokeCase } from './helpers/code-benchmark-provider-case.mjs'
 
 const execFileAsync = promisify(execFile)
 const cliEntry = path.resolve('packages/cli/dist/src/tokenless.mjs')
@@ -34,13 +35,14 @@ test(`Web UI displays one completed real-provider job from ${profile}`, { timeou
     profileSlug: profile,
   })
 
-  const marker = `TOKENLESS_WEB_UI_${new Date().toISOString().replaceAll(/[^0-9]/g, '').slice(0, 14)}_${randomUUID().slice(0, 8)}`
-  const taskId = `web-ui-provider-${provider}-${randomUUID()}`
+  const benchmark = providerCodeSmokeCase()
+  await benchmark.prepare()
+  const taskId = `benchmark:${benchmark.task.id}:${provider}:${randomUUID()}`
   runningJob = await inspection.startCli([
     'run',
     '--provider', provider,
     '--task-id', taskId,
-    '--prompt', `Reply with this exact marker: ${marker}`,
+    '--prompt', benchmark.prompt,
     '--browser-visibility', 'headed',
     '--timeout-ms', '300000',
   ])
@@ -48,6 +50,9 @@ test(`Web UI displays one completed real-provider job from ${profile}`, { timeou
   assert.equal(run.payload.ok, true)
   assert.equal(run.payload.status, 'succeeded', `real ${provider} job must complete successfully`)
   assert.equal(typeof run.payload.jobId, 'string')
+  const response = responseResult(run.payload?.result?.result, 'response.read')
+  assert.equal(typeof response?.text, 'string')
+  assert.equal((await benchmark.evaluate(response.text)).passed, true)
 
   const dashboard = await cli([
     'dashboard',
@@ -81,7 +86,7 @@ test(`Web UI displays one completed real-provider job from ${profile}`, { timeou
       await row.click()
       const detail = page.getByTestId('job-detail')
       await detail.waitFor()
-      assert.match(await detail.textContent(), new RegExp(marker), matrixCase.id)
+      assert.match(await detail.textContent(), /Count the occurrence of each integer/, matrixCase.id)
       assert.equal(await hasDocumentOverflow(page), false, matrixCase.id)
   }
   assert.deepEqual(consoleFailures, [])
@@ -89,6 +94,12 @@ test(`Web UI displays one completed real-provider job from ${profile}`, { timeou
   await runningJob.close()
   runningJob = undefined
 })
+
+function responseResult(result, action) {
+  const responses = result?.responses
+  if (!Array.isArray(responses)) return null
+  return [...responses].reverse().find((response) => response?.ok === true && response.action === action)?.result ?? null
+}
 
 async function openJobs(page) {
   const desktop = page.locator('.rail [data-nav="jobs"]')

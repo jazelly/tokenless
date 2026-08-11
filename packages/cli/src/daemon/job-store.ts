@@ -2049,6 +2049,7 @@ export class JobStore {
   }
 
   private initialize() {
+    this.exec('PRAGMA journal_mode = DELETE;')
     this.exec('PRAGMA foreign_keys = ON;')
     this.createBaseTables()
     this.ensureWebAiStagedAttachmentMultiplicity()

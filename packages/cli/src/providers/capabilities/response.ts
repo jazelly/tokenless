@@ -102,7 +102,19 @@ export async function readDomResponse(
     )
   }
   const response = await answer.evaluate((element) => {
-    const text = element instanceof HTMLElement ? element.innerText : ''
+    const text = (() => {
+      if (!(element instanceof HTMLElement)) return ''
+      const clone = element.cloneNode(true) as HTMLElement
+      for (const pre of clone.querySelectorAll('pre')) {
+        const code = pre.querySelector('code')
+        const source = (code?.textContent ?? pre.textContent ?? '').replace(/\r\n?/g, '\n').trim()
+        const language = /(?:^|\s)language-([\w-]+)/u.exec(code?.className ?? '')?.[1] ?? ''
+        const replacement = document.createElement('div')
+        replacement.textContent = `\n\`\`\`${language}\n${source}\n\`\`\`\n`
+        pre.replaceWith(replacement)
+      }
+      return clone.innerText
+    })()
     try {
       const tags = new Set<ResponseDecisionElement['tag']>(['article', 'blockquote', 'button', 'code', 'div', 'element', 'li', 'main', 'ol', 'p', 'pre', 'section', 'span', 'ul'])
       const roles = new Set<NonNullable<ResponseDecisionElement['role']>>(['button', 'textbox', 'menuitem', 'option', 'combobox', 'listbox'])
@@ -196,7 +208,11 @@ function isReadyResponseObservation(
 }
 
 function normalizeVisibleText(text: string) {
-  return text.replace(/\s+/g, ' ').trim()
+  return text
+    .replace(/\r\n?/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
 }
 
 function boundVisibleText(text: string) {

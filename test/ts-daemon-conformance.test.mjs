@@ -53,6 +53,39 @@ test('TS daemon embeds the managed Playwright scheduler without idle browser lau
   }
 })
 
+test('JobStore normalizes a legacy WAL database for direct read compatibility', {
+  timeout: 60_000,
+}, async () => {
+  requireBuiltArtifacts()
+  const homeDir = tempHome('tokenless-legacy-wal-')
+  const databasePath = path.join(homeDir, 'tokenless.sqlite3')
+  const legacyDatabase = new DatabaseSync(databasePath)
+  try {
+    assert.equal(String(legacyDatabase.prepare('PRAGMA journal_mode = WAL').get().journal_mode).toLowerCase(), 'wal')
+  } finally {
+    legacyDatabase.close()
+  }
+
+  const moduleUrl = pathToFileURL(path.join(cliDir, 'dist/src/daemon/job-store.js')).href + '?test=' + randomUUID()
+  const { JobStore } = await import(moduleUrl)
+  let store
+  try {
+    store = await JobStore.open(homeDir)
+    store.close()
+    store = undefined
+
+    const readOnlyDatabase = new DatabaseSync(databasePath, { readOnly: true })
+    try {
+      assert.equal(String(readOnlyDatabase.prepare('PRAGMA journal_mode').get().journal_mode).toLowerCase(), 'delete')
+    } finally {
+      readOnlyDatabase.close()
+    }
+    assert.equal(fs.existsSync(databasePath + '-wal'), false)
+  } finally {
+    store?.close()
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
 test('TS daemon rejects unsupported Playwright providers', {
   timeout: 60_000,
 }, async () => {

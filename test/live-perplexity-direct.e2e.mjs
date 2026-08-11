@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { randomUUID } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -7,6 +6,7 @@ import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 import { resolveConfiguredBrowserTarget } from './helpers/configured-browser-profile.mjs'
+import { providerCodeSmokeCase } from './helpers/code-benchmark-provider-case.mjs'
 import { browserRuntimeStatus } from '../packages/cli/dist/src/index.js'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -16,8 +16,9 @@ assert.equal(gate, 'real-perplexity-direct', 'TOKENLESS_LIVE_DIRECT_E2E_GATE mus
 
 const target = await resolveConfiguredBrowserTarget()
 
-test('built CLI completes one real Perplexity direct text chat', { timeout: 600_000 }, async () => {
-  const marker = `TOKENLESS_DIRECT_${randomUUID().replaceAll('-', '')}`
+test('built CLI completes and evaluates one real Perplexity direct code benchmark', { timeout: 600_000 }, async () => {
+  const benchmark = providerCodeSmokeCase()
+  await benchmark.prepare()
   const completed = spawnSync(process.execPath, [
     cliEntry,
     'run',
@@ -25,7 +26,7 @@ test('built CLI completes one real Perplexity direct text chat', { timeout: 600_
     '--profile', target.profile.slug,
     '--provider', 'perplexity',
     '--execution-mode', 'direct',
-    '--prompt', `Reply with exactly ${marker} and no other text.`,
+    '--prompt', benchmark.prompt,
     '--json',
   ], {
     cwd: root,
@@ -33,7 +34,7 @@ test('built CLI completes one real Perplexity direct text chat', { timeout: 600_
     timeout: 540_000,
     maxBuffer: 2 * 1024 * 1024,
   })
-  assert.equal(completed.status, 0, 'The built direct Perplexity CLI request must succeed.')
+  assert.equal(completed.status, 0, `The built direct Perplexity CLI request must succeed.\n${completed.stderr}\n${completed.stdout}`)
 
   let output
   try {
@@ -50,6 +51,7 @@ test('built CLI completes one real Perplexity direct text chat', { timeout: 600_
   assert.equal(typeof read?.result?.text, 'string')
   assert.ok(read.result.text.length > 0, 'The direct Perplexity text response must be non-empty.')
   assert.deepEqual(read?.result?.citations, [])
+  assert.equal((await benchmark.evaluate(read.result.text)).passed, true)
 
   const [runtime, profileDirectory] = await Promise.all([
     browserRuntimeStatus({

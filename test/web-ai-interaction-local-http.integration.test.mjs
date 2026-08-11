@@ -4,16 +4,16 @@ import { DatabaseSync } from 'node:sqlite'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import Ajv2020 from 'ajv/dist/2020.js'
 import addFormats from 'ajv-formats'
 import { parseStartTurnRequest, parseTurnState } from 'tokenless-web-ai-interaction-protocol'
 import { LocalHttpError, createLocalHttpClient } from 'tokenless-web-ai-interaction-protocol/local-http'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const daemonServer = path.join(root, 'packages/cli/dist/src/daemon/server.js')
-const daemonStore = path.join(root, 'packages/cli/dist/src/daemon/job-store.js')
-const profileRegistry = path.join(root, 'packages/cli/dist/src/playwright/profiles/registry.js')
+const daemonServer = pathToFileURL(path.join(root, 'packages/cli/dist/src/daemon/server.js')).href
+const daemonStore = pathToFileURL(path.join(root, 'packages/cli/dist/src/daemon/job-store.js')).href
+const profileRegistry = pathToFileURL(path.join(root, 'packages/cli/dist/src/playwright/profiles/registry.js')).href
 const startExample = JSON.parse(fs.readFileSync(path.join(root, 'packages/web-ai-interaction-protocol/examples/v0/start-turn-request.json'), 'utf8'))
 const markerName = '.tokenless-web-ai-v0-stage'
 const maxStageBytes = 1024 * 1024

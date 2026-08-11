@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url'
 
 import { createLiveBrowserInspectionSession } from './helpers/live-browser-observer.mjs'
 import { resolveConfiguredBrowserTarget } from './helpers/configured-browser-profile.mjs'
+import { providerCodeSmokeCase } from './helpers/code-benchmark-provider-case.mjs'
 import {
   knownIssueSkipForDurableBlocker,
   loadLiveProviderCapabilityMatrix,
@@ -1036,7 +1037,7 @@ async function conversationWorkflow({ provider, journey }) {
         '--deepseek-deepthink', 'off',
         '--deepseek-search', 'on',
       ] : []),
-      '--prompt', 'Reply with exactly the secret from my previous message and no other text.',
+      '--prompt', 'Return a JSON object with the secret from my previous message and its exact character count.',
     ])
     const secondText = responseResult(second.payload, 'response.read')?.text ?? ''
     assert.match(secondText, new RegExp(escapeRegExp(contextSecret)))
@@ -1132,41 +1133,18 @@ async function workspaceResponseCitations({ provider, journey }) {
 }
 
 async function workspaceResponseBaseline({ provider, journey }) {
-  if (provider === 'meta') {
-    const run = await journey.run([
-      '--project-name', `Meta defensive browser review ${compactTimestamp(new Date())}`,
-      '--workspace-mode', 'conversation',
-      '--prompt', [
-        'For a defensive engineering review, explain in three to five sentences why matching a TLS fingerprint alone does not prove that a client is a real browser.',
-        'Include at least two other protocol or behavior layers a defender can compare.',
-        'Do not provide bypass instructions.',
-      ].join(' '),
-    ])
-    const text = responseResult(run.payload, 'response.read')?.text ?? ''
-    assert.ok(text.length >= 180, 'Meta must return a substantive terminal response')
-    assert.match(text, /TLS/i)
-    assert.match(text, /HTTP\/?2|headers?|JavaScript|behaviou?r|IP reputation/i)
-    assert.doesNotMatch(text, /(?:sorry|can't|cannot|unable to) help (?:you )?with this request/i)
-    const visibleAnswer = run.page.locator('[data-testid="assistant-message"]:visible').last()
-    assert.equal(await visibleAnswer.count(), 1, 'Meta observer must see the terminal assistant response')
-    assert.match(await visibleAnswer.innerText(), /TLS/i)
-    assertConversationWorkspaceResult(provider, journey.taskId, run)
-    await run.close()
-    return
-  }
   const name = markerFor(provider, 'WORKSPACE_RESPONSE')
-  const responseMarker = markerFor(provider, 'WORKSPACE_RESPONSE_MARKER')
-  const prompt = provider === 'doubao'
-    ? `请只在代码块中原样回复：\`${responseMarker}\``
-    : `Reply with this exact marker: ${responseMarker}`
+  const benchmark = providerCodeSmokeCase()
+  await benchmark.prepare()
   const run = await journey.run([
     '--project-name', name,
     '--workspace-mode', 'conversation',
-    '--prompt', prompt,
+    '--prompt', benchmark.prompt,
   ])
   const response = responseResult(run.payload, 'response.read')
-  assert.match(response?.text ?? '', new RegExp(escapeRegExp(responseMarker)))
-  assert.equal(await pageContains(run.page, responseMarker, 2), true)
+  assert.equal(typeof response?.text, 'string')
+  assert.equal((await benchmark.evaluate(response.text)).passed, true)
+  assert.equal(await pageContains(run.page, 'def task_func', 2), true)
   assertConversationWorkspaceResult(provider, journey.taskId, run)
   await run.close()
 }

@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tokenless.local/schemas/code-benchmark-collection-v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "revision", "collections", "evaluatorImages", "tasks"],
+  "properties": {
+    "$schema": { "const": "./manifest.schema.json" },
+    "schema": { "const": "tokenless.code-benchmark-collection.v1" },
+    "revision": { "type": "string", "format": "date" },
+    "collections": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code-smoke", "code-core", "code-agent"],
+      "properties": {
+        "code-smoke": { "$ref": "#/$defs/collection" },
+        "code-core": { "$ref": "#/$defs/collection" },
+        "code-agent": { "$ref": "#/$defs/collection" }
+      }
+    },
+    "evaluatorImages": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["python", "evalplus"],
+      "properties": {
+        "python": { "type": "string", "pattern": "^[^@\\s]+@sha256:[a-f0-9]{64}$" },
+        "evalplus": { "type": "string", "pattern": "^[^@\\s]+@sha256:[a-f0-9]{64}$" }
+      }
+    },
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/task" }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "collection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "purpose"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "purpose": { "type": "string", "minLength": 1 }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "url", "artifactUrl", "revision", "artifactSha256", "recordSha256",
+        "repositoryLicense", "datasetLicense", "contentLicense", "redistribution", "retrievedAt", "locator"
+      ],
+      "properties": {
+        "url": { "type": "string", "format": "uri", "pattern": "^https://" },
+        "artifactUrl": { "type": "string", "format": "uri", "pattern": "^https://" },
+        "revision": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+        "artifactSha256": { "$ref": "#/$defs/sha256" },
+        "recordSha256": { "$ref": "#/$defs/sha256" },
+        "repositoryLicense": { "type": "string", "minLength": 1 },
+        "datasetLicense": { "type": "string", "minLength": 1 },
+        "contentLicense": { "type": "string", "minLength": 1 },
+        "redistribution": { "enum": ["vendored", "reference_only", "excluded"] },
+        "retrievedAt": { "type": "string", "format": "date" },
+        "locator": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "value"],
+          "properties": {
+            "kind": { "enum": ["jsonl_id", "parquet_row_offset"] },
+            "value": { "anyOf": [{ "type": "string" }, { "type": "integer" }] }
+          }
+        }
+      }
+    },
+    "prompt": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "artifact", "key", "sha256", "variant"],
+          "properties": {
+            "mode": { "const": "vendored" },
+            "artifact": { "const": "prompts.json" },
+            "key": { "type": "string", "minLength": 1 },
+            "sha256": { "$ref": "#/$defs/sha256" },
+            "variant": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "field", "sourceSha256", "variant"],
+          "properties": {
+            "mode": { "const": "reference_only" },
+            "field": { "const": "question_content" },
+            "sourceSha256": { "$ref": "#/$defs/sha256" },
+            "variant": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "value"],
+      "properties": {
+        "kind": { "enum": ["prior_candidate", "evaluator_feedback"] },
+        "value": { "anyOf": [{ "type": "string" }, { "type": "object" }] }
+      }
+    },
+    "evaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "adapter", "artifact", "isolation"],
+      "properties": {
+        "kind": { "enum": ["official_tests", "exact_output", "official_execution"] },
+        "adapter": { "type": "string", "minLength": 1 },
+        "artifact": { "const": "materialized_source_record" },
+        "isolation": { "enum": ["none", "docker"] }
+      }
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "benchmark", "upstreamTaskId", "taskType", "language", "prompt",
+        "source", "inputs", "evaluation", "collections"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "benchmark": { "enum": ["LiveCodeBench", "BigCodeBench-Instruct", "EvalPlus MBPP+", "CRUXEval"] },
+        "upstreamTaskId": { "type": "string", "minLength": 1 },
+        "taskType": { "enum": ["code_generation", "self_repair", "input_prediction", "output_prediction"] },
+        "language": { "const": "python" },
+        "prompt": { "$ref": "#/$defs/prompt" },
+        "source": { "$ref": "#/$defs/source" },
+        "inputs": { "type": "array", "items": { "$ref": "#/$defs/input" } },
+        "evaluation": { "$ref": "#/$defs/evaluation" },
+        "collections": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["code-smoke", "code-core", "code-agent"] }
+        }
+      }
+    }
+  }
+}
