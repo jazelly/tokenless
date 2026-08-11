@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "license": "MIT",
-  "description": "Authenticated local API for visible Web AI automation and explicit direct provider protocols.",
+  "description": "Standalone managed Playwright bridge for visible AI provider sessions.",
   "scripts": {
     "build": "npm run build --workspaces --if-present && npm run build:scripts && npm run build:link",
     "build:link": "node scripts/link-built-cli.mjs",

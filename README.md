@@ -12,8 +12,8 @@
 </p>
 
 <p align="center">
-  <strong>Use the Web AI providers you already have—without provider API keys.</strong><br>
-  Tokenless is building one local interface across visible-browser workflows and explicit direct provider protocols.
+  <strong>Use the AI providers you already have—through the browser, without provider API keys.</strong><br>
+  Tokenless gives agents one local interface for visible AI workflows while reducing agent-side token use.
 </p>
 
 <p align="center">
@@ -25,13 +25,6 @@
 </p>
 
 <p align="center"><sub>Captured from a real local browser session; token totals and job states are actual local dashboard data, not a benchmark.</sub></p>
-
-## Two parallel P0 product lines
-
-| Product line | What it does | Current status |
-| --- | --- | --- |
-| **Web Provider** | Automates visible provider websites in the user-selected browser, including verified controls, uploads, Projects, and responses. | Primary supported path; availability remains capability- and provider-specific. |
-| **Web AI → API** | Exposes real provider Web protocols through Tokenless's authenticated local API and OpenAI-compatible proxy, with `direct` remaining an explicit execution mode. | Active P0 direction. The gpt4free provider surface is the parity baseline, not a claim of completed parity. Current ChatGPT and Perplexity routes are experimental new-text-only proofs of concept. |
 
 ## 13 providers. One local interface.
 
@@ -75,7 +68,7 @@ tokenless setup
 tokenless run --provider chatgpt --prompt "Review this proposal."
 ```
 
-An explicit direct mode exposes experimental new-text-only ChatGPT and Perplexity proofs of concept. These routes are under active repair and real-endpoint verification; do not treat them as supported parity. Attachments, continuation, model controls, Projects, and fallback remain unavailable:
+An explicit direct mode is also available for one new ChatGPT or Perplexity text chat. It bridges the selected provider session in memory and uses a Chrome-impersonating Node.js transport; Perplexity works with guest or signed-in sessions. Attachments, continuation, model controls, Projects, and fallback remain unavailable:
 
 ```bash
 tokenless run --provider chatgpt --execution-mode direct --prompt "Review this proposal." --json
@@ -86,7 +79,7 @@ Setup asks about Anti-Detect mode first. If you decline, choose Google Chrome or
 
 Native mode is headed-only for now. Stopping or restarting the Tokenless daemon disconnects automation but does not close the selected browser.
 
-An opt-in local [API proxy](docs/api-proxy-integration.md) serves OpenAI- and Anthropic-shaped requests through the authenticated local API, so existing clients can reach a provider website by changing only their base URL. It ships off; enable it with `tokenless api-proxy enable`. Direct provider-protocol routes will use this same local boundary as each capability becomes verified; the current PoCs do not imply API parity.
+An opt-in local [API proxy](docs/api-proxy-integration.md) serves OpenAI- and Anthropic-shaped requests from the selected browser profile, so existing clients can reach a provider website by changing only their base URL. It ships off; enable it with `tokenless api-proxy enable`.
 
 Explicit Anti-Detect setup can instead install a checksum-pinned CloakBrowser from its official GitHub release on macOS arm64/x64, Linux arm64/x64, or Windows x64. These catalog paths do not imply real-provider acceptance on every host; Tokenless does not bundle or redistribute CloakBrowser.
 
@@ -96,7 +89,6 @@ Explicit Anti-Detect setup can instead install a checksum-pinned CloakBrowser fr
 - File uploads plus verified model, reasoning, and provider-specific controls.
 - Stable provider tabs, task continuity, and supported native Projects.
 - In the current visible-browser mode, browser state and credentials remain in your Chrome; job history and token-savings estimates remain local.
-- In explicit direct mode, only the selected provider's required session values may be acquired from the explicitly selected auth source; they are never returned to agents or UI clients, logged, or sent to unrelated services.
 
 ## Optional Codex integration
 
