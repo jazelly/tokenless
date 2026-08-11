@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <strong>Use the AI providers you already have—through the browser, without provider API keys.</strong><br>
+  <strong>Use the AI providers you already have—through the browser, without separate provider API keys.</strong><br>
   Tokenless gives agents one local interface for visible AI workflows while reducing agent-side token use.
 </p>
 
@@ -28,7 +28,7 @@
 
 ## 13 providers. One local interface.
 
-Five providers are supported today; eight more are experimental and fail closed when a workflow is not verified.
+Five providers are supported today; eight more are experimental. Only verified workflows are advertised.
 
 <table>
   <tr>
@@ -56,11 +56,7 @@ See the [Capability Matrix](docs/capability-matrix.md) for the verified workflow
 
 ## Start in three commands
 
-Browser features require Node.js 22.13+ and a current Google Chrome or Brave Browser release that exposes its browser-managed remote debugging endpoint. Apple Silicon macOS is the current target, and Windows x64 remains prerelease.
-
-Chrome and Brave are user-supplied browsers: Tokenless does not bundle or download either one. If setup cannot find the selected browser, it still saves configuration, skips provider checks, and ends with instructions for adding an executable path. The first browser action validates that path or retries standard discovery. During setup, CloakBrowser is the only browser runtime Tokenless downloads and prepares.
-
-Before setup, open `chrome://inspect/#remote-debugging` in your everyday Google Chrome or `brave://inspect/#remote-debugging` in Brave, enable remote debugging, and approve the browser's connection prompt. The browser manages the underlying CDP endpoint and Tokenless discovers it automatically, so you do not launch it with `--remote-debugging-port` or configure a fixed port. Tokenless tests capability by connecting; it does not copy your profile or launch another browser.
+Requires Node.js 22.13+. Apple Silicon macOS is the current target; Windows x64 is prerelease. For native mode, use a current Chrome or Brave, enable remote debugging at `chrome://inspect/#remote-debugging` or `brave://inspect/#remote-debugging`, and approve the browser prompt. Setup also offers an [Anti-Detect option](COMMANDS.md#tokenless-setup).
 
 ```bash
 npm install --global tokenless@latest
@@ -68,39 +64,25 @@ tokenless setup
 tokenless run --provider chatgpt --prompt "Review this proposal."
 ```
 
-An explicit direct mode is also available for one new ChatGPT or Perplexity text chat. It bridges the selected provider session in memory and uses a Chrome-impersonating Node.js transport; Perplexity works with guest or signed-in sessions. Attachments, continuation, model controls, Projects, and fallback remain unavailable:
-
-```bash
-tokenless run --provider chatgpt --execution-mode direct --prompt "Review this proposal." --json
-# Or: tokenless run --provider perplexity --execution-mode direct --prompt "Review this proposal." --json
-```
-
-Setup asks about Anti-Detect mode first. If you decline, choose Google Chrome or Brave; Tokenless then creates a logical profile, connects to that running headed browser, checks enabled providers, and opens the local dashboard. Reopen it later with `tokenless dashboard`.
-
-Native mode is headed-only for now. Stopping or restarting the Tokenless daemon disconnects automation but does not close the selected browser.
-
-An opt-in local [API proxy](docs/api-proxy-integration.md) serves OpenAI- and Anthropic-shaped requests from the selected browser profile, so existing clients can reach a provider website by changing only their base URL. It ships off; enable it with `tokenless api-proxy enable`.
-
-Explicit Anti-Detect setup can instead install a checksum-pinned CloakBrowser from its official GitHub release on macOS arm64/x64, Linux arm64/x64, or Windows x64. These catalog paths do not imply real-provider acceptance on every host; Tokenless does not bundle or redistribute CloakBrowser.
+Setup opens the local dashboard. Reopen it anytime with `tokenless dashboard`.
 
 ## What agents get
 
-- Prompts, visible responses, and citations through real provider websites.
-- File uploads plus verified model, reasoning, and provider-specific controls.
-- Stable provider tabs, task continuity, and supported native Projects.
-- In the current visible-browser mode, browser state and credentials remain in your Chrome; job history and token-savings estimates remain local.
+- Send prompts and read visible responses through real provider websites.
+- Use uploads, citations, and provider controls where the selected provider supports them.
+- Stable provider tabs and continuity for supported tasks.
+- Provider sign-in stays in the selected browser profile; job history and token-savings estimates remain local.
+- An optional [local API proxy](docs/api-proxy-integration.md) for OpenAI- and Anthropic-shaped clients.
 
 ## Optional Codex integration
 
-Install delegation guidance and exact invocation continuity without wrapping or replacing Codex:
+Install the optional Codex integration:
 
 ```bash
 tokenless setup --install-codex
-# Or install it separately after setup:
-tokenless agents install codex
 ```
 
-Setup never installs the integration by default; `--codex-home <dir>` is available only with `--install-codex`. Restart Codex, open `/hooks`, and trust the Tokenless hook definition.
+Restart Codex, open `/hooks`, and trust Tokenless.
 
 ## Go deeper
 
@@ -108,7 +90,6 @@ Setup never installs the integration by default; `--codex-home <dir>` is availab
 - [API Proxy Integration](docs/api-proxy-integration.md)
 - [Capability Matrix](docs/capability-matrix.md)
 - [Privacy boundaries](PRIVACY.md)
-- [Architecture](docs/architecture.md)
 - [Documentation index](docs/README.md)
 
 Tokenless is in early access: it reduces agent-side token use, but does not eliminate token use or bypass provider account requirements.

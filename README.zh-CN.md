@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <strong>通过浏览器使用你已有的 AI provider，无需 provider API Key。</strong><br>
+  <strong>通过浏览器使用你已有的 AI provider，无需单独购买 provider API Key。</strong><br>
   Tokenless 为 Agent 提供统一的本地可见 AI 工作流接口，同时减少 Agent 侧 token 消耗。
 </p>
 
@@ -28,7 +28,7 @@
 
 ## 13 家 provider，一个本地接口
 
-目前有 5 家 provider 受支持，另外 8 家处于实验阶段；未经验证的工作流会明确停止。
+目前有 5 家 provider 受支持，另外 8 家处于实验阶段；只展示经过验证的工作流。
 
 <table>
   <tr>
@@ -56,11 +56,7 @@
 
 ## 三条命令开始使用
 
-Browser 功能需要 Node.js 22.13+，以及能提供浏览器自主管理 remote debugging endpoint 的当前版 Google Chrome 或 Brave Browser；当前目标平台是 Apple Silicon macOS，Windows x64 仍处于 prerelease 阶段。
-
-Chrome 与 Brave 必须由用户自行提供；Tokenless 不会 bundle 或下载它们。Setup 找不到所选浏览器时仍会保存配置、跳过 provider 检查，并在结束时提示如何添加 executable path。首次 browser action 会验证该 path，或再次尝试标准 discovery。在 setup 过程中，CloakBrowser 是 Tokenless 唯一会下载并准备的 browser runtime。
-
-Setup 前，请在日常使用的 Google Chrome 中打开 `chrome://inspect/#remote-debugging`，或在 Brave 中打开 `brave://inspect/#remote-debugging`，启用 remote debugging，并确认浏览器的连接提示。底层 CDP endpoint 由浏览器管理、由 Tokenless 自动发现，因此不需要用 `--remote-debugging-port` 启动浏览器，也不需要配置固定端口。Tokenless 直接以连接是否成功判断能力，不复制 profile，也不启动另一份浏览器。
+需要 Node.js 22.13+。当前目标平台是 Apple Silicon macOS，Windows x64 仍处于 prerelease 阶段。Native mode 使用当前版本的 Chrome 或 Brave；请在 `chrome://inspect/#remote-debugging` 或 `brave://inspect/#remote-debugging` 启用 remote debugging，并确认浏览器提示。Setup 也提供 [Anti-Detect 选项](COMMANDS.zh-CN.md#tokenless-setup)。
 
 ```bash
 npm install --global tokenless@latest
@@ -68,39 +64,25 @@ tokenless setup
 tokenless run --provider chatgpt --prompt "Review this proposal."
 ```
 
-现在也可显式选择 direct mode，完成一次新的 ChatGPT 或 Perplexity 文本聊天。它只在内存中桥接所选 provider session，并使用模拟 Chrome 指纹的 Node.js transport；Perplexity 支持 guest 或 signed-in session。附件、续聊、model control、Project 和 fallback 暂不支持：
-
-```bash
-tokenless run --provider chatgpt --execution-mode direct --prompt "Review this proposal." --json
-# 或：tokenless run --provider perplexity --execution-mode direct --prompt "Review this proposal." --json
-```
-
-Setup 会先询问是否使用 Anti-Detect mode。若选择不使用，再选择 Google Chrome 或 Brave；Tokenless 随后创建逻辑 profile、连接正在运行的 headed 浏览器、检查已启用的 provider 并打开本地控制台。之后可用 `tokenless dashboard` 再次打开。
-
-Native mode 目前只支持 headed。停止或重启 Tokenless daemon 只会断开自动化连接，不会关闭所选浏览器。
-
-可选开启的本地 [API proxy](docs/api-proxy-integration.zh-CN.md) 会用选定的浏览器 profile 处理 OpenAI 与 Anthropic 形态的请求，既有客户端只需改动 base URL 即可访问 provider 网站。它默认关闭，用 `tokenless api-proxy enable` 开启。
-
-显式启用 Anti-Detect setup 时，也可以在 macOS arm64/x64、Linux arm64/x64 或 Windows x64 上从 CloakBrowser 官方 GitHub release 安装经过 checksum 固定的版本。这些 catalog 路径不代表已在每类真实 host 上完成 provider 验收；Tokenless 不会捆绑或再分发 CloakBrowser。
+Setup 会自动打开本地控制台，之后可随时用 `tokenless dashboard` 再次打开。
 
 ## Agent 可以获得什么
 
-- 通过真实 provider 网站发送 prompt，并读取可见 response 和 citation。
-- 上传文件，并使用已验证的 model、reasoning 和 provider-specific controls。
-- 保留稳定的 provider tab、task continuity 和受支持的 native Project。
-- 在当前 visible-browser mode 中，browser state 和 credential 留在你的 Chrome；job history 与 token 节省估算保留在本机。
+- 通过真实 provider 网站发送 prompt，并读取可见 response。
+- 在所选 provider 支持时使用 upload、citation 和 provider control。
+- 保留稳定的 provider tab，并为受支持的任务维持连续性。
+- Provider 登录保留在所选 browser profile 中；job history 与 token 节省估算留在本机。
+- 为 OpenAI 与 Anthropic 形态的 client 提供可选的 [本地 API proxy](docs/api-proxy-integration.zh-CN.md)。
 
 ## 可选的 Codex 集成
 
-安装委派指引和精确调用连续性，不会包装或替换 Codex：
+安装可选的 Codex integration：
 
 ```bash
 tokenless setup --install-codex
-# 也可以在 setup 后单独安装：
-tokenless agents install codex
 ```
 
-Setup 默认不会安装该集成；`--codex-home <dir>` 只能与 `--install-codex` 一起使用。重启 Codex，打开 `/hooks`，然后信任 Tokenless hook definition。
+重启 Codex，打开 `/hooks`，然后信任 Tokenless。
 
 ## 深入了解
 
@@ -108,7 +90,6 @@ Setup 默认不会安装该集成；`--codex-home <dir>` 只能与 `--install-co
 - [API Proxy 接入指南](docs/api-proxy-integration.zh-CN.md)
 - [Capability Matrix](docs/capability-matrix.zh-CN.md)
 - [隐私边界](PRIVACY.zh-CN.md)
-- [架构](docs/architecture.md)
 - [文档索引](docs/README.zh-CN.md)
 
 Tokenless 仍处于内测阶段：它会减少 Agent 侧 token 消耗，但不会完全消除 token 消耗，也不会绕过 provider 的账号要求。
