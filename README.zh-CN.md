@@ -79,7 +79,7 @@ Setup 会先询问是否使用 Anti-Detect mode。若选择不使用，再选择
 
 Native mode 目前只支持 headed。停止或重启 Tokenless daemon 只会断开自动化连接，不会关闭所选浏览器。
 
-Arena 还提供一个小型本地 [OpenAI-compatible API](docs/openai-compatible-api.zh-CN.md)，用于 non-streaming `arena:max` 文本聊天。它使用选定的浏览器 profile，并为每个请求新建一个 Direct conversation。
+可选开启的本地 [API proxy](docs/api-proxy-integration.zh-CN.md) 会用选定的浏览器 profile 处理 OpenAI 与 Anthropic 形态的请求，既有客户端只需改动 base URL 即可访问 provider 网站。它默认关闭，用 `tokenless api-proxy enable` 开启。
 
 显式启用 Anti-Detect setup 时，也可以在 macOS arm64/x64、Linux arm64/x64 或 Windows x64 上从 CloakBrowser 官方 GitHub release 安装经过 checksum 固定的版本。这些 catalog 路径不代表已在每类真实 host 上完成 provider 验收；Tokenless 不会捆绑或再分发 CloakBrowser。
 
@@ -105,7 +105,7 @@ Setup 默认不会安装该集成；`--codex-home <dir>` 只能与 `--install-co
 ## 深入了解
 
 - [CLI 命令](COMMANDS.zh-CN.md)
-- [OpenAI-compatible Arena Chat](docs/openai-compatible-api.zh-CN.md)
+- [API Proxy 接入指南](docs/api-proxy-integration.zh-CN.md)
 - [Capability Matrix](docs/capability-matrix.zh-CN.md)
 - [隐私边界](PRIVACY.zh-CN.md)
 - [架构](docs/architecture.md)

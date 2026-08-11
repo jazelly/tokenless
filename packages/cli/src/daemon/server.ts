@@ -33,15 +33,16 @@ import { OutputSavingsProcessor } from '../output-savings/processor.js'
 import { WebAiInteractionV0Adapter } from './web-ai-interaction-v0.js'
 import {
   ApiProxyAdapter,
+  ApiProxyError,
   anthropicMessageBody,
   anthropicStreamFrames,
+  apiProxyDisabled,
   apiProxyErrorBody,
   apiProxyModelList,
   openAiCompletionBody,
   openAiStreamFrames,
   type ApiProxyDialect,
 } from './api-proxy.js'
-import { OpenAiCompatibility, OpenAiCompatibilityError } from './openai-compat.js'
 
 export type DaemonServer = {
   activate(): void
@@ -109,11 +110,10 @@ export async function serveHttp({
     origin,
   })
   const webAi = new WebAiInteractionV0Adapter(store)
-  const openAi = new OpenAiCompatibility(store, runtimeController)
   await webAi.initializeCleanup()
   const apiProxy = new ApiProxyAdapter(store, async () => await runtimeController?.wake())
   server = http.createServer((request, response) => {
-    void handleRequest(store, close, () => active, deactivate, runtimeController, uiServer, webAi, apiProxy, openAi, request, response)
+    void handleRequest(store, close, () => active, deactivate, runtimeController, uiServer, webAi, apiProxy, request, response)
   })
   await new Promise<void>((resolve, reject) => {
     const onError = (error: Error) => {
@@ -180,7 +180,6 @@ async function handleRequest(
   uiServer: TokenlessUiServer,
   webAi: WebAiInteractionV0Adapter,
   apiProxy: ApiProxyAdapter,
-  openAi: OpenAiCompatibility,
   request: IncomingMessage,
   response: ServerResponse
 ) {
@@ -238,28 +237,6 @@ async function handleRequest(
         uiServer.writeError(response, error)
       }
       return
-    }
-
-    if (url.pathname === '/v1/models' || url.pathname === '/v1/chat/completions') {
-      const requestLifetime = openAiRequestLifetime(request, response)
-      try {
-        requireControlAuth(store, request)
-        if (method === 'GET' && url.pathname === '/v1/models') {
-          writeJson(response, 200, await openAi.models())
-          return
-        }
-        if (method === 'POST' && url.pathname === '/v1/chat/completions') {
-          requireOpenAiJsonContentType(request)
-          writeJson(response, 200, await openAi.chatCompletion(await readOpenAiJson(request), requestLifetime.signal))
-          return
-        }
-        throw new OpenAiCompatibilityError(405, 'method_not_allowed', 'Method not allowed.')
-      } catch (error) {
-        writeOpenAiError(response, error)
-        return
-      } finally {
-        requestLifetime.dispose()
-      }
     }
 
     requireControlAuth(store, request)
@@ -578,82 +555,6 @@ function writeWebAiError(response: ServerResponse, error: unknown) {
   })
 }
 
-function writeOpenAiError(response: ServerResponse, error: unknown) {
-  if (response.destroyed) return
-  if (error instanceof OpenAiCompatibilityError) {
-    writeJson(response, error.status, {
-      error: {
-        message: error.message,
-        type: error.status >= 500 ? 'server_error' : 'invalid_request_error',
-        param: error.param,
-        code: error.code,
-      },
-    })
-    return
-  }
-  const daemonError = toDaemonError(error)
-  const status = daemonErrorStatus(daemonError)
-  writeJson(response, status, {
-    error: {
-      message: status >= 500 ? 'The local Tokenless daemon encountered an error.' : daemonError.message,
-      type: daemonError.kind === 'control_auth_missing' || daemonError.kind === 'control_auth_rejected'
-        ? 'authentication_error'
-        : status >= 500 ? 'server_error' : 'invalid_request_error',
-      param: null,
-      code: daemonErrorBody(daemonError).error.code,
-    },
-  })
-}
-
-function openAiRequestLifetime(request: IncomingMessage, response: ServerResponse) {
-  const controller = new AbortController()
-  const abort = () => controller.abort()
-  const requestClosed = () => {
-    if (!request.complete) abort()
-  }
-  const responseClosed = () => {
-    if (!response.writableEnded) abort()
-  }
-  request.once('aborted', abort)
-  request.once('close', requestClosed)
-  response.once('close', responseClosed)
-  if (request.aborted || request.destroyed && !request.complete) abort()
-  return {
-    signal: controller.signal,
-    dispose() {
-      request.off('aborted', abort)
-      request.off('close', requestClosed)
-      response.off('close', responseClosed)
-    },
-  }
-}
-
-function requireOpenAiJsonContentType(request: IncomingMessage) {
-  const header = request.headers['content-type']
-  const value = Array.isArray(header) ? header[0] : header
-  if (value?.split(';', 1)[0]?.trim().toLowerCase() !== 'application/json') {
-    throw new OpenAiCompatibilityError(415, 'unsupported_media_type', 'Content-Type must be application/json.', 'Content-Type')
-  }
-}
-
-async function readOpenAiJson(request: IncomingMessage) {
-  let raw: string
-  try {
-    raw = await readBody(request)
-  } catch (error) {
-    if (error instanceof BodyLimitExceededError) {
-      throw new OpenAiCompatibilityError(413, 'request_too_large', 'Request body exceeds the 2 MiB limit.')
-    }
-    throw error
-  }
-  if (!raw) throw new OpenAiCompatibilityError(400, 'invalid_json', 'Request body must be a JSON object.')
-  try {
-    return JSON.parse(raw) as unknown
-  } catch {
-    throw new OpenAiCompatibilityError(400, 'invalid_json', 'Request body must be a JSON object.')
-  }
-}
-
 function hasManagedPlaywrightProtocol(value: unknown) {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value) && Object.hasOwn(value, 'protocol'))
 }
@@ -742,10 +643,18 @@ type ApiProxyRoute =
   | { kind: 'completion'; dialect: ApiProxyDialect }
   | { kind: 'models' }
 
+/**
+ * The bare `/v1/models` and `/v1/chat/completions` paths let an unmodified
+ * OpenAI SDK work with nothing but a `baseURL` override, so OpenAI is the
+ * default dialect. The prefixed paths stay authoritative and are the only way
+ * to reach Anthropic.
+ */
 function matchApiProxyRoute(method: string, pathname: string): ApiProxyRoute | null {
-  if (method === 'POST' && pathname === '/v1/openai/chat/completions') return { kind: 'completion', dialect: 'openai' }
+  if (method === 'POST' && (pathname === '/v1/openai/chat/completions' || pathname === '/v1/chat/completions')) {
+    return { kind: 'completion', dialect: 'openai' }
+  }
   if (method === 'POST' && pathname === '/v1/anthropic/messages') return { kind: 'completion', dialect: 'anthropic' }
-  if (method === 'GET' && pathname === '/v1/openai/models') return { kind: 'models' }
+  if (method === 'GET' && (pathname === '/v1/openai/models' || pathname === '/v1/models')) return { kind: 'models' }
   return null
 }
 
@@ -755,18 +664,18 @@ async function handleApiProxyRequest(
   request: IncomingMessage,
   response: ServerResponse,
 ) {
-  if (route.kind === 'models') {
-    writeJson(response, 200, apiProxyModelList())
-    return
-  }
-  const dialect = route.dialect
+  const dialect = route.kind === 'models' ? 'openai' : route.dialect
+  const requestLifetime = apiProxyRequestLifetime(request, response)
   let requestedModel = 'unknown'
   try {
-    const body = await readJsonObject(request)
+    if (!await apiProxy.enabled()) throw apiProxyDisabled()
+    if (route.kind === 'models') {
+      writeJson(response, 200, apiProxyModelList())
+      return
+    }
+    const body = await readApiProxyJson(request)
     requestedModel = typeof body.model === 'string' ? body.model : 'unknown'
-    const abort = new AbortController()
-    request.once('aborted', () => abort.abort())
-    const completion = await apiProxy.complete(dialect, body, abort.signal)
+    const completion = await apiProxy.complete(dialect, body, requestLifetime.signal)
     if (body.stream === true) {
       writeApiProxyStream(response, dialect === 'openai'
         ? openAiStreamFrames(completion, requestedModel)
@@ -777,14 +686,80 @@ async function handleApiProxyRequest(
       ? openAiCompletionBody(completion, requestedModel)
       : anthropicMessageBody(completion, requestedModel))
   } catch (error) {
-    const daemonError = toDaemonError(error)
-    const { error: envelope } = daemonErrorBody(daemonError)
-    writeJson(response, daemonErrorStatus(daemonError), apiProxyErrorBody(
-      dialect,
-      typeof envelope.code === 'string' ? envelope.code : 'api_proxy_failed',
-      daemonError.message,
-    ))
+    writeApiProxyError(response, dialect, error)
+  } finally {
+    requestLifetime.dispose()
   }
+}
+
+function writeApiProxyError(response: ServerResponse, dialect: ApiProxyDialect, error: unknown) {
+  if (response.destroyed || response.writableEnded) return
+  if (error instanceof ApiProxyError) {
+    writeJson(response, error.status, apiProxyErrorBody(dialect, error.code, error.message, error.status, error.param))
+    return
+  }
+  const daemonError = toDaemonError(error)
+  const status = daemonErrorStatus(daemonError)
+  const { error: envelope } = daemonErrorBody(daemonError)
+  writeJson(response, status, apiProxyErrorBody(
+    dialect,
+    typeof envelope.code === 'string' ? envelope.code : 'api_proxy_failed',
+    // A 5xx is a local daemon fault, so the caller gets a stable sentence
+    // instead of internal store or filesystem detail.
+    status >= 500 ? 'The local Tokenless daemon encountered an error.' : daemonError.message,
+    status,
+  ))
+}
+
+/**
+ * A browser-paced completion outlives many client timeouts, so the adapter needs
+ * to know the caller has gone away in order to report a disconnect rather than
+ * waiting out the full deadline.
+ */
+function apiProxyRequestLifetime(request: IncomingMessage, response: ServerResponse) {
+  const controller = new AbortController()
+  const abort = () => controller.abort()
+  const requestClosed = () => {
+    if (!request.complete) abort()
+  }
+  const responseClosed = () => {
+    if (!response.writableEnded) abort()
+  }
+  request.once('aborted', abort)
+  request.once('close', requestClosed)
+  response.once('close', responseClosed)
+  if (request.aborted || request.destroyed && !request.complete) abort()
+  return {
+    signal: controller.signal,
+    dispose() {
+      request.off('aborted', abort)
+      request.off('close', requestClosed)
+      response.off('close', responseClosed)
+    },
+  }
+}
+
+async function readApiProxyJson(request: IncomingMessage) {
+  let raw: string
+  try {
+    raw = await readBody(request)
+  } catch (error) {
+    if (error instanceof BodyLimitExceededError) {
+      throw new ApiProxyError(413, 'request_too_large', 'Request body exceeds the 2 MiB limit.')
+    }
+    throw error
+  }
+  if (!raw) throw new ApiProxyError(400, 'invalid_json', 'Request body must be a JSON object.')
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    throw new ApiProxyError(400, 'invalid_json', 'Request body must be a JSON object.')
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new ApiProxyError(400, 'invalid_request_error', 'Request body must be a JSON object.')
+  }
+  return parsed as Record<string, unknown>
 }
 
 function writeApiProxyStream(response: ServerResponse, frames: readonly string[]) {

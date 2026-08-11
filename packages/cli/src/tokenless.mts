@@ -4502,6 +4502,9 @@ async function apiProxyCommand(subcommand: string | undefined, args: CliArgs) {
       endpoints: {
         openai: `${baseUrl}/v1/openai`,
         anthropic: `${baseUrl}/v1/anthropic`,
+        // An unmodified OpenAI client can point at the bare /v1 base, so report
+        // it alongside the prefixed routes rather than leaving callers to guess.
+        openaiDefault: `${baseUrl}/v1`,
       },
       modelNaming: 'tokenless/<provider>',
       profile: profile?.slug ?? null,

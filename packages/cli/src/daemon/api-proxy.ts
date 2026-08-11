@@ -5,8 +5,29 @@ import { createManagedPlaywrightJobRequest, MANAGED_PLAYWRIGHT_JOB_ACTION } from
 import { VISIBLE_ACTIONS, createVisibleActionRequest } from '../playwright/actions.js'
 import { ManagedProfileRegistry } from '../playwright/profiles/registry.js'
 import { getProviderInstanceById, providerRegistry } from '../providers/registry.js'
-import { invalidInput } from './errors.js'
 import type { Job, JobStore } from './job-store.js'
+
+/**
+ * Callers reach this surface with vendor SDKs that branch on the HTTP status, so
+ * a disabled proxy, an unknown model, a browser-paced timeout, and a malformed
+ * body have to be distinguishable. A single 400 for everything would make a
+ * retryable condition look like a caller bug.
+ */
+export class ApiProxyError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+    readonly param: string | null = null,
+  ) {
+    super(message)
+    this.name = 'ApiProxyError'
+  }
+}
+
+function badRequest(message: string, param: string | null = null) {
+  return new ApiProxyError(400, 'invalid_request_error', message, param)
+}
 
 /**
  * Callers point an OpenAI or Anthropic client at the daemon, so the `model`
@@ -61,9 +82,7 @@ export class ApiProxyAdapter {
 
   async complete(dialect: ApiProxyDialect, body: unknown, signal?: AbortSignal): Promise<ApiProxyCompletion> {
     const config = await readTokenlessConfig(this.store.homeDir)
-    if (!config.apiProxy.enabled) {
-      throw invalidInput('api proxy is disabled; enable it with tokenless config --api-proxy enabled')
-    }
+    if (!config.apiProxy.enabled) throw apiProxyDisabled()
     const request = dialect === 'openai' ? normalizeOpenAiRequest(body) : normalizeAnthropicRequest(body)
     // Request-level validation first: an unknown provider is the caller's
     // mistake and must be rejected the same way whether or not this
@@ -71,11 +90,20 @@ export class ApiProxyAdapter {
     assertProviderSupported(request.provider)
     const profile = await this.profiles.resolveProfile()
     if (profile.lifecycle !== 'ready') {
-      throw invalidInput('managed profile is not ready; run tokenless setup before proxying API traffic')
+      throw new ApiProxyError(
+        503,
+        'profile_not_ready',
+        'The managed profile is not ready; run tokenless setup before proxying API traffic.',
+      )
     }
     const enabledProviders = config.profiles[profile.slug]?.enabledProviders ?? []
     if (!enabledProviders.includes(request.provider)) {
-      throw invalidInput(`api proxy provider is not enabled for the managed profile: ${request.provider}`)
+      throw new ApiProxyError(
+        503,
+        'model_not_available',
+        `The managed profile does not have ${request.provider} enabled.`,
+        'model',
+      )
     }
 
     const mode = config.apiProxy.conversationMode
@@ -126,9 +154,15 @@ export class ApiProxyAdapter {
       const job = this.store.getJob(jobId)
       if (isTerminalJobStatus(job.status)) return job
       if (job.status === 'waiting_for_user') throw apiProxyJobFailure(job)
-      if (signal?.aborted) throw invalidInput('api proxy request was aborted by the client')
+      if (signal?.aborted) {
+        throw new ApiProxyError(499, 'client_closed_request', 'The client disconnected before completion.')
+      }
       if (Date.now() >= deadline) {
-        throw invalidInput(`api proxy timed out after ${Math.round(this.timeoutMs / 1000)}s; job ${jobId} is still running`)
+        throw new ApiProxyError(
+          504,
+          'completion_timeout',
+          `The provider did not respond within ${Math.round(this.timeoutMs / 1000)}s; job ${jobId} is still running.`,
+        )
       }
       await delay(JOB_POLL_INTERVAL_MS)
     }
@@ -138,8 +172,16 @@ export class ApiProxyAdapter {
 function assertProviderSupported(provider: string) {
   const instance = getProviderInstanceById(provider)
   if (!instance || instance.descriptor.stage === 'disabled') {
-    throw invalidInput(`api proxy provider is not supported: ${provider}`)
+    throw new ApiProxyError(404, 'model_not_found', `The model '${MODEL_PREFIX}${provider}' does not exist.`, 'model')
   }
+}
+
+export function apiProxyDisabled() {
+  return new ApiProxyError(
+    503,
+    'api_proxy_disabled',
+    'The local API proxy is disabled; enable it with tokenless config --api-proxy enabled.',
+  )
 }
 
 /**
@@ -198,9 +240,9 @@ function roleLabel(role: NormalizedMessage['role']) {
 }
 
 function assertPromptSize(text: string) {
-  if (!text.trim()) throw invalidInput('api proxy request has no prompt content')
+  if (!text.trim()) throw badRequest('api proxy request has no prompt content', 'messages')
   if (Buffer.byteLength(text, 'utf8') > MAX_PROMPT_BYTES) {
-    throw invalidInput('api proxy prompt exceeds the 1 MiB visible-prompt limit')
+    throw badRequest('api proxy prompt exceeds the 1 MiB visible-prompt limit', 'messages')
   }
 }
 
@@ -209,16 +251,18 @@ export function normalizeOpenAiRequest(body: unknown): NormalizedRequest {
   const provider = providerFromModel(record.model)
   const rawMessages = record.messages
   if (!Array.isArray(rawMessages) || rawMessages.length === 0) {
-    throw invalidInput('messages must be a non-empty array')
+    throw badRequest('messages must be a non-empty array', 'messages')
   }
-  if (rawMessages.length > MAX_MESSAGES) throw invalidInput(`messages must contain at most ${MAX_MESSAGES} entries`)
+  if (rawMessages.length > MAX_MESSAGES) {
+    throw badRequest(`messages must contain at most ${MAX_MESSAGES} entries`, 'messages')
+  }
   const messages = rawMessages.map((entry): NormalizedMessage => {
     const message = plainRecord(entry)
     const role = message.role
     // `developer` is the current OpenAI spelling of the system role.
     if (role === 'developer' || role === 'system') return { role: 'system', text: openAiContentText(message.content) }
     if (role === 'user' || role === 'assistant') return { role, text: openAiContentText(message.content) }
-    throw invalidInput(`unsupported message role: ${String(role)}`)
+    throw badRequest(`unsupported message role: ${String(role)}`, 'messages')
   })
   rejectUnsupportedToolFields(record)
   return { provider, messages, stream: record.stream === true, requestedModel: String(record.model) }
@@ -229,9 +273,11 @@ export function normalizeAnthropicRequest(body: unknown): NormalizedRequest {
   const provider = providerFromModel(record.model)
   const rawMessages = record.messages
   if (!Array.isArray(rawMessages) || rawMessages.length === 0) {
-    throw invalidInput('messages must be a non-empty array')
+    throw badRequest('messages must be a non-empty array', 'messages')
   }
-  if (rawMessages.length > MAX_MESSAGES) throw invalidInput(`messages must contain at most ${MAX_MESSAGES} entries`)
+  if (rawMessages.length > MAX_MESSAGES) {
+    throw badRequest(`messages must contain at most ${MAX_MESSAGES} entries`, 'messages')
+  }
   const messages: NormalizedMessage[] = []
   if (record.system !== undefined) {
     messages.push({ role: 'system', text: anthropicContentText(record.system) })
@@ -240,7 +286,7 @@ export function normalizeAnthropicRequest(body: unknown): NormalizedRequest {
     const message = plainRecord(entry)
     const role = message.role
     if (role !== 'user' && role !== 'assistant') {
-      throw invalidInput(`unsupported message role: ${String(role)}`)
+      throw badRequest(`unsupported message role: ${String(role)}`, 'messages')
     }
     messages.push({ role, text: anthropicContentText(message.content) })
   }
@@ -256,19 +302,26 @@ export function normalizeAnthropicRequest(body: unknown): NormalizedRequest {
 function rejectUnsupportedToolFields(record: Record<string, unknown>) {
   for (const field of ['tools', 'tool_choice', 'functions', 'function_call', 'response_format']) {
     if (record[field] !== undefined) {
-      throw invalidInput(`api proxy does not support ${field}; visible provider pages expose no equivalent control`)
+      throw new ApiProxyError(
+        400,
+        'unsupported_parameter',
+        `api proxy does not support ${field}; visible provider pages expose no equivalent control`,
+        field,
+      )
     }
   }
 }
 
 function providerFromModel(value: unknown) {
-  if (typeof value !== 'string' || !value.trim()) throw invalidInput('model must be a non-empty string')
+  if (typeof value !== 'string' || !value.trim()) throw badRequest('model must be a non-empty string', 'model')
   const trimmed = value.trim()
   if (!trimmed.startsWith(MODEL_PREFIX)) {
-    throw invalidInput(`model must be named ${MODEL_PREFIX}<provider>, for example ${MODEL_PREFIX}chatgpt`)
+    throw badRequest(`model must be named ${MODEL_PREFIX}<provider>, for example ${MODEL_PREFIX}chatgpt`, 'model')
   }
   const provider = trimmed.slice(MODEL_PREFIX.length)
-  if (!/^[a-z0-9-]{1,64}$/.test(provider)) throw invalidInput(`model names an invalid provider: ${trimmed}`)
+  if (!/^[a-z0-9-]{1,64}$/.test(provider)) {
+    throw new ApiProxyError(404, 'model_not_found', `The model '${trimmed}' does not exist.`, 'model')
+  }
   return provider
 }
 
@@ -278,13 +331,13 @@ function openAiContentText(content: unknown): string {
     const parts = content.map((part) => {
       const record = plainRecord(part)
       if (record.type !== 'text' || typeof record.text !== 'string') {
-        throw invalidInput('api proxy supports only text content parts')
+        throw badRequest('api proxy supports only text content parts', 'messages')
       }
       return record.text
     })
     return parts.join('\n')
   }
-  throw invalidInput('message content must be a string or an array of text parts')
+  throw badRequest('message content must be a string or an array of text parts', 'messages')
 }
 
 function anthropicContentText(content: unknown): string {
@@ -293,18 +346,18 @@ function anthropicContentText(content: unknown): string {
     const parts = content.map((part) => {
       const record = plainRecord(part)
       if (record.type !== 'text' || typeof record.text !== 'string') {
-        throw invalidInput('api proxy supports only text content blocks')
+        throw badRequest('api proxy supports only text content blocks', 'messages')
       }
       return record.text
     })
     return parts.join('\n')
   }
-  throw invalidInput('message content must be a string or an array of text blocks')
+  throw badRequest('message content must be a string or an array of text blocks', 'messages')
 }
 
 function plainRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw invalidInput('request body must be a JSON object')
+    throw badRequest('request body must be a JSON object')
   }
   return value as Record<string, unknown>
 }
@@ -317,7 +370,7 @@ function apiProxyJobFailure(job: Job) {
   const blocker = describeJson(job.blocker_json)
   const error = describeJson(job.error_json)
   const detail = blocker ?? error ?? `job ended as ${job.status}`
-  return invalidInput(`api proxy job did not produce a visible response: ${detail}`)
+  return new ApiProxyError(502, 'upstream_error', `api proxy job did not produce a visible response: ${detail}`)
 }
 
 function describeJson(value: unknown) {
@@ -453,10 +506,25 @@ function sseEvent(event: string, payload: unknown) {
 }
 
 /** Mirrors each vendor's error envelope so client SDKs surface a usable message. */
-export function apiProxyErrorBody(dialect: ApiProxyDialect, code: string, message: string) {
+export function apiProxyErrorBody(
+  dialect: ApiProxyDialect,
+  code: string,
+  message: string,
+  status = 400,
+  param: string | null = null,
+) {
+  const type = apiProxyErrorType(status)
   return dialect === 'openai'
-    ? { error: { message, type: 'invalid_request_error', param: null, code } }
-    : { type: 'error', error: { type: 'invalid_request_error', message } }
+    ? { error: { message, type, param, code } }
+    : { type: 'error', error: { type, message } }
+}
+
+function apiProxyErrorType(status: number) {
+  if (status === 401 || status === 403) return 'authentication_error'
+  if (status === 404) return 'not_found_error'
+  if (status === 429) return 'rate_limit_error'
+  if (status === 503) return 'overloaded_error'
+  return status >= 500 ? 'api_error' : 'invalid_request_error'
 }
 
 export function apiProxyModelList() {

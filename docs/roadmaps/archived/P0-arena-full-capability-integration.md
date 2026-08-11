@@ -4,6 +4,8 @@ Status: completed | Priority: P0 | Started: 2026-08-10 | Completed: 2026-08-11
 
 Disposition: Completed after all ten acceptance assertions passed through the built CLI, packaged daemon, real Arena website, authenticated local HTTP API, and independent review.
 
+Superseded detail: the Arena-only OpenAI-compatible adapter recorded below (`arena:max` on `GET /v1/models` and `POST /v1/chat/completions`) was later folded into the shared local API proxy, where Arena Direct chat is reached as `tokenless/arena` and those two paths became dialect-neutral aliases. The evidence below is preserved as the record of what was proven at completion; see [API Proxy Integration](../../api-proxy-integration.md) for the current surface.
+
 Depends on: [Provider Expansion and Parity](../P0-provider-expansion.md), [Real Provider Browser E2E and Native Projects](../P0-real-provider-browser-e2e-and-native-projects.md), and the existing built CLI, packaged daemon, selected `web-ai` profile, and production CDP path
 
 ## 目标

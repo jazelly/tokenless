@@ -79,7 +79,7 @@ Setup asks about Anti-Detect mode first. If you decline, choose Google Chrome or
 
 Native mode is headed-only for now. Stopping or restarting the Tokenless daemon disconnects automation but does not close the selected browser.
 
-Arena also exposes a small local [OpenAI-compatible API](docs/openai-compatible-api.md) for non-streaming `arena:max` text chat. It uses the selected browser profile and creates a new Direct conversation for each request.
+An opt-in local [API proxy](docs/api-proxy-integration.md) serves OpenAI- and Anthropic-shaped requests from the selected browser profile, so existing clients can reach a provider website by changing only their base URL. It ships off; enable it with `tokenless api-proxy enable`.
 
 Explicit Anti-Detect setup can instead install a checksum-pinned CloakBrowser from its official GitHub release on macOS arm64/x64, Linux arm64/x64, or Windows x64. These catalog paths do not imply real-provider acceptance on every host; Tokenless does not bundle or redistribute CloakBrowser.
 
@@ -105,7 +105,7 @@ Setup never installs the integration by default; `--codex-home <dir>` is availab
 ## Go deeper
 
 - [CLI commands](COMMANDS.md)
-- [OpenAI-compatible Arena Chat](docs/openai-compatible-api.md)
+- [API Proxy Integration](docs/api-proxy-integration.md)
 - [Capability Matrix](docs/capability-matrix.md)
 - [Privacy boundaries](PRIVACY.md)
 - [Architecture](docs/architecture.md)

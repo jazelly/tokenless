@@ -29,12 +29,15 @@ tokenless api-proxy status --json
 
 Default `http://127.0.0.1:7331`. It is loopback-only and never binds a public interface.
 
-Do not hardcode it. Read `apiProxy.endpoints` from `tokenless api-proxy status --json`, which already accounts for a custom `daemonUrl` in the config.
+Do not hardcode it. Read `apiProxy.endpoints` from `tokenless api-proxy status --json` — keys `openai`, `openaiDefault`, and `anthropic` — which already accounts for a custom `daemonUrl` in the config.
 
 | Client style | Base URL |
 | --- | --- |
 | OpenAI-compatible | `http://127.0.0.1:7331/v1/openai` |
+| OpenAI-compatible, default paths | `http://127.0.0.1:7331/v1` |
 | Anthropic-compatible | `http://127.0.0.1:7331/v1/anthropic` |
+
+The bare `/v1` base exists so a client that hardcodes `/v1/chat/completions` works without modification. It is an alias: same dialect, same behavior. Anthropic has no bare alias, because the two dialects would collide on one path.
 
 ## Authentication
 
@@ -58,7 +61,9 @@ Treat it as a local credential: it authorizes every daemon control route, not ju
 | Method | Path | Purpose |
 | --- | --- | --- |
 | POST | `/v1/openai/chat/completions` | OpenAI chat completion |
+| POST | `/v1/chat/completions` | Alias of the above |
 | GET | `/v1/openai/models` | List accepted model names |
+| GET | `/v1/models` | Alias of the above |
 | POST | `/v1/anthropic/messages` | Anthropic message |
 
 ## Model naming
@@ -77,8 +82,10 @@ A bare model name such as `gpt-4o` is **rejected**, not remapped. This is delibe
 
 ```jsonc
 // 400
-{"error":{"message":"invalid input: model must be named tokenless/<provider>, for example tokenless/chatgpt","type":"invalid_request_error","param":null,"code":"invalid_input"}}
+{"error":{"message":"model must be named tokenless/<provider>, for example tokenless/chatgpt","type":"invalid_request_error","param":"model","code":"invalid_request_error"}}
 ```
+
+A well-formed name for a provider that does not exist or is not built in returns `404` / `model_not_found`, matching what a real API does with an unknown model.
 
 ## Request bodies
 
@@ -259,10 +266,10 @@ If your client rewrites history at all, prefer `new-conversation` — you get th
 
 Every failure returns the dialect's own error envelope.
 
-OpenAI:
+OpenAI, where `param` names the offending field when there is one:
 
 ```json
-{"error":{"message":"...","type":"invalid_request_error","param":null,"code":"invalid_input"}}
+{"error":{"message":"...","type":"invalid_request_error","param":"messages","code":"invalid_request_error"}}
 ```
 
 Anthropic:
@@ -273,29 +280,28 @@ Anthropic:
 
 ### Status codes
 
-| Status | Code | Meaning |
-| --- | --- | --- |
-| 401 | `control_auth_missing` | No bearer token |
-| 403 | `control_auth_rejected` | Wrong bearer token |
-| 400 | `invalid_input` | Everything else |
+The status is the signal to branch on. Read `code` for the specific cause and treat `message` as human-readable only.
 
-### Known weakness: all operational failures share one code
+| Status | Code | Cause | Retry? |
+| --- | --- | --- | --- |
+| 400 | `invalid_request_error` | Malformed body, bad model syntax, unsupported role or content part | No — fix the request |
+| 400 | `invalid_json` | Body is empty or not JSON | No |
+| 400 | `unsupported_parameter` | `tools`, `tool_choice`, `functions`, `function_call`, or `response_format` was sent | No |
+| 401 | `control_auth_missing` | No bearer token | No |
+| 403 | `control_auth_rejected` | Wrong bearer token | No |
+| 404 | `model_not_found` | `model` names a provider that does not exist or is not built in | No |
+| 413 | `request_too_large` | Body exceeds 2 MiB | No |
+| 499 | `client_closed_request` | The client disconnected first | No — nobody is listening |
+| 500 | — | Local daemon fault, message deliberately generic | Yes, once |
+| 502 | `upstream_error` | The provider page produced no visible reply: sign-in blocker, CAPTCHA, or a failed job | Yes, after the user clears the blocker |
+| 503 | `api_proxy_disabled` | The proxy is off | No — enable it |
+| 503 | `profile_not_ready` | The managed profile needs `tokenless setup` | No — finish setup |
+| 503 | `model_not_available` | The provider is not enabled for the resolved profile | No — enable it |
+| 504 | `completion_timeout` | The provider did not answer within 10 minutes | Yes, but the original job may still be running |
 
-Every non-auth failure is `400` / `invalid_input`, whatever the cause. The only distinguishing information is the human-readable `message`:
+A `4xx` other than 499 means the caller must change something. A `502`, `504`, or `500` is operational: the same request may succeed later. That distinction is the whole point of the table — do not match on message strings.
 
-| Cause | Message contains |
-| --- | --- |
-| Proxy not enabled | `api proxy is disabled` |
-| Bad model name | `model must be named tokenless/<provider>` |
-| Unsupported field | `does not support <field>` |
-| Unknown provider | `provider is not supported` |
-| Provider not enabled here | `provider is not enabled for this installation` |
-| Profile not ready | `managed profile is not ready` |
-| Provider needs sign-in / CAPTCHA | `did not produce a visible response` |
-| 10-minute timeout | `api proxy timed out after 600s` |
-| Client disconnected | `aborted by the client` |
-
-**Do not build retry logic on string matching.** A malformed request (never retry) and a transient provider blocker (retry after the user signs in) are indistinguishable by status and code today. Until that is fixed, the safe client behavior is: surface the message to the user and do not auto-retry. See [Open issue](#open-issue).
+On `502` and `504` the underlying browser job is **not** cancelled and may still complete. Inspect it with `tokenless state --job-id <id> --json` before retrying, or you may queue duplicate provider work.
 
 ## Hard limits
 
@@ -304,7 +310,7 @@ Design around these, not against them.
 | Property | Reality |
 | --- | --- |
 | Latency | Seconds to minutes. Real browser navigation, page settle, typing, submit, and render. |
-| Timeout | 10 minutes, then 400. The underlying job may still be running — check `job_id`. |
+| Timeout | 10 minutes, then 504. The underlying job may still be running — check `job_id`. |
 | Concurrency | Effectively serial per profile. One browser, one provider tab. |
 | Tool use | Unsupported, rejected. |
 | Structured output | Unsupported, rejected. |
@@ -344,7 +350,7 @@ client = OpenAI(
     base_url="http://127.0.0.1:7331/v1/openai",
     api_key=pathlib.Path.home().joinpath(".tokenless/daemon.token").read_text().strip(),
     timeout=660.0,  # must exceed the 10-minute server timeout
-    max_retries=0,  # see the errors section: do not auto-retry
+    max_retries=0,  # retry deliberately on 500/502/504 only; see the errors section
 )
 
 response = client.chat.completions.create(
@@ -387,17 +393,19 @@ Note both SDKs need their default timeout raised and their retry count zeroed. D
 - [ ] Strip `tools`, `tool_choice`, `functions`, `function_call`, `response_format` before sending, or keep those call paths on the real API.
 - [ ] Do not depend on `temperature`, `max_tokens`, or any sampling field.
 - [ ] Do not read `usage` for cost.
-- [ ] Raise client timeout above 10 minutes; set retries to 0.
-- [ ] Surface error `message` to the user; do not auto-retry.
+- [ ] Raise client timeout above 10 minutes; set retries to 0 and handle retries yourself.
+- [ ] Branch on HTTP status, not on `message`: retry only `500`, `502`, and `504`.
+- [ ] Before retrying a `502` or `504`, check `job_id` — the original job may still be running.
 - [ ] Log `tokenless.job_id` on every call.
 - [ ] Expect serial execution; do not fan out concurrent requests.
 - [ ] Confirm the active conversation mode, and if the client rewrites history, use `new-conversation`.
 
-## Open issue
+## Known gaps
 
-Operational failures are not distinguishable from client mistakes: everything non-auth is `400` / `invalid_input`. A client cannot correctly decide whether to retry.
+Two things a client should still not rely on:
 
-A fix would map the existing internal distinctions onto the transport — 401/403 for a provider sign-in blocker, 408 or 504 for the timeout, 409 for a busy profile, 429 for provider rate limits, 400 only for genuinely malformed requests — and add a stable machine-readable code inside the error envelope. That work is not done. Until it is, keep client behavior conservative.
+- **A `502` does not say why the page failed.** A sign-in blocker, a CAPTCHA, and a genuinely failed job all report `upstream_error`. Use `job_id` to find out which.
+- **A timeout or disconnect leaves the browser job running.** Nothing cancels provider-side work on your behalf, so a naive retry can queue a second job for the same prompt.
 
 ## Reference
 

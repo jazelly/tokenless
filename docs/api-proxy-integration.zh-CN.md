@@ -29,12 +29,15 @@ tokenless api-proxy status --json
 
 默认 `http://127.0.0.1:7331`。仅监听 loopback，绝不绑定公网接口。
 
-不要硬编码。请从 `tokenless api-proxy status --json` 读取 `apiProxy.endpoints`，它已经考虑了配置中自定义的 `daemonUrl`。
+不要硬编码。请从 `tokenless api-proxy status --json` 读取 `apiProxy.endpoints`（键为 `openai`、`openaiDefault`、`anthropic`），它已经考虑了配置中自定义的 `daemonUrl`。
 
 | 客户端形态 | Base URL |
 | --- | --- |
 | OpenAI 兼容 | `http://127.0.0.1:7331/v1/openai` |
+| OpenAI 兼容，默认路径 | `http://127.0.0.1:7331/v1` |
 | Anthropic 兼容 | `http://127.0.0.1:7331/v1/anthropic` |
+
+裸 `/v1` base 的存在，是为了让硬编码 `/v1/chat/completions` 的客户端无需改动即可使用。它只是 alias：dialect 与行为完全一致。Anthropic 没有裸 alias，因为两种 dialect 会在同一路径上冲突。
 
 ## 认证
 
@@ -58,7 +61,9 @@ Token 位于 `<TOKENLESS_HOME>/daemon.token`，默认 `~/.tokenless/daemon.token
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
 | POST | `/v1/openai/chat/completions` | OpenAI chat completion |
+| POST | `/v1/chat/completions` | 上一条的 alias |
 | GET | `/v1/openai/models` | 列出可用 model 名称 |
+| GET | `/v1/models` | 上一条的 alias |
 | POST | `/v1/anthropic/messages` | Anthropic message |
 
 ## Model 命名
@@ -77,8 +82,10 @@ tokenless/<provider>
 
 ```jsonc
 // 400
-{"error":{"message":"invalid input: model must be named tokenless/<provider>, for example tokenless/chatgpt","type":"invalid_request_error","param":null,"code":"invalid_input"}}
+{"error":{"message":"model must be named tokenless/<provider>, for example tokenless/chatgpt","type":"invalid_request_error","param":"model","code":"invalid_request_error"}}
 ```
+
+若名称格式正确但该 provider 不存在或未内置，则返回 `404` / `model_not_found`，与真实 API 遇到未知 model 的行为一致。
 
 ## 请求体
 
@@ -259,10 +266,10 @@ Tokenless 会对**除最后一条 user message 之外**的全部消息做指纹�
 
 所有失败都会按对应方言的错误信封返回。
 
-OpenAI：
+OpenAI，其中 `param` 会在可定位时指出出错字段：
 
 ```json
-{"error":{"message":"...","type":"invalid_request_error","param":null,"code":"invalid_input"}}
+{"error":{"message":"...","type":"invalid_request_error","param":"messages","code":"invalid_request_error"}}
 ```
 
 Anthropic：
@@ -273,29 +280,28 @@ Anthropic：
 
 ### 状态码
 
-| 状态码 | Code | 含义 |
-| --- | --- | --- |
-| 401 | `control_auth_missing` | 缺少 bearer token |
-| 403 | `control_auth_rejected` | bearer token 错误 |
-| 400 | `invalid_input` | 其他全部情况 |
+状态码就是判断依据。`code` 给出具体根因，`message` 仅供人类阅读。
 
-### 已知缺陷：全部运行期失败共用同一个 code
+| 状态码 | Code | 根因 | 可否重试 |
+| --- | --- | --- | --- |
+| 400 | `invalid_request_error` | 请求体格式错误、model 名语法错误、role 或 content part 不受支持 | 否 —— 修正请求 |
+| 400 | `invalid_json` | 请求体为空或不是 JSON | 否 |
+| 400 | `unsupported_parameter` | 传入了 `tools`、`tool_choice`、`functions`、`function_call` 或 `response_format` | 否 |
+| 401 | `control_auth_missing` | 缺少 bearer token | 否 |
+| 403 | `control_auth_rejected` | bearer token 错误 | 否 |
+| 404 | `model_not_found` | `model` 指向不存在或未内置的 provider | 否 |
+| 413 | `request_too_large` | 请求体超过 2 MiB | 否 |
+| 499 | `client_closed_request` | 客户端先断开了连接 | 否 —— 已无接收方 |
+| 500 | — | 本地 daemon 故障，message 刻意保持通用 | 可重试一次 |
+| 502 | `upstream_error` | provider 页面没有产生可见回复：登录 blocker、CAPTCHA 或 job 失败 | 用户清除 blocker 后可重试 |
+| 503 | `api_proxy_disabled` | proxy 未开启 | 否 —— 请先开启 |
+| 503 | `profile_not_ready` | managed profile 需要先执行 `tokenless setup` | 否 —— 请先完成 setup |
+| 503 | `model_not_available` | 该 provider 未在解析出的 profile 上启用 | 否 —— 请先启用 |
+| 504 | `completion_timeout` | provider 在 10 分钟内没有回复 | 可重试，但原 job 可能仍在运行 |
 
-除认证外的每一种失败都是 `400` / `invalid_input`，无论根因为何。唯一的区分信息是人类可读的 `message`：
+除 499 之外的 `4xx` 表示调用方必须做出修改。`502`、`504`、`500` 属于运行期问题：同一请求稍后可能成功。这张表的全部意义就在于这一区分 —— 不要匹配 message 字符串。
 
-| 根因 | message 包含 |
-| --- | --- |
-| proxy 未开启 | `api proxy is disabled` |
-| model 名不合法 | `model must be named tokenless/<provider>` |
-| 使用了不支持的字段 | `does not support <field>` |
-| provider 未知 | `provider is not supported` |
-| provider 在本安装未启用 | `provider is not enabled for this installation` |
-| profile 未就绪 | `managed profile is not ready` |
-| provider 需要登录 / CAPTCHA | `did not produce a visible response` |
-| 10 分钟超时 | `api proxy timed out after 600s` |
-| 客户端断开 | `aborted by the client` |
-
-**不要基于字符串匹配来做重试逻辑。** 请求格式错误（绝不该重试）和临时性 provider blocker（用户登录后应重试）在今天的状态码与 code 上完全无法区分。在修好之前，安全的客户端行为是：把 message 呈现给用户，不要自动重试。见 [待解决问题](#待解决问题)。
+发生 `502` 与 `504` 时，底层浏览器 job **不会**被取消，仍可能继续完成。重试前请用 `tokenless state --job-id <id> --json` 检查，否则可能重复排入同一份 provider 工作。
 
 ## 硬性限制
 
@@ -304,7 +310,7 @@ Anthropic：
 | 属性 | 实际情况 |
 | --- | --- |
 | 延迟 | 秒到分钟级。真实浏览器导航、页面稳定、输入、提交、渲染。 |
-| 超时 | 10 分钟，随后返回 400。底层 job 可能仍在运行——请用 `job_id` 查询。 |
+| 超时 | 10 分钟，随后返回 504。底层 job 可能仍在运行——请用 `job_id` 查询。 |
 | 并发 | 单 profile 基本串行。一个浏览器、一个 provider 标签页。 |
 | Tool use | 不支持，直接拒绝。 |
 | 结构化输出 | 不支持，直接拒绝。 |
@@ -344,7 +350,7 @@ client = OpenAI(
     base_url="http://127.0.0.1:7331/v1/openai",
     api_key=pathlib.Path.home().joinpath(".tokenless/daemon.token").read_text().strip(),
     timeout=660.0,  # 必须大于服务端 10 分钟超时
-    max_retries=0,  # 见错误一节：不要自动重试
+    max_retries=0,  # 只在 500/502/504 上主动重试，见错误一节
 )
 
 response = client.chat.completions.create(
@@ -387,17 +393,19 @@ console.log(message.content)
 - [ ] 发送前剥离 `tools`、`tool_choice`、`functions`、`function_call`、`response_format`，或把这些调用路径留在真实 API。
 - [ ] 不要依赖 `temperature`、`max_tokens` 或任何采样字段。
 - [ ] 不要用 `usage` 计算成本。
-- [ ] 把客户端超时提到 10 分钟以上；重试设为 0。
-- [ ] 把错误 `message` 呈现给用户；不要自动重试。
+- [ ] 把客户端超时提到 10 分钟以上；重试设为 0，改由自己控制重试。
+- [ ] 依据 HTTP 状态码而不是 `message` 分支：只重试 `500`、`502`、`504`。
+- [ ] 重试 `502` 或 `504` 前先检查 `job_id` —— 原 job 可能仍在运行。
 - [ ] 每次调用都记录 `tokenless.job_id`。
 - [ ] 按串行执行预期设计；不要并发扇出请求。
 - [ ] 确认当前 conversation 模式；若客户端会重写历史，使用 `new-conversation`。
 
-## 待解决问题
+## 已知不足
 
-运行期失败与客户端错误无法区分：除认证外一切都是 `400` / `invalid_input`。客户端无法正确判断是否应该重试。
+仍有两点不应依赖：
 
-修复方向是把已有的内部区分映射到传输层——provider 登录 blocker 用 401/403，超时用 408 或 504，profile 繁忙用 409，provider 限流用 429，仅真正格式错误才用 400——并在错误信封内加入稳定的机器可读 code。这项工作尚未完成。在完成之前，请让客户端行为保持保守。
+- **`502` 不会说明页面失败的原因。** 登录 blocker、CAPTCHA 与真正失败的 job 都报 `upstream_error`，需要用 `job_id` 进一步定位。
+- **超时或断开不会终止浏览器 job。** 系统不会代为取消 provider 侧的工作，因此草率重试可能为同一 prompt 排入第二个 job。
 
 ## 参考
 
