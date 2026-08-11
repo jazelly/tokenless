@@ -29,7 +29,9 @@ run('vite', ['build', '--config', 'vite.harness.config.mjs', '--logLevel', 'erro
 
 const uiRoot = path.join(distRoot, 'src', 'daemon', 'ui')
 const providersRoot = path.join(distRoot, 'src', 'providers')
+const runtimeRoot = path.join(distRoot, 'runtime')
 fs.mkdirSync(providersRoot, { recursive: true })
+fs.cpSync(path.join(packageRoot, 'runtime'), runtimeRoot, { recursive: true })
 fs.copyFileSync(
   path.join(packageRoot, '..', '..', 'assets', 'tokenless-mark.png'),
   path.join(uiRoot, 'mark.png'),

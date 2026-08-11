@@ -4,6 +4,9 @@ import { JobStore, defaultHomeDir } from './job-store.js'
 import { BrowserRuntimeController } from './browser-runtime-controller.js'
 import { serveHttp, type DaemonServer } from './server.js'
 import { DaemonRuntimeState, createStartupOwnerToken } from './runtime-state.js'
+import { readTokenlessConfig } from '../job-store.js'
+import { ManagedProfileRegistry } from '../playwright/profiles/registry.js'
+import { G4fRuntimeManager, type G4fServiceProcess } from '../g4f/index.js'
 
 export type StartDaemonOptions = {
   homeDir?: string | undefined
@@ -31,6 +34,7 @@ export async function startDaemon({
     ? { ownerToken: startupOwnerToken, generation: startupGeneration, externallyOwned: true }
     : acquireDirectStartupClaim(runtimeState)
   let daemon: DaemonServer | undefined
+  let g4fService: G4fServiceProcess | undefined
   let runnerFatalError: unknown
   const runtimeController = new BrowserRuntimeController({
     store,
@@ -44,13 +48,23 @@ export async function startDaemon({
     },
   })
   try {
+    const config = await readTokenlessConfig(store.homeDir)
+    if (config.g4f.enabled) {
+      const profiles = await new ManagedProfileRegistry(store.homeDir).listProfiles()
+      g4fService = await new G4fRuntimeManager(store.homeDir).start({
+        allowedRoots: profiles.map((profile) => profile.directory),
+      })
+      runtimeController.setG4fClient(g4fService.client)
+    }
     daemon = await serveHttpWithDynamicPort({
       store,
       host,
       startPort: port,
       runtimeController,
+      g4fService,
       beforeClose: async () => {
         await runtimeController.shutdown()
+        await g4fService?.close()
       },
       afterStoreClose: async () => {
         if (daemon) {
@@ -73,6 +87,7 @@ export async function startDaemon({
     daemon.activate()
   } catch (error) {
     await runtimeController.shutdown().catch(() => undefined)
+    await g4fService?.close().catch(() => undefined)
     await daemon?.close().catch(() => undefined)
     if (!startupClaim.externallyOwned) runtimeState.releaseStartupLease(startupClaim.ownerToken)
     runtimeState.close()
@@ -105,6 +120,7 @@ async function serveHttpWithDynamicPort({
   host,
   startPort,
   runtimeController,
+  g4fService,
   beforeClose,
   afterStoreClose,
 }: {
@@ -112,6 +128,7 @@ async function serveHttpWithDynamicPort({
   host: string
   startPort: number
   runtimeController: BrowserRuntimeController
+  g4fService?: G4fServiceProcess | undefined
   beforeClose: () => Promise<void>
   afterStoreClose: () => Promise<void>
 }) {
@@ -123,6 +140,7 @@ async function serveHttpWithDynamicPort({
         host,
         port,
         runtimeController,
+        g4fService,
         beforeClose,
         afterStoreClose,
       })

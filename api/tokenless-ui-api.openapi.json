@@ -365,9 +365,27 @@
             "properties": { "enabled": { "type": "boolean" } },
             "required": ["enabled"],
             "additionalProperties": false
+          },
+          "g4f": {
+            "type": "object",
+            "properties": { "enabled": { "type": "boolean" } },
+            "required": ["enabled"],
+            "additionalProperties": false
+          },
+          "directProvider": {
+            "type": "object",
+            "properties": {
+              "defaultBackend": { "type": "string", "enum": ["native", "g4f"] },
+              "providerBackends": {
+                "type": "object",
+                "additionalProperties": { "type": "string", "enum": ["native", "g4f"] }
+              }
+            },
+            "required": ["defaultBackend", "providerBackends"],
+            "additionalProperties": false
           }
         },
-        "required": ["updatedAt", "profiles", "browser", "browserExecutablePathConfigured", "browserVisibility", "daemonUrl", "language", "outputSavings"],
+        "required": ["updatedAt", "profiles", "browser", "browserExecutablePathConfigured", "browserVisibility", "daemonUrl", "language", "outputSavings", "g4f", "directProvider"],
         "additionalProperties": false
       },
       "ConfirmedDeletion": {

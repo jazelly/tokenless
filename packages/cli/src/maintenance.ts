@@ -1,10 +1,11 @@
-import { tokenlessHome } from './job-store.js'
-import { ensureSetupDaemonRunnable } from './runtime.js'
+import { readTokenlessConfig, tokenlessHome } from './job-store.js'
+import { ensureSetupDaemonRunnable, probeDaemonReady, stopDaemon } from './runtime.js'
 import { installTokenlessSkills } from './setup-workflow.js'
 import { tokenlessPackageVersion } from './platform-package.js'
+import { G4fRuntimeManager } from './g4f/runtime-manager.js'
 import type { CliMessageKey } from './i18n/catalog.js'
 
-export type TokenlessMaintenancePhase = 'skills' | 'daemon'
+export type TokenlessMaintenancePhase = 'skills' | 'g4f' | 'daemon'
 
 export type TokenlessMaintenanceStepRunner = <T>(
   phase: TokenlessMaintenancePhase,
@@ -37,6 +38,16 @@ export async function reconcileTokenlessMaintenance({
       ...(codexHome ? { codexHome } : {}),
     }),
   )
+  const config = await readTokenlessConfig(homeDir)
+  const g4f = config.g4f.enabled
+    ? await runStep('g4f', 'maintenanceG4f', () => new G4fRuntimeManager(homeDir).ensure())
+    : await new G4fRuntimeManager(homeDir).inspect()
+  if (config.g4f.enabled) {
+    const existing = await probeDaemonReady({ homeDir, daemonUrl })
+    if (existing.ok && existing.body?.g4f_ready !== true) {
+      await stopDaemon({ homeDir, daemonUrl })
+    }
+  }
   const daemon = await runStep(
     'daemon',
     'maintenanceDaemon',
@@ -59,6 +70,7 @@ export async function reconcileTokenlessMaintenance({
       manifests: Object.values(skillInstall.check.skills).map((skill) => skill.manifest),
       targets: skillInstall.check.targets,
     },
+    g4f,
     daemon,
   }
 }

@@ -57,6 +57,10 @@ export type { ManagedProfileConfig, TokenlessConfig } from './job-store.js'
 export type { OutputSavingsConfig } from './job-store.js'
 export { API_PROXY_CONVERSATION_MODES } from './job-store.js'
 export type { ApiProxyConfig, ApiProxyConversationMode } from './job-store.js'
+export type { DirectProviderConfig, G4fConfig, ProviderBackend } from './job-store.js'
+export * from './g4f/index.js'
+export * from './providers/direct/g4f-map.js'
+export * from './providers/direct/protocol-router.js'
 export type { BrowserVisibility, EffectiveBrowserVisibility } from './browser-visibility.js'
 
 export {

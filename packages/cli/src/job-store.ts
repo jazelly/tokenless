@@ -31,6 +31,8 @@ export type TokenlessConfig = {
   language: TokenlessLanguage
   outputSavings: OutputSavingsConfig
   apiProxy: ApiProxyConfig
+  g4f: G4fConfig
+  directProvider: DirectProviderConfig
 }
 
 export type OutputSavingsConfig = {
@@ -44,6 +46,19 @@ export type ApiProxyConversationMode = (typeof API_PROXY_CONVERSATION_MODES)[num
 export type ApiProxyConfig = {
   enabled: boolean
   conversationMode: ApiProxyConversationMode
+  executionMode: 'browser' | 'direct'
+}
+
+export const PROVIDER_BACKENDS = Object.freeze(['native', 'g4f'] as const)
+export type ProviderBackend = typeof PROVIDER_BACKENDS[number]
+
+export type G4fConfig = {
+  enabled: boolean
+}
+
+export type DirectProviderConfig = {
+  defaultBackend: ProviderBackend
+  providerBackends: Record<string, ProviderBackend>
 }
 
 export type ManagedProfileConfig = {
@@ -159,6 +174,12 @@ async function readTokenlessConfigUnlocked(homeDir: string) {
   if (payload.apiProxy !== undefined && !isApiProxyConfig(payload.apiProxy)) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
+  if (payload.g4f !== undefined && !isG4fConfig(payload.g4f)) {
+    throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
+  }
+  if (payload.directProvider !== undefined && !isDirectProviderConfig(payload.directProvider)) {
+    throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
+  }
   const normalizedBrowser = normalizeBrowserId(payload.browser)
   const browser = normalizedBrowser === 'brave' ? 'brave' : 'chrome'
   const browserExecutablePath = normalizedBrowser === 'chrome' || normalizedBrowser === 'brave'
@@ -176,6 +197,8 @@ async function readTokenlessConfigUnlocked(homeDir: string) {
     language: normalizeTokenlessLanguage(payload.language) ?? 'en',
     outputSavings: normalizeOutputSavingsConfig(payload.outputSavings),
     apiProxy: normalizeApiProxyConfig(payload.apiProxy),
+    g4f: normalizeG4fConfig(payload.g4f),
+    directProvider: normalizeDirectProviderConfig(payload.directProvider),
   }
   return { config, needsWrite: JSON.stringify(payload) !== JSON.stringify(config) }
 }
@@ -190,6 +213,8 @@ export async function writeTokenlessConfig({
   language,
   outputSavings,
   apiProxy,
+  g4f,
+  directProvider,
 }: {
   homeDir?: string
   profiles?: unknown
@@ -200,6 +225,8 @@ export async function writeTokenlessConfig({
   language?: unknown
   outputSavings?: unknown
   apiProxy?: unknown
+  g4f?: unknown
+  directProvider?: unknown
 } = {}) {
   return await withConfigWriterLock(homeDir, async () => {
     const current = (await readTokenlessConfigUnlocked(homeDir)).config
@@ -237,6 +264,10 @@ export async function writeTokenlessConfig({
       apiProxy: apiProxy === undefined
         ? current.apiProxy
         : validateApiProxyConfig(apiProxy),
+      g4f: g4f === undefined ? current.g4f : validateG4fConfig(g4f),
+      directProvider: directProvider === undefined
+        ? current.directProvider
+        : validateDirectProviderConfig(directProvider),
     }
     await writeJsonAtomic(configPath(homeDir), config, 0o600)
     return config
@@ -308,23 +339,26 @@ function emptyTokenlessConfig(): TokenlessConfig {
     language: 'en',
     outputSavings: { enabled: true },
     apiProxy: defaultApiProxyConfig(),
+    g4f: { enabled: false },
+    directProvider: { defaultBackend: 'g4f', providerBackends: {} },
   }
 }
 
 function defaultApiProxyConfig(): ApiProxyConfig {
-  return { enabled: false, conversationMode: 'new-conversation' }
+  return { enabled: false, conversationMode: 'new-conversation', executionMode: 'direct' }
 }
 
 function isApiProxyConfig(value: unknown): value is ApiProxyConfig {
   return isJsonRecord(value) &&
-    Object.keys(value).length === 2 &&
+    (Object.keys(value).length === 2 || Object.keys(value).length === 3) &&
     typeof value.enabled === 'boolean' &&
-    API_PROXY_CONVERSATION_MODES.includes(value.conversationMode as ApiProxyConversationMode)
+    API_PROXY_CONVERSATION_MODES.includes(value.conversationMode as ApiProxyConversationMode) &&
+    (value.executionMode === undefined || value.executionMode === 'browser' || value.executionMode === 'direct')
 }
 
 function normalizeApiProxyConfig(value: unknown): ApiProxyConfig {
   return isApiProxyConfig(value)
-    ? { enabled: value.enabled, conversationMode: value.conversationMode }
+    ? { enabled: value.enabled, conversationMode: value.conversationMode, executionMode: value.executionMode ?? 'browser' }
     : defaultApiProxyConfig()
 }
 
@@ -332,7 +366,45 @@ function validateApiProxyConfig(value: unknown): ApiProxyConfig {
   if (!isApiProxyConfig(value)) {
     throw configError('tokenless_config_invalid', 'Invalid Tokenless API proxy configuration.')
   }
-  return { enabled: value.enabled, conversationMode: value.conversationMode }
+  return { enabled: value.enabled, conversationMode: value.conversationMode, executionMode: value.executionMode ?? 'direct' }
+}
+
+function isG4fConfig(value: unknown): value is G4fConfig {
+  return isJsonRecord(value) &&
+    Object.keys(value).length === 1 &&
+    typeof value.enabled === 'boolean'
+}
+
+function normalizeG4fConfig(value: unknown): G4fConfig {
+  return isG4fConfig(value) ? { enabled: value.enabled } : { enabled: false }
+}
+
+function validateG4fConfig(value: unknown): G4fConfig {
+  if (!isG4fConfig(value)) {
+    throw configError('tokenless_config_invalid', 'Invalid Tokenless G4F configuration.')
+  }
+  return { enabled: value.enabled }
+}
+
+function isDirectProviderConfig(value: unknown): value is DirectProviderConfig {
+  if (!isJsonRecord(value) || Object.keys(value).length !== 2) return false
+  if (!PROVIDER_BACKENDS.includes(value.defaultBackend as ProviderBackend) || !isJsonRecord(value.providerBackends)) return false
+  return Object.entries(value.providerBackends).every(([provider, backend]) =>
+    /^[a-z0-9][a-z0-9-]{0,63}$/.test(provider) && PROVIDER_BACKENDS.includes(backend as ProviderBackend)
+  )
+}
+
+function normalizeDirectProviderConfig(value: unknown): DirectProviderConfig {
+  return isDirectProviderConfig(value)
+    ? { defaultBackend: value.defaultBackend, providerBackends: { ...value.providerBackends } }
+    : { defaultBackend: 'native', providerBackends: {} }
+}
+
+function validateDirectProviderConfig(value: unknown): DirectProviderConfig {
+  if (!isDirectProviderConfig(value)) {
+    throw configError('tokenless_config_invalid', 'Invalid Tokenless direct provider configuration.')
+  }
+  return { defaultBackend: value.defaultBackend, providerBackends: { ...value.providerBackends } }
 }
 
 function isOutputSavingsConfig(value: unknown): value is OutputSavingsConfig {

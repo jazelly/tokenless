@@ -598,6 +598,8 @@ function publicConfig(config: TokenlessConfig) {
     daemonUrl: config.daemonUrl,
     language: config.language,
     outputSavings: config.outputSavings,
+    g4f: config.g4f,
+    directProvider: config.directProvider,
   }
 }
 

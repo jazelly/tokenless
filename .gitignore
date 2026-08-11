@@ -18,6 +18,8 @@ docs/*
 !docs/api-proxy-integration.zh-CN.md
 !docs/capability-matrix.md
 !docs/capability-matrix.zh-CN.md
+!docs/g4f-direct-provider-service.md
+!docs/g4f-direct-provider-service.zh-CN.md
 !docs/provider-capability-census.md
 !docs/provider-rate-limits.md
 !docs/roadmaps/

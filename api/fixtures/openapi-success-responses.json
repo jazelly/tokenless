@@ -11,6 +11,7 @@
         "ready": true,
         "home_dir": "/tmp/tokenless",
         "pid": 12345,
+        "g4f_ready": false,
         "proof": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
       }
     },

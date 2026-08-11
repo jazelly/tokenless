@@ -1,11 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto'
 
-import { readTokenlessConfig, type ApiProxyConversationMode } from '../job-store.js'
+import { readTokenlessConfig, type ApiProxyConversationMode, type ProviderBackend } from '../job-store.js'
 import { createManagedPlaywrightJobRequest, MANAGED_PLAYWRIGHT_JOB_ACTION } from '../playwright/job-contract.js'
 import { VISIBLE_ACTIONS, createVisibleActionRequest } from '../playwright/actions.js'
 import { ManagedProfileRegistry } from '../playwright/profiles/registry.js'
 import { getProviderInstanceById, providerRegistry } from '../providers/registry.js'
 import type { Job, JobStore } from './job-store.js'
+import type { G4fServiceClient } from '../g4f/client.js'
+import { ProviderProtocolRouter } from '../providers/direct/protocol-router.js'
 
 /**
  * Callers reach this surface with vendor SDKs that branch on the HTTP status, so
@@ -55,6 +57,10 @@ type NormalizedRequest = {
   messages: NormalizedMessage[]
   stream: boolean
   requestedModel: string
+  upstreamModel: string
+  executionMode: 'browser' | 'direct' | null
+  providerBackend: ProviderBackend | null
+  authContextId: string | null
 }
 
 export type ApiProxyCompletion = {
@@ -63,17 +69,22 @@ export type ApiProxyCompletion = {
   citations: { url: string; title?: string }[]
   jobId: string
   conversationMode: ApiProxyConversationMode
+  executionMode: 'browser' | 'direct'
+  providerBackend: 'browser' | ProviderBackend
 }
 
 export class ApiProxyAdapter {
   private readonly profiles: ManagedProfileRegistry
+  private readonly protocolRouter: ProviderProtocolRouter
 
   constructor(
     private readonly store: JobStore,
     private readonly wake: () => Promise<unknown>,
+    private readonly g4fClient?: G4fServiceClient | undefined,
     private readonly timeoutMs = DEFAULT_JOB_TIMEOUT_MS,
   ) {
     this.profiles = new ManagedProfileRegistry(store.homeDir)
+    this.protocolRouter = new ProviderProtocolRouter(g4fClient)
   }
 
   async enabled() {
@@ -106,7 +117,37 @@ export class ApiProxyAdapter {
       )
     }
 
+    const executionMode = request.executionMode ?? config.apiProxy.executionMode
+    const providerBackend = executionMode === 'direct'
+      ? this.protocolRouter.backend(config.directProvider, request.provider, request.providerBackend ?? undefined)
+      : 'browser'
+    if (executionMode === 'direct' && providerBackend === 'g4f') {
+      try {
+        const completion = await this.protocolRouter.completeG4f({
+          provider: request.provider,
+          messages: request.messages.map((message) => ({ role: message.role, content: message.text })),
+          model: request.upstreamModel,
+          ...(request.authContextId ? { authContextId: request.authContextId } : {}),
+          signal,
+        })
+        return {
+          provider: request.provider,
+          text: completion.text,
+          citations: completion.citations,
+          jobId: completion.requestId,
+          conversationMode: config.apiProxy.conversationMode,
+          executionMode,
+          providerBackend,
+        }
+      } catch (error) {
+        throw new ApiProxyError(502, 'upstream_error', safeDirectError(error))
+      }
+    }
+
     const mode = config.apiProxy.conversationMode
+    if (executionMode === 'direct' && mode === 'continue-conversation') {
+      throw new ApiProxyError(400, 'unsupported_parameter', 'Native direct execution currently supports only new conversations.')
+    }
     const plan = mode === 'continue-conversation'
       ? continuationPlan(request, profile.id, this.store)
       : newConversationPlan(request)
@@ -116,6 +157,7 @@ export class ApiProxyAdapter {
       taskId: plan.taskId,
       browserVisibility: 'auto',
       userHandoff: false,
+      executionMode,
       ...(plan.targetUrl ? { target: { kind: 'provider_home' as const, url: plan.targetUrl } } : {}),
       actions: [
         createVisibleActionRequest({
@@ -145,6 +187,8 @@ export class ApiProxyAdapter {
       citations: result.citations,
       jobId: settled.job_id,
       conversationMode: mode,
+      executionMode,
+      providerBackend,
     }
   }
 
@@ -248,7 +292,7 @@ function assertPromptSize(text: string) {
 
 export function normalizeOpenAiRequest(body: unknown): NormalizedRequest {
   const record = plainRecord(body)
-  const provider = providerFromModel(record.model)
+  const model = providerFromModel(record.model)
   const rawMessages = record.messages
   if (!Array.isArray(rawMessages) || rawMessages.length === 0) {
     throw badRequest('messages must be a non-empty array', 'messages')
@@ -265,12 +309,13 @@ export function normalizeOpenAiRequest(body: unknown): NormalizedRequest {
     throw badRequest(`unsupported message role: ${String(role)}`, 'messages')
   })
   rejectUnsupportedToolFields(record)
-  return { provider, messages, stream: record.stream === true, requestedModel: String(record.model) }
+  const options = normalizeTokenlessOptions(record.tokenless)
+  return { provider: model.provider, messages, stream: record.stream === true, requestedModel: String(record.model), upstreamModel: model.upstreamModel, ...options }
 }
 
 export function normalizeAnthropicRequest(body: unknown): NormalizedRequest {
   const record = plainRecord(body)
-  const provider = providerFromModel(record.model)
+  const model = providerFromModel(record.model)
   const rawMessages = record.messages
   if (!Array.isArray(rawMessages) || rawMessages.length === 0) {
     throw badRequest('messages must be a non-empty array', 'messages')
@@ -291,7 +336,8 @@ export function normalizeAnthropicRequest(body: unknown): NormalizedRequest {
     messages.push({ role, text: anthropicContentText(message.content) })
   }
   rejectUnsupportedToolFields(record)
-  return { provider, messages, stream: record.stream === true, requestedModel: String(record.model) }
+  const options = normalizeTokenlessOptions(record.tokenless)
+  return { provider: model.provider, messages, stream: record.stream === true, requestedModel: String(record.model), upstreamModel: model.upstreamModel, ...options }
 }
 
 /**
@@ -318,11 +364,36 @@ function providerFromModel(value: unknown) {
   if (!trimmed.startsWith(MODEL_PREFIX)) {
     throw badRequest(`model must be named ${MODEL_PREFIX}<provider>, for example ${MODEL_PREFIX}chatgpt`, 'model')
   }
-  const provider = trimmed.slice(MODEL_PREFIX.length)
+  const [provider = '', ...modelParts] = trimmed.slice(MODEL_PREFIX.length).split('/')
   if (!/^[a-z0-9-]{1,64}$/.test(provider)) {
     throw new ApiProxyError(404, 'model_not_found', `The model '${trimmed}' does not exist.`, 'model')
   }
-  return provider
+  return { provider, upstreamModel: modelParts.join('/') }
+}
+
+function normalizeTokenlessOptions(value: unknown): Pick<NormalizedRequest, 'executionMode' | 'providerBackend' | 'authContextId'> {
+  if (value === undefined) return { executionMode: null, providerBackend: null, authContextId: null }
+  const options = plainRecord(value)
+  const executionMode = options.execution_mode
+  if (executionMode !== undefined && executionMode !== 'browser' && executionMode !== 'direct') {
+    throw badRequest('tokenless.execution_mode must be browser or direct', 'tokenless.execution_mode')
+  }
+  const providerBackend = options.provider_backend
+  if (providerBackend !== undefined && providerBackend !== 'native' && providerBackend !== 'g4f') {
+    throw badRequest('tokenless.provider_backend must be native or g4f', 'tokenless.provider_backend')
+  }
+  if (executionMode === 'browser' && providerBackend !== undefined) {
+    throw badRequest('tokenless.provider_backend applies only to direct execution', 'tokenless.provider_backend')
+  }
+  const authContextId = options.auth_context_id
+  if (authContextId !== undefined && (typeof authContextId !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(authContextId))) {
+    throw badRequest('tokenless.auth_context_id is invalid', 'tokenless.auth_context_id')
+  }
+  return {
+    executionMode: executionMode ?? null,
+    providerBackend: providerBackend ?? null,
+    authContextId: authContextId ?? null,
+  }
 }
 
 function openAiContentText(content: unknown): string {
@@ -455,8 +526,15 @@ function tokenlessMetadata(completion: ApiProxyCompletion) {
     provider: completion.provider,
     job_id: completion.jobId,
     conversation_mode: completion.conversationMode,
+    execution_mode: completion.executionMode,
+    provider_backend: completion.providerBackend,
     citations: completion.citations,
   }
+}
+
+function safeDirectError(error: unknown) {
+  const code = typeof (error as { code?: unknown })?.code === 'string' ? (error as { code: string }).code : 'g4f_request_failed'
+  return `Direct provider request failed: ${code}.`
 }
 
 /**

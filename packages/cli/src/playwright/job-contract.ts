@@ -26,6 +26,8 @@ import type { BrowserVisibility } from '../browser-visibility.js'
 import type { ManagedPagePolicy } from './browser/context-manager.js'
 import type { VisibleActionRequest, VisibleActionWireRequest } from './actions.js'
 import type { ProviderId, ProviderInstance, TaskCapabilityId, TaskCapabilityRoute } from '../providers/registry.js'
+import type { ProviderBackend } from '../job-store.js'
+import { g4fProviderName, nativeDirectProviderAvailable } from '../providers/direct/g4f-map.js'
 
 export { CONTEXT_ENVELOPE_SCHEMA_ID } from './context-envelope.js'
 export type { ContextEnvelope } from './context-envelope.js'
@@ -52,6 +54,8 @@ export type ManagedPlaywrightJobRequest = {
   fallback: ManagedPlaywrightFallbackPlan | null
   context: ContextEnvelope
   executionMode: PlaywrightExecutionMode
+  providerBackend: ProviderBackend | null
+  authContextId: string | null
   browserVisibility: BrowserVisibility
   userHandoff: boolean
   pagePolicy?: ManagedPagePolicy | undefined
@@ -81,6 +85,8 @@ export type CreateManagedPlaywrightJobRequestInput = {
   contextLanguage?: 'en' | 'zh-CN' | null | undefined
   contextUpstream?: ContextEnvelope['upstream'] | undefined
   executionMode?: unknown
+  providerBackend?: unknown
+  authContextId?: unknown
   browserVisibility?: unknown
   userHandoff?: unknown
   pagePolicy?: unknown
@@ -133,6 +139,8 @@ export function createManagedPlaywrightJobRequest(
       upstream: input.contextUpstream,
     }),
     executionMode: validateExecutionMode(input.executionMode ?? 'browser'),
+    providerBackend: validateProviderBackend(input.providerBackend ?? null),
+    authContextId: validateAuthContextId(input.authContextId ?? null),
     browserVisibility: validateJobBrowserVisibility(input.browserVisibility ?? 'auto'),
     userHandoff: validateUserHandoff(input.userHandoff ?? false),
     ...(input.pagePolicy === undefined ? {} : { pagePolicy: validateManagedPagePolicy(input.pagePolicy) }),
@@ -147,7 +155,7 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
   requireKeys(
     input,
     ['protocol', 'provider', 'target', 'taskId', 'browserVisibility', 'actions'],
-    ['capabilityRoute', 'fallback', 'context', 'executionMode', 'pagePolicy', 'userHandoff'],
+    ['capabilityRoute', 'fallback', 'context', 'executionMode', 'providerBackend', 'authContextId', 'pagePolicy', 'userHandoff'],
     'invalid_playwright_job_request',
   )
   if (input.protocol !== MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID) {
@@ -206,11 +214,16 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
   const userHandoff = validateUserHandoff(input.userHandoff ?? false)
   const pagePolicy = input.pagePolicy === undefined ? undefined : validateManagedPagePolicy(input.pagePolicy)
   const executionMode = validateExecutionMode(input.executionMode ?? 'browser')
+  const providerBackend = validateProviderBackend(input.providerBackend ?? null)
+  const authContextId = validateAuthContextId(input.authContextId ?? null)
+  if (executionMode === 'browser' && (providerBackend !== null || authContextId !== null)) {
+    throw tokenlessError('invalid_playwright_job_provider_backend', 'providerBackend and authContextId apply only to direct execution.')
+  }
   if (fallback && actions.some((action) => !AUTOMATIC_FALLBACK_ACTIONS.has(action.action))) {
     throw tokenlessError('invalid_playwright_job_fallback', 'Automatic provider fallback accepts only portable conversation actions.')
   }
   if (executionMode === 'direct') {
-    validateDirectChatRequest({ provider, target, taskId, capabilityRoute, fallback, userHandoff, actions })
+    validateDirectChatRequest({ provider, providerBackend, authContextId, target, taskId, capabilityRoute, fallback, userHandoff, actions })
   }
   return {
     protocol: MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID,
@@ -221,6 +234,8 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
     fallback,
     context,
     executionMode,
+    providerBackend,
+    authContextId,
     browserVisibility,
     userHandoff,
     ...(pagePolicy === undefined ? {} : { pagePolicy }),
@@ -235,8 +250,26 @@ function validateExecutionMode(value: unknown): PlaywrightExecutionMode {
   return value
 }
 
+function validateProviderBackend(value: unknown): ProviderBackend | null {
+  if (value === null) return null
+  if (value !== 'native' && value !== 'g4f') {
+    throw tokenlessError('invalid_playwright_job_provider_backend', 'Managed Playwright providerBackend must be native or g4f.')
+  }
+  return value
+}
+
+function validateAuthContextId(value: unknown) {
+  if (value === null) return null
+  if (typeof value !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(value)) {
+    throw tokenlessError('invalid_playwright_job_auth_context', 'Managed Playwright authContextId is invalid.')
+  }
+  return value
+}
+
 function validateDirectChatRequest(input: {
   provider: ProviderInstance
+  providerBackend: ProviderBackend | null
+  authContextId: string | null
   target: ManagedPlaywrightSafeTarget
   taskId: string | null
   capabilityRoute: TaskCapabilityRoute | null
@@ -244,8 +277,17 @@ function validateDirectChatRequest(input: {
   userHandoff: boolean
   actions: readonly VisibleActionRequest[]
 }) {
-  if (input.provider.id !== 'chatgpt' && input.provider.id !== 'perplexity') {
-    throw tokenlessError('direct_provider_unsupported', 'Direct execution currently supports only the ChatGPT and Perplexity providers.')
+  const nativeAvailable = nativeDirectProviderAvailable(input.provider.id)
+  const g4fAvailable = g4fProviderName(input.provider.id) !== null
+  if (
+    input.providerBackend === 'native' && !nativeAvailable ||
+    input.providerBackend === 'g4f' && !g4fAvailable ||
+    input.providerBackend === null && !nativeAvailable && !g4fAvailable
+  ) {
+    throw tokenlessError('direct_provider_unsupported', 'Direct execution is not available through the selected provider backend.')
+  }
+  if (input.authContextId !== null && input.providerBackend === 'native') {
+    throw tokenlessError('direct_auth_context_unsupported', 'Native direct execution does not accept a G4F auth context.')
   }
   if (!isProviderHomeTarget(input.target, input.provider) || input.taskId !== null) {
     throw tokenlessError('direct_conversation_unsupported', 'Direct execution currently supports only a new provider conversation.')

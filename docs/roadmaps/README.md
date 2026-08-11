@@ -47,7 +47,7 @@ Every roadmap filename must begin with its product priority (`P0-`, `P1-`, `P2-`
 | --- | --- | --- |
 | [Real Provider Browser E2E and Native Projects](P0-real-provider-browser-e2e-and-native-projects.md) | Advance the Web Provider line by proving every advertised visible capability against real provider websites and adding real Claude and Grok native Project creation, reuse, and continuation. | P0 |
 | [Provider Expansion and Parity](P0-provider-expansion.md) | Advance the Web Provider line with high-value AI websites and an evidence-backed visible capability catalog and routing matrix. | P0 |
-| [Web AI → API: Provider Direct Protocol](P0-direct-provider-protocol.md) | Advance the Web AI → API line through the existing authenticated local API and OpenAI-compatible proxy; repair the experimental ChatGPT new-text PoC, define auth sources, add a minimal pinned gpt4free gap adapter, then deliver its parity matrix capability by capability. | P0 |
+| [Web AI → API: Provider Direct Protocol](P0-direct-provider-protocol.md) | Advance the Web AI → API line through the existing authenticated local API: install one pinned private GPT4Free service for broad direct-provider coverage, retain native adapters behind `providerBackend`, and internalize provider implementations through real A/B evidence. | P0 |
 | [FeatureBench Agent Runtime Evaluation](P0-featurebench-agent-runtime-evaluation.md) | Run Tokenless as a FeatureBench scaffold across the pinned 200-task full split, using real provider turns, container tools, patches, and the official evaluator. | P0 |
 | [Context Delivery and Workspace Alignment](P0-context-delivery-and-workspace-alignment.md) | Carry authorized task, repository, instruction, and file context into the exact provider Project or conversation, including a new chat. | P0 |
 | [Web AI Interaction Protocol](P0-web-ai-interaction-protocol.md) | Define the versioned, provider-neutral turn interface through which the Web Agent Harness drives durable visible-provider work without importing browser or daemon internals. | P0 |
@@ -85,7 +85,7 @@ flowchart LR
   Browser["Browser connection<br/>native Chrome or Brave + explicit Cloak"]
   Provider["Web Provider adapters<br/>visible capabilities"]
   Auth["Explicit direct auth source<br/>ephemeral or user-persisted"]
-  Direct["Web AI → API adapters<br/>Node first + pinned Python gaps"]
+  Direct["Web AI → API router<br/>native or private pinned G4F service"]
   Endpoint["Real provider Web endpoint"]
   Workspace["Provider workspace mirror<br/>Project or conversation"]
   Task["Web-agent task<br/>exact session and project context"]
@@ -119,7 +119,7 @@ flowchart LR
 The two product lines can proceed in parallel; their first tangible slices are:
 
 1. For Web Provider, keep visible-browser automation on the real provider evidence path and expand only verified capabilities.
-2. For Web AI → API, repair the real ChatGPT same-origin PoC and exact-marker/secret-leak E2E, define explicit auth sources and lifetimes, add only the minimal pinned gpt4free Python gap adapter, then expose verified direct capabilities through the existing authenticated local API and OpenAI-compatible proxy.
+2. For Web AI → API, install and manage one pinned private GPT4Free HTTP service, define explicit auth contexts and lifetimes, route direct providers through `native | g4f`, and expose verified capabilities through the existing authenticated local API while retaining native implementations for A/B and gradual internalization.
 
 Shared substrate and later product work follow:
 

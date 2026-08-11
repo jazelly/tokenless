@@ -46,20 +46,23 @@ tokenless run \
   --json
 ```
 
-Opt into the direct protocol for one new ChatGPT or Perplexity text chat:
+Use the setup-managed GPT4Free backend for a direct ChatGPT text chat:
 
 ```bash
 tokenless run \
   --profile default \
   --provider chatgpt \
   --execution-mode direct \
+  --provider-backend g4f \
   --prompt "Review this proposal." \
   --json
 ```
 
-Use `--provider perplexity` with the same command for a guest or signed-in Perplexity session.
+Use `--provider-backend native` to keep the existing Tokenless ChatGPT or Perplexity implementation for A/B testing and rollback.
 
-Direct mode reads only the selected provider session into process memory and sends it only to approved `chatgpt.com` or `www.perplexity.ai` endpoints through Chrome impersonation. Its first request may download the native `curl-impersonate` library pinned by `impers`. It does not expose or persist session values, and it rejects attachments, continuation, model or effort selection, search/media, Projects, other providers, and fallback. Omitting `--execution-mode direct` keeps the existing visible-browser behavior.
+Setup installs one pinned private `g4f[all]` Python service. Tokenless keeps browser control and profile ownership; G4F handles direct provider HTTP, impersonation, Sentinel/PoW, streaming, HAR/Cookie auth, media, and provider introspection behind the authenticated daemon API. Omitting `--execution-mode direct` keeps visible-browser behavior.
+
+See [GPT4Free direct provider service](../../docs/g4f-direct-provider-service.md) for backend flags, exact provider IDs, auth contexts, API routes, pins, and isolation boundaries.
 
 If no provider is explicit, Tokenless uses the first configured provider with a cached guest or signed-in observation. If none is usable, it fails before creating a job and reports how to refresh access.
 

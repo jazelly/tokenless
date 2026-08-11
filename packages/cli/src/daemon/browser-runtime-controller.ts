@@ -11,6 +11,7 @@ import { BrowserRuntimeManager } from '../browser-runtime/manager.js'
 import { readTokenlessConfig } from '../job-store.js'
 import type { JobStore } from './job-store.js'
 import type { BrowserVisibility } from '../browser-visibility.js'
+import type { G4fServiceClient } from '../g4f/client.js'
 
 export type BrowserRuntimeState = 'running' | 'quiescing' | 'quiesced' | 'stopped'
 
@@ -41,10 +42,16 @@ export class BrowserRuntimeController {
   private quiesceRequested = false
   private quiesceFailure: unknown
   private lane: Promise<unknown> = Promise.resolve()
+  private g4fClient: G4fServiceClient | undefined
 
   constructor(options: BrowserRuntimeControllerOptions) {
     this.store = options.store
     this.onFatalError = options.onFatalError
+  }
+
+  setG4fClient(client: G4fServiceClient | undefined) {
+    if (this.runner) throw new Error('Cannot replace the G4F client while the browser runtime is running.')
+    this.g4fClient = client
   }
 
   status(): BrowserRuntimeStatus {
@@ -164,6 +171,7 @@ export class BrowserRuntimeController {
     const service = new ManagedPlaywrightRunnerService({
       homeDir: this.store.homeDir,
       daemonClient: createInProcessDaemonClient(this.store),
+      g4fClient: this.g4fClient,
       browserResolver: async (profile) => {
         if (!profile.runtimeBinding) {
           const runtime = await runtimeManager.ensure(nativeBrowser, {

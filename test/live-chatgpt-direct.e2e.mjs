@@ -25,6 +25,7 @@ test('built CLI completes one real ChatGPT direct text chat', { timeout: 600_000
     '--profile', target.profile.slug,
     '--provider', 'chatgpt',
     '--execution-mode', 'direct',
+    '--provider-backend', 'native',
     '--prompt', `Reply with exactly ${marker} and no other text.`,
     '--json',
   ], {

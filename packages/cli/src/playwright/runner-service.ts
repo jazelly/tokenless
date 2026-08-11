@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import {
   claimRecoveryError,
   errorResponse,
@@ -34,7 +34,7 @@ import { ManagedProfileRegistry } from './profiles/registry.js'
 import { checkpointIndicatesExternalMutation } from './submission-certainty.js'
 import { readTokenlessConfig } from '../job-store.js'
 import { PROVIDER_CAPABILITIES, TASK_CAPABILITIES, getProviderInstanceById } from '../providers/registry.js'
-import { sendDirectChatGptMessage } from '../providers/direct/chatgpt.js'
+import { readChatGptBrowserSession, sendDirectChatGptMessage } from '../providers/direct/chatgpt.js'
 import { sendDirectPerplexityMessage } from '../providers/direct/perplexity.js'
 import type {
   ManagedBrowserContext,
@@ -55,6 +55,9 @@ import type { ProviderActionPreparation } from '../providers/contracts.js'
 import type { ProviderCapacityProjection } from '../providers/rate-limit-policy.js'
 import type { BrowserContext, Page } from 'playwright-core'
 import type { OutputSavingsWorkInput } from '../daemon/job-store.js'
+import type { G4fServiceClient } from '../g4f/client.js'
+import { ProviderProtocolRouter } from '../providers/direct/protocol-router.js'
+import { g4fProviderName } from '../providers/direct/g4f-map.js'
 
 export type ManagedPlaywrightRunnerServiceOptions = {
   homeDir?: string | undefined
@@ -73,6 +76,7 @@ export type ManagedPlaywrightRunnerServiceOptions = {
   recoverAbortedClaim?: ((job: DaemonClaimedJob) => Promise<unknown> | unknown) | undefined
   cleanupAttachmentRoot?: boolean | undefined
   now?: (() => Date) | undefined
+  g4fClient?: G4fServiceClient | undefined
 }
 
 export type ManagedProfileSource = {
@@ -192,6 +196,8 @@ export class ManagedPlaywrightRunnerService {
   private readonly e2eInspection: E2EBrowserInspectionConfig | null
   private readonly controlPlanePageKey: string
   private readonly homeDir: string | undefined
+  private readonly protocolRouter: ProviderProtocolRouter
+  private readonly g4fClient: G4fServiceClient | undefined
   private readonly providerTabsByProfile = new Map<string, Map<string, Page>>()
   private readonly pendingProviderTabsByProfile = new Map<string, Set<string>>()
   private readonly inFlightProfiles = new Set<string>()
@@ -200,6 +206,8 @@ export class ManagedPlaywrightRunnerService {
 
   constructor(options: ManagedPlaywrightRunnerServiceOptions) {
     this.homeDir = options.homeDir === undefined ? undefined : path.resolve(options.homeDir)
+    this.g4fClient = options.g4fClient
+    this.protocolRouter = new ProviderProtocolRouter(options.g4fClient)
     if (options.profileRegistry) {
       this.profileRegistry = options.profileRegistry
     } else {
@@ -751,6 +759,15 @@ export class ManagedPlaywrightRunnerService {
     renewalError: () => unknown,
   ): Promise<ManagedPlaywrightExecutionOutcome> {
     if (request.executionMode === 'direct') {
+      const config = await readTokenlessConfig(this.homeDir)
+      const backend = this.protocolRouter.backend(
+        config.directProvider,
+        request.provider,
+        request.providerBackend ?? undefined,
+      )
+      if (backend === 'g4f') {
+        return await this.executeG4fDirectChatActions(profile, job, request, signal, isCanceled, renewalError)
+      }
       return await this.executeDirectChatActions(profile, job, request, signal, isCanceled, renewalError)
     }
     const outputSavingsEnabled = await this.outputSavingsEnabled()
@@ -1190,6 +1207,149 @@ export class ManagedPlaywrightRunnerService {
       },
       outputSavingsWork: [],
     }
+  }
+
+  private async executeG4fDirectChatActions(
+    profile: ManagedBrowserProfile,
+    job: DaemonClaimedJob,
+    request: ManagedPlaywrightJobRequest,
+    signal: AbortSignal,
+    isCanceled: () => boolean,
+    renewalError: () => unknown,
+  ): Promise<ManagedPlaywrightExecutionOutcome> {
+    const promptAction = request.actions[0]
+    const submitAction = request.actions[1]
+    const readAction = request.actions[2]
+    if (
+      promptAction?.action !== VISIBLE_ACTIONS.PROMPT_INPUT ||
+      typeof promptAction.payload.text !== 'string' ||
+      submitAction?.action !== VISIBLE_ACTIONS.PROMPT_SUBMIT ||
+      readAction?.action !== VISIBLE_ACTIONS.RESPONSE_READ
+    ) {
+      throw tokenlessError('direct_action_unsupported', 'G4F direct execution requires prompt.input, prompt.submit, and response.read.')
+    }
+    if (job.checkpoint_json !== null || job.provider_submitted_at !== null) {
+      throw tokenlessError(
+        'direct_protocol_resume_unsupported',
+        'A G4F direct provider submission cannot be replayed after runner interruption; start a new direct request.',
+      )
+    }
+    throwIfStopped(signal, isCanceled, renewalError)
+    let ephemeralContextId: string | undefined
+    let authContextId = request.authContextId ?? undefined
+    try {
+      if (!authContextId) {
+        authContextId = await this.createG4fBrowserAuthContext(profile, job, request, signal)
+        ephemeralContextId = authContextId
+      }
+      const completion = await this.protocolRouter.completeG4f({
+        provider: request.provider,
+        messages: [{ role: 'user', content: promptAction.payload.text }],
+        ...(authContextId ? { authContextId } : {}),
+        signal,
+      })
+      throwIfStopped(signal, isCanceled, renewalError)
+      await this.daemonClient.recordProviderSubmission({
+        jobId: job.job_id,
+        claimToken: job.claim_token,
+        signal,
+      })
+      const responses: VisibleActionResponse[] = [
+        directActionSuccess(promptAction, {
+          visible: true,
+          inputProof: 'g4f-direct-protocol-prompt-cached-in-memory',
+        }),
+        directActionSuccess(submitAction, {
+          visible: true,
+          submissionProof: 'g4f-private-service-request-completed',
+        }),
+        directActionSuccess(readAction, {
+          text: completion.text,
+          citations: completion.citations.map((citation) => ({
+            label: citation.title ?? citation.url,
+            href: citation.url,
+          })),
+          visibleProof: 'g4f-private-service-response',
+          decisionDiagnostics: {
+            selected: null,
+            visibleAnswerCount: 0,
+            visibleBusyCount: 0,
+            generationStopVisible: false,
+          },
+        }),
+      ]
+      return {
+        result: {
+          protocol: MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID,
+          provider: request.provider,
+          responses,
+        },
+        outputSavingsWork: [],
+      }
+    } finally {
+      if (ephemeralContextId) await this.g4fClient?.deleteAuthContext(ephemeralContextId).catch(() => undefined)
+    }
+  }
+
+  private async createG4fBrowserAuthContext(
+    profile: ManagedBrowserProfile,
+    job: DaemonClaimedJob,
+    request: ManagedPlaywrightJobRequest,
+    signal: AbortSignal,
+  ) {
+    const client = this.g4fClient
+    const provider = getProviderInstanceById(request.provider)
+    const upstreamProvider = g4fProviderName(request.provider)
+    if (!client || !provider || !upstreamProvider) return undefined
+    const claimBrowserVisibility = requestedVisibilityForClaim(
+      request.browserVisibility,
+      validateResumeVisibility(job.resume_json),
+    )
+    return await this.contextManager.runWithProfile(profile, claimBrowserVisibility, async (managedContext) => {
+      const lease = await managedContext.acquireProviderPage({
+        provider: provider.id,
+        taskKey: `${managedPageKey(job, request)}:g4f-auth`,
+        policy: request.pagePolicy,
+        matchesExistingPage: (candidate) => providerOwnsPage(provider, candidate),
+        isAvailablePage: (candidate) => providerPageAvailable(provider, candidate),
+      })
+      try {
+        await navigateToTarget(lease.page, provider, request.target.url, signal, false)
+        const contextId = `g4f-${job.job_id}-${randomUUID()}`
+        const providerCookies = await managedContext.browserContext.cookies([request.target.url])
+        const cookies: Record<string, Record<string, string>> = {}
+        for (const cookie of providerCookies) {
+          const domain = cookie.domain.toLowerCase()
+          cookies[domain] ??= {}
+          cookies[domain]![cookie.name] = cookie.value
+        }
+        const browserValues = await lease.page.evaluate(() => ({
+          userAgent: navigator.userAgent,
+          language: navigator.language || 'en-US',
+        }))
+        const headers = {
+          [new URL(request.target.url).hostname]: {
+            'user-agent': browserValues.userAgent,
+            'accept-language': `${browserValues.language},en;q=0.8`,
+          },
+        }
+        let apiKey: string | undefined
+        if (provider.id === 'chatgpt') {
+          const session = await readChatGptBrowserSession(lease.page, managedContext.browserContext)
+          apiKey = session.accessToken
+        }
+        await client.createAuthContext({
+          contextId,
+          provider: upstreamProvider,
+          profile: profile.id,
+          lifetime: 'ephemeral',
+          source: { type: 'manual', cookies, headers, ...(apiKey ? { apiKey } : {}) },
+        }, signal)
+        return contextId
+      } finally {
+        await lease.release()
+      }
+    })
   }
 
   private async outputSavingsEnabled() {

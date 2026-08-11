@@ -43,6 +43,8 @@ import {
   openAiStreamFrames,
   type ApiProxyDialect,
 } from './api-proxy.js'
+import type { G4fServiceProcess } from '../g4f/index.js'
+import { handleG4fApiRequest } from './g4f-api.js'
 
 export type DaemonServer = {
   activate(): void
@@ -71,6 +73,7 @@ export async function serveHttp({
   host,
   port,
   runtimeController,
+  g4fService,
   beforeClose,
   afterStoreClose,
 }: {
@@ -78,6 +81,7 @@ export async function serveHttp({
   host: string
   port: number
   runtimeController?: BrowserRuntimeController | undefined
+  g4fService?: G4fServiceProcess | undefined
   beforeClose?: (() => Promise<void>) | undefined
   afterStoreClose?: (() => Promise<void>) | undefined
 }) {
@@ -111,9 +115,9 @@ export async function serveHttp({
   })
   const webAi = new WebAiInteractionV0Adapter(store)
   await webAi.initializeCleanup()
-  const apiProxy = new ApiProxyAdapter(store, async () => await runtimeController?.wake())
+  const apiProxy = new ApiProxyAdapter(store, async () => await runtimeController?.wake(), g4fService?.client)
   server = http.createServer((request, response) => {
-    void handleRequest(store, close, () => active, deactivate, runtimeController, uiServer, webAi, apiProxy, request, response)
+    void handleRequest(store, close, () => active, deactivate, runtimeController, g4fService, uiServer, webAi, apiProxy, request, response)
   })
   await new Promise<void>((resolve, reject) => {
     const onError = (error: Error) => {
@@ -177,6 +181,7 @@ async function handleRequest(
   isActive: () => boolean,
   deactivate: () => void,
   runtimeController: BrowserRuntimeController | undefined,
+  g4fService: G4fServiceProcess | undefined,
   uiServer: TokenlessUiServer,
   webAi: WebAiInteractionV0Adapter,
   apiProxy: ApiProxyAdapter,
@@ -196,6 +201,7 @@ async function handleRequest(
         ready: active,
         home_dir: store.homeDir,
         pid: process.pid,
+        g4f_ready: g4fService?.health.status === 'ready',
         proof: daemonReadyProof(store.controlToken(), challenge, store.homeDir),
       })
       return
@@ -240,6 +246,15 @@ async function handleRequest(
     }
 
     requireControlAuth(store, request)
+
+    if (await handleG4fApiRequest({
+      store,
+      client: g4fService?.client,
+      request,
+      response,
+      method,
+      url,
+    })) return
 
     const apiProxyRoute = matchApiProxyRoute(method, url.pathname)
     if (apiProxyRoute) {
@@ -467,6 +482,21 @@ async function handleRequest(
 
     writeJson(response, 404, { error: { message: 'not found' } })
   } catch (error) {
+    const directApiStatus = (error as { status?: unknown })?.status
+    const directApiCode = (error as { code?: unknown })?.code
+    if (
+      typeof directApiStatus === 'number' &&
+      typeof directApiCode === 'string' &&
+      directApiCode.startsWith('g4f_')
+    ) {
+      writeJson(response, directApiStatus, {
+        error: {
+          code: directApiCode,
+          message: error instanceof Error ? error.message : 'The direct G4F request was rejected.',
+        },
+      })
+      return
+    }
     if (error instanceof BodyLimitExceededError) {
       writeText(response, 413, BODY_LIMIT_EXCEEDED_MESSAGE)
       return

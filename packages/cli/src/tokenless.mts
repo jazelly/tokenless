@@ -78,6 +78,8 @@ import {
   type ApiProxyConversationMode,
 } from './index.js'
 import type { TokenlessConfig } from './job-store.js'
+import { G4fRuntimeManager } from './g4f/runtime-manager.js'
+import { g4fProviderName, nativeDirectProviderAvailable } from './providers/direct/g4f-map.js'
 import {
   OUTPUT_SAVINGS_ESTIMATOR,
   OutputSavingsRuntimeManager,
@@ -1738,6 +1740,8 @@ async function executeDaemonJob({
       contextLanguage: config.language,
       contextUpstream: agentContextEnvelopeFromEnvironment(),
       executionMode,
+      providerBackend: normalizeProviderBackend(args.providerBackend),
+      authContextId: args.authContextId === undefined ? null : String(args.authContextId),
       fallback: fallbackAlternatives.length === 0 ? null : {
         protocol: 'tokenless.provider-fallback.v1',
         mode: 'automatic',
@@ -2925,6 +2929,7 @@ async function installCommand(args: CliArgs) {
     ok: true,
     runtime: 'typescript',
     skills: provisioned.skills,
+    g4f: provisioned.g4f,
     browser: {
       id: provisioned.browser.browserId,
       runtimeId: provisioned.browser.runtimeId,
@@ -3158,6 +3163,11 @@ async function setupCommand(args: CliArgs) {
         daemonUrl: configuredDaemonUrl,
         language: config.language,
         apiProxy,
+        g4f: { enabled: true },
+        directProvider: {
+          defaultBackend: 'g4f',
+          providerBackends: current.directProvider.providerBackends,
+        },
       })
     })
     const codexIntegration = await setupCodexIntegration({ args, homeDir, presenter })
@@ -3298,6 +3308,7 @@ async function setupCommand(args: CliArgs) {
       transport: 'daemon',
       backend: PLAYWRIGHT_EXECUTION_BACKEND,
       skills,
+      g4f: maintenance.g4f,
       codexIntegration: codexIntegrationStatus,
       nextStep,
       ...(setupBrowserWarning === null ? {} : { warning: setupBrowserWarning }),
@@ -3706,11 +3717,11 @@ async function selectSetupApiProxy({
   prompt: ReturnType<typeof createSetupPrompt> | null
 }) {
   if (args.conversationMode !== undefined) {
-    return { enabled: true, conversationMode: requiredApiProxyConversationMode(args.conversationMode) }
+    return { enabled: true, conversationMode: requiredApiProxyConversationMode(args.conversationMode), executionMode: 'direct' as const }
   }
   if (!prompt || args.setupDefaults === true) return config.apiProxy
   const enabled = await prompt.confirm(t('setupApiProxyPrompt'), config.apiProxy.enabled)
-  if (!enabled) return { enabled: false, conversationMode: config.apiProxy.conversationMode }
+  if (!enabled) return { enabled: false, conversationMode: config.apiProxy.conversationMode, executionMode: config.apiProxy.executionMode }
   const conversationMode = await prompt.select<ApiProxyConversationMode>(
     t('setupApiProxyModePrompt'),
     [
@@ -3719,7 +3730,7 @@ async function selectSetupApiProxy({
     ],
     config.apiProxy.conversationMode === 'continue-conversation' ? 1 : 0,
   )
-  return { enabled: true, conversationMode }
+  return { enabled: true, conversationMode, executionMode: 'direct' as const }
 }
 
 async function selectSetupProviders({
@@ -3904,6 +3915,11 @@ async function provisionRuntime(args: CliArgs) {
     browser: primaryBrowser.selection,
     browserExecutablePath: primaryBrowser.executablePath,
     daemonUrl: configuredDaemonUrl,
+    g4f: { enabled: true },
+    directProvider: {
+      defaultBackend: 'g4f',
+      providerBackends: config.directProvider.providerBackends,
+    },
   })
   const maintenance = await reconcileTokenlessMaintenance({
     homeDir,
@@ -3915,6 +3931,7 @@ async function provisionRuntime(args: CliArgs) {
     homeDir,
     config,
     skills: maintenance.skills,
+    g4f: maintenance.g4f,
     browsers: resolvedBrowsers.map((browser) => browser.runtimeId),
     browser: primaryBrowser,
     installed: {
@@ -3998,6 +4015,8 @@ async function doctorCommand(args: CliArgs) {
       : 'disabled',
     runtime: outputSavingsRuntime,
   }
+  const g4fEnabled = config.g4f?.enabled === true
+  const g4fRuntime = await new G4fRuntimeManager(homeDir).inspect()
   let daemon: Record<string, any>
   const daemonLogPath = path.join(homeDir, 'daemon.log')
   const daemonLogExists = await fileExists(daemonLogPath)
@@ -4053,6 +4072,7 @@ async function doctorCommand(args: CliArgs) {
         expectedControlApiRevision: DAEMON_CONTROL_API_REVISION,
         runningControlApiRevision,
         controlApiCompatible,
+        g4fReady: false,
       }
     } else {
       daemon = {
@@ -4072,6 +4092,7 @@ async function doctorCommand(args: CliArgs) {
         expectedControlApiRevision: DAEMON_CONTROL_API_REVISION,
         runningControlApiRevision,
         controlApiCompatible,
+        g4fReady: ready.body?.g4f_ready === true,
         pid: ready.body?.pid ?? null,
       }
     }
@@ -4157,6 +4178,13 @@ async function doctorCommand(args: CliArgs) {
     profileRuntime,
     providerReadiness,
     outputSavings,
+    g4f: {
+      ok: !g4fEnabled || (g4fRuntime.installed && (daemon.running !== true || daemon.g4fReady === true)),
+      enabled: g4fEnabled,
+      installed: g4fRuntime.installed,
+      daemonReady: daemon.g4fReady === true,
+      runtime: g4fRuntime,
+    },
   }
   const ok = Object.values(checks).every((check) => check.ok === true)
   printPayload({
@@ -4941,7 +4969,7 @@ function assertDaemonRequestSize(value: unknown) {
 function createCommandContracts(): CommandContract[] {
   const visibleJobOptions = [
     'home', 'json', 'quiet', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'browserVisibility',
-    'executionMode',
+    'executionMode', 'providerBackend', 'authContextId',
     'runnerHeartbeatTimeoutMs', 'timeoutMs', 'cancelTimeoutMs', 'targetUrl', 'taskId', 'idempotencyKey',
     'projectName', 'chatName', 'workspaceMode', 'projectInstructions', 'projectInstructionsFile',
     'model', 'modelFallbacks', 'effort', 'thinkingEffort', 'qwenMode', 'qwenModeVariant',
@@ -5068,6 +5096,8 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--browser-executable-path': 'browserExecutablePath',
     '--browser-visibility': 'browserVisibility',
     '--execution-mode': 'executionMode',
+    '--provider-backend': 'providerBackend',
+    '--auth-context-id': 'authContextId',
     '--proxy-server': 'proxyServer',
     '--proxy-bypass': 'proxyBypass',
     '--browsers': 'browsers',
@@ -5421,8 +5451,14 @@ function assertVisibleRunArguments(args: CliArgs) {
 
   const provider = args.provider ?? process.env.TOKENLESS_PROVIDER
   const directProvider = provider === undefined ? undefined : normalizeProvider(provider)
-  if (directProvider !== 'chatgpt' && directProvider !== 'perplexity') {
-    throw usageError('unsupported_provider', '--execution-mode direct currently requires --provider chatgpt or perplexity.')
+  const backend = normalizeProviderBackend(args.providerBackend)
+  if (
+    !directProvider ||
+    backend === 'native' && !nativeDirectProviderAvailable(directProvider) ||
+    backend === 'g4f' && !g4fProviderName(directProvider) ||
+    backend === null && !nativeDirectProviderAvailable(directProvider) && !g4fProviderName(directProvider)
+  ) {
+    throw usageError('unsupported_provider', '--execution-mode direct requires a provider supported by the selected native or g4f backend.')
   }
   if (action !== 'submit_and_read') {
     throw usageError('unsupported_visible_action', '--execution-mode direct currently supports only the default submit_and_read action.')
@@ -5451,6 +5487,15 @@ function normalizeExecutionMode(value: unknown): 'browser' | 'direct' {
   const normalized = value === undefined ? 'browser' : String(value).trim().toLowerCase()
   if (normalized !== 'browser' && normalized !== 'direct') {
     throw usageError('unsupported_visible_action', '--execution-mode must be browser or direct.')
+  }
+  return normalized
+}
+
+function normalizeProviderBackend(value: unknown): 'native' | 'g4f' | null {
+  if (value === undefined || value === null || value === '') return null
+  const normalized = String(value).trim().toLowerCase()
+  if (normalized !== 'native' && normalized !== 'g4f') {
+    throw usageError('invalid_argument', '--provider-backend must be native or g4f.')
   }
   return normalized
 }
@@ -6647,7 +6692,7 @@ async function initializeCliLanguage(argv: string[]) {
       setActiveLanguage(detectSystemLanguage())
       return
     }
-    setActiveLanguage((await readTokenlessConfig(homeDir)).language)
+    setActiveLanguage((await readTokenlessConfig(homeDir, { persistMigrations: false })).language)
   } catch {
     setActiveLanguage(detectSystemLanguage())
   }

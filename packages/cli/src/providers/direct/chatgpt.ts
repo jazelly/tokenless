@@ -14,7 +14,7 @@ export type DirectChatGptResult = {
   citations: readonly []
 }
 
-type BrowserSessionBridge = {
+export type ChatGptBrowserSession = {
   accessToken: string
   userAgent: string
   language: string
@@ -22,6 +22,8 @@ type BrowserSessionBridge = {
   timezoneOffsetMinutes: number
   cookies: Cookie[]
 }
+
+type BrowserSessionBridge = ChatGptBrowserSession
 
 export async function sendDirectChatGptMessage(options: {
   page: Page
@@ -33,7 +35,7 @@ export async function sendDirectChatGptMessage(options: {
   assertNotAborted(options.signal)
   let bridge: BrowserSessionBridge
   try {
-    bridge = await bootstrapBrowserSession(options.page, options.browserContext)
+    bridge = await readChatGptBrowserSession(options.page, options.browserContext)
   } catch (error) {
     if (isSafeDirectError(error)) throw error
     throw tokenlessError(
@@ -57,7 +59,7 @@ export async function sendDirectChatGptMessage(options: {
   }
 }
 
-async function bootstrapBrowserSession(page: Page, browserContext: BrowserContext): Promise<BrowserSessionBridge> {
+export async function readChatGptBrowserSession(page: Page, browserContext: BrowserContext): Promise<ChatGptBrowserSession> {
   const pageUrl = new URL(page.url())
   if (pageUrl.origin !== CHATGPT_ORIGIN) {
     throw tokenlessError('direct_session_origin_invalid', 'ChatGPT direct execution requires a current chatgpt.com page.')

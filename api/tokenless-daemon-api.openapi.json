@@ -1492,6 +1492,156 @@
           }
         }
       }
+    },
+    "/v1/direct/g4f/providers": {
+      "get": {
+        "operationId": "listG4fProviders",
+        "summary": "List exact providers exposed by the pinned private G4F service",
+        "responses": {
+          "200": { "description": "G4F provider inventory", "content": { "application/json": { "schema": { "type": "array", "items": { "type": "object", "additionalProperties": true } } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "503": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/v1/direct/g4f/providers/{provider}": {
+      "get": {
+        "operationId": "getG4fProvider",
+        "summary": "Inspect one mapped or exact G4F provider",
+        "parameters": [{ "$ref": "#/components/parameters/G4fProvider" }],
+        "responses": {
+          "200": { "$ref": "#/components/responses/G4fJson" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/v1/direct/g4f/providers/{provider}/models": {
+      "get": {
+        "operationId": "listG4fProviderModels",
+        "summary": "List models reported by one G4F provider",
+        "parameters": [{ "$ref": "#/components/parameters/G4fProvider" }, { "$ref": "#/components/parameters/G4fAuthContext" }],
+        "responses": { "200": { "$ref": "#/components/responses/G4fJson" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/v1/direct/g4f/providers/{provider}/quota": {
+      "get": {
+        "operationId": "getG4fProviderQuota",
+        "summary": "Read quota reported by one G4F provider",
+        "parameters": [{ "$ref": "#/components/parameters/G4fProvider" }, { "$ref": "#/components/parameters/G4fAuthContext" }],
+        "responses": { "200": { "$ref": "#/components/responses/G4fJson" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/v1/direct/g4f/auth-contexts/{contextId}": {
+      "post": {
+        "operationId": "createG4fAuthContext",
+        "summary": "Create a provider/profile-scoped G4F auth context",
+        "parameters": [{ "$ref": "#/components/parameters/G4fAuthContextId" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/G4fAuthContextRequest" } } } },
+        "responses": { "200": { "$ref": "#/components/responses/G4fJson" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      },
+      "delete": {
+        "operationId": "deleteG4fAuthContext",
+        "summary": "Delete a G4F auth context and its private files",
+        "parameters": [{ "$ref": "#/components/parameters/G4fAuthContextId" }],
+        "responses": { "200": { "$ref": "#/components/responses/G4fJson" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/v1/direct/g4f/auth-contexts": {
+      "get": {
+        "operationId": "listG4fAuthContexts",
+        "summary": "List public metadata for active G4F auth contexts without session values",
+        "responses": { "200": { "$ref": "#/components/responses/G4fJson" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/v1/direct/g4f/auth-contexts/{contextId}/files": {
+      "post": {
+        "operationId": "uploadG4fAuthFiles",
+        "summary": "Upload HAR or cookie JSON files to a scoped G4F auth context",
+        "parameters": [{ "$ref": "#/components/parameters/G4fAuthContextId" }],
+        "requestBody": { "required": true, "content": { "multipart/form-data": { "schema": { "type": "object", "required": ["files"], "properties": { "files": { "type": "array", "items": { "type": "string", "format": "binary" } } } } } } },
+        "responses": { "200": { "$ref": "#/components/responses/G4fJson" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "413": { "$ref": "#/components/responses/BadRequest" } }
+      }
+    },
+    "/v1/direct/g4f/{provider}/chat/completions": {
+      "post": {
+        "operationId": "createG4fChatCompletion",
+        "summary": "Proxy a chat completion to one exact G4F provider, preserving SSE when requested",
+        "parameters": [{ "$ref": "#/components/parameters/G4fProvider" }, { "$ref": "#/components/parameters/G4fAuthContext" }],
+        "requestBody": { "$ref": "#/components/requestBodies/G4fJson" },
+        "responses": { "200": { "$ref": "#/components/responses/G4fData" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "502": { "$ref": "#/components/responses/InternalError" } }
+      }
+    },
+    "/v1/direct/g4f/{provider}/responses": {
+      "post": {
+        "operationId": "createG4fResponse",
+        "summary": "Proxy a Responses API request to one exact G4F provider",
+        "parameters": [{ "$ref": "#/components/parameters/G4fProvider" }, { "$ref": "#/components/parameters/G4fAuthContext" }],
+        "requestBody": { "$ref": "#/components/requestBodies/G4fJson" },
+        "responses": { "200": { "$ref": "#/components/responses/G4fData" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/v1/direct/g4f/{provider}/messages": {
+      "post": {
+        "operationId": "createG4fMessage",
+        "summary": "Proxy a Messages API request to one exact G4F provider",
+        "parameters": [{ "$ref": "#/components/parameters/G4fProvider" }, { "$ref": "#/components/parameters/G4fAuthContext" }],
+        "requestBody": { "$ref": "#/components/requestBodies/G4fJson" },
+        "responses": { "200": { "$ref": "#/components/responses/G4fData" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/v1/direct/g4f/{provider}/images/generations": {
+      "post": {
+        "operationId": "createG4fImage",
+        "summary": "Proxy image generation to one exact G4F provider",
+        "parameters": [{ "$ref": "#/components/parameters/G4fProvider" }, { "$ref": "#/components/parameters/G4fAuthContext" }],
+        "requestBody": { "$ref": "#/components/requestBodies/G4fJson" },
+        "responses": { "200": { "$ref": "#/components/responses/G4fData" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/v1/direct/g4f/{provider}/audio/transcriptions": {
+      "post": {
+        "operationId": "createG4fTranscription",
+        "summary": "Proxy audio transcription to one exact G4F provider",
+        "parameters": [{ "$ref": "#/components/parameters/G4fProvider" }, { "$ref": "#/components/parameters/G4fAuthContext" }],
+        "responses": { "200": { "$ref": "#/components/responses/G4fData" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/v1/direct/g4f/{provider}/audio/speech": {
+      "post": {
+        "operationId": "createG4fSpeech",
+        "summary": "Proxy speech generation to one exact G4F provider",
+        "parameters": [{ "$ref": "#/components/parameters/G4fProvider" }, { "$ref": "#/components/parameters/G4fAuthContext" }],
+        "requestBody": { "$ref": "#/components/requestBodies/G4fJson" },
+        "responses": { "200": { "$ref": "#/components/responses/G4fData" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/v1/direct/g4f/pa/providers": {
+      "get": {
+        "operationId": "listG4fPaProviders",
+        "summary": "List setup-managed G4F PA providers",
+        "responses": { "200": { "$ref": "#/components/responses/G4fJson" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/v1/direct/g4f/pa/providers/{providerId}": {
+      "get": {
+        "operationId": "getG4fPaProvider",
+        "summary": "Inspect one setup-managed G4F PA provider",
+        "parameters": [{ "name": "providerId", "in": "path", "required": true, "schema": { "type": "string", "minLength": 1 } }],
+        "responses": { "200": { "$ref": "#/components/responses/G4fJson" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/v1/direct/g4f/assets/{kind}/{filename}": {
+      "get": {
+        "operationId": "getG4fAsset",
+        "summary": "Read an image or media asset generated by the private G4F service",
+        "parameters": [
+          { "name": "kind", "in": "path", "required": true, "schema": { "type": "string", "enum": ["images", "media"] } },
+          { "name": "filename", "in": "path", "required": true, "schema": { "type": "string", "minLength": 1 } }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/G4fData" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
     }
   },
   "components": {
@@ -1503,6 +1653,25 @@
       }
     },
     "parameters": {
+      "G4fProvider": {
+        "name": "provider",
+        "in": "path",
+        "required": true,
+        "description": "Mapped Tokenless provider id or explicit g4f:<ProviderName> id.",
+        "schema": { "type": "string", "minLength": 1, "maxLength": 128 }
+      },
+      "G4fAuthContext": {
+        "name": "x-tokenless-auth-context",
+        "in": "header",
+        "required": false,
+        "schema": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" }
+      },
+      "G4fAuthContextId": {
+        "name": "contextId",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" }
+      },
       "job_id": {
         "name": "job_id",
         "in": "path",
@@ -1606,6 +1775,18 @@
       }
     },
     "responses": {
+      "G4fJson": {
+        "description": "JSON response from the selected private G4F surface",
+        "content": { "application/json": { "schema": { "type": ["object", "array"], "additionalProperties": true } } }
+      },
+      "G4fData": {
+        "description": "JSON, SSE, audio, image, or other media returned by the selected G4F surface",
+        "content": {
+          "application/json": { "schema": { "type": ["object", "array"], "additionalProperties": true } },
+          "text/event-stream": { "schema": { "type": "string" } },
+          "application/octet-stream": { "schema": { "type": "string", "format": "binary" } }
+        }
+      },
       "PublicJob": {
         "description": "Public job view",
         "content": {
@@ -1625,6 +1806,14 @@
             }
           }
         }
+      },
+      "Conflict": {
+        "description": "The requested auth context conflicts with profile/provider scope",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DaemonErrorResponse" } } }
+      },
+      "NotFound": {
+        "description": "The selected route, provider, or auth context does not exist",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DaemonErrorResponse" } } }
       },
       "Unauthorized": {
         "description": "Missing bearer token",
@@ -1704,7 +1893,29 @@
         }
       }
     },
+    "requestBodies": {
+      "G4fJson": {
+        "required": true,
+        "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } }
+      }
+    },
     "schemas": {
+      "G4fAuthContextRequest": {
+        "type": "object",
+        "required": ["provider", "profile", "source"],
+        "properties": {
+          "provider": { "type": "string", "minLength": 1 },
+          "profile": { "type": "string", "minLength": 1 },
+          "lifetime": { "type": "string", "enum": ["ephemeral", "user-persisted"], "default": "ephemeral" },
+          "source": {
+            "type": "object",
+            "required": ["type"],
+            "properties": { "type": { "type": "string", "enum": ["empty", "manual", "har", "cookie-file", "browser-cookie3", "cookie-database", "cdp"] } },
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": false
+      },
       "ApiProxyOpenAiError": {
         "type": "object",
         "description": "OpenAI-shaped error envelope. The HTTP status distinguishes a caller mistake from a disabled proxy, an unavailable provider, and a browser-paced timeout.",
@@ -2888,6 +3099,7 @@
           "ready",
           "home_dir",
           "pid",
+          "g4f_ready",
           "proof"
         ],
         "additionalProperties": false,
@@ -2910,6 +3122,9 @@
           "pid": {
             "type": "integer",
             "minimum": 1
+          },
+          "g4f_ready": {
+            "type": "boolean"
           },
           "proof": {
             "type": "string",

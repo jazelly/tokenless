@@ -192,20 +192,20 @@ test('api proxy conversation mode round-trips through the persisted config', asy
     const { readTokenlessConfig, writeTokenlessConfig } = await import(runtimeModule)
     assert.deepEqual(
       (await readTokenlessConfig(daemon.homeDir)).apiProxy,
-      { enabled: false, conversationMode: 'new-conversation' },
+      { enabled: false, conversationMode: 'new-conversation', executionMode: 'direct' },
     )
     await writeTokenlessConfig({
       homeDir: daemon.homeDir,
-      apiProxy: { enabled: true, conversationMode: 'continue-conversation' },
+      apiProxy: { enabled: true, conversationMode: 'continue-conversation', executionMode: 'browser' },
     })
     assert.deepEqual(
       (await readTokenlessConfig(daemon.homeDir)).apiProxy,
-      { enabled: true, conversationMode: 'continue-conversation' },
+      { enabled: true, conversationMode: 'continue-conversation', executionMode: 'browser' },
     )
     await assert.rejects(
       () => writeTokenlessConfig({
         homeDir: daemon.homeDir,
-        apiProxy: { enabled: true, conversationMode: 'sometimes' },
+        apiProxy: { enabled: true, conversationMode: 'sometimes', executionMode: 'direct' },
       }),
       /API proxy configuration/,
     )
