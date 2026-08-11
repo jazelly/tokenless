@@ -4,6 +4,7 @@ packages/cli/npm/*/bin/
 dist/
 packages/*/dist/
 *.tsbuildinfo
+/tokenless-beta
 .DS_Store
 
 .env
