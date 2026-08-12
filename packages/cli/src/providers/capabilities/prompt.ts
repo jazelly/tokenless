@@ -221,7 +221,7 @@ async function writePrompt(page: Page, composer: Locator, text: string) {
     await composer.click({ timeout: 1000 })
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A')
     if (text.length === 0) await page.keyboard.press('Backspace')
-    else await page.keyboard.type(text)
+    else await page.keyboard.insertText(text)
     return await composerHasExpectedText(composer, text)
   } catch {
     return await composerHasExpectedText(composer, text)

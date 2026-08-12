@@ -7,6 +7,7 @@ This index separates user guidance, stable product contracts, implementation arc
 - [README](../README.md) — product overview, installation, and first run.
 - [CLI Commands](../COMMANDS.md) — complete command and option reference.
 - [Capability Matrix](capability-matrix.md) — canonical outcomes, current provider mappings, support states, and extension rules.
+- [FeatureBench Evaluation](featurebench-evaluation.md) — pinned coding-agent benchmark, runtime boundary, commands, reports, and acceptance rules.
 - [API Proxy Integration](api-proxy-integration.md) — calling the OpenAI/Anthropic-compatible local proxy from an existing project.
 - [Privacy](../PRIVACY.md) — browser-profile, credential, file, and local-data boundaries.
 

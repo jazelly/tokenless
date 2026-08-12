@@ -137,6 +137,21 @@ export type ShutdownDaemonResponse = {
   pid?: number | undefined
 }
 
+export type IssueFeatureBenchChannelOptions = DaemonClientOptions & {
+  instanceId: string
+  benchmarkRunId: string
+  benchmarkCommit: string
+  datasetRevision: string
+  provider: string
+  profile?: string | undefined
+  executionMode: 'browser' | 'direct'
+  model: string
+  effort?: string | undefined
+  maxTurns: number
+  expiresInMs?: number | undefined
+  providerTurnTimeoutMs?: number | undefined
+}
+
 export type BrowserRuntimeStatus = {
   status: 'running' | 'quiescing' | 'quiesced' | 'stopped'
   activeProfileCount: number
@@ -253,6 +268,63 @@ export async function createDaemonJob({
       agent_kind: agentKind,
       agent_session_id: agentSessionId,
       job_id: jobId,
+    },
+    token: daemon.token,
+    timeoutMs: requestTimeoutMs,
+    signal,
+  })
+}
+
+export async function issueFeatureBenchChannel({
+  daemonUrl: explicitDaemonUrl,
+  homeDir,
+  requestTimeoutMs,
+  signal,
+  instanceId,
+  benchmarkRunId,
+  benchmarkCommit,
+  datasetRevision,
+  provider,
+  profile,
+  executionMode,
+  model,
+  effort,
+  maxTurns,
+  expiresInMs,
+  providerTurnTimeoutMs,
+}: IssueFeatureBenchChannelOptions) {
+  const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
+  return daemonRequest<{
+    protocol: 'tokenless.featurebench-channel.v1'
+    channelId: string
+    token: string
+    bridgePort: number
+    instanceId: string
+    benchmarkCommit: string
+    datasetRevision: string
+    provider: string
+    profileId: string
+    model: string
+    executionMode: 'browser' | 'direct'
+    maxTurns: number
+    providerTurnTimeoutMs: number
+    expiresAt: string
+  }>({
+    daemonUrl: daemon.daemonUrl,
+    path: '/v1/featurebench/channels',
+    body: {
+      instanceId,
+      benchmarkRunId,
+      benchmarkCommit,
+      datasetRevision,
+      provider,
+      profile,
+      executionMode,
+      model,
+      effort,
+      maxTurns,
+      expiresInMs,
+      providerTurnTimeoutMs,
     },
     token: daemon.token,
     timeoutMs: requestTimeoutMs,

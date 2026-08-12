@@ -83,6 +83,7 @@ const PLAYWRIGHT_KEYCHAIN_NEUTRAL_DEFAULT_ARGUMENTS = [
 ] as const
 const BROWSER_RUNTIME_SESSION_FILE = 'tokenless-browser-runtime.json'
 const BROWSER_RUNTIME_SESSION_PROTOCOL = 'tokenless.browser-runtime-session.v1'
+const CDP_CONNECTION_TIMEOUT_MS = 120_000
 const execFileAsync = promisify(execFile)
 
 export type PersistentContextManagerOptions = {
@@ -296,11 +297,6 @@ export class PersistentContextManager {
           { retryable: true },
         )
       }
-      if (browserTarget.e2eInspection) {
-        await fs.unlink(path.join(profile.directory, 'DevToolsActivePort')).catch((error) => {
-          if (!isMissingFileError(error)) throw error
-        })
-      }
       const launched = browserTarget.launchPolicy === 'native'
         ? await connectNativeBrowserContext(browserTarget.id, requestedVisibility)
         : await launchCdpManagedContext(
@@ -373,6 +369,7 @@ export class PersistentContextManager {
     await Promise.all([...this.contexts.entries()].map(async ([profileId, active]) => {
       active.closing = true
       clearProviderPageCleanup(active)
+      await closeReleasedBlankProviderPages(active)
       await active.detachBrowser()
       if (this.contexts.get(profileId) === active) this.contexts.delete(profileId)
     }))
@@ -713,6 +710,31 @@ function providerPageLease(
   }
 }
 
+async function closeReleasedBlankProviderPages(active: ActiveContext) {
+  const releasedBlankPages = [...active.providerPagesByRef.values()]
+    .filter((state) => (
+      state.status === 'idle' &&
+      state.ownership === 'tokenless-owned' &&
+      state.page.url() === 'about:blank'
+    ))
+  for (const state of releasedBlankPages) {
+    if (
+      active.providerPagesByRef.get(state.refKey) !== state ||
+      active.providerPages.get(state.page) !== state
+    ) continue
+    const page = state.page
+    if (page.isClosed() || active.unavailablePages.has(page)) {
+      detachProviderPageBinding(active, state, state.generation)
+      continue
+    }
+    const livePages = active.browserContext.pages().filter((candidate) => !candidate.isClosed())
+    if (livePages.length <= 1) return
+    state.status = 'closing'
+    detachProviderPageBinding(active, state, state.generation)
+    await page.close().catch(() => undefined)
+  }
+}
+
 async function closeExpiredProviderPages(active: ActiveContext) {
   if (active.closing) return
   const cutoff = Date.now() - PROVIDER_PAGE_IDLE_TTL_MS
@@ -854,7 +876,7 @@ async function connectNativeBrowserContext(
   const browserName = nativeBrowserDisplayName(browserId)
   let browser: Browser
   try {
-    browser = await chromium.connectOverCDP(await nativeBrowserEndpoint(browserId))
+    browser = await chromium.connectOverCDP(await nativeBrowserEndpoint(browserId), { timeout: CDP_CONNECTION_TIMEOUT_MS })
   } catch (cause) {
     throw tokenlessError(
       'native_chrome_connection_unavailable',
@@ -981,7 +1003,7 @@ async function launchCdpManagedContext(
   let connectedBrowser: Browser | undefined
   try {
     const endpoint = await waitForDevToolsEndpoint(endpointFile, browserExit)
-    connectedBrowser = await chromium.connectOverCDP(endpoint)
+    connectedBrowser = await chromium.connectOverCDP(endpoint, { timeout: CDP_CONNECTION_TIMEOUT_MS })
     const contexts = connectedBrowser.contexts()
     if (contexts.length !== 1 || !contexts[0]) {
       throw new Error('CDP managed browser must expose exactly one persistent context.')
@@ -1032,7 +1054,7 @@ async function connectExistingCdpManagedContext({
   if (!endpoint) return null
   let browser: Browser | undefined
   try {
-    browser = await chromium.connectOverCDP(endpoint)
+    browser = await chromium.connectOverCDP(endpoint, { timeout: CDP_CONNECTION_TIMEOUT_MS })
     if (session && !compatibleLaunchSignatures.has(session.launchSignature)) {
       await closeConnectedCdpManagedBrowser(browser, session.pid)
       await removeBrowserRuntimeSession(sessionFile, endpointFile)
@@ -1041,7 +1063,11 @@ async function connectExistingCdpManagedContext({
     const contexts = browser.contexts()
     if (contexts.length !== 1 || !contexts[0]) {
       await browser.close().catch(() => undefined)
-      return null
+      throw tokenlessError(
+        'playwright_resident_browser_context_unavailable',
+        'The resident managed browser did not expose exactly one persistent context.',
+        { retryable: true },
+      )
     }
     const residentSession = session ?? await verifiedLegacyResidentSession(browser, residentLaunchCandidates)
     if (!residentSession) {
@@ -1074,9 +1100,15 @@ async function connectExistingCdpManagedContext({
     }
   } catch (error) {
     await browser?.close().catch(() => undefined)
-    if ((error as { code?: unknown }).code === 'playwright_legacy_resident_browser_unverified') throw error
-    await removeBrowserRuntimeSession(sessionFile, endpointFile)
-    return null
+    if (
+      (error as { code?: unknown }).code === 'playwright_legacy_resident_browser_unverified' ||
+      (error as { code?: unknown }).code === 'playwright_resident_browser_context_unavailable'
+    ) throw error
+    throw tokenlessError(
+      'playwright_resident_browser_connection_failed',
+      'Could not reconnect to the resident managed browser; its profile and CDP metadata were preserved.',
+      { retryable: true, cause: error },
+    )
   }
 }
 
@@ -1116,6 +1148,20 @@ async function verifiedLegacyResidentSession(
 }
 
 async function browserProcessCommand(pid: number) {
+  if (process.platform === 'win32') {
+    try {
+      const { stdout } = await execFileAsync('powershell.exe', [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        '$process = Get-CimInstance Win32_Process -Filter "ProcessId = ' + pid + '"; if ($null -ne $process) { [Console]::Out.Write($process.CommandLine) }',
+      ], { windowsHide: true })
+      const command = String(stdout).trim()
+      return command || null
+    } catch {
+      return null
+    }
+  }
   if (process.platform !== 'darwin') return null
   try {
     const { stdout } = await execFileAsync('/bin/ps', ['-ww', '-p', String(pid), '-o', 'command='])

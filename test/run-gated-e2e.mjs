@@ -76,7 +76,23 @@ function resolveDefinition(name, arguments_) {
     }
   }
 
-  failUsage('suite must be managed-playwright, provider-fallback, or web-ui-provider')
+  if (name === 'featurebench') {
+    if (arguments_.length !== 2) failUsage('featurebench requires <provider> <browser|direct>')
+    const [provider, executionMode] = arguments_
+    if (!provider || (executionMode !== 'browser' && executionMode !== 'direct')) {
+      failUsage('featurebench requires <provider> <browser|direct>')
+    }
+    return {
+      testPath: 'test/live-featurebench.e2e.mjs',
+      environment: {
+        TOKENLESS_LIVE_FEATUREBENCH_GATE: 'real-featurebench',
+        TOKENLESS_FEATUREBENCH_PROVIDER: provider,
+        TOKENLESS_FEATUREBENCH_EXECUTION_MODE: executionMode,
+      },
+    }
+  }
+
+  failUsage('suite must be managed-playwright, provider-fallback, web-ui-provider, or featurebench')
 }
 
 function failUsage(message) {
@@ -84,5 +100,6 @@ function failUsage(message) {
   console.error('Usage: node test/run-gated-e2e.mjs managed-playwright <all|non_submission|mutation|project>')
   console.error('   or: node test/run-gated-e2e.mjs provider-fallback')
   console.error('   or: node test/run-gated-e2e.mjs web-ui-provider')
+  console.error('   or: node test/run-gated-e2e.mjs featurebench <provider> <browser|direct>')
   process.exit(2)
 }

@@ -1,58 +1,27 @@
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
 import fs from 'node:fs/promises'
-import path from 'node:path'
 import test from 'node:test'
-import { fileURLToPath } from 'node:url'
 
-import { resolveConfiguredBrowserTarget } from './helpers/configured-browser-profile.mjs'
-import { providerCodeSmokeCase } from './helpers/code-benchmark-provider-case.mjs'
 import { browserRuntimeStatus } from '../packages/cli/dist/src/index.js'
+import { resolveConfiguredBrowserTarget } from './helpers/configured-browser-profile.mjs'
+import { runFeatureBenchProviderCase } from './helpers/featurebench-provider-case.mjs'
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const cliEntry = path.join(root, 'packages/cli/dist/src/tokenless.mjs')
 const gate = requiredEnvironment('TOKENLESS_LIVE_DIRECT_E2E_GATE')
 assert.equal(gate, 'real-chatgpt-direct', 'TOKENLESS_LIVE_DIRECT_E2E_GATE must be real-chatgpt-direct')
-
 const target = await resolveConfiguredBrowserTarget()
 
-test('built CLI completes and evaluates one real ChatGPT direct code benchmark', { timeout: 600_000 }, async () => {
-  const benchmark = providerCodeSmokeCase()
-  await benchmark.prepare()
-  const completed = spawnSync(process.execPath, [
-    cliEntry,
-    'run',
-    '--home', target.homeDir,
-    '--profile', target.profile.slug,
-    '--provider', 'chatgpt',
-    '--execution-mode', 'direct',
-    '--provider-backend', 'native',
-    '--prompt', benchmark.prompt,
-    '--json',
-  ], {
-    cwd: root,
-    encoding: 'utf8',
-    timeout: 540_000,
-    maxBuffer: 2 * 1024 * 1024,
+test('built Tokenless scaffold completes one real FeatureBench task through ChatGPT direct mode', { timeout: 3 * 60 * 60_000 }, async () => {
+  const result = await runFeatureBenchProviderCase({
+    provider: 'chatgpt',
+    executionMode: 'direct',
+    homeDir: target.homeDir,
+    profile: target.profile.slug,
+    daemonUrl: target.config.daemonUrl,
   })
-  assert.equal(completed.status, 0, `The built direct ChatGPT CLI request must succeed.\n${completed.stderr}\n${completed.stdout}`)
-
-  let output
-  try {
-    output = JSON.parse(completed.stdout)
-  } catch {
-    throw new Error('The built direct ChatGPT CLI request did not return JSON.')
-  }
-  const responses = output?.result?.result?.responses
-  assert.equal(output?.executionMode, 'direct')
-  assert.ok(Array.isArray(responses), 'The direct ChatGPT result must contain action responses.')
-  const read = responses.find((response) => response?.action === 'response.read')
-  assert.equal(read?.ok, true)
-  assert.equal(read?.result?.visibleProof, 'direct-protocol-sse-response')
-  assert.equal(typeof read?.result?.text, 'string')
-  assert.ok(read.result.text.length > 0, 'The direct ChatGPT text response must be non-empty.')
-  assert.deepEqual(read?.result?.citations, [])
-  assert.equal((await benchmark.evaluate(read.result.text)).passed, true)
+  assert.equal(result.report.executionMode, 'direct-protocol')
+  assert.equal(result.report.infrastructureFailures, 0)
+  assert.equal(result.report.officialEvaluation.resolvedInstances, 1)
+  assert.equal(result.report.resolvedPercent, 100)
 
   const [runtime, profileDirectory] = await Promise.all([
     browserRuntimeStatus({
@@ -68,6 +37,6 @@ test('built CLI completes and evaluates one real ChatGPT direct code benchmark',
 
 function requiredEnvironment(name) {
   const value = process.env[name]?.trim()
-  if (!value) throw new Error(`${name} is required.`)
+  if (!value) throw new Error(name + ' is required.')
   return value
 }

@@ -1244,7 +1244,7 @@ export class ManagedPlaywrightRunnerService {
     return await this.contextManager.runWithProfile(profile, claimBrowserVisibility, async (managedContext) => {
       const lease = await managedContext.acquireProviderPage({
         provider: provider.id,
-        taskKey: `${managedPageKey(job, request)}:g4f-auth`,
+        pageRef: `${managedPageRef(job, request)}:g4f-auth`,
         policy: request.pagePolicy,
         matchesExistingPage: (candidate) => providerOwnsPage(provider, candidate),
         isAvailablePage: (candidate) => providerPageAvailable(provider, candidate),

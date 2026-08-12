@@ -89,6 +89,7 @@ tokenless setup --install-codex
 - [CLI 命令](COMMANDS.zh-CN.md)
 - [API Proxy 接入指南](docs/api-proxy-integration.zh-CN.md)
 - [Capability Matrix](docs/capability-matrix.zh-CN.md)
+- [FeatureBench 评测](docs/featurebench-evaluation.zh-CN.md)
 - [隐私边界](PRIVACY.zh-CN.md)
 - [文档索引](docs/README.zh-CN.md)
 

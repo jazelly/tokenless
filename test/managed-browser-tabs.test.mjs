@@ -10,11 +10,23 @@ import { resolveConfiguredBrowserTarget } from './helpers/configured-browser-pro
 test('CDP production launch allows configured Chromium executables to use native credential storage', async () => {
   await withManager(async ({ manager, profile }) => {
     const managed = await manager.ensureContext(profile, 'auto')
-    const page = await managed.acquirePage({ key: 'browser-command-line' })
-    await page.goto('chrome://version')
-    const commandLine = await page.locator('#command_line').textContent()
-    assert.doesNotMatch(commandLine ?? '', /(?:^|\s)--password-store=basic(?:\s|$)/u)
-    assert.doesNotMatch(commandLine ?? '', /(?:^|\s)--use-mock-keychain(?:\s|$)/u)
+    const baselinePages = managed.browserContext.pages()
+    const baselineVersionPages = baselinePages.filter((page) => page.url() === 'chrome://version/').length
+    const temporary = await managed.acquireTemporaryPage()
+    try {
+      await temporary.page.goto('chrome://version')
+      const commandLine = await temporary.page.locator('#command_line').textContent()
+      assert.doesNotMatch(commandLine ?? '', /(?:^|\s)--password-store=basic(?:\s|$)/u)
+      assert.doesNotMatch(commandLine ?? '', /(?:^|\s)--use-mock-keychain(?:\s|$)/u)
+    } finally {
+      await temporary.close()
+    }
+    const remainingPages = managed.browserContext.pages()
+    assert.equal(remainingPages.length, baselinePages.length)
+    assert.equal(
+      remainingPages.filter((page) => page.url() === 'chrome://version/').length,
+      baselineVersionPages,
+    )
   })
 })
 
@@ -128,18 +140,41 @@ test('CDP provider Page Refs reuse stable live bindings without sharing independ
   })
 })
 
+test('CDP detach removes released blank provider pages before their runtime bindings are lost', async () => {
+  const primary = await resolveConfiguredBrowserTarget()
+  const marker = `tokenless-detach-cleanup-${randomUUID()}`
+  const manager = createManager(primary.runtime)
+  let baselinePageCount
+  try {
+    const context = await manager.ensureContext(primary.profile, 'auto')
+    baselinePageCount = context.browserContext.pages().length
+    for (const suffix of ['a', 'b']) {
+      const lease = await context.acquireProviderPage({
+        provider: 'chatgpt',
+        pageRef: `page:test:detach:${suffix}:${randomUUID()}`,
+      })
+      await lease.page.evaluate((title) => { document.title = title }, `${marker}-${suffix}`)
+      await lease.release()
+    }
+  } finally {
+    await manager.detach()
+  }
+
+  const observer = createManager(primary.runtime)
+  try {
+    const reconnected = await observer.ensureContext(primary.profile, 'auto')
+    const pages = reconnected.browserContext.pages()
+    const titles = await Promise.all(pages.map((page) => page.title().catch(() => '')))
+    assert.equal(titles.some((title) => title.startsWith(marker)), false)
+    assert.ok(pages.length <= Math.max(1, baselinePageCount))
+  } finally {
+    await observer.detach()
+  }
+})
+
 async function withManager(operation) {
   const primary = await resolveConfiguredBrowserTarget()
-  const runtime = primary.runtime
-  const manager = new PersistentContextManager({
-    maxContexts: 2,
-    browser: {
-      id: runtime.browserId,
-      executablePath: runtime.executablePath,
-      runtimeId: runtime.runtimeId,
-      launchPolicy: runtime.launchPolicy,
-    },
-  })
+  const manager = createManager(primary.runtime)
   const profile = primary.profile
   try {
     return await operation({
@@ -149,4 +184,16 @@ async function withManager(operation) {
   } finally {
     await manager.detach()
   }
+}
+
+function createManager(runtime) {
+  return new PersistentContextManager({
+    maxContexts: 2,
+    browser: {
+      id: runtime.browserId,
+      executablePath: runtime.executablePath,
+      runtimeId: runtime.runtimeId,
+      launchPolicy: runtime.launchPolicy,
+    },
+  })
 }

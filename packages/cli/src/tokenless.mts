@@ -115,6 +115,7 @@ import {
   normalizeBrowserSelection,
   type ResolvedBrowserRuntime,
 } from './browser-runtime/index.js'
+import { featureBenchCommand } from './featurebench/cli.js'
 
 const CLI_ARG_FLAGS: unique symbol = Symbol('tokenless.cliArgFlags')
 
@@ -255,6 +256,7 @@ const TOP_LEVEL_USAGE = [
   `tokenless run --provider ${VISIBLE_PROVIDER_USAGE} [--execution-mode browser|direct] --prompt <text> --json`,
   'tokenless capabilities list --json',
   'tokenless limits inspect --profile <slug> --provider <provider> --json',
+  'tokenless featurebench inspect --json',
   'tokenless replay --agent-kind <kind> --agent-session-id <id> --json',
   'tokenless profiles <subcommand> [options]',
   'tokenless agents <install|status|inspect|uninstall> codex [options]',
@@ -289,7 +291,7 @@ try {
   } else {
     command = argv[0]?.startsWith('-') ? 'prompt' : (argv.shift() ?? 'help')
   }
-  const subcommand = (command === 'profiles' || command === 'daemon' || command === 'capabilities' || command === 'limits' || command === 'savings' || command === 'api-proxy' || command === 'agents') && argv[0] && !argv[0].startsWith('-')
+  const subcommand = (command === 'profiles' || command === 'daemon' || command === 'capabilities' || command === 'limits' || command === 'savings' || command === 'api-proxy' || command === 'agents' || command === 'featurebench') && argv[0] && !argv[0].startsWith('-')
     ? argv.shift()
     : undefined
   const agentTarget = command === 'agents' && argv[0] && !argv[0].startsWith('-')
@@ -340,6 +342,8 @@ try {
     await savingsCommand(subcommand, args)
   } else if (command === 'api-proxy') {
     await apiProxyCommand(subcommand, args)
+  } else if (command === 'featurebench') {
+    printPayload(await featureBenchCommand(subcommand, args), args)
   } else if (command === 'replay') {
     await replayCommand(args)
   } else if (command === 'provider-status' || command === 'provider-auth-status') {
@@ -5011,6 +5015,9 @@ function createCommandContracts(): CommandContract[] {
     { command: 'api-proxy', subcommand: 'status', usage: ['tokenless api-proxy status [--profile <slug>] --json'], options: ['home', 'json', 'profile', 'daemonUrl'] },
     { command: 'api-proxy', subcommand: 'enable', usage: ['tokenless api-proxy enable [--conversation-mode <new-conversation|continue-conversation>] --json'], options: ['home', 'json', 'conversationMode', 'daemonUrl'] },
     { command: 'api-proxy', subcommand: 'disable', usage: ['tokenless api-proxy disable --json'], options: ['home', 'json'] },
+    { command: 'featurebench', subcommand: 'inspect', usage: ['tokenless featurebench inspect --json'], options: ['json'] },
+    { command: 'featurebench', subcommand: 'issue-channel', usage: ['tokenless featurebench issue-channel --instance-id <id> --benchmark-run-id <id> --provider <provider> [--profile <slug>] [--execution-mode browser|direct] [--model <label>] --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'executionMode', 'model', 'effort', 'instanceId', 'benchmarkRunId', 'maxSteps', 'expiresInMs', 'providerTurnTimeoutMs'] },
+    { command: 'featurebench', subcommand: 'run', usage: ['tokenless featurebench run --channel-file <path> --instruction-file <path> [--workspace /testbed] [--events-file <path>] [--max-steps <count>] --json'], options: ['json', 'channelFile', 'instructionFile', 'workspace', 'eventsFile', 'maxSteps', 'toolTimeoutMs'] },
     { command: 'replay', usage: ['tokenless replay --agent-kind <kind> --agent-session-id <id> [--limit <count>] --json'], options: ['home', 'json', 'daemonUrl', 'daemonStartTimeoutMs', 'agentKind', 'agentSessionId', 'limit'] },
     { command: 'provider-status', usage: ['tokenless provider-status --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
     { command: 'provider-auth-status', usage: ['tokenless provider-auth-status --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
@@ -5138,6 +5145,16 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--codex-home': 'codexHome',
     '--chat-id': 'chatId',
     '--integration-id': 'integrationId',
+    '--instance-id': 'instanceId',
+    '--benchmark-run-id': 'benchmarkRunId',
+    '--channel-file': 'channelFile',
+    '--instruction-file': 'instructionFile',
+    '--workspace': 'workspace',
+    '--events-file': 'eventsFile',
+    '--max-steps': 'maxSteps',
+    '--tool-timeout-ms': 'toolTimeoutMs',
+    '--expires-in-ms': 'expiresInMs',
+    '--provider-turn-timeout-ms': 'providerTurnTimeoutMs',
   }
   const booleanFlags: Record<string, string> = {
     '--include-text': 'includeText',

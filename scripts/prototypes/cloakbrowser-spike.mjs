@@ -15,10 +15,6 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
 
-import { getCodeBenchmarkTask, getVendoredCodeBenchmarkPrompt } from '../../test/provider-prompts/code/collection.mjs'
-import { evaluateCodeBenchmarkResponse } from '../../test/provider-prompts/code/evaluator.mjs'
-import { materializeCodeBenchmarkTask } from '../../test/provider-prompts/code/materialize.mjs'
-
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const artifactRoot = path.join(root, 'test-results', 'cloakbrowser-spike')
 const runtimeCache = path.join(artifactRoot, 'runtime-cache')
@@ -30,8 +26,6 @@ const wrapperVersion = '0.5.3'
 const observeMs = parseDurationArg(process.argv.slice(2), '--observe-ms=')
 const googleObserveMs = parseDurationArg(process.argv.slice(2), '--observe-google-ms=')
 const providers = Object.freeze(['chatgpt', 'claude', 'gemini', 'grok', 'qwen', 'deepseek'])
-const providerBenchmarkTaskId = 'bigcodebench:v0.1.4:4'
-let benchmarkPreparation
 
 const legacyBrowserVersion = '145.0.7632.109.2'
 const supportedLegacyPlatforms = new Set([
@@ -249,10 +243,8 @@ async function runProviderAction(cliEntry, browserPath, provider, action, extraA
 }
 
 async function runProviderConversation(cliEntry, browserPath, provider) {
-  const benchmark = getCodeBenchmarkTask(providerBenchmarkTaskId)
-  await (benchmarkPreparation ??= materializeCodeBenchmarkTask(benchmark.id))
-  const prompt = getVendoredCodeBenchmarkPrompt(benchmark.id)
-  const taskId = `${benchmark.id}:${provider}`
+  const prompt = 'What is the capital of Australia? Answer in one sentence.'
+  const taskId = 'cloakbrowser-semantic:' + provider
   const command = await run(process.execPath, [
     cliEntry,
     'run',
@@ -277,7 +269,7 @@ async function runProviderConversation(cliEntry, browserPath, provider) {
   if (!payload) {
     return {
       taskId,
-      benchmarkTaskId: benchmark.id,
+      probe: 'capital-of-australia',
       exitCode: command.code,
       status: 'failed',
       succeeded: false,
@@ -287,7 +279,7 @@ async function runProviderConversation(cliEntry, browserPath, provider) {
   if (payload.status !== 'succeeded' || typeof payload.jobId !== 'string') {
     return {
       taskId,
-      benchmarkTaskId: benchmark.id,
+      probe: 'capital-of-australia',
       jobId: payload.jobId ?? null,
       exitCode: command.code,
       status: payload.status ?? 'failed',
@@ -298,17 +290,9 @@ async function runProviderConversation(cliEntry, browserPath, provider) {
   }
 
   const response = responseResult(payload, 'response.read')
-  let evaluation
-  try {
-    evaluation = typeof response?.text === 'string'
-      ? await evaluateCodeBenchmarkResponse(benchmark.id, response.text)
-      : { passed: false, detail: 'missing_response_text' }
-  } catch (error) {
-    evaluation = {
-      passed: false,
-      detail: error instanceof Error ? error.message : String(error),
-    }
-  }
+  const evaluation = typeof response?.text === 'string'
+    ? { passed: /Canberra/i.test(response.text), detail: 'semantic_response' }
+    : { passed: false, detail: 'missing_response_text' }
   const durableCommand = await run(process.execPath, [
     cliEntry,
     'state',
@@ -327,7 +311,7 @@ async function runProviderConversation(cliEntry, browserPath, provider) {
   const durablePayload = parseOptionalJsonOutput(durableCommand.stdout)
   return {
     taskId,
-    benchmarkTaskId: benchmark.id,
+    probe: 'capital-of-australia',
     jobId: payload.jobId,
     exitCode: command.code,
     status: payload.status,

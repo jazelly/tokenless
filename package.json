@@ -30,7 +30,8 @@
     "test:e2e:fallback": "npm run build && node test/run-gated-e2e.mjs provider-fallback",
     "test:e2e:output-savings": "npm run build && node --test --test-concurrency=1 test/output-savings-runtime.e2e.mjs",
     "test:e2e:codex-app-server": "npm run build && node --test --test-concurrency=1 test/codex-app-server.e2e.mjs",
-    "benchmark:code": "node scripts/code-benchmark.mjs"
+    "benchmark:featurebench": "node scripts/featurebench.mjs",
+    "test:e2e:featurebench": "npm run build && node test/run-gated-e2e.mjs featurebench"
   },
   "workspaces": [
     "packages/*"
@@ -45,7 +46,6 @@
     "@types/node": "^26.1.1",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
-    "hyparquet": "1.28.1",
     "selfsigned": "^5.5.0",
     "typescript": "^7.0.2"
   }

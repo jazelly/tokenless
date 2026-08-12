@@ -89,6 +89,7 @@ Restart Codex, open `/hooks`, and trust Tokenless.
 - [CLI commands](COMMANDS.md)
 - [API Proxy Integration](docs/api-proxy-integration.md)
 - [Capability Matrix](docs/capability-matrix.md)
+- [FeatureBench Evaluation](docs/featurebench-evaluation.md)
 - [Privacy boundaries](PRIVACY.md)
 - [Documentation index](docs/README.md)
 

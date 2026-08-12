@@ -8,7 +8,6 @@ import { promisify } from 'node:util'
 
 import { createLiveBrowserInspectionSession } from './helpers/live-browser-observer.mjs'
 import { resolveConfiguredBrowserTarget } from './helpers/configured-browser-profile.mjs'
-import { providerCodeSmokeCase } from './helpers/code-benchmark-provider-case.mjs'
 
 const execFileAsync = promisify(execFile)
 const cliEntry = path.resolve('packages/cli/dist/src/tokenless.mjs')
@@ -35,14 +34,13 @@ test(`Web UI displays one completed real-provider job from ${profile}`, { timeou
     profileSlug: profile,
   })
 
-  const benchmark = providerCodeSmokeCase()
-  await benchmark.prepare()
-  const taskId = `benchmark:${benchmark.task.id}:${provider}:${randomUUID()}`
+  const prompt = 'What is the capital of Australia? Answer in one sentence.'
+  const taskId = 'web-ui-semantic:' + provider + ':' + randomUUID()
   runningJob = await inspection.startCli([
     'run',
     '--provider', provider,
     '--task-id', taskId,
-    '--prompt', benchmark.prompt,
+    '--prompt', prompt,
     '--browser-visibility', 'headed',
     '--timeout-ms', '300000',
   ])
@@ -52,7 +50,7 @@ test(`Web UI displays one completed real-provider job from ${profile}`, { timeou
   assert.equal(typeof run.payload.jobId, 'string')
   const response = responseResult(run.payload?.result?.result, 'response.read')
   assert.equal(typeof response?.text, 'string')
-  assert.equal((await benchmark.evaluate(response.text)).passed, true)
+  assert.match(response.text, /Canberra/i)
 
   const dashboard = await cli([
     'dashboard',
@@ -86,7 +84,7 @@ test(`Web UI displays one completed real-provider job from ${profile}`, { timeou
       await row.click()
       const detail = page.getByTestId('job-detail')
       await detail.waitFor()
-      assert.match(await detail.textContent(), /Count the occurrence of each integer/, matrixCase.id)
+      assert.match(await detail.textContent(), /capital of Australia/i, matrixCase.id)
       assert.equal(await hasDocumentOverflow(page), false, matrixCase.id)
   }
   assert.deepEqual(consoleFailures, [])

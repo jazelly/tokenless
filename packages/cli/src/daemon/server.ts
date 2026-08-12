@@ -46,6 +46,8 @@ import {
 import type { G4fServiceProcess } from '../g4f/index.js'
 import { handleG4fApiRequest } from './g4f-api.js'
 
+import { FeatureBenchChannelError, FeatureBenchChannelManager, type FeatureBenchChannelIssue } from './featurebench-channel.js'
+
 export type DaemonServer = {
   activate(): void
   close(): Promise<void>
@@ -94,9 +96,13 @@ export async function serveHttp({
     active = false
   }
   const outputSavingsProcessor = new OutputSavingsProcessor(store)
+  const featureBench = new FeatureBenchChannelManager(store, async () => await runtimeController?.wake())
   let closePromise: Promise<void> | undefined
   const close = () => {
-    closePromise ??= closeServer(server, store, outputSavingsProcessor, beforeClose, afterStoreClose)
+    closePromise ??= closeServer(server, store, outputSavingsProcessor, async () => {
+      await featureBench.close()
+      await beforeClose?.()
+    }, afterStoreClose)
     return closePromise
   }
   const startedAt = Date.now()
@@ -117,7 +123,7 @@ export async function serveHttp({
   await webAi.initializeCleanup()
   const apiProxy = new ApiProxyAdapter(store, async () => await runtimeController?.wake(), g4fService?.client)
   server = http.createServer((request, response) => {
-    void handleRequest(store, close, () => active, deactivate, runtimeController, g4fService, uiServer, webAi, apiProxy, request, response)
+    void handleRequest(store, close, () => active, deactivate, runtimeController, g4fService, uiServer, webAi, apiProxy, featureBench, request, response)
   })
   await new Promise<void>((resolve, reject) => {
     const onError = (error: Error) => {
@@ -185,6 +191,7 @@ async function handleRequest(
   uiServer: TokenlessUiServer,
   webAi: WebAiInteractionV0Adapter,
   apiProxy: ApiProxyAdapter,
+  featureBench: FeatureBenchChannelManager,
   request: IncomingMessage,
   response: ServerResponse
 ) {
@@ -255,6 +262,29 @@ async function handleRequest(
       method,
       url,
     })) return
+
+    if (method === 'POST' && url.pathname === '/v1/featurebench/channels') {
+      const body = await readJsonObject(request)
+      const allowed = new Set([
+        'instanceId',
+        'benchmarkRunId',
+        'benchmarkCommit',
+        'datasetRevision',
+        'provider',
+        'profile',
+        'executionMode',
+        'model',
+        'effort',
+        'maxTurns',
+        'expiresInMs',
+        'providerTurnTimeoutMs',
+      ])
+      if (Object.keys(body).some((key) => !allowed.has(key))) {
+        throw invalidInput('FeatureBench channel request contains an unknown field')
+      }
+      writeJson(response, 200, await featureBench.issue(body as unknown as FeatureBenchChannelIssue))
+      return
+    }
 
     const apiProxyRoute = matchApiProxyRoute(method, url.pathname)
     if (apiProxyRoute) {
@@ -495,6 +525,10 @@ async function handleRequest(
           message: error instanceof Error ? error.message : 'The direct G4F request was rejected.',
         },
       })
+      return
+    }
+    if (error instanceof FeatureBenchChannelError) {
+      writeJson(response, error.status, { error: { code: error.code, message: error.message, retryable: error.status >= 500, details: { category: error.category } } })
       return
     }
     if (error instanceof BodyLimitExceededError) {

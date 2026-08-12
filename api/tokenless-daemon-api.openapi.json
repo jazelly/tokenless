@@ -187,6 +187,60 @@
         }
       }
     },
+    "/v1/featurebench/channels": {
+      "post": {
+        "operationId": "issueFeatureBenchChannel",
+        "summary": "Issue one task-scoped provider-turn channel for the pinned FeatureBench scaffold",
+        "description": "Returns a short-lived bearer and ephemeral bridge port. The bearer authorizes only ordered provider turns for one pinned FeatureBench instance and must never be persisted in benchmark reports.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeatureBenchChannelIssueRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Task-scoped FeatureBench provider-turn channel",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeatureBenchChannelIssueResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "description": "Selected profile, provider, or browser runtime is unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DaemonErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/models": {
       "get": {
         "operationId": "listApiProxyModelsOnDefaultPath",
@@ -5442,6 +5496,166 @@
                 }
               }
             }
+          }
+        }
+      },
+      "FeatureBenchChannelIssueRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "instanceId",
+          "benchmarkRunId",
+          "benchmarkCommit",
+          "datasetRevision",
+          "provider",
+          "executionMode",
+          "model",
+          "maxTurns"
+        ],
+        "properties": {
+          "instanceId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "benchmarkRunId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "benchmarkCommit": {
+            "type": "string",
+            "const": "445dcbaec0b2e136061b0acb54e753c0a9f1888e"
+          },
+          "datasetRevision": {
+            "type": "string",
+            "const": "e99d6efdfe511ea832c1b5735c536129561ec96a"
+          },
+          "provider": {
+            "type": "string",
+            "minLength": 1
+          },
+          "profile": {
+            "type": "string",
+            "minLength": 1
+          },
+          "executionMode": {
+            "type": "string",
+            "enum": [
+              "browser",
+              "direct"
+            ]
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "effort": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "maxTurns": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          },
+          "expiresInMs": {
+            "type": "integer",
+            "minimum": 60000,
+            "maximum": 86400000
+          },
+          "providerTurnTimeoutMs": {
+            "type": "integer",
+            "minimum": 30000,
+            "maximum": 1800000
+          }
+        }
+      },
+      "FeatureBenchChannelIssueResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "protocol",
+          "channelId",
+          "token",
+          "bridgePort",
+          "instanceId",
+          "benchmarkCommit",
+          "datasetRevision",
+          "provider",
+          "profileId",
+          "model",
+          "executionMode",
+          "maxTurns",
+          "providerTurnTimeoutMs",
+          "expiresAt"
+        ],
+        "properties": {
+          "protocol": {
+            "type": "string",
+            "const": "tokenless.featurebench-channel.v1"
+          },
+          "channelId": {
+            "type": "string",
+            "pattern": "^fbch_[0-9a-f-]+$"
+          },
+          "token": {
+            "type": "string",
+            "minLength": 32,
+            "writeOnly": true,
+            "description": "One-run bearer for the scoped bridge; never log or persist it."
+          },
+          "bridgePort": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "instanceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "benchmarkCommit": {
+            "type": "string",
+            "const": "445dcbaec0b2e136061b0acb54e753c0a9f1888e"
+          },
+          "datasetRevision": {
+            "type": "string",
+            "const": "e99d6efdfe511ea832c1b5735c536129561ec96a"
+          },
+          "provider": {
+            "type": "string",
+            "minLength": 1
+          },
+          "profileId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1
+          },
+          "executionMode": {
+            "type": "string",
+            "enum": [
+              "browser",
+              "direct"
+            ]
+          },
+          "maxTurns": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "providerTurnTimeoutMs": {
+            "type": "integer",
+            "minimum": 30000,
+            "maximum": 1800000
           }
         }
       }

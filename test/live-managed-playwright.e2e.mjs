@@ -9,7 +9,6 @@ import { fileURLToPath } from 'node:url'
 
 import { createLiveBrowserInspectionSession } from './helpers/live-browser-observer.mjs'
 import { resolveConfiguredBrowserTarget } from './helpers/configured-browser-profile.mjs'
-import { providerCodeSmokeCase } from './helpers/code-benchmark-provider-case.mjs'
 import {
   knownIssueSkipForDurableBlocker,
   loadLiveProviderCapabilityMatrix,
@@ -1134,17 +1133,15 @@ async function workspaceResponseCitations({ provider, journey }) {
 
 async function workspaceResponseBaseline({ provider, journey }) {
   const name = markerFor(provider, 'WORKSPACE_RESPONSE')
-  const benchmark = providerCodeSmokeCase()
-  await benchmark.prepare()
+  const prompt = 'What is the capital of Australia? Answer in one sentence.'
   const run = await journey.run([
     '--project-name', name,
     '--workspace-mode', 'conversation',
-    '--prompt', benchmark.prompt,
+    '--prompt', prompt,
   ])
   const response = responseResult(run.payload, 'response.read')
-  assert.equal(typeof response?.text, 'string')
-  assert.equal((await benchmark.evaluate(response.text)).passed, true)
-  assert.equal(await pageContains(run.page, 'def task_func', 2), true)
+  assert.match(response?.text ?? '', /Canberra/i)
+  assert.equal(await pageContains(run.page, 'Canberra', 2), true)
   assertConversationWorkspaceResult(provider, journey.taskId, run)
   await run.close()
 }

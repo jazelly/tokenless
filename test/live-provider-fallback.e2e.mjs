@@ -8,7 +8,6 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { createLiveBrowserInspectionSession } from './helpers/live-browser-observer.mjs'
 import { resolveConfiguredBrowserTarget } from './helpers/configured-browser-profile.mjs'
-import { providerCodeSmokeCase } from './helpers/code-benchmark-provider-case.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliDir = path.join(root, 'packages/cli')
@@ -53,15 +52,14 @@ test('real visible provider blocker falls back under one durable job', { timeout
   const fallbackRoute = requiredRoute(playwright, fallbackProvider)
   const primary = requiredProvider(playwright, primaryProvider)
   const fallback = requiredProvider(playwright, fallbackProvider)
-  const benchmark = providerCodeSmokeCase()
-  await benchmark.prepare()
-  const taskId = `provider-fallback:${benchmark.task.id}:${randomUUID()}`
+  const prompt = 'Read the attached note and answer its question in one sentence.'
+  const taskId = 'provider-fallback:semantic:' + randomUUID()
   const jobId = inspection.createJobId()
   const attachmentName = `tokenless-fallback-input-${randomUUID().slice(0, 8)}.txt`
   const attachmentPath = path.join(root, 'test-results', 'live-provider-inputs', attachmentName)
   liveAttachmentPath = attachmentPath
   await fs.mkdir(path.dirname(attachmentPath), { recursive: true, mode: 0o700 })
-  await fs.writeFile(attachmentPath, `Benchmark task: ${benchmark.task.id}\n`, { mode: 0o600 })
+  await fs.writeFile(attachmentPath, 'Question: What is the capital of Australia?\n', { mode: 0o600 })
   const attachments = await runtime.stageVisibleAttachments({
     homeDir,
     bundleId: jobId,
@@ -92,7 +90,7 @@ test('real visible provider blocker falls back under one durable job', { timeout
       {
         requestId: `${jobId}:prompt`,
         action: playwright.VISIBLE_ACTIONS.PROMPT_INPUT,
-        payload: { text: benchmark.prompt },
+        payload: { text: prompt },
       },
       {
         requestId: `${jobId}:submit`,
@@ -177,7 +175,7 @@ test('real visible provider blocker falls back under one durable job', { timeout
   assert.ok(upload?.attachments?.some((attachment) => attachment.name === attachmentName))
   const response = responseResult(completed.result, playwright.VISIBLE_ACTIONS.RESPONSE_READ)
   assert.equal(typeof response?.text, 'string')
-  assert.equal((await benchmark.evaluate(response.text)).passed, true)
+  assert.match(response.text, /Canberra/i)
 
   const state = spawnSync(process.execPath, [
     cliEntry,
