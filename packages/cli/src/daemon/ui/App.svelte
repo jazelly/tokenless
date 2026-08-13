@@ -276,7 +276,7 @@
       {:else if section === 'capabilities'}
         <CapabilitiesView {snapshot} {selectedProfile} {language} {t} onselect={selectProfile} />
       {:else if section === 'routing'}
-        <RoutingView {snapshot} {t} {busy} onmutate={mutate} />
+        <RoutingView {snapshot} {selectedProfile} {t} {busy} onmutate={mutate} />
       {:else if section === 'jobs'}
         <JobsView {snapshot} {language} {t} {busy} onget={(path) => client.get(path)} onmutate={mutate} />
       {:else}

@@ -2,6 +2,23 @@ import type { JsonRecord } from './types.js'
 
 export type RouterEngineId = 'chrome-prompt-api'
 
+export const CHROME_PROMPT_API_MIN_MAJOR = 148
+
+export type RouterBrowserBinding = {
+  browserId: string
+  family: string
+  version: string | null
+}
+
+export type RouterEngineObservation = {
+  supported: boolean
+  code: 'supported' | 'unsupported-browser-mode' | 'unsupported-browser' | 'unsupported-version' | 'api-missing'
+  browserId: string
+  browserFamily: string
+  browserVersion: string | null
+  minimumChromeMajor: number
+}
+
 export type RouterModel = {
   id: string
   label: string
@@ -30,34 +47,49 @@ type LanguageModelApi = {
 }
 
 export class RouterEngineError extends Error {
-  constructor(readonly code: 'unsupported' | 'unavailable' | 'invalid-result') {
+  constructor(
+    readonly code: 'unsupported-engine' | 'unsupported-browser-mode' | 'unsupported-browser' | 'unsupported-version' | 'api-missing' | 'unavailable' | 'invalid-result',
+    readonly observation: RouterEngineObservation | null = null,
+  ) {
     super(code)
   }
 }
 
 export function createRouterEngine(engine: RouterEngineId) {
-  if (engine !== 'chrome-prompt-api') throw new RouterEngineError('unsupported')
+  if (engine !== 'chrome-prompt-api') throw new RouterEngineError('unsupported-engine')
 
   return {
-    async availability() {
+    async inspect(browserBinding: RouterBrowserBinding): Promise<RouterEngineObservation> {
+      return await inspectChromePromptApi(browserBinding)
+    },
+
+    async availability(browserBinding: RouterBrowserBinding) {
+      const observation = await inspectChromePromptApi(browserBinding)
+      requireSupportedObservation(observation)
       const api = languageModelApi()
-      return api ? await api.availability() : 'unsupported'
+      if (!api) throw new RouterEngineError('api-missing', observation)
+      return { observation, status: await api.availability() }
     },
 
     async route(
       task: string,
       models: RouterModel[],
+      browserBinding: RouterBrowserBinding,
       callbacks: {
+        onObservation: (observation: RouterEngineObservation) => void
         onAvailability: (availability: string) => void
         onDownloadProgress: (progress: number | null) => void
       },
     ): Promise<RouterResult> {
+      const observation = await inspectChromePromptApi(browserBinding)
+      callbacks.onObservation(observation)
+      requireSupportedObservation(observation)
       const api = languageModelApi()
-      if (!api) throw new RouterEngineError('unsupported')
+      if (!api) throw new RouterEngineError('api-missing', observation)
 
       const initialAvailability = await api.availability()
       callbacks.onAvailability(initialAvailability)
-      if (initialAvailability === 'unavailable') throw new RouterEngineError('unavailable')
+      if (initialAvailability === 'unavailable') throw new RouterEngineError('unavailable', observation)
       if (initialAvailability === 'downloadable' || initialAvailability === 'downloading') {
         callbacks.onAvailability('downloading')
         callbacks.onDownloadProgress(0)
@@ -109,6 +141,66 @@ export function createRouterEngine(engine: RouterEngineId) {
       }
     },
   }
+}
+
+async function inspectChromePromptApi(browserBinding: RouterBrowserBinding): Promise<RouterEngineObservation> {
+  const base = {
+    browserId: browserBinding.browserId,
+    browserFamily: browserBinding.family,
+    browserVersion: browserBinding.version,
+    minimumChromeMajor: CHROME_PROMPT_API_MIN_MAJOR,
+  }
+  if (browserBinding.family !== 'system' || browserBinding.browserId !== 'chrome') {
+    return { ...base, supported: false, code: 'unsupported-browser-mode' }
+  }
+
+  const identity = await googleChromeIdentity()
+  const browserVersion = identity.version ?? browserBinding.version
+  if (!identity.isGoogleChrome) {
+    return { ...base, browserVersion, supported: false, code: 'unsupported-browser' }
+  }
+  const browserMajor = versionMajor(browserVersion)
+  if (browserMajor === null || browserMajor < CHROME_PROMPT_API_MIN_MAJOR) {
+    return { ...base, browserVersion, supported: false, code: 'unsupported-version' }
+  }
+  if (!languageModelApi()) {
+    return { ...base, browserVersion, supported: false, code: 'api-missing' }
+  }
+  return { ...base, browserVersion, supported: true, code: 'supported' }
+}
+
+function requireSupportedObservation(observation: RouterEngineObservation) {
+  if (observation.code === 'supported') return
+  throw new RouterEngineError(observation.code, observation)
+}
+
+async function googleChromeIdentity() {
+  const userAgentData = (navigator as Navigator & {
+    userAgentData?: {
+      brands?: Array<{ brand: string; version: string }>
+      getHighEntropyValues?: (hints: string[]) => Promise<{
+        fullVersionList?: Array<{ brand: string; version: string }>
+      }>
+    }
+  }).userAgentData
+  let versions = userAgentData?.brands ?? []
+  if (userAgentData?.getHighEntropyValues) {
+    try {
+      const values = await userAgentData.getHighEntropyValues(['fullVersionList'])
+      if (values.fullVersionList?.length) versions = values.fullVersionList
+    } catch {
+      // The low-entropy brand list still provides the browser major version.
+    }
+  }
+  const chrome = versions.find((brand) => brand.brand === 'Google Chrome')
+  const observed = chrome ?? versions.find((brand) => !/not.?a.?brand/i.test(brand.brand))
+  return { isGoogleChrome: Boolean(chrome), version: observed?.version ?? null }
+}
+
+function versionMajor(version: string | null) {
+  if (!version) return null
+  const major = Number.parseInt(version.split('.')[0] ?? '', 10)
+  return Number.isSafeInteger(major) ? major : null
 }
 
 function languageModelApi() {

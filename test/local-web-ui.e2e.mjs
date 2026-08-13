@@ -199,13 +199,23 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       await page.getByTestId('routing-view').waitFor()
       assert.equal(await page.getByTestId('router-enabled').isChecked(), false)
       assert.equal(await page.getByTestId('router-availability').locator('strong').textContent(), 'disabled')
+      assert.match(await page.getByTestId('router-compatibility').textContent(), /Google Chrome 148\+/)
       assert.match(await page.getByTestId('router-chrome-setup').textContent(), /on-device-internals|experimental AI/i)
       await page.waitForFunction(() => !document.querySelector('[data-testid="router-enabled"]')?.disabled)
       await page.getByTestId('router-enabled-control').click()
       const promptApiExposed = await page.evaluate(() => typeof window.LanguageModel !== 'undefined')
+      const googleChromeMajor = await page.evaluate(() => {
+        const chrome = navigator.userAgentData?.brands?.find((brand) => brand.brand === 'Google Chrome')
+        return chrome ? Number.parseInt(chrome.version, 10) : null
+      })
       await page.waitForFunction(() => document.querySelector('[data-testid="router-availability"] strong')?.textContent !== 'checking')
       const routerAvailability = await page.getByTestId('router-availability').locator('strong').textContent()
-      assert.equal(promptApiExposed ? ['available', 'downloadable', 'downloading', 'unavailable'].includes(routerAvailability) : routerAvailability === 'unsupported', true)
+      if (googleChromeMajor === null || googleChromeMajor < 148) {
+        assert.equal(routerAvailability, 'blocked')
+        assert.equal(await page.getByTestId('router-run').isDisabled(), true)
+      } else {
+        assert.equal(promptApiExposed ? ['available', 'downloadable', 'downloading', 'unavailable'].includes(routerAvailability) : routerAvailability === 'unsupported', true)
+      }
       await page.getByTestId('router-add-model').click()
       await page.getByTestId('router-model-0').locator('input').nth(0).fill('fast-local')
       await page.getByTestId('router-model-0').locator('input').nth(1).fill('Fast local model')

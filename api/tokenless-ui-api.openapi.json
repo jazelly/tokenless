@@ -529,9 +529,10 @@
             "properties": {
               "browserId": { "type": "string" },
               "runtimeId": { "type": "string" },
-              "family": { "type": "string" }
+              "family": { "type": "string" },
+              "version": { "type": ["string", "null"] }
             },
-            "required": ["browserId", "runtimeId", "family"],
+            "required": ["browserId", "runtimeId", "family", "version"],
             "additionalProperties": false
           },
           "roleLabel": { "type": "string", "maxLength": 80 },

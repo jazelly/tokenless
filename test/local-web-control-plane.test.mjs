@@ -345,7 +345,9 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
       browserId: afterProfile.config.browser,
       runtimeId: `native:${afterProfile.config.browser}`,
       family: 'system',
+      version: afterProfile.profiles[0].browserBinding.version,
     })
+    assert.match(afterProfile.profiles[0].browserBinding.version, /^\d+\./)
     assert.equal(Object.hasOwn(afterProfile.profiles[0], 'preferences'), false)
     assert.equal(afterProfile.providers.find((provider) => provider.id === 'chatgpt').profiles[0].enabled, true)
     assert.equal(afterProfile.providers.find((provider) => provider.id === 'gemini').profiles[0].enabled, false)
@@ -377,6 +379,7 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
       browserId: 'cloak',
       runtimeId: 'cloak:darwin-arm64:145.0.7632.109.2',
       family: 'cloak',
+      version: '145.0.7632.109.2',
     })
     assert.equal(boundSnapshot.profiles.find((profile) => profile.slug === 'cloak-bound').browserMode, 'managed')
 

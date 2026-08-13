@@ -99,6 +99,7 @@ export class TokenlessApplicationServices {
     const capabilityRoutes = listProviderTaskCapabilityRoutes()
     this.store.reconcileOutputSavings()
     const outputSavings = await this.outputSavingsState(config)
+    const nativeBrowser = await this.inspectConfiguredBrowser(config)
     const body = {
       schema: 'tokenless.ui-snapshot.v1',
       generatedAt: new Date().toISOString(),
@@ -116,6 +117,7 @@ export class TokenlessApplicationServices {
         profileData.defaultProfile,
         profileConfig(config, profile.slug),
         config.browser,
+        nativeBrowser.runtime?.actualVersion ?? null,
       )),
       providers: providers.map((provider) => ({
         ...provider,
@@ -149,7 +151,7 @@ export class TokenlessApplicationServices {
         profiles,
         this.store.outputSavingsForJob(job.job_id),
       )),
-      diagnostics: await this.diagnostics(config, profiles, runtime, outputSavings),
+      diagnostics: await this.diagnostics(config, profiles, runtime, outputSavings, nativeBrowser),
     }
     return {
       ...body,
@@ -308,7 +310,8 @@ export class TokenlessApplicationServices {
     try {
       await this.updateProfileConfig(profile, profileConfiguration)
       const config = await this.migratedConfig()
-      return publicProfile(profile, (await this.profiles.read()).defaultProfile, profileConfig(config, profile.slug), config.browser)
+      const browser = await this.inspectConfiguredBrowser(config)
+      return publicProfile(profile, (await this.profiles.read()).defaultProfile, profileConfig(config, profile.slug), config.browser, browser.runtime?.actualVersion ?? null)
     } catch (error) {
       await this.profiles.removeProfile(slug, { confirmDelete: true }).catch(() => undefined)
       throw error
@@ -334,7 +337,8 @@ export class TokenlessApplicationServices {
     if (input.setDefault === true) profile = await this.profiles.setDefault(slug)
     await this.updateProfileConfig(profile, next)
     const config = await this.migratedConfig()
-    return publicProfile(profile, (await this.profiles.read()).defaultProfile, profileConfig(config, profile.slug), config.browser)
+    const browser = await this.inspectConfiguredBrowser(config)
+    return publicProfile(profile, (await this.profiles.read()).defaultProfile, profileConfig(config, profile.slug), config.browser, browser.runtime?.actualVersion ?? null)
   }
 
   async removeProfile(slug: string) {
@@ -482,6 +486,12 @@ export class TokenlessApplicationServices {
     return await readTokenlessConfig(this.store.homeDir)
   }
 
+  private async inspectConfiguredBrowser(config: TokenlessConfig) {
+    return await this.runtimeManager.inspect(config.browser, {
+      browserExecutablePath: config.browserExecutablePath,
+    })
+  }
+
   private async updateProfileConfig(
     profile: ManagedProfileRecord,
     next: ManagedProfileConfig,
@@ -498,10 +508,8 @@ export class TokenlessApplicationServices {
     profiles: ManagedProfileRecord[],
     runtime: ReturnType<BrowserRuntimeController['status']>,
     outputSavings: Awaited<ReturnType<TokenlessApplicationServices['outputSavingsState']>>,
+    browser: Awaited<ReturnType<BrowserRuntimeManager['inspect']>>,
   ) {
-    const browser = await this.runtimeManager.inspect(config.browser, {
-      browserExecutablePath: config.browserExecutablePath,
-    })
     return [
       {
         id: 'configuration',
@@ -612,17 +620,20 @@ function publicProfile(
   defaultSlug: string | null,
   configured: ManagedProfileConfig,
   configuredBrowser: string,
+  configuredBrowserVersion: string | null,
 ) {
   const browserBinding = profile.runtimeBinding
     ? {
         browserId: profile.runtimeBinding.browserId,
         runtimeId: profile.runtimeBinding.runtimeId,
         family: profile.runtimeBinding.family,
+        version: profile.runtimeBinding.createdWithVersion,
       }
     : {
         browserId: configuredBrowser,
         runtimeId: `native:${configuredBrowser}`,
         family: 'system',
+        version: configuredBrowserVersion,
       }
   return {
     slug: profile.slug,

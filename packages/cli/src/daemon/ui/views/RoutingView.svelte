@@ -3,9 +3,12 @@
   import { Plus, RefreshCw, Trash2 } from '@lucide/svelte'
   import PageHeader from '../components/PageHeader.svelte'
   import {
+    CHROME_PROMPT_API_MIN_MAJOR,
     createRouterEngine,
     RouterEngineError,
+    type RouterBrowserBinding,
     type RouterEngineId,
+    type RouterEngineObservation,
     type RouterModel,
     type RouterResult,
   } from '../router-engine.js'
@@ -14,11 +17,13 @@
 
   let {
     snapshot,
+    selectedProfile,
     t,
     busy,
     onmutate,
   }: {
     snapshot: JsonRecord
+    selectedProfile: string
     t: (key: MessageKey) => string
     busy: boolean
     onmutate: (path: string, body?: unknown, method?: string) => Promise<unknown>
@@ -36,23 +41,75 @@
   let formError = $state('')
   let running = $state(false)
   let result = $state<RouterResult | null>(null)
+  let observation = $state<RouterEngineObservation | null>(null)
+  const browserBinding = $derived(selectedBrowserBinding())
 
-  onMount(() => { if (enabled) void refreshAvailability() })
+  onMount(() => { void refreshAvailability() })
 
   async function refreshAvailability() {
     availabilityError = ''
     downloadProgress = null
     if (!enabled) {
       availability = 'disabled'
+      try {
+        observation = await createRouterEngine(engine).inspect(selectedBrowserBinding())
+        if (!observation.supported) availabilityError = observationMessage(observation)
+      } catch (error) {
+        availabilityError = error instanceof Error ? error.message : t('requestFailed')
+      }
       return
     }
     availability = 'checking'
     try {
-      availability = await createRouterEngine(engine).availability()
+      const inspected = await createRouterEngine(engine).availability(selectedBrowserBinding())
+      observation = inspected.observation
+      availability = inspected.status
     } catch (error) {
-      availability = 'unavailable'
-      availabilityError = error instanceof Error ? error.message : t('requestFailed')
+      if (error instanceof RouterEngineError) {
+        if (error.observation) observation = error.observation
+        availability = isBrowserBlock(error.code) ? 'blocked' : 'unsupported'
+        availabilityError = engineErrorMessage(error)
+      } else {
+        availability = 'unavailable'
+        availabilityError = error instanceof Error ? error.message : t('requestFailed')
+      }
     }
+  }
+
+  function selectedBrowserBinding(): RouterBrowserBinding {
+    const profile = snapshot.profiles?.find((candidate: JsonRecord) => (
+      candidate.slug === selectedProfile || candidate.id === selectedProfile
+    ))
+    const binding = profile?.browserBinding
+    return {
+      browserId: typeof binding?.browserId === 'string' ? binding.browserId : String(snapshot.config.browser ?? ''),
+      family: typeof binding?.family === 'string' ? binding.family : 'system',
+      version: typeof binding?.version === 'string' ? binding.version : null,
+    }
+  }
+
+  function isBrowserBlock(code: RouterEngineError['code']) {
+    return code === 'unsupported-browser-mode' || code === 'unsupported-browser' || code === 'unsupported-version'
+  }
+
+  function observationMessage(value: RouterEngineObservation) {
+    if (value.code === 'unsupported-browser-mode') return t('routerBrowserModeUnsupported')
+    if (value.code === 'unsupported-browser') return t('routerBrowserUnsupported')
+    if (value.code === 'unsupported-version') {
+      return `${t('routerBrowserVersionUnsupported')} ${value.browserVersion ?? t('unknown')}.`
+    }
+    if (value.code === 'api-missing') return t('routerApiUnsupported')
+    return ''
+  }
+
+  function engineErrorMessage(error: RouterEngineError) {
+    if (error.observation) {
+      const message = observationMessage(error.observation)
+      if (message) return message
+    }
+    if (error.code === 'unavailable') return t('routerApiUnavailable')
+    if (error.code === 'invalid-result') return t('routerInvalidResult')
+    return t('routerApiUnsupported')
   }
 
   function toggleEnabled(checked: boolean) {
@@ -124,21 +181,16 @@
     downloadProgress = null
     try {
       const candidates = normalizedModels()
-      result = await createRouterEngine(engine).route(task.trim(), candidates, {
+      result = await createRouterEngine(engine).route(task.trim(), candidates, selectedBrowserBinding(), {
+        onObservation(value) { observation = value },
         onAvailability(value) { availability = value },
         onDownloadProgress(value) { downloadProgress = value },
       })
     } catch (error) {
       if (error instanceof RouterEngineError) {
-        if (error.code === 'unsupported') {
-          availability = 'unsupported'
-          formError = t('routerApiUnsupported')
-        } else if (error.code === 'unavailable') {
-          availability = 'unavailable'
-          formError = t('routerApiUnavailable')
-        } else {
-          formError = t('routerInvalidResult')
-        }
+        if (error.observation) observation = error.observation
+        availability = isBrowserBlock(error.code) ? 'blocked' : error.code === 'unavailable' ? 'unavailable' : 'unsupported'
+        formError = engineErrorMessage(error)
       } else {
         formError = error instanceof Error ? error.message : t('requestFailed')
       }
@@ -166,9 +218,14 @@
       </select>
       <small>{t('routerEngineHelp')}</small>
     </label>
+    <div class="router-compatibility" data-testid="router-compatibility">
+      <div><small>{t('selectedBrowser')}</small><strong>{browserBinding.family} · {browserBinding.browserId}</strong></div>
+      <div><small>{t('browserVersion')}</small><strong>{observation?.browserVersion ?? browserBinding.version ?? t('unknown')}</strong></div>
+      <div><small>{t('routerRequirement')}</small><strong>Google Chrome {CHROME_PROMPT_API_MIN_MAJOR}+</strong></div>
+    </div>
     <div class="router-status-row">
       <div class="router-availability" data-testid="router-availability">
-        <span class:ok={availability === 'available'} class:warning={availability === 'downloadable' || availability === 'downloading'} class:error={availability === 'unavailable' || availability === 'unsupported'} class="status-dot"></span>
+        <span class:ok={availability === 'available'} class:warning={availability === 'downloadable' || availability === 'downloading'} class:error={availability === 'unavailable' || availability === 'unsupported' || availability === 'blocked'} class="status-dot"></span>
         <span><small>{t('availability')}</small><strong>{availability}</strong>{#if downloadProgress !== null}<small>{t('downloadProgress')}: {downloadProgress}%</small>{/if}</span>
       </div>
       <button class="icon-button subtle" type="button" disabled={!enabled} aria-label={t('refresh')} title={t('refresh')} onclick={refreshAvailability}>
@@ -213,7 +270,7 @@
   <section class="settings-section system-card router-run-card">
     <div class="settings-section-title"><div><h2>{t('routerTest')}</h2><p>{t('routerTestHelp')}</p></div></div>
     <label class="field"><span>{t('taskPrompt')}</span><textarea bind:value={task} maxlength="4000" placeholder={t('taskPromptPlaceholder')} data-testid="router-prompt"></textarea></label>
-    <div class="form-actions"><button class="button primary" type="button" disabled={!enabled || running || busy} onclick={run} data-testid="router-run">{running ? t('routerRunning') : t('runSemanticRouter')}</button></div>
+    <div class="form-actions"><button class="button primary" type="button" disabled={!enabled || running || busy || availability === 'checking' || observation?.supported === false} onclick={run} data-testid="router-run">{running ? t('routerRunning') : t('runSemanticRouter')}</button></div>
     {#if formError}<div class="inline-feedback error" role="alert" data-testid="router-error">{formError}</div>{/if}
     {#if result}<div class="router-result" data-testid="router-result"><h3>{t('routerResult')}</h3><pre>{JSON.stringify(result, null, 2)}</pre></div>{/if}
   </section>
