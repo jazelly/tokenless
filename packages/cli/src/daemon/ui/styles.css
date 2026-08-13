@@ -229,13 +229,19 @@ a.data-row:hover, button.data-row:hover { background: #faf9f7; }
 .diagnostic-row { cursor: default; }
 
 .routing-page { max-width: 1080px; }
-.routing-api-card, .router-config, .router-run-card { margin-bottom: 16px; }
-.routing-api-card .settings-section-title > div, .router-config .settings-section-title > div, .router-run-card .settings-section-title > div { min-width: 0; }
-.routing-api-card .settings-section-title p, .router-config .settings-section-title p, .router-run-card .settings-section-title p { max-width: 720px; margin-top: 5px; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.routing-api-card, .router-setup, .router-config, .router-run-card { margin-bottom: 16px; }
+.routing-api-card .settings-section-title > div, .router-setup .settings-section-title > div, .router-config .settings-section-title > div, .router-run-card .settings-section-title > div { min-width: 0; }
+.routing-api-card .settings-section-title p, .router-setup .settings-section-title p, .router-config .settings-section-title p, .router-run-card .settings-section-title p { max-width: 720px; margin-top: 5px; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.router-engine-field { max-width: 420px; }
+.router-engine-field small { color: var(--muted); font-size: 9px; }
+.router-status-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .router-availability { display: flex; align-items: center; gap: 10px; margin-top: 16px; }
 .router-availability > span:last-child { display: flex; flex-direction: column; gap: 3px; }
 .router-availability small { color: var(--muted); font-size: 9px; }
 .router-availability strong { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.router-setup ol { display: grid; gap: 8px; margin: 14px 0 12px 18px; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.router-setup code { color: var(--ink); font-size: 9px; }
+.router-setup > p { color: var(--muted); font-size: 10px; line-height: 1.5; }
 .router-model-list { display: flex; flex-direction: column; gap: 10px; margin: 16px 0; }
 .router-model-row { display: grid; grid-template-columns: minmax(130px, .65fr) minmax(160px, .8fr) minmax(260px, 1.55fr) 34px; align-items: end; gap: 10px; padding: 12px; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--surface-muted); }
 .router-model-row .field > input { background: var(--surface); }

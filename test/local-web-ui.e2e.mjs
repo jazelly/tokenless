@@ -197,10 +197,15 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
 
       await activateNavigation(page, 'routing')
       await page.getByTestId('routing-view').waitFor()
+      assert.equal(await page.getByTestId('router-enabled').isChecked(), false)
+      assert.equal(await page.getByTestId('router-availability').locator('strong').textContent(), 'disabled')
+      assert.match(await page.getByTestId('router-chrome-setup').textContent(), /on-device-internals|experimental AI/i)
+      await page.waitForFunction(() => !document.querySelector('[data-testid="router-enabled"]')?.disabled)
+      await page.getByTestId('router-enabled-control').click()
       const promptApiExposed = await page.evaluate(() => typeof window.LanguageModel !== 'undefined')
       await page.waitForFunction(() => document.querySelector('[data-testid="router-availability"] strong')?.textContent !== 'checking')
-      const nanoAvailability = await page.getByTestId('router-availability').locator('strong').textContent()
-      assert.equal(promptApiExposed ? ['available', 'downloadable', 'downloading', 'unavailable'].includes(nanoAvailability) : nanoAvailability === 'unsupported', true)
+      const routerAvailability = await page.getByTestId('router-availability').locator('strong').textContent()
+      assert.equal(promptApiExposed ? ['available', 'downloadable', 'downloading', 'unavailable'].includes(routerAvailability) : routerAvailability === 'unsupported', true)
       await page.getByTestId('router-add-model').click()
       await page.getByTestId('router-model-0').locator('input').nth(0).fill('fast-local')
       await page.getByTestId('router-model-0').locator('input').nth(1).fill('Fast local model')
@@ -215,7 +220,9 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       ))
       await page.getByTestId('router-save').click()
       assert.equal((await routerSaved).status(), 200)
-      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8')).semanticRouter, {
+      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8')).router, {
+        enabled: true,
+        engine: 'chrome-prompt-api',
         models: [
           { id: 'fast-local', label: 'Fast local model', suitableTasks: 'Summaries and simple extraction' },
           { id: 'deep-reasoning', label: 'Deep reasoning model', suitableTasks: 'Complex analysis and multi-step reasoning' },
@@ -223,6 +230,8 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       })
       await page.reload({ waitUntil: 'networkidle' })
       await page.getByTestId('routing-view').waitFor()
+      assert.equal(await page.getByTestId('router-enabled').isChecked(), true)
+      assert.equal(await page.getByTestId('router-engine').inputValue(), 'chrome-prompt-api')
       assert.equal(await page.getByTestId('router-model-0').locator('input').nth(0).inputValue(), 'fast-local')
       assert.equal(await page.getByTestId('router-model-1').locator('input').nth(2).inputValue(), 'Complex analysis and multi-step reasoning')
 
@@ -238,6 +247,8 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       assert.match(await page.getByTestId('overview-output-savings').getAttribute('title'), /Token 汇总统计不可用/)
       await page.reload({ waitUntil: 'networkidle' })
       await page.getByTestId('app-shell').waitFor()
+      await activateNavigation(page, 'routing')
+      assert.match(await page.getByTestId('router-chrome-setup').textContent(), /启用 Chrome 实验性 AI|模型信息/)
       await activateNavigation(page, 'system')
       await page.getByTestId('system-view').waitFor()
       assert.equal(await page.getByTestId('config-language').inputValue(), 'zh-CN')

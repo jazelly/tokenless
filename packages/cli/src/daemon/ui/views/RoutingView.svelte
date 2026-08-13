@@ -2,30 +2,15 @@
   import { onMount, untrack } from 'svelte'
   import { Plus, RefreshCw, Trash2 } from '@lucide/svelte'
   import PageHeader from '../components/PageHeader.svelte'
+  import {
+    createRouterEngine,
+    RouterEngineError,
+    type RouterEngineId,
+    type RouterModel,
+    type RouterResult,
+  } from '../router-engine.js'
   import type { JsonRecord } from '../types.js'
   import type { MessageKey } from '../localization.js'
-
-  type RouterModel = {
-    id: string
-    label: string
-    suitableTasks: string
-  }
-
-  type LanguageModelSession = {
-    prompt: (input: string, options: { responseConstraint: JsonRecord }) => Promise<string>
-    destroy?: () => void
-  }
-
-  type LanguageModelApi = {
-    availability: () => Promise<string>
-    create: (options: {
-      monitor: (monitor: {
-        addEventListener: (type: 'downloadprogress', listener: (event: { loaded: number }) => void) => void
-      }) => void
-    }) => Promise<LanguageModelSession>
-  }
-
-  const semanticInstruction = 'Analyze the task. Choose the candidate model whose suitableTasks best matches it. Return the task type, complexity, and a concise reason.'
 
   let {
     snapshot,
@@ -39,37 +24,44 @@
     onmutate: (path: string, body?: unknown, method?: string) => Promise<unknown>
   } = $props()
 
-  let models = $state<RouterModel[]>(untrack(() => (
-    snapshot.config.semanticRouter?.models?.map((model: RouterModel) => ({ ...model })) ?? []
-  )))
+  const initialRouter = untrack(() => snapshot.config.router ?? {})
+  const initialEnabled = initialRouter.enabled === true
+  let enabled = $state(initialEnabled)
+  let engine = $state<RouterEngineId>(initialRouter.engine === 'chrome-prompt-api' ? initialRouter.engine : 'chrome-prompt-api')
+  let models = $state<RouterModel[]>(initialRouter.models?.map((model: RouterModel) => ({ ...model })) ?? [])
   let task = $state('')
-  let availability = $state('checking')
+  let availability = $state(initialEnabled ? 'checking' : 'disabled')
   let downloadProgress = $state<number | null>(null)
   let availabilityError = $state('')
   let formError = $state('')
   let running = $state(false)
-  let result = $state<JsonRecord | null>(null)
+  let result = $state<RouterResult | null>(null)
 
-  onMount(() => { void refreshAvailability() })
-
-  function languageModelApi() {
-    return (window as Window & { LanguageModel?: LanguageModelApi }).LanguageModel
-  }
+  onMount(() => { if (enabled) void refreshAvailability() })
 
   async function refreshAvailability() {
     availabilityError = ''
     downloadProgress = null
-    const api = languageModelApi()
-    if (!api) {
-      availability = 'unsupported'
+    if (!enabled) {
+      availability = 'disabled'
       return
     }
     availability = 'checking'
     try {
-      availability = await api.availability()
+      availability = await createRouterEngine(engine).availability()
     } catch (error) {
       availability = 'unavailable'
       availabilityError = error instanceof Error ? error.message : t('requestFailed')
+    }
+  }
+
+  function toggleEnabled(checked: boolean) {
+    enabled = checked
+    if (checked) void refreshAvailability()
+    else {
+      availability = 'disabled'
+      availabilityError = ''
+      downloadProgress = null
     }
   }
 
@@ -109,7 +101,7 @@
     if (formError) return
     try {
       const normalized = normalizedModels()
-      await onmutate('/config', { semanticRouter: { models: normalized } }, 'PATCH')
+      await onmutate('/config', { router: { enabled, engine, models: normalized } }, 'PATCH')
       models = normalized
     } catch (error) {
       formError = error instanceof Error ? error.message : t('requestFailed')
@@ -117,6 +109,10 @@
   }
 
   async function run() {
+    if (!enabled) {
+      formError = t('routerDisabledError')
+      return
+    }
     formError = validateModels(true)
     if (formError) return
     if (!task.trim()) {
@@ -126,73 +122,72 @@
     result = null
     running = true
     downloadProgress = null
-    let session: LanguageModelSession | undefined
     try {
-      const api = languageModelApi()
-      if (!api) {
-        availability = 'unsupported'
-        throw new Error(t('routerApiUnsupported'))
-      }
-      availability = await api.availability()
-      if (availability === 'unavailable') throw new Error(t('routerApiUnavailable'))
       const candidates = normalizedModels()
-      if (availability === 'downloadable' || availability === 'downloading') {
-        availability = 'downloading'
-        downloadProgress = 0
-      }
-      session = await api.create({
-        monitor(monitor) {
-          monitor.addEventListener('downloadprogress', (event) => {
-            availability = 'downloading'
-            downloadProgress = Math.round(Math.min(1, Math.max(0, event.loaded)) * 100)
-          })
-        },
+      result = await createRouterEngine(engine).route(task.trim(), candidates, {
+        onAvailability(value) { availability = value },
+        onDownloadProgress(value) { downloadProgress = value },
       })
-      availability = 'available'
-      downloadProgress = null
-      const response = await session.prompt(`${semanticInstruction}\n${JSON.stringify({
-        task: task.trim(),
-        modelConfiguration: candidates,
-      })}`, {
-        responseConstraint: {
-          type: 'object',
-          properties: {
-            modelId: { type: 'string', enum: candidates.map((model) => model.id) },
-            taskType: { type: 'string' },
-            complexity: { type: 'string', enum: ['low', 'medium', 'high'] },
-            reason: { type: 'string' },
-          },
-          required: ['modelId', 'taskType', 'complexity', 'reason'],
-          additionalProperties: false,
-        },
-      })
-      const parsed = JSON.parse(response) as JsonRecord
-      if (!candidates.some((model) => model.id === parsed.modelId)) throw new Error(t('routerInvalidResult'))
-      result = parsed
     } catch (error) {
-      formError = error instanceof Error ? error.message : t('requestFailed')
+      if (error instanceof RouterEngineError) {
+        if (error.code === 'unsupported') {
+          availability = 'unsupported'
+          formError = t('routerApiUnsupported')
+        } else if (error.code === 'unavailable') {
+          availability = 'unavailable'
+          formError = t('routerApiUnavailable')
+        } else {
+          formError = t('routerInvalidResult')
+        }
+      } else {
+        formError = error instanceof Error ? error.message : t('requestFailed')
+      }
     } finally {
-      session?.destroy?.()
       running = false
     }
   }
 </script>
 
 <section class="page routing-page" data-testid="routing-view">
-  <PageHeader title={t('semanticRouting')} description={t('routingLede')} />
+  <PageHeader title={t('experimentalRouter')} description={t('routingLede')} />
 
   <section class="settings-section system-card routing-api-card">
     <div class="settings-section-title">
-      <div><h2>{t('nanoApi')}</h2><p>{t('routerExperimentNote')}</p></div>
-      <button class="icon-button subtle" type="button" aria-label={t('refresh')} title={t('refresh')} onclick={refreshAvailability}>
+      <div><h2>{t('routerEngine')}</h2><p>{t('routerExperimentNote')}</p></div>
+      <label class="switch" title={enabled ? t('enabled') : t('disabled')} data-testid="router-enabled-control">
+        <input type="checkbox" checked={enabled} disabled={busy} onchange={(event) => toggleEnabled(event.currentTarget.checked)} data-testid="router-enabled" />
+        <span></span>
+      </label>
+    </div>
+    <label class="field compact-field router-engine-field">
+      <span>{t('routerEngine')}</span>
+      <select bind:value={engine} disabled={busy} data-testid="router-engine">
+        <option value="chrome-prompt-api">{t('chromePromptApiEngine')}</option>
+      </select>
+      <small>{t('routerEngineHelp')}</small>
+    </label>
+    <div class="router-status-row">
+      <div class="router-availability" data-testid="router-availability">
+        <span class:ok={availability === 'available'} class:warning={availability === 'downloadable' || availability === 'downloading'} class:error={availability === 'unavailable' || availability === 'unsupported'} class="status-dot"></span>
+        <span><small>{t('availability')}</small><strong>{availability}</strong>{#if downloadProgress !== null}<small>{t('downloadProgress')}: {downloadProgress}%</small>{/if}</span>
+      </div>
+      <button class="icon-button subtle" type="button" disabled={!enabled} aria-label={t('refresh')} title={t('refresh')} onclick={refreshAvailability}>
         <RefreshCw size={15} />
       </button>
     </div>
-    <div class="router-availability" data-testid="router-availability">
-      <span class:ok={availability === 'available'} class:warning={availability === 'downloadable' || availability === 'downloading'} class:error={availability === 'unavailable' || availability === 'unsupported'} class="status-dot"></span>
-      <span><small>{t('availability')}</small><strong>{availability}</strong>{#if downloadProgress !== null}<small>{t('downloadProgress')}: {downloadProgress}%</small>{/if}</span>
-    </div>
+    {#if downloadProgress === 0}<div class="inline-feedback warning" data-testid="router-download-zero">{t('downloadZeroHelp')}</div>{/if}
     {#if availabilityError}<div class="inline-feedback error" role="alert">{availabilityError}</div>{/if}
+  </section>
+
+  <section class="settings-section system-card router-setup" data-testid="router-chrome-setup">
+    <div class="settings-section-title"><div><h2>{t('chromeSetup')}</h2><p>{t('chromeSetupIntro')}</p></div></div>
+    <ol>
+      <li>{t('chromeSetupOptimization')} <code>chrome://flags/#optimization-guide-on-device-model</code></li>
+      <li>{t('chromeSetupPrompt')} <code>chrome://flags/#prompt-api-for-gemini-nano</code></li>
+      <li>{t('chromeSetupRelaunch')}</li>
+      <li>{t('chromeSetupInspect')} <code>chrome://on-device-internals</code></li>
+    </ol>
+    <p>{t('chromeModelVersionHelp')}</p>
   </section>
 
   <form class="settings-section system-card router-config" onsubmit={save} data-testid="router-config-form">
@@ -218,7 +213,7 @@
   <section class="settings-section system-card router-run-card">
     <div class="settings-section-title"><div><h2>{t('routerTest')}</h2><p>{t('routerTestHelp')}</p></div></div>
     <label class="field"><span>{t('taskPrompt')}</span><textarea bind:value={task} maxlength="4000" placeholder={t('taskPromptPlaceholder')} data-testid="router-prompt"></textarea></label>
-    <div class="form-actions"><button class="button primary" type="button" disabled={running || busy} onclick={run} data-testid="router-run">{running ? t('routerRunning') : t('runSemanticRouter')}</button></div>
+    <div class="form-actions"><button class="button primary" type="button" disabled={!enabled || running || busy} onclick={run} data-testid="router-run">{running ? t('routerRunning') : t('runSemanticRouter')}</button></div>
     {#if formError}<div class="inline-feedback error" role="alert" data-testid="router-error">{formError}</div>{/if}
     {#if result}<div class="router-result" data-testid="router-result"><h3>{t('routerResult')}</h3><pre>{JSON.stringify(result, null, 2)}</pre></div>{/if}
   </section>

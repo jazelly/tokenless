@@ -82,7 +82,7 @@ test('persistent config preserves native Chrome or Brave and removes managed bro
   try {
     const defaults = await runtime.readTokenlessConfig(homeDir)
     assert.deepEqual(defaults.outputSavings, { enabled: true })
-    assert.deepEqual(defaults.semanticRouter, { models: [] })
+    assert.deepEqual(defaults.router, { enabled: false, engine: 'chrome-prompt-api', models: [] })
     assert.equal(defaults.browser, 'chrome')
     assert.equal(Object.hasOwn(defaults, 'browserConnectionMode'), false)
     assert.equal(defaults.browserExecutablePath, null)
@@ -95,23 +95,33 @@ test('persistent config preserves native Chrome or Brave and removes managed bro
       { enabled: false },
     )
     assert.deepEqual((await runtime.readTokenlessConfig(homeDir)).outputSavings, { enabled: false })
-    const semanticRouter = {
+    const router = {
+      enabled: true,
+      engine: 'chrome-prompt-api',
       models: [
         { id: 'fast-local', label: 'Fast local model', suitableTasks: 'Summaries and simple extraction' },
         { id: 'deep-reasoning', label: 'Deep reasoning model', suitableTasks: 'Complex analysis' },
       ],
     }
-    assert.deepEqual((await runtime.writeTokenlessConfig({ homeDir, semanticRouter })).semanticRouter, semanticRouter)
-    assert.deepEqual((await runtime.readTokenlessConfig(homeDir)).semanticRouter, semanticRouter)
+    assert.deepEqual((await runtime.writeTokenlessConfig({ homeDir, router })).router, router)
+    assert.deepEqual((await runtime.readTokenlessConfig(homeDir)).router, router)
     await assert.rejects(
       runtime.writeTokenlessConfig({
         homeDir,
-        semanticRouter: { models: [...semanticRouter.models, { ...semanticRouter.models[0] }] },
+        router: { ...router, models: [...router.models, { ...router.models[0] }] },
       }),
-      /Invalid Tokenless semantic router configuration/,
+      /Invalid Tokenless router configuration/,
     )
-    const savedConfig = JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8'))
+    const configFile = path.join(homeDir, 'config.json')
+    const savedConfig = JSON.parse(fs.readFileSync(configFile, 'utf8'))
     assert.equal(Object.hasOwn(savedConfig, 'browserConnectionMode'), false)
+    delete savedConfig.router
+    savedConfig.semanticRouter = { models: router.models }
+    fs.writeFileSync(configFile, `${JSON.stringify(savedConfig, null, 2)}\n`)
+    assert.deepEqual((await runtime.readTokenlessConfig(homeDir)).router, router)
+    const migratedConfig = JSON.parse(fs.readFileSync(configFile, 'utf8'))
+    assert.equal(Object.hasOwn(migratedConfig, 'semanticRouter'), false)
+    assert.deepEqual(migratedConfig.router, router)
     await runtime.writeTokenlessConfig({ homeDir, browser: 'brave' })
     assert.equal((await runtime.readTokenlessConfig(homeDir)).browser, 'brave')
     const nativeExecutablePath = path.join(homeDir, 'user-provided', 'brave')

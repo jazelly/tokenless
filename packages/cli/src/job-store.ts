@@ -33,7 +33,7 @@ export type TokenlessConfig = {
   apiProxy: ApiProxyConfig
   g4f: G4fConfig
   directProvider: DirectProviderConfig
-  semanticRouter: SemanticRouterConfig
+  router: RouterConfig
 }
 
 export type OutputSavingsConfig = {
@@ -62,11 +62,16 @@ export type DirectProviderConfig = {
   providerBackends: Record<string, ProviderBackend>
 }
 
-export type SemanticRouterConfig = {
-  models: SemanticRouterModel[]
+export const ROUTER_ENGINES = Object.freeze(['chrome-prompt-api'] as const)
+export type RouterEngine = typeof ROUTER_ENGINES[number]
+
+export type RouterConfig = {
+  enabled: boolean
+  engine: RouterEngine
+  models: RouterModel[]
 }
 
-export type SemanticRouterModel = {
+export type RouterModel = {
   id: string
   label: string
   suitableTasks: string
@@ -191,7 +196,10 @@ async function readTokenlessConfigUnlocked(homeDir: string) {
   if (payload.directProvider !== undefined && !isDirectProviderConfig(payload.directProvider)) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
-  if (payload.semanticRouter !== undefined && !isSemanticRouterConfig(payload.semanticRouter)) {
+  if (payload.router !== undefined && !isRouterConfig(payload.router)) {
+    throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
+  }
+  if (payload.semanticRouter !== undefined && !isLegacySemanticRouterConfig(payload.semanticRouter)) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
   const normalizedBrowser = normalizeBrowserId(payload.browser)
@@ -213,7 +221,7 @@ async function readTokenlessConfigUnlocked(homeDir: string) {
     apiProxy: normalizeApiProxyConfig(payload.apiProxy),
     g4f: normalizeG4fConfig(payload.g4f),
     directProvider: normalizeDirectProviderConfig(payload.directProvider),
-    semanticRouter: normalizeSemanticRouterConfig(payload.semanticRouter),
+    router: normalizeRouterConfig(payload.router, payload.semanticRouter),
   }
   return { config, needsWrite: JSON.stringify(payload) !== JSON.stringify(config) }
 }
@@ -230,7 +238,7 @@ export async function writeTokenlessConfig({
   apiProxy,
   g4f,
   directProvider,
-  semanticRouter,
+  router,
 }: {
   homeDir?: string
   profiles?: unknown
@@ -243,7 +251,7 @@ export async function writeTokenlessConfig({
   apiProxy?: unknown
   g4f?: unknown
   directProvider?: unknown
-  semanticRouter?: unknown
+  router?: unknown
 } = {}) {
   return await withConfigWriterLock(homeDir, async () => {
     const current = (await readTokenlessConfigUnlocked(homeDir)).config
@@ -285,9 +293,7 @@ export async function writeTokenlessConfig({
       directProvider: directProvider === undefined
         ? current.directProvider
         : validateDirectProviderConfig(directProvider),
-      semanticRouter: semanticRouter === undefined
-        ? current.semanticRouter
-        : validateSemanticRouterConfig(semanticRouter),
+      router: router === undefined ? current.router : validateRouterConfig(router),
     }
     await writeJsonAtomic(configPath(homeDir), config, 0o600)
     return config
@@ -361,7 +367,7 @@ function emptyTokenlessConfig(): TokenlessConfig {
     apiProxy: defaultApiProxyConfig(),
     g4f: { enabled: false },
     directProvider: { defaultBackend: 'g4f', providerBackends: {} },
-    semanticRouter: { models: [] },
+    router: defaultRouterConfig(),
   }
 }
 
@@ -428,11 +434,20 @@ function validateDirectProviderConfig(value: unknown): DirectProviderConfig {
   return { defaultBackend: value.defaultBackend, providerBackends: { ...value.providerBackends } }
 }
 
-function isSemanticRouterConfig(value: unknown): value is SemanticRouterConfig {
-  if (!isJsonRecord(value) || Object.keys(value).length !== 1 || !Array.isArray(value.models)) return false
-  if (value.models.length > 20) return false
+function isRouterConfig(value: unknown): value is RouterConfig {
+  if (!isJsonRecord(value) || Object.keys(value).length !== 3 || !Array.isArray(value.models)) return false
+  if (typeof value.enabled !== 'boolean' || !ROUTER_ENGINES.includes(value.engine as RouterEngine)) return false
+  return isRouterModels(value.models)
+}
+
+function isLegacySemanticRouterConfig(value: unknown): value is { models: RouterModel[] } {
+  return isJsonRecord(value) && Object.keys(value).length === 1 && Array.isArray(value.models) && isRouterModels(value.models)
+}
+
+function isRouterModels(models: unknown[]): models is RouterModel[] {
+  if (models.length > 20) return false
   const ids = new Set<string>()
-  for (const model of value.models) {
+  for (const model of models) {
     if (!isJsonRecord(model) || Object.keys(model).length !== 3) return false
     if (typeof model.id !== 'string' || !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(model.id)) return false
     if (ids.has(model.id)) return false
@@ -443,23 +458,39 @@ function isSemanticRouterConfig(value: unknown): value is SemanticRouterConfig {
   return true
 }
 
-function normalizeSemanticRouterConfig(value: unknown): SemanticRouterConfig {
-  return isSemanticRouterConfig(value)
-    ? { models: value.models.map((model) => ({ ...model })) }
-    : { models: [] }
+function normalizeRouterConfig(value: unknown, legacyValue?: unknown): RouterConfig {
+  if (isRouterConfig(value)) return copyRouterConfig(value)
+  if (isLegacySemanticRouterConfig(legacyValue)) {
+    return {
+      enabled: true,
+      engine: 'chrome-prompt-api',
+      models: legacyValue.models.map((model) => ({ ...model })),
+    }
+  }
+  return defaultRouterConfig()
 }
 
-function validateSemanticRouterConfig(value: unknown): SemanticRouterConfig {
-  if (!isSemanticRouterConfig(value)) {
-    throw configError('tokenless_config_invalid', 'Invalid Tokenless semantic router configuration.')
+function validateRouterConfig(value: unknown): RouterConfig {
+  if (!isRouterConfig(value)) {
+    throw configError('tokenless_config_invalid', 'Invalid Tokenless router configuration.')
   }
+  return copyRouterConfig(value)
+}
+
+function copyRouterConfig(value: RouterConfig): RouterConfig {
   return {
+    enabled: value.enabled,
+    engine: value.engine,
     models: value.models.map((model) => ({
       id: model.id,
       label: model.label.trim(),
       suitableTasks: model.suitableTasks.trim(),
     })),
   }
+}
+
+function defaultRouterConfig(): RouterConfig {
+  return { enabled: false, engine: 'chrome-prompt-api', models: [] }
 }
 
 function isOutputSavingsConfig(value: unknown): value is OutputSavingsConfig {

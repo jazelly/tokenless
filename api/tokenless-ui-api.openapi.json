@@ -347,7 +347,7 @@
         "required": ["roleLabel", "enabledProviders", "browserVisibility", "proxy"],
         "additionalProperties": false
       },
-      "SemanticRouterModel": {
+      "RouterModel": {
         "type": "object",
         "properties": {
           "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
@@ -357,12 +357,14 @@
         "required": ["id", "label", "suitableTasks"],
         "additionalProperties": false
       },
-      "SemanticRouterConfig": {
+      "RouterConfig": {
         "type": "object",
         "properties": {
-          "models": { "type": "array", "maxItems": 20, "items": { "$ref": "#/components/schemas/SemanticRouterModel" } }
+          "enabled": { "type": "boolean" },
+          "engine": { "type": "string", "enum": ["chrome-prompt-api"] },
+          "models": { "type": "array", "maxItems": 20, "items": { "$ref": "#/components/schemas/RouterModel" } }
         },
-        "required": ["models"],
+        "required": ["enabled", "engine", "models"],
         "additionalProperties": false
       },
       "UiConfig": {
@@ -402,9 +404,9 @@
             "required": ["defaultBackend", "providerBackends"],
             "additionalProperties": false
           },
-          "semanticRouter": { "$ref": "#/components/schemas/SemanticRouterConfig" }
+          "router": { "$ref": "#/components/schemas/RouterConfig" }
         },
-        "required": ["updatedAt", "profiles", "browser", "browserExecutablePathConfigured", "browserVisibility", "daemonUrl", "language", "outputSavings", "g4f", "directProvider", "semanticRouter"],
+        "required": ["updatedAt", "profiles", "browser", "browserExecutablePathConfigured", "browserVisibility", "daemonUrl", "language", "outputSavings", "g4f", "directProvider", "router"],
         "additionalProperties": false
       },
       "ConfirmedDeletion": {
@@ -689,7 +691,7 @@
           "browserExecutablePath": { "type": ["string", "null"], "minLength": 1 },
           "browserVisibility": { "$ref": "#/components/schemas/BrowserVisibility" },
           "language": { "type": "string", "enum": ["en", "zh-CN"] },
-          "semanticRouter": { "$ref": "#/components/schemas/SemanticRouterConfig" }
+          "router": { "$ref": "#/components/schemas/RouterConfig" }
         },
         "additionalProperties": false
       },
