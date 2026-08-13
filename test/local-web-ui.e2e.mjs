@@ -12,6 +12,13 @@ import {
   resolveConfiguredBrowserTarget,
 } from './helpers/configured-browser-profile.mjs'
 
+const gate = process.env.TOKENLESS_LOCAL_WEB_UI_E2E_GATE
+assert.equal(
+  gate,
+  'configured-persistent-visible-browser',
+  'To authorize this test to use the configured persistent visible browser, run: TOKENLESS_LOCAL_WEB_UI_E2E_GATE=configured-persistent-visible-browser npm run test:e2e:web',
+)
+
 test('Svelte Web UI completes setup, persists configuration, renders durable work, and remains responsive', async () => {
   await withDaemon(async ({ daemon, homeDir }) => {
     const browserTarget = await resolveConfiguredBrowserTarget()
