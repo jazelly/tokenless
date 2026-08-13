@@ -195,6 +195,39 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       assert.equal(runtimeConfig.browser, 'chrome')
       assert.equal(runtimeConfig.browserExecutablePath, null)
 
+      await activateNavigation(page, 'routing')
+      await page.getByTestId('routing-view').waitFor()
+      const promptApiExposed = await page.evaluate(() => typeof window.LanguageModel !== 'undefined')
+      await page.waitForFunction(() => document.querySelector('[data-testid="router-availability"] strong')?.textContent !== 'checking')
+      const nanoAvailability = await page.getByTestId('router-availability').locator('strong').textContent()
+      assert.equal(promptApiExposed ? ['available', 'downloadable', 'downloading', 'unavailable'].includes(nanoAvailability) : nanoAvailability === 'unsupported', true)
+      await page.getByTestId('router-add-model').click()
+      await page.getByTestId('router-model-0').locator('input').nth(0).fill('fast-local')
+      await page.getByTestId('router-model-0').locator('input').nth(1).fill('Fast local model')
+      await page.getByTestId('router-model-0').locator('input').nth(2).fill('Summaries and simple extraction')
+      await page.getByTestId('router-add-model').click()
+      await page.getByTestId('router-model-1').locator('input').nth(0).fill('deep-reasoning')
+      await page.getByTestId('router-model-1').locator('input').nth(1).fill('Deep reasoning model')
+      await page.getByTestId('router-model-1').locator('input').nth(2).fill('Complex analysis and multi-step reasoning')
+      const routerSaved = page.waitForResponse((response) => (
+        new URL(response.url()).pathname === '/ui-api/v1/config' &&
+        response.request().method() === 'PATCH'
+      ))
+      await page.getByTestId('router-save').click()
+      assert.equal((await routerSaved).status(), 200)
+      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8')).semanticRouter, {
+        models: [
+          { id: 'fast-local', label: 'Fast local model', suitableTasks: 'Summaries and simple extraction' },
+          { id: 'deep-reasoning', label: 'Deep reasoning model', suitableTasks: 'Complex analysis and multi-step reasoning' },
+        ],
+      })
+      await page.reload({ waitUntil: 'networkidle' })
+      await page.getByTestId('routing-view').waitFor()
+      assert.equal(await page.getByTestId('router-model-0').locator('input').nth(0).inputValue(), 'fast-local')
+      assert.equal(await page.getByTestId('router-model-1').locator('input').nth(2).inputValue(), 'Complex analysis and multi-step reasoning')
+
+      await activateNavigation(page, 'system')
+
       await page.getByTestId('config-language').selectOption('zh-CN')
       await page.getByTestId('config-save').click()
       await page.waitForFunction(() => document.documentElement.lang === 'zh-CN')

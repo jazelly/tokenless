@@ -2,7 +2,7 @@ export type JsonRecord = Record<string, any>
 
 export type Language = 'en' | 'zh-CN'
 
-export type Section = 'overview' | 'profiles' | 'providers' | 'capabilities' | 'jobs' | 'system'
+export type Section = 'overview' | 'profiles' | 'providers' | 'capabilities' | 'routing' | 'jobs' | 'system'
 
 export type DashboardState = {
   language: Language

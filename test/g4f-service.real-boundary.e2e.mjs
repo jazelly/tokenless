@@ -29,6 +29,8 @@ test('pinned G4F runtime stays private and is exposed through the authenticated 
     assert.equal(health.workerCount, 1)
     assert.equal(health.requestLogging, false)
     assert.equal(health.paAutoDownload, false)
+    assert.equal(health.browserMode, 'headless')
+    assert.equal(health.browserAutoDiscovery, false)
 
     const unauthorizedPrivate = await fetch(`${service.origin}/tokenless/health`)
     assert.equal(unauthorizedPrivate.status, 401)
@@ -102,6 +104,35 @@ test('pinned G4F runtime stays private and is exposed through the authenticated 
       headers: { authorization: `Bearer ${token}` },
     })
     assert.equal(unscopedUpstreamName.status, 404)
+
+    const missingProviderAuth = await fetch(`${daemon.url}/v1/direct/g4f/g4f%3AAirforce/chat/completions`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'user', content: 'Reply with OK.' }],
+        stream: false,
+      }),
+    })
+    assert.equal(missingProviderAuth.status, 502)
+    assert.deepEqual(await missingProviderAuth.json(), {
+      error: {
+        code: 'g4f_upstream_missing_auth_error',
+        message: "G4F provider 'g4f:Airforce' failed with MissingAuthError (upstream HTTP 401).",
+        provider: 'g4f:Airforce',
+        upstream: {
+          system: 'g4f',
+          status: 401,
+          type: 'MissingAuthError',
+          category: 'authentication',
+          provider: 'Airforce',
+          model: 'gpt-4o-mini',
+        },
+      },
+    })
 
     const paResponse = await fetch(`${daemon.url}/v1/direct/g4f/pa/providers`, {
       headers: { authorization: `Bearer ${token}` },

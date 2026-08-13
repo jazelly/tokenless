@@ -347,6 +347,24 @@
         "required": ["roleLabel", "enabledProviders", "browserVisibility", "proxy"],
         "additionalProperties": false
       },
+      "SemanticRouterModel": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
+          "label": { "type": "string", "minLength": 1, "maxLength": 80 },
+          "suitableTasks": { "type": "string", "minLength": 1, "maxLength": 500 }
+        },
+        "required": ["id", "label", "suitableTasks"],
+        "additionalProperties": false
+      },
+      "SemanticRouterConfig": {
+        "type": "object",
+        "properties": {
+          "models": { "type": "array", "maxItems": 20, "items": { "$ref": "#/components/schemas/SemanticRouterModel" } }
+        },
+        "required": ["models"],
+        "additionalProperties": false
+      },
       "UiConfig": {
         "type": "object",
         "properties": {
@@ -383,9 +401,10 @@
             },
             "required": ["defaultBackend", "providerBackends"],
             "additionalProperties": false
-          }
+          },
+          "semanticRouter": { "$ref": "#/components/schemas/SemanticRouterConfig" }
         },
-        "required": ["updatedAt", "profiles", "browser", "browserExecutablePathConfigured", "browserVisibility", "daemonUrl", "language", "outputSavings", "g4f", "directProvider"],
+        "required": ["updatedAt", "profiles", "browser", "browserExecutablePathConfigured", "browserVisibility", "daemonUrl", "language", "outputSavings", "g4f", "directProvider", "semanticRouter"],
         "additionalProperties": false
       },
       "ConfirmedDeletion": {
@@ -669,7 +688,8 @@
           "browser": { "type": "string" },
           "browserExecutablePath": { "type": ["string", "null"], "minLength": 1 },
           "browserVisibility": { "$ref": "#/components/schemas/BrowserVisibility" },
-          "language": { "type": "string", "enum": ["en", "zh-CN"] }
+          "language": { "type": "string", "enum": ["en", "zh-CN"] },
+          "semanticRouter": { "$ref": "#/components/schemas/SemanticRouterConfig" }
         },
         "additionalProperties": false
       },

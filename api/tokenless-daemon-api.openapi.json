@@ -1576,7 +1576,7 @@
         "operationId": "listG4fProviderModels",
         "summary": "List models reported by one G4F provider",
         "parameters": [{ "$ref": "#/components/parameters/G4fProvider" }, { "$ref": "#/components/parameters/G4fAuthContext" }],
-        "responses": { "200": { "$ref": "#/components/responses/G4fJson" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" } }
+        "responses": { "200": { "$ref": "#/components/responses/G4fJson" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" }, "502": { "$ref": "#/components/responses/G4fUpstreamError" } }
       }
     },
     "/v1/direct/g4f/providers/{provider}/quota": {
@@ -1584,7 +1584,7 @@
         "operationId": "getG4fProviderQuota",
         "summary": "Read quota reported by one G4F provider",
         "parameters": [{ "$ref": "#/components/parameters/G4fProvider" }, { "$ref": "#/components/parameters/G4fAuthContext" }],
-        "responses": { "200": { "$ref": "#/components/responses/G4fJson" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" } }
+        "responses": { "200": { "$ref": "#/components/responses/G4fJson" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" }, "502": { "$ref": "#/components/responses/G4fUpstreamError" } }
       }
     },
     "/v1/direct/g4f/auth-contexts/{contextId}": {
@@ -1624,7 +1624,7 @@
         "summary": "Proxy a chat completion to one exact G4F provider, preserving SSE when requested",
         "parameters": [{ "$ref": "#/components/parameters/G4fProvider" }, { "$ref": "#/components/parameters/G4fAuthContext" }],
         "requestBody": { "$ref": "#/components/requestBodies/G4fJson" },
-        "responses": { "200": { "$ref": "#/components/responses/G4fData" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "502": { "$ref": "#/components/responses/InternalError" } }
+        "responses": { "200": { "$ref": "#/components/responses/G4fData" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "502": { "$ref": "#/components/responses/G4fUpstreamError" } }
       }
     },
     "/v1/direct/g4f/{provider}/responses": {
@@ -1633,7 +1633,7 @@
         "summary": "Proxy a Responses API request to one exact G4F provider",
         "parameters": [{ "$ref": "#/components/parameters/G4fProvider" }, { "$ref": "#/components/parameters/G4fAuthContext" }],
         "requestBody": { "$ref": "#/components/requestBodies/G4fJson" },
-        "responses": { "200": { "$ref": "#/components/responses/G4fData" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+        "responses": { "200": { "$ref": "#/components/responses/G4fData" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "502": { "$ref": "#/components/responses/G4fUpstreamError" } }
       }
     },
     "/v1/direct/g4f/{provider}/messages": {
@@ -1642,7 +1642,7 @@
         "summary": "Proxy a Messages API request to one exact G4F provider",
         "parameters": [{ "$ref": "#/components/parameters/G4fProvider" }, { "$ref": "#/components/parameters/G4fAuthContext" }],
         "requestBody": { "$ref": "#/components/requestBodies/G4fJson" },
-        "responses": { "200": { "$ref": "#/components/responses/G4fData" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+        "responses": { "200": { "$ref": "#/components/responses/G4fData" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "502": { "$ref": "#/components/responses/G4fUpstreamError" } }
       }
     },
     "/v1/direct/g4f/{provider}/images/generations": {
@@ -1651,7 +1651,7 @@
         "summary": "Proxy image generation to one exact G4F provider",
         "parameters": [{ "$ref": "#/components/parameters/G4fProvider" }, { "$ref": "#/components/parameters/G4fAuthContext" }],
         "requestBody": { "$ref": "#/components/requestBodies/G4fJson" },
-        "responses": { "200": { "$ref": "#/components/responses/G4fData" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+        "responses": { "200": { "$ref": "#/components/responses/G4fData" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "502": { "$ref": "#/components/responses/G4fUpstreamError" } }
       }
     },
     "/v1/direct/g4f/{provider}/audio/transcriptions": {
@@ -1659,7 +1659,7 @@
         "operationId": "createG4fTranscription",
         "summary": "Proxy audio transcription to one exact G4F provider",
         "parameters": [{ "$ref": "#/components/parameters/G4fProvider" }, { "$ref": "#/components/parameters/G4fAuthContext" }],
-        "responses": { "200": { "$ref": "#/components/responses/G4fData" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+        "responses": { "200": { "$ref": "#/components/responses/G4fData" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "502": { "$ref": "#/components/responses/G4fUpstreamError" } }
       }
     },
     "/v1/direct/g4f/{provider}/audio/speech": {
@@ -1668,7 +1668,7 @@
         "summary": "Proxy speech generation to one exact G4F provider",
         "parameters": [{ "$ref": "#/components/parameters/G4fProvider" }, { "$ref": "#/components/parameters/G4fAuthContext" }],
         "requestBody": { "$ref": "#/components/requestBodies/G4fJson" },
-        "responses": { "200": { "$ref": "#/components/responses/G4fData" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+        "responses": { "200": { "$ref": "#/components/responses/G4fData" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "502": { "$ref": "#/components/responses/G4fUpstreamError" } }
       }
     },
     "/v1/direct/g4f/pa/providers": {
@@ -1841,6 +1841,10 @@
           "application/octet-stream": { "schema": { "type": "string", "format": "binary" } }
         }
       },
+      "G4fUpstreamError": {
+        "description": "Tokenless-wrapped G4F provider failure with a safe upstream classification",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/G4fUpstreamError" } } }
+      },
       "PublicJob": {
         "description": "Public job view",
         "content": {
@@ -1954,6 +1958,36 @@
       }
     },
     "schemas": {
+      "G4fUpstreamError": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code", "message", "provider", "upstream"],
+            "properties": {
+              "code": { "type": "string", "pattern": "^g4f_upstream_[a-z0-9_]+$" },
+              "message": { "type": "string" },
+              "provider": { "type": ["string", "null"] },
+              "upstream": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["system", "status", "type", "category", "provider", "model"],
+                "properties": {
+                  "system": { "const": "g4f" },
+                  "status": { "type": "integer", "minimum": 400, "maximum": 599 },
+                  "type": { "type": "string" },
+                  "category": { "type": "string", "enum": ["authentication", "rate_limit", "anti_bot", "model", "timeout", "transport", "invalid_request", "provider"] },
+                  "provider": { "type": ["string", "null"] },
+                  "model": { "type": ["string", "null"] }
+                }
+              }
+            }
+          }
+        }
+      },
       "G4fAuthContextRequest": {
         "type": "object",
         "required": ["provider", "profile", "source"],

@@ -1,10 +1,11 @@
 # GPT4Free direct provider service
 
-Tokenless setup installs one pinned private GPT4Free HTTP service. The Tokenless daemon remains the only public API and owns profiles, feature flags, browser automation, and session scope.
+Tokenless setup installs one pinned private GPT4Free HTTP service. The Tokenless daemon remains the only public API and owns profiles, feature flags, visible-browser automation, and session scope.
 
 ```text
 Caller -> Tokenless daemon API -> native direct adapter
                                -> private G4F service -> provider HTTP
+                                                      -> isolated headless browser for provider challenges
 Tokenless managed browser -----^ session bootstrap only
 ```
 
@@ -70,11 +71,18 @@ Uploaded HAR files are reduced to requests for the selected provider domains bef
 - One worker serializes auth activation through the entire response stream.
 - Each auth context has a private directory; provider class auth state is cleared before activation.
 - Stock request logs, wildcard CORS, GUI, docs, OpenAPI, cookie upload, and runtime PA download routes are not reachable.
+- G4F-owned browser launches are forced to headless mode; they may compute provider challenge tokens but expose no provider UI. Automatic discovery of other CDP browsers is disabled; only an explicitly selected `cdp` auth source may attach to an existing browser.
 - Provider session values never enter caller responses, daemon errors, telemetry, or service logs.
 
 Visible-browser execution remains Tokenless-native. For ChatGPT G4F direct execution without an explicit auth context, Tokenless reads only the selected provider session from its managed browser, creates an ephemeral provider-scoped G4F auth cache, and deletes it after the request.
 
 Real E2E covers both authentication boundaries:
 
-- Guest: an explicit `g4f:AnyProvider` request omits the provider auth-context header, requires an exact random response marker, and verifies that no auth context was created.
+- Guest: an explicit `g4f:GLM` request omits the provider auth-context header, completes Aliyun traceless verification in the isolated headless browser, requires an exact random response marker, and verifies that no auth context was created.
 - Signed in: ChatGPT direct reads only the selected Cloak browser profile's ChatGPT cookies, access token, user agent, and language headers into one ephemeral provider-scoped context.
+
+## Provider errors
+
+Tokenless wraps a failed G4F provider call as HTTP `502` while retaining safe upstream diagnostics. Error codes preserve the G4F exception type, for example `g4f_upstream_missing_auth_error` or `g4f_upstream_curl_error`; `upstream` includes only `status`, `type`, `category`, `provider`, and `model`.
+
+The free-form G4F exception message is not returned because it may contain provider session material. OpenAI-compatible requests carry the same specific Tokenless code in the OpenAI error envelope.

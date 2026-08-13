@@ -228,6 +228,24 @@ a.data-row:hover, button.data-row:hover { background: #faf9f7; }
 .diagnostics-section > header p { margin-top: 4px; color: var(--muted); font-size: 10px; }
 .diagnostic-row { cursor: default; }
 
+.routing-page { max-width: 1080px; }
+.routing-api-card, .router-config, .router-run-card { margin-bottom: 16px; }
+.routing-api-card .settings-section-title > div, .router-config .settings-section-title > div, .router-run-card .settings-section-title > div { min-width: 0; }
+.routing-api-card .settings-section-title p, .router-config .settings-section-title p, .router-run-card .settings-section-title p { max-width: 720px; margin-top: 5px; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.router-availability { display: flex; align-items: center; gap: 10px; margin-top: 16px; }
+.router-availability > span:last-child { display: flex; flex-direction: column; gap: 3px; }
+.router-availability small { color: var(--muted); font-size: 9px; }
+.router-availability strong { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.router-model-list { display: flex; flex-direction: column; gap: 10px; margin: 16px 0; }
+.router-model-row { display: grid; grid-template-columns: minmax(130px, .65fr) minmax(160px, .8fr) minmax(260px, 1.55fr) 34px; align-items: end; gap: 10px; padding: 12px; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--surface-muted); }
+.router-model-row .field > input { background: var(--surface); }
+.router-remove { margin-bottom: 2px; }
+.router-empty { padding: 18px; border: 1px dashed var(--line); border-radius: 8px; color: var(--muted); font-size: 11px; text-align: center; }
+.router-run-card textarea { width: 100%; min-height: 112px; resize: vertical; padding: 10px 11px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); font-size: 12px; line-height: 1.55; }
+.router-run-card .form-actions { margin-top: 12px; }
+.router-run-card .inline-feedback, .router-result { margin-top: 12px; }
+.router-result h3 { margin-bottom: 8px; font-size: 12px; }
+
 .field { display: flex; min-width: 0; flex-direction: column; gap: 7px; }
 .field > span, .fieldset legend { color: #595751; font-size: 11px; font-weight: 620; }
 .field > span small { margin-left: 4px; font-size: 9px; font-weight: 450; }
@@ -357,7 +375,7 @@ pre { max-width: 100%; max-height: 260px; overflow: auto; margin: 0; padding: 12
   .mobile-header > div { display: flex; align-items: center; gap: 8px; font-size: 12px; }
   .mobile-header img { width: 24px; height: 24px; }
   .mobile-profile-select select { max-width: 148px; min-height: 32px; padding: 0 26px 0 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); font-size: 11px; }
-  .mobile-nav { position: fixed; z-index: 30; inset: auto 0 0; display: grid; height: calc(68px + env(safe-area-inset-bottom)); grid-template-columns: repeat(6, 1fr); padding: 5px 5px max(5px, env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: rgb(255 255 255 / 96%); backdrop-filter: blur(12px); }
+  .mobile-nav { position: fixed; z-index: 30; inset: auto 0 0; display: grid; height: calc(68px + env(safe-area-inset-bottom)); grid-template-columns: repeat(7, 1fr); padding: 5px 5px max(5px, env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: rgb(255 255 255 / 96%); backdrop-filter: blur(12px); }
   .mobile-nav a { display: flex; min-width: 0; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted); text-decoration: none; }
   .mobile-nav a.active { background: var(--surface-muted); color: var(--ink); }
   .mobile-nav span { max-width: 100%; overflow: hidden; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
@@ -405,6 +423,9 @@ pre { max-width: 100%; max-height: 260px; overflow: auto; margin: 0; padding: 12
   .job-row .mono-label, .job-row time { display: none; }
   .system-grid { grid-template-columns: 1fr; }
   .system-actions { grid-column: auto; }
+  .router-model-row { grid-template-columns: 1fr 34px; }
+  .router-model-row .field { grid-column: 1 / -1; }
+  .router-model-row .router-remove { grid-column: 2; grid-row: 1; }
   .modal-backdrop { align-items: end; padding: 0; }
   .modal, .modal.wide { width: 100%; max-height: calc(100vh - 24px); border-radius: 14px 14px 0 0; }
   .modal-body { max-height: calc(100vh - 88px); }

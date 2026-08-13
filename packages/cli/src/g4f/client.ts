@@ -12,6 +12,7 @@ import type {
   G4fProxyRequest,
   G4fServiceHealth,
 } from './types.js'
+import { readG4fUpstreamDiagnostic, type G4fUpstreamDiagnostic } from './upstream-error.js'
 
 export class G4fServiceClient {
   constructor(
@@ -68,8 +69,7 @@ export class G4fServiceClient {
   async request(input: G4fProxyRequest) {
     const response = await this.rawRequest(input)
     if (!response.ok) {
-      await response.body?.cancel().catch(() => undefined)
-      throw g4fServiceError(response.status, 'The private G4F service rejected the request without exposing provider session material.')
+      throw g4fServiceError(await readG4fUpstreamDiagnostic(response))
     }
     return response
   }
@@ -104,15 +104,19 @@ function isHealth(value: unknown): value is G4fServiceHealth {
     health.workerCount === 1 &&
     health.paAutoDownload === false &&
     health.requestLogging === false
+    && health.browserMode === 'headless'
+    && health.browserAutoDiscovery === false
     && health.serviceRevision === G4F_SERVICE_REVISION
 }
 
-function g4fServiceError(status: number, message: string) {
-  const error = new Error(`Private G4F service request failed (${status}): ${message}`) as Error & {
+function g4fServiceError(diagnostic: G4fUpstreamDiagnostic) {
+  const error = new Error(diagnostic.message) as Error & {
     code?: string
     status?: number
+    g4f?: G4fUpstreamDiagnostic['upstream']
   }
-  error.code = 'g4f_service_request_failed'
-  error.status = status
+  error.code = diagnostic.code
+  error.status = diagnostic.status
+  error.g4f = diagnostic.upstream
   return error
 }

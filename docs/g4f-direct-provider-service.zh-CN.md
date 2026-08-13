@@ -1,10 +1,11 @@
 # GPT4Free direct provider service
 
-Tokenless setup 会安装一个固定版本的私有 GPT4Free HTTP service。Tokenless daemon 仍是唯一 public API，并拥有 profile、feature flag、browser automation 与 session scope。
+Tokenless setup 会安装一个固定版本的私有 GPT4Free HTTP service。Tokenless daemon 仍是唯一 public API，并拥有 profile、feature flag、visible-browser automation 与 session scope。
 
 ```text
 Caller -> Tokenless daemon API -> native direct adapter
                                -> private G4F service -> provider HTTP
+                                                      -> 隔离的 headless browser，用于 provider challenge
 Tokenless managed browser -----^ 只负责 session bootstrap
 ```
 
@@ -70,11 +71,18 @@ macOS 会禁用 `browser-cookie3` 与直接 Cookie DB 解密，因为该 library
 - 一个 worker 在完整 response stream 期间串行化 auth activation。
 - 每个 auth context 使用独立 private directory；activation 前会清理 provider class auth state。
 - Stock request log、wildcard CORS、GUI、docs、OpenAPI、cookie upload 与 runtime PA download route 均不可达。
+- G4F 自己启动的 browser 会被强制设为 headless；它可以计算 provider challenge token，但不暴露 provider UI。自动发现其他 CDP browser 已禁用；只有显式选择的 `cdp` auth source 才能连接现有 browser。
 - Provider session value 不会进入 caller response、daemon error、telemetry 或 service log。
 
 Visible-browser execution 继续由 Tokenless 原生实现。ChatGPT G4F direct 未显式指定 auth context 时，Tokenless 只从所选 managed browser 读取该 provider session，创建临时 provider-scoped G4F auth cache，并在请求后删除。
 
 真实 E2E 同时覆盖两种认证边界：
 
-- Guest：显式请求 `g4f:AnyProvider`，不携带 provider auth-context header，要求返回精确随机 marker，并验证请求前后没有创建 auth context。
+- Guest：显式请求 `g4f:GLM`，不携带 provider auth-context header，在隔离的 headless browser 中完成 Aliyun traceless verification，要求返回精确随机 marker，并验证请求前后没有创建 auth context。
 - 已登录：ChatGPT direct 只从选中的 Cloak browser profile 读取 ChatGPT cookies、access token、user agent 与 language headers，写入一个 provider-scoped 临时 context。
+
+## Provider 错误
+
+G4F provider 调用失败时，Tokenless 对外返回 HTTP `502`，同时保留安全的 upstream diagnostics。Error code 会保留 G4F exception type，例如 `g4f_upstream_missing_auth_error` 或 `g4f_upstream_curl_error`；`upstream` 只包含 `status`、`type`、`category`、`provider` 与 `model`。
+
+G4F 的自由文本 exception message 可能含有 provider session material，因此不会返回。OpenAI-compatible request 会在 OpenAI error envelope 中携带同一个具体 Tokenless code。

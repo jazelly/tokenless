@@ -140,7 +140,8 @@ export class ApiProxyAdapter {
           providerBackend,
         }
       } catch (error) {
-        throw new ApiProxyError(502, 'upstream_error', safeDirectError(error))
+        const directError = safeDirectError(error)
+        throw new ApiProxyError(502, directError.code, directError.message)
       }
     }
 
@@ -534,7 +535,15 @@ function tokenlessMetadata(completion: ApiProxyCompletion) {
 
 function safeDirectError(error: unknown) {
   const code = typeof (error as { code?: unknown })?.code === 'string' ? (error as { code: string }).code : 'g4f_request_failed'
-  return `Direct provider request failed: ${code}.`
+  const g4f = (error as { g4f?: unknown })?.g4f
+  if (g4f && typeof g4f === 'object' && !Array.isArray(g4f)) {
+    const detail = g4f as Record<string, unknown>
+    const type = typeof detail.type === 'string' ? detail.type : 'HttpError'
+    const provider = typeof detail.provider === 'string' ? detail.provider : 'unknown'
+    const status = typeof detail.status === 'number' ? detail.status : 502
+    return { code, message: `G4F provider '${provider}' failed with ${type} (upstream HTTP ${status}).` }
+  }
+  return { code, message: `Direct provider request failed: ${code}.` }
 }
 
 /**

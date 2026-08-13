@@ -7,6 +7,8 @@ export type G4fServiceHealth = {
   workerCount: 1
   paAutoDownload: false
   requestLogging: false
+  browserMode: 'headless'
+  browserAutoDiscovery: false
   serviceRevision: number
 }
 

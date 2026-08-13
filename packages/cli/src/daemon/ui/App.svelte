@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { Blocks, LayoutDashboard, ListChecks, PanelsTopLeft, Settings, UsersRound } from '@lucide/svelte'
+  import { Blocks, LayoutDashboard, ListChecks, PanelsTopLeft, Route, Settings, UsersRound } from '@lucide/svelte'
   import { DashboardClient } from './dashboard-client.js'
   import { translate } from './localization.js'
   import CapabilitiesView from './views/CapabilitiesView.svelte'
@@ -8,11 +8,12 @@
   import OverviewView from './views/OverviewView.svelte'
   import ProfilesView from './views/ProfilesView.svelte'
   import ProvidersView from './views/ProvidersView.svelte'
+  import RoutingView from './views/RoutingView.svelte'
   import SetupView from './views/SetupView.svelte'
   import SystemView from './views/SystemView.svelte'
   import type { JsonRecord, Language, Section } from './types.js'
 
-  const sections = new Set<Section>(['overview', 'profiles', 'providers', 'capabilities', 'jobs', 'system'])
+  const sections = new Set<Section>(['overview', 'profiles', 'providers', 'capabilities', 'routing', 'jobs', 'system'])
   const initialLanguage: Language = document.documentElement.lang === 'zh-CN' ? 'zh-CN' : 'en'
 
   function parseSection(hash: string): Section {
@@ -38,6 +39,7 @@
     { id: 'profiles' as const, label: t('profiles'), icon: UsersRound },
     { id: 'providers' as const, label: t('providers'), icon: PanelsTopLeft },
     { id: 'capabilities' as const, label: t('capabilities'), icon: Blocks },
+    { id: 'routing' as const, label: t('routing'), icon: Route },
     { id: 'jobs' as const, label: t('jobs'), icon: ListChecks },
     { id: 'system' as const, label: t('system'), icon: Settings },
   ])
@@ -273,6 +275,8 @@
         <ProvidersView {snapshot} {selectedProfile} {language} {t} {busy} onselect={selectProfile} onmutate={mutate} />
       {:else if section === 'capabilities'}
         <CapabilitiesView {snapshot} {selectedProfile} {language} {t} onselect={selectProfile} />
+      {:else if section === 'routing'}
+        <RoutingView {snapshot} {t} {busy} onmutate={mutate} />
       {:else if section === 'jobs'}
         <JobsView {snapshot} {language} {t} {busy} onget={(path) => client.get(path)} onmutate={mutate} />
       {:else}

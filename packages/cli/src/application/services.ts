@@ -229,7 +229,7 @@ export class TokenlessApplicationServices {
   }
 
   async updateConfig(input: Record<string, unknown>) {
-    requireKnownFields(input, ['browser', 'browserExecutablePath', 'browserVisibility', 'language'])
+    requireKnownFields(input, ['browser', 'browserExecutablePath', 'browserVisibility', 'language', 'semanticRouter'])
     const current = await this.migratedConfig()
     const browserVisibility = input.browserVisibility === undefined
       ? 'headed'
@@ -280,6 +280,7 @@ export class TokenlessApplicationServices {
       browserExecutablePath: requestedBrowserExecutablePath,
       browserVisibility: 'headed',
       language,
+      semanticRouter: input.semanticRouter,
     })
     return publicConfig(saved)
   }
@@ -602,6 +603,7 @@ function publicConfig(config: TokenlessConfig) {
     outputSavings: config.outputSavings,
     g4f: config.g4f,
     directProvider: config.directProvider,
+    semanticRouter: config.semanticRouter,
   }
 }
 

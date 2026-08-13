@@ -35,7 +35,7 @@ from g4f.Provider import ProviderUtils
 SERVICE_PROTOCOL = "tokenless.g4f-service.v1"
 PINNED_G4F_VERSION = "8.1.2"
 PINNED_G4F_COMMIT = "fdbd84b7c5129ea8faa7c66065425ca344ea5fb2"
-SERVICE_REVISION = 12
+SERVICE_REVISION = 14
 SAFE_ID = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$")
 CONTROL_PREFIX = "/tokenless/"
 SERVICE_KEY_HEADER = b"x-tokenless-service-key"
@@ -488,6 +488,32 @@ def retain_private_routes(app: FastAPI) -> None:
     ]
 
 
+def force_headless_browser_launches() -> None:
+    import zendriver
+    import g4f.requests.cdp as g4f_cdp
+
+    g4f_cdp.find_running_cdp_port = lambda host: None
+
+    if not getattr(zendriver.start, "_tokenless_headless", False):
+        original_zendriver_start = zendriver.start
+
+        async def headless_zendriver_start(*args, **kwargs):
+            kwargs["headless"] = True
+            return await original_zendriver_start(*args, **kwargs)
+
+        headless_zendriver_start._tokenless_headless = True
+        zendriver.start = headless_zendriver_start
+
+    if not getattr(g4f_cdp.get_shared_browser, "_tokenless_headless", False):
+        original_get_shared_browser = g4f_cdp.get_shared_browser
+
+        def get_headless_shared_browser(host, preferred_port, headless=True):
+            return original_get_shared_browser(host, preferred_port, True)
+
+        get_headless_shared_browser._tokenless_headless = True
+        g4f_cdp.get_shared_browser = get_headless_shared_browser
+
+
 def create_private_app(
     service_key: str,
     auth_root: Path,
@@ -513,6 +539,7 @@ def create_private_app(
     os.chmod(pa_root, 0o700)
     pa_provider.get_workspace_dir = lambda: pa_root
     g4f_cookies.BROWSERS = []
+    force_headless_browser_launches()
 
     app = create_app()
     remove_stock_middleware(app)
@@ -535,6 +562,8 @@ def create_private_app(
             "paAutoDownload": False,
             "paRoot": "setup-managed",
             "requestLogging": False,
+            "browserMode": "headless",
+            "browserAutoDiscovery": False,
             "serviceRevision": SERVICE_REVISION,
         }
 

@@ -5,6 +5,7 @@ import path from 'node:path'
 
 import { readTokenlessConfig } from '../job-store.js'
 import type { G4fServiceClient } from '../g4f/client.js'
+import { readG4fUpstreamDiagnostic } from '../g4f/upstream-error.js'
 import { g4fProviderName } from '../providers/direct/g4f-map.js'
 import { ManagedProfileRegistry } from '../playwright/profiles/registry.js'
 import type { JobStore } from './job-store.js'
@@ -84,7 +85,7 @@ export async function handleG4fApiRequest({
       : action === 'quota'
         ? `/api/${encodeURIComponent(upstream)}/quota`
         : `/v1/providers/${encodeURIComponent(upstream)}`
-    await proxyResponse(client, { path, authContextId: authContextHeader(request) }, response, url)
+    await proxyResponse(client, { path, authContextId: authContextHeader(request) }, response, url, provider)
     return true
   }
 
@@ -104,7 +105,7 @@ export async function handleG4fApiRequest({
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ ...body, provider: upstream }),
       })
-      await forwardResponse(upstreamResponse, response, url)
+      await forwardResponse(upstreamResponse, response, url, provider)
       return true
     }
     if (method === 'POST' && authRoute[2] === 'files') {
@@ -158,7 +159,7 @@ export async function handleG4fApiRequest({
       },
       ...(body === undefined ? {} : { body }),
       ...(authContextHeader(request) ? { authContextId: authContextHeader(request)! } : {}),
-    }, response, url)
+    }, response, url, provider)
     return true
   }
 
@@ -215,14 +216,21 @@ async function proxyResponse(
   input: Parameters<G4fServiceClient['rawRequest']>[0],
   response: ServerResponse,
   requestUrl: URL,
+  requestedProvider: string | null = null,
 ) {
-  await forwardResponse(await client.rawRequest(input), response, requestUrl)
+  await forwardResponse(await client.rawRequest(input), response, requestUrl, requestedProvider)
 }
 
-async function forwardResponse(upstream: Response, response: ServerResponse, requestUrl: URL) {
+async function forwardResponse(upstream: Response, response: ServerResponse, requestUrl: URL, requestedProvider: string | null = null) {
   if (!upstream.ok) {
-    writeJson(response, upstream.status, {
-      error: { code: 'g4f_upstream_error', message: `The selected G4F provider returned HTTP ${upstream.status}.` },
+    const diagnostic = await readG4fUpstreamDiagnostic(upstream, requestedProvider)
+    writeJson(response, 502, {
+      error: {
+        code: diagnostic.code,
+        message: diagnostic.message,
+        provider: diagnostic.provider,
+        upstream: diagnostic.upstream,
+      },
     })
     return
   }

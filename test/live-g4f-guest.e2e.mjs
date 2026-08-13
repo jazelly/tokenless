@@ -15,7 +15,7 @@ assert.equal(gate, 'real-g4f-guest', 'TOKENLESS_LIVE_G4F_GUEST_E2E_GATE must be 
 
 const target = await resolveTestConfig()
 
-test('authenticated daemon reaches one real G4F guest provider without a provider auth context', { timeout: 600_000 }, async () => {
+test('authenticated daemon reaches real GLM guest mode through the isolated G4F headless browser', { timeout: 600_000 }, async () => {
   assert.equal(target.config.g4f.enabled, true, 'The configured Tokenless home must enable G4F.')
   await new G4fRuntimeManager(target.homeDir).ensure()
   await stopDaemon({
@@ -32,14 +32,14 @@ test('authenticated daemon reaches one real G4F guest provider without a provide
   const contextIdsBefore = await authContextIds(daemon.url, authorization)
   const marker = `TOKENLESS_GUEST_${randomUUID().replaceAll('-', '')}`
 
-  const response = await fetch(`${daemon.url}/v1/direct/g4f/g4f%3AAnyProvider/chat/completions`, {
+  const response = await fetch(`${daemon.url}/v1/direct/g4f/g4f%3AGLM/chat/completions`, {
     method: 'POST',
     headers: {
       authorization,
       'content-type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'default',
+      model: 'GLM-4.7',
       messages: [{ role: 'user', content: `Reply with exactly ${marker} and no other text.` }],
       stream: false,
     }),
@@ -48,9 +48,8 @@ test('authenticated daemon reaches one real G4F guest provider without a provide
   assert.equal(response.status, 200, 'The real G4F guest request must succeed.')
   const payload = await response.json()
   assert.equal(payload?.choices?.[0]?.message?.content?.trim(), marker)
-  assert.equal(typeof payload?.provider, 'string')
-  assert.notEqual(payload.provider, 'AnyProvider', 'G4F must report the concrete guest provider it selected.')
-  assert.equal(typeof payload?.model, 'string')
+  assert.equal(payload?.provider, 'GLM')
+  assert.equal(payload?.model, 'GLM-4.7')
   assert.deepEqual(await authContextIds(daemon.url, authorization), contextIdsBefore)
 })
 

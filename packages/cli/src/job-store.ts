@@ -33,6 +33,7 @@ export type TokenlessConfig = {
   apiProxy: ApiProxyConfig
   g4f: G4fConfig
   directProvider: DirectProviderConfig
+  semanticRouter: SemanticRouterConfig
 }
 
 export type OutputSavingsConfig = {
@@ -59,6 +60,16 @@ export type G4fConfig = {
 export type DirectProviderConfig = {
   defaultBackend: ProviderBackend
   providerBackends: Record<string, ProviderBackend>
+}
+
+export type SemanticRouterConfig = {
+  models: SemanticRouterModel[]
+}
+
+export type SemanticRouterModel = {
+  id: string
+  label: string
+  suitableTasks: string
 }
 
 export type ManagedProfileConfig = {
@@ -180,6 +191,9 @@ async function readTokenlessConfigUnlocked(homeDir: string) {
   if (payload.directProvider !== undefined && !isDirectProviderConfig(payload.directProvider)) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
+  if (payload.semanticRouter !== undefined && !isSemanticRouterConfig(payload.semanticRouter)) {
+    throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
+  }
   const normalizedBrowser = normalizeBrowserId(payload.browser)
   const browser = normalizedBrowser === 'brave' ? 'brave' : 'chrome'
   const browserExecutablePath = normalizedBrowser === 'chrome' || normalizedBrowser === 'brave'
@@ -199,6 +213,7 @@ async function readTokenlessConfigUnlocked(homeDir: string) {
     apiProxy: normalizeApiProxyConfig(payload.apiProxy),
     g4f: normalizeG4fConfig(payload.g4f),
     directProvider: normalizeDirectProviderConfig(payload.directProvider),
+    semanticRouter: normalizeSemanticRouterConfig(payload.semanticRouter),
   }
   return { config, needsWrite: JSON.stringify(payload) !== JSON.stringify(config) }
 }
@@ -215,6 +230,7 @@ export async function writeTokenlessConfig({
   apiProxy,
   g4f,
   directProvider,
+  semanticRouter,
 }: {
   homeDir?: string
   profiles?: unknown
@@ -227,6 +243,7 @@ export async function writeTokenlessConfig({
   apiProxy?: unknown
   g4f?: unknown
   directProvider?: unknown
+  semanticRouter?: unknown
 } = {}) {
   return await withConfigWriterLock(homeDir, async () => {
     const current = (await readTokenlessConfigUnlocked(homeDir)).config
@@ -268,6 +285,9 @@ export async function writeTokenlessConfig({
       directProvider: directProvider === undefined
         ? current.directProvider
         : validateDirectProviderConfig(directProvider),
+      semanticRouter: semanticRouter === undefined
+        ? current.semanticRouter
+        : validateSemanticRouterConfig(semanticRouter),
     }
     await writeJsonAtomic(configPath(homeDir), config, 0o600)
     return config
@@ -341,6 +361,7 @@ function emptyTokenlessConfig(): TokenlessConfig {
     apiProxy: defaultApiProxyConfig(),
     g4f: { enabled: false },
     directProvider: { defaultBackend: 'g4f', providerBackends: {} },
+    semanticRouter: { models: [] },
   }
 }
 
@@ -405,6 +426,40 @@ function validateDirectProviderConfig(value: unknown): DirectProviderConfig {
     throw configError('tokenless_config_invalid', 'Invalid Tokenless direct provider configuration.')
   }
   return { defaultBackend: value.defaultBackend, providerBackends: { ...value.providerBackends } }
+}
+
+function isSemanticRouterConfig(value: unknown): value is SemanticRouterConfig {
+  if (!isJsonRecord(value) || Object.keys(value).length !== 1 || !Array.isArray(value.models)) return false
+  if (value.models.length > 20) return false
+  const ids = new Set<string>()
+  for (const model of value.models) {
+    if (!isJsonRecord(model) || Object.keys(model).length !== 3) return false
+    if (typeof model.id !== 'string' || !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(model.id)) return false
+    if (ids.has(model.id)) return false
+    if (typeof model.label !== 'string' || !model.label.trim() || model.label.length > 80) return false
+    if (typeof model.suitableTasks !== 'string' || !model.suitableTasks.trim() || model.suitableTasks.length > 500) return false
+    ids.add(model.id)
+  }
+  return true
+}
+
+function normalizeSemanticRouterConfig(value: unknown): SemanticRouterConfig {
+  return isSemanticRouterConfig(value)
+    ? { models: value.models.map((model) => ({ ...model })) }
+    : { models: [] }
+}
+
+function validateSemanticRouterConfig(value: unknown): SemanticRouterConfig {
+  if (!isSemanticRouterConfig(value)) {
+    throw configError('tokenless_config_invalid', 'Invalid Tokenless semantic router configuration.')
+  }
+  return {
+    models: value.models.map((model) => ({
+      id: model.id,
+      label: model.label.trim(),
+      suitableTasks: model.suitableTasks.trim(),
+    })),
+  }
 }
 
 function isOutputSavingsConfig(value: unknown): value is OutputSavingsConfig {

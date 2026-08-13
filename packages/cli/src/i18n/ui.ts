@@ -4,7 +4,7 @@ type JsonRecord = Record<string, any>
 type Language = 'en' | 'zh-CN'
 
 const enMessages = {
-    overview: 'Overview', profiles: 'Profiles', providers: 'Providers', capabilities: 'Capabilities', jobs: 'Jobs', system: 'System',
+    overview: 'Overview', profiles: 'Profiles', providers: 'Providers', capabilities: 'Capabilities', routing: 'Routing', jobs: 'Jobs', system: 'System',
     localConsole: 'Local console', operationalSummary: 'Operational summary', overviewLede: 'The exact daemon, browser, provider, and job state on this machine.',
     daemon: 'Daemon', browser: 'Browser runtime', activeProfiles: 'Active profiles', waitingJobs: 'Waiting jobs', healthy: 'Healthy',
     actionRequired: 'Action required', recentJobs: 'Recent jobs', providerReadiness: 'Provider readiness', noJobs: 'No jobs yet', noJobsBody: 'Durable jobs will appear here when Tokenless starts work.',
@@ -45,10 +45,14 @@ const enMessages = {
     savingsSummaryUnavailable: 'Token summary statistics are unavailable.', turnOnToReview: 'Turn it on to review how many output tokens Tokenless has saved.', savingsUnavailableTooltip: 'Token summary statistics are unavailable. Turn it on to review output tokens saved.', tokenizerPreparesOnFirstResponse: 'The tokenizer will be prepared when Tokenless measures the first visible response.', manageOutputSavings: 'Manage in System',
     confirmClearSavings: 'Clear all saved output savings measurements? This cannot be undone.', confirmUninstallTokenizer: 'Disable output savings and remove the local tokenizer runtime?', tokensSavedShort: 'tokens saved',
     offlineShort: 'Offline', menu: 'Menu', mainContent: 'Main content', profileList: 'Profile list', navigation: 'Navigation',
+    semanticRouting: 'Semantic routing', routingLede: 'Test a local semantic model choice before any operational provider routing.', nanoApi: 'Chrome built-in Prompt API · Gemini Nano', routerExperimentNote: 'This experiment runs in this page and returns a recommendation only. It does not execute a provider route.',
+    availability: 'API availability', routerModels: 'Candidate models', routerModelsHelp: 'Describe which tasks each model suits. This exact configuration is saved in Tokenless config.json.', addModel: 'Add model', modelId: 'Model ID', modelLabel: 'Label', suitableTasks: 'Suitable tasks', suitableTasksPlaceholder: 'Fast summaries, extraction, and simple classification',
+    routerNeedsModels: 'Add at least one candidate model.', routerConfigInvalid: 'Every model needs a unique valid ID, a label, and suitable tasks.', routerTaskRequired: 'Enter a task prompt.', routerApiUnsupported: 'This Chrome does not expose window.LanguageModel.', routerApiUnavailable: 'Gemini Nano is unavailable for this page or device.', routerInvalidResult: 'Gemini Nano returned an invalid model selection.',
+    routerTest: 'Semantic router test', routerTestHelp: 'The fixed semantic routing instruction receives only the task and candidate model configuration. No provider or operational data is included.', taskPrompt: 'Task prompt', taskPromptPlaceholder: 'Compare three used cars and summarize the best value.', runSemanticRouter: 'Run semantic router', routerRunning: 'Routing…', routerResult: 'Structured result', downloadProgress: 'Model download',
 } as const
 
 const zhMessages: Record<keyof typeof enMessages, string> = {
-    overview: '概览', profiles: 'Profile', providers: 'Provider', capabilities: '能力', jobs: '任务', system: '系统',
+    overview: '概览', profiles: 'Profile', providers: 'Provider', capabilities: '能力', routing: '路由', jobs: '任务', system: '系统',
     localConsole: '本地控制台', operationalSummary: '运行概览', overviewLede: '查看这台机器上 daemon、浏览器、provider 和任务的真实状态。',
     daemon: 'Daemon', browser: '浏览器运行时', activeProfiles: '活跃 profile', waitingJobs: '等待任务', healthy: '健康',
     actionRequired: '需要处理', recentJobs: '最近任务', providerReadiness: 'Provider 就绪状态', noJobs: '还没有任务', noJobsBody: 'Tokenless 开始工作后，持久任务会显示在这里。',
@@ -89,6 +93,10 @@ const zhMessages: Record<keyof typeof enMessages, string> = {
     savingsSummaryUnavailable: 'Token 汇总统计不可用。', turnOnToReview: '开启后即可查看 Tokenless 已节省多少 output token。', savingsUnavailableTooltip: 'Token 汇总统计不可用；开启后即可查看已节省的 output token。', tokenizerPreparesOnFirstResponse: 'Tokenless 首次计量可见响应时会准备 tokenizer。', manageOutputSavings: '在系统中管理',
     confirmClearSavings: '清空全部输出节省计量记录？此操作无法撤销。', confirmUninstallTokenizer: '停用输出节省并移除本地 tokenizer 运行时？', tokensSavedShort: 'token 已节省',
     offlineShort: '离线', menu: '菜单', mainContent: '主要内容', profileList: 'Profile 列表', navigation: '导航',
+    semanticRouting: '语义路由', routingLede: '在任何 operational provider 路由之前，先实验本地语义模型选择。', nanoApi: 'Chrome 内置 Prompt API · Gemini Nano', routerExperimentNote: '这个实验只在当前页面运行并返回推荐，不会实际执行 provider 路由。',
+    availability: 'API 可用性', routerModels: '候选模型', routerModelsHelp: '描述每个模型适合的任务；这份精确配置会保存到 Tokenless config.json。', addModel: '添加模型', modelId: 'Model ID', modelLabel: '标签', suitableTasks: '适合的任务', suitableTasksPlaceholder: '快速总结、提取和简单分类',
+    routerNeedsModels: '请至少添加一个候选模型。', routerConfigInvalid: '每个模型都需要唯一且有效的 ID、标签和适合的任务。', routerTaskRequired: '请输入任务 prompt。', routerApiUnsupported: '当前 Chrome 没有暴露 window.LanguageModel。', routerApiUnavailable: '当前页面或设备无法使用 Gemini Nano。', routerInvalidResult: 'Gemini Nano 返回了无效的模型选择。',
+    routerTest: '语义路由实验', routerTestHelp: '固定的语义路由指令只接收任务和候选模型配置，不包含 provider 或 operational 数据。', taskPrompt: '任务 prompt', taskPromptPlaceholder: '比较三辆二手车，并总结性价比最高的一辆。', runSemanticRouter: '运行语义路由', routerRunning: '路由中…', routerResult: '结构化结果', downloadProgress: '模型下载',
 }
 
 const messages = { en: enMessages, 'zh-CN': zhMessages } as const

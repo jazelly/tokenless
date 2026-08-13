@@ -25,7 +25,7 @@ Tokenless 同时推进两条并列 P0 主线：
 
 默认 visible-browser mode 的状态独立于 direct mode。任何 capability 都必须按 `provider × execution mode` 分别声明、实现和验证，不能用另一条模式的成功证据代替。
 
-2026-08-12 evidence：`g4f-service.real-boundary.e2e.mjs` 从空 home 安装固定 runtime，验证 private/public auth boundary、provider/PA inventory 与 persisted auth context；`live-g4f-guest.e2e.mjs` 通过 authenticated packaged daemon 显式请求 `g4f:AnyProvider`，不传 provider auth context，由实际 guest provider 返回 exact marker，且请求前后 auth-context 集合不变；`live-chatgpt-g4f-direct.e2e.mjs` 通过 built CLI、packaged daemon、selected Cloak browser profile 与真实 ChatGPT endpoint 返回 exact marker。ChatGPT G4F SSE 连续三次只返回 marker 前缀，因此 CLI adapter 使用已通过的 non-stream completion，通用 API 仍透明传递 upstream SSE。
+2026-08-12 evidence：`g4f-service.real-boundary.e2e.mjs` 从空 home 安装固定 runtime，验证 private/public auth boundary、provider/PA inventory、persisted auth context、`browserMode=headless` 与 disabled CDP auto-discovery；`live-g4f-guest.e2e.mjs` 通过 authenticated packaged daemon 显式请求 `g4f:GLM`，不传 provider auth context，在隔离 headless browser 中完成 Aliyun traceless verification，并从真实 GLM endpoint 返回 exact marker，请求前后 auth-context 集合不变；`live-chatgpt-g4f-direct.e2e.mjs` 通过 built CLI、packaged daemon、selected Cloak browser profile 与真实 ChatGPT endpoint 返回 exact marker。ChatGPT G4F SSE 连续三次只返回 marker 前缀，因此 CLI adapter 使用已通过的 non-stream completion，通用 API 仍透明传递 upstream SSE。
 
 ## 实现边界
 
@@ -39,12 +39,12 @@ Tokenless 同时推进两条并列 P0 主线：
 
 ### 固定版本 G4F private service 拥有
 
-- G4F provider protocol、`curl_cffi` browser impersonation、SSE 与 provider-specific challenge；
+- G4F provider protocol、`curl_cffi` browser impersonation、SSE、provider-specific challenge，以及只用于 direct prerequisite 的隔离 headless browser；
 - chat、responses、messages、images、audio、files/media、provider models 与 quota；
 - G4F 的 HAR parser、cookie parsing、`browser_cookie3`/browser Cookie DB 与 `zendriver` 能力；
 - 精确 provider 选择；除非 caller 明确选择 `AnyProvider`，不得静默 fallback。
 
-G4F service 不拥有 Tokenless daemon job、profile registry、public API 或 visible-browser automation。v1 使用一个 worker，并在 auth-context 请求边界串行化，以避免 G4F 进程级 provider/auth 状态跨 profile 混用；不为尚未出现的吞吐问题预建 queue、retry 或分布式协调。
+G4F service 不拥有 Tokenless daemon job、profile registry、public API 或 visible-browser automation。其 `zendriver` 与 CDP browser launch 被 wrapper 强制为 headless，只允许用于 CAPTCHA/challenge token 等 direct HTTP prerequisite。v1 使用一个 worker，并在 auth-context 请求边界串行化，以避免 G4F 进程级 provider/auth 状态跨 profile 混用；不为尚未出现的吞吐问题预建 queue、retry 或分布式协调。
 
 ### 私有 service surface
 
@@ -83,8 +83,8 @@ Provider session secret 可在本地进程内存中传给用户显式选择的 d
 | 能力组 | gpt4free baseline | Tokenless delivery rule |
 | --- | --- | --- |
 | Auth bootstrap | browser login、HAR、Cookie DB、manual cookies/tokens、access token | 先关闭统一 auth-source contract，再逐 provider 验证最小必要字段 |
-| Transport | browser automation、`curl_cffi` impersonation、SSE | visible browser 仍走 Tokenless；direct HTTP provider 默认走固定 G4F service |
-| Provider challenges | sentinel requirements、proof-of-work、短期 token、部分 CAPTCHA/Turnstile/Arkose 路径 | 可实现非交互 challenge；CAPTCHA 与登录仍由用户控制，不自动规避 |
+| Transport | browser automation、`curl_cffi` impersonation、SSE | visible browser 仍走 Tokenless；direct HTTP provider 走固定 G4F service，并允许其隔离 headless browser 完成 protocol prerequisite |
+| Provider challenges | sentinel requirements、proof-of-work、短期 token、部分 CAPTCHA/Turnstile/Arkose 路径 | 允许 G4F 在 headless browser 中自动完成无需用户交互的 challenge；需要人工交互时必须明确失败或交还用户 |
 | Text chat | new chat、streaming、conversation/message identity、continuation、variant、auto-continue、temporary chat | 先修复 new text，再逐项交付 identity 与 continuation |
 | Model controls | model、reasoning effort、system hints、web search | 每个 provider 与 mode 单独验证，不从文本成功推断 |
 | Context | file upload、image input、system message、history | 优先复用现有 browser capability；direct 缺口按真实 endpoint 补齐 |
@@ -101,7 +101,7 @@ Provider session secret 可在本地进程内存中传给用户显式选择的 d
 | Qwen | `g4f/Provider/Qwen.py`；auth/JWT → new chat → SSE；部分路径要求 reCAPTCHA | browser experimental；只验证无需自动 CAPTCHA 的路径 |
 | DeepSeek | `g4f/Provider/needs_auth/DeepSeek.py`、`needs_auth/deepseek/pow_solver.wasm`；auth token → PoW → session → SSE | browser experimental；PoW 与 session create 分开验证 |
 | Perplexity | `g4f/Provider/Perplexity.py`；origin cookies、可选 auth-session → diff blocks | G4F 覆盖 broader direct；native new-text 保留并 A/B |
-| Z.ai / GLM | `g4f/Provider/glm/__init__.py`、`glm/captcha_solver.py`；JWT/API key → fingerprint/signature → SSE | browser experimental；不自动解 CAPTCHA |
+| Z.ai / GLM | `g4f/Provider/glm/__init__.py`、`glm/captcha_solver.py`；guest JWT → headless Aliyun traceless verification → fingerprint/signature → SSE | G4F guest direct 已通过 exact-marker E2E；visible browser 仍独立验证 |
 | Claude | baseline 使用第三方 `claude.gpt4free.workers.dev`，不是 `claude.ai` first-party Web protocol | 不计入 direct parity；需独立研究 first-party boundary |
 | Kimi / Doubao / Dola | 固定 commit 无对应 first-party Web adapter | 无可移植 baseline；保留现有 browser 方向 |
 
