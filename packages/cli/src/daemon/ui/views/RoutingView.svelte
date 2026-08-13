@@ -1,7 +1,6 @@
 <script lang="ts">
-  import { onMount, untrack } from 'svelte'
+  import { untrack } from 'svelte'
   import { RefreshCw } from '@lucide/svelte'
-  import PageHeader from '../components/PageHeader.svelte'
   import {
     CHROME_PROMPT_API_MIN_MAJOR,
     createRouterEngine,
@@ -29,53 +28,99 @@
     onmutate: (path: string, body?: unknown, method?: string) => Promise<unknown>
   } = $props()
 
-  const initialRouter = untrack(() => snapshot.config.router ?? {})
-  const initialEnabled = initialRouter.enabled === true
-  const initialProviderTasks = Object.fromEntries((initialRouter.providers ?? []).map((provider: JsonRecord) => (
-    [provider.id, provider.suitableTasks]
-  )))
-  const initialProviders = untrack(() => snapshot.providers.map((provider: JsonRecord) => ({ ...provider })))
-  let enabled = $state(initialEnabled)
-  let engine = $state<RouterEngineId>(initialRouter.engine === 'chrome-prompt-api' ? initialRouter.engine : 'chrome-prompt-api')
-  let providerTasks = $state<Record<string, string>>(Object.fromEntries(initialProviders.map((provider: JsonRecord) => (
-    [provider.id, initialProviderTasks[provider.id] ?? '']
-  ))))
+  let pendingEnabled = $state<boolean | null>(null)
   let task = $state('')
-  let availability = $state(initialEnabled ? 'checking' : 'disabled')
+  let availability = $state('disabled')
   let downloadProgress = $state<number | null>(null)
   let availabilityError = $state('')
   let formError = $state('')
   let running = $state(false)
   let result = $state<RouterResult | null>(null)
   let observation = $state<RouterEngineObservation | null>(null)
+  let observationBindingKey = $state('')
+  let observedAvailabilityContext = $state('')
+  let availabilityInvocationId = 0
+  let routeInvocationId = 0
+  let observedSemanticContext = ''
+  const configuredRouter = $derived(snapshot.config.router ?? {})
+  const configuredEnabled = $derived(configuredRouter.enabled === true)
+  const enabled = $derived(pendingEnabled ?? configuredEnabled)
+  const engine: RouterEngineId = $derived(configuredRouter.engine === 'chrome-prompt-api' ? configuredRouter.engine : 'chrome-prompt-api')
+  const configuredProviderRules = $derived(normalizedProviderRules())
   const browserBinding = $derived(selectedBrowserBinding())
+  const browserBindingKey = $derived(bindingKey(browserBinding))
+  const availabilityContext = $derived(`${browserBindingKey}\u0000${enabled ? 'enabled' : 'disabled'}`)
+  const currentObservation = $derived(observationBindingKey === browserBindingKey ? observation : null)
+  const displayedAvailability = $derived(!enabled ? 'disabled' : observedAvailabilityContext === availabilityContext ? availability : 'checking')
+  const displayedAvailabilityError = $derived(enabled && observedAvailabilityContext === availabilityContext ? availabilityError : '')
+  const displayedDownloadProgress = $derived(enabled && observedAvailabilityContext === availabilityContext ? downloadProgress : null)
   const providers = $derived(snapshot.providers.filter((provider: JsonRecord) => provider.stage !== 'disabled'))
   const candidates = $derived(buildProviderCandidates())
   const enabledProviderCount = $derived(providers.filter((provider: JsonRecord) => providerState(provider)?.enabled === true).length)
+  const semanticContext = $derived(semanticContextSignature())
 
-  onMount(() => { void refreshAvailability() })
+  $effect(() => {
+    const context = availabilityContext
+    if (context === observedAvailabilityContext) return
+    observedAvailabilityContext = context
+    untrack(() => {
+      observation = null
+      observationBindingKey = ''
+      availabilityError = ''
+      downloadProgress = null
+      availability = enabled ? 'checking' : 'disabled'
+      void refreshAvailability()
+    })
+  })
+
+  $effect(() => {
+    const context = semanticContext
+    if (context === observedSemanticContext) return
+    observedSemanticContext = context
+    routeInvocationId += 1
+    untrack(() => {
+      running = false
+      result = null
+      formError = ''
+    })
+  })
 
   async function refreshAvailability() {
+    const binding = selectedBrowserBinding()
+    const requestedBindingKey = bindingKey(binding)
+    const requestedEnabled = enabled
+    const requestedContext = availabilityContext
+    const invocationId = ++availabilityInvocationId
     availabilityError = ''
     downloadProgress = null
-    if (!enabled) {
+    if (!requestedEnabled) {
       availability = 'disabled'
       try {
-        observation = await createRouterEngine(engine).inspect(selectedBrowserBinding())
-        if (!observation.supported) availabilityError = observationMessage(observation)
+        const inspected = await createRouterEngine(engine).inspect(binding)
+        if (!availabilityInvocationMatches(invocationId, requestedContext)) return
+        observation = inspected
+        observationBindingKey = requestedBindingKey
+        if (!inspected.supported) availabilityError = observationMessage(inspected)
       } catch (error) {
+        if (!availabilityInvocationMatches(invocationId, requestedContext)) return
         availabilityError = error instanceof Error ? error.message : t('requestFailed')
       }
       return
     }
     availability = 'checking'
     try {
-      const inspected = await createRouterEngine(engine).availability(selectedBrowserBinding())
+      const inspected = await createRouterEngine(engine).availability(binding)
+      if (!availabilityInvocationMatches(invocationId, requestedContext)) return
       observation = inspected.observation
+      observationBindingKey = requestedBindingKey
       availability = inspected.status
     } catch (error) {
+      if (!availabilityInvocationMatches(invocationId, requestedContext)) return
       if (error instanceof RouterEngineError) {
-        if (error.observation) observation = error.observation
+        if (error.observation) {
+          observation = error.observation
+          observationBindingKey = requestedBindingKey
+        }
         availability = isBrowserBlock(error.code) ? 'blocked' : 'unsupported'
         availabilityError = engineErrorMessage(error)
       } else {
@@ -83,6 +128,10 @@
         availabilityError = error instanceof Error ? error.message : t('requestFailed')
       }
     }
+  }
+
+  function availabilityInvocationMatches(invocationId: number, requestedContext: string) {
+    return invocationId === availabilityInvocationId && requestedContext === availabilityContext
   }
 
   function selectedBrowserBinding(): RouterBrowserBinding {
@@ -95,6 +144,10 @@
       family: typeof binding?.family === 'string' ? binding.family : 'system',
       version: typeof binding?.version === 'string' ? binding.version : null,
     }
+  }
+
+  function bindingKey(binding: RouterBrowserBinding) {
+    return `${binding.family}\u0000${binding.browserId}\u0000${binding.version ?? ''}`
   }
 
   function isBrowserBlock(code: RouterEngineError['code']) {
@@ -121,13 +174,17 @@
     return t('routerApiUnsupported')
   }
 
-  function toggleEnabled(checked: boolean) {
-    enabled = checked
-    if (checked) void refreshAvailability()
-    else {
-      availability = 'disabled'
-      availabilityError = ''
-      downloadProgress = null
+  async function toggleEnabled(checked: boolean) {
+    pendingEnabled = checked
+    formError = ''
+    try {
+      await onmutate('/config', {
+        router: { enabled: checked, engine, providers: normalizedProviderRules() },
+      }, 'PATCH')
+    } catch (error) {
+      formError = error instanceof Error ? error.message : t('requestFailed')
+    } finally {
+      pendingEnabled = null
     }
   }
 
@@ -147,32 +204,34 @@
   }
 
   function normalizedProviderRules(): Array<{ id: string; suitableTasks: string }> {
-    return providers.flatMap((provider: JsonRecord) => {
-      const suitableTasks = providerTasks[provider.id]?.trim()
-      return suitableTasks ? [{ id: provider.id, suitableTasks }] : []
+    const rules = Array.isArray(configuredRouter.providers) ? configuredRouter.providers : []
+    return rules.flatMap((rule: JsonRecord) => {
+      const id = typeof rule.id === 'string' ? rule.id : ''
+      const suitableTasks = typeof rule.suitableTasks === 'string' ? rule.suitableTasks.trim() : ''
+      return id && suitableTasks ? [{ id, suitableTasks }] : []
     })
   }
 
   function buildProviderCandidates(): RouterProviderCandidate[] {
     return providers.flatMap((provider: JsonRecord) => {
-      const suitableTasks = providerTasks[provider.id]?.trim()
+      const suitableTasks = configuredProviderRules.find((rule) => rule.id === provider.id)?.suitableTasks
       if (providerState(provider)?.enabled !== true || !suitableTasks) return []
       return [{ providerId: provider.id, label: provider.label, suitableTasks, model: selectedModel(provider) }]
     })
   }
 
-  async function save(event: SubmitEvent) {
-    event.preventDefault()
-    formError = ''
-    try {
-      const normalized = normalizedProviderRules()
-      await onmutate('/config', { router: { enabled, engine, providers: normalized } }, 'PATCH')
-      providerTasks = Object.fromEntries(providers.map((provider: JsonRecord) => (
-        [provider.id, normalized.find((rule) => rule.id === provider.id)?.suitableTasks ?? '']
-      )))
-    } catch (error) {
-      formError = error instanceof Error ? error.message : t('requestFailed')
-    }
+  function semanticContextSignature() {
+    return JSON.stringify([
+      selectedProfile,
+      enabled,
+      browserBindingKey,
+      candidates.map((candidate) => [candidate.providerId, candidate.suitableTasks, candidate.model ?? null]),
+      task,
+    ])
+  }
+
+  function routeInvocationMatches(invocationId: number, context: string) {
+    return invocationId === routeInvocationId && context === semanticContext
   }
 
   async function run() {
@@ -192,63 +251,90 @@
       formError = t('routerTaskRequired')
       return
     }
+    formError = ''
     result = null
     running = true
     downloadProgress = null
+    const binding = selectedBrowserBinding()
+    const requestedBindingKey = bindingKey(binding)
+    const requestedContext = semanticContext
+    const requestedAvailabilityContext = availabilityContext
+    const invocationId = ++routeInvocationId
+    const availabilityId = ++availabilityInvocationId
     try {
-      result = await createRouterEngine(engine).route(task.trim(), candidates, selectedBrowserBinding(), {
-        onObservation(value) { observation = value },
-        onAvailability(value) { availability = value },
-        onDownloadProgress(value) { downloadProgress = value },
+      const routedResult = await createRouterEngine(engine).route(task.trim(), candidates, binding, {
+        onObservation(value) {
+          if (!routeInvocationMatches(invocationId, requestedContext) || !availabilityInvocationMatches(availabilityId, requestedAvailabilityContext)) return
+          observation = value
+          observationBindingKey = requestedBindingKey
+        },
+        onAvailability(value) {
+          if (routeInvocationMatches(invocationId, requestedContext) && availabilityInvocationMatches(availabilityId, requestedAvailabilityContext)) availability = value
+        },
+        onDownloadProgress(value) {
+          if (routeInvocationMatches(invocationId, requestedContext) && availabilityInvocationMatches(availabilityId, requestedAvailabilityContext)) downloadProgress = value
+        },
       })
+      if (!routeInvocationMatches(invocationId, requestedContext)) return
+      result = routedResult
     } catch (error) {
+      if (!routeInvocationMatches(invocationId, requestedContext)) return
       if (error instanceof RouterEngineError) {
-        if (error.observation) observation = error.observation
-        availability = isBrowserBlock(error.code) ? 'blocked' : error.code === 'unavailable' ? 'unavailable' : 'unsupported'
+        if (availabilityInvocationMatches(availabilityId, requestedAvailabilityContext)) {
+          if (error.observation) {
+            observation = error.observation
+            observationBindingKey = requestedBindingKey
+          }
+          availability = isBrowserBlock(error.code) ? 'blocked' : error.code === 'unavailable' ? 'unavailable' : 'unsupported'
+        }
         formError = engineErrorMessage(error)
       } else {
         formError = error instanceof Error ? error.message : t('requestFailed')
       }
     } finally {
-      running = false
+      if (routeInvocationMatches(invocationId, requestedContext)) running = false
     }
   }
 </script>
 
-<section class="page routing-page" data-testid="routing-view">
-  <PageHeader title={t('experimentalRouter')} description={t('routingLede')} />
+<section class="providers-router" data-testid="routing-view">
+  <header class="providers-router-header">
+    <h2>{t('experimentalRouter')}</h2>
+    <p>{t('routingLede')}</p>
+  </header>
 
   <section class="settings-section system-card routing-api-card">
     <div class="settings-section-title">
       <div><h2>{t('routerEngine')}</h2><p>{t('routerExperimentNote')}</p></div>
       <label class="switch" title={enabled ? t('enabled') : t('disabled')} data-testid="router-enabled-control">
-        <input type="checkbox" checked={enabled} disabled={busy} onchange={(event) => toggleEnabled(event.currentTarget.checked)} data-testid="router-enabled" />
+        <input type="checkbox" checked={enabled} disabled={busy} onchange={(event) => void toggleEnabled(event.currentTarget.checked)} data-testid="router-enabled" />
         <span></span>
       </label>
     </div>
     <label class="field compact-field router-engine-field">
       <span>{t('routerEngine')}</span>
-      <select bind:value={engine} disabled={busy} data-testid="router-engine">
+      <select value={engine} disabled data-testid="router-engine">
         <option value="chrome-prompt-api">{t('chromePromptApiEngine')}</option>
       </select>
       <small>{t('routerEngineHelp')}</small>
     </label>
     <div class="router-compatibility" data-testid="router-compatibility">
       <div><small>{t('selectedBrowser')}</small><strong>{browserBinding.family} · {browserBinding.browserId}</strong></div>
-      <div><small>{t('browserVersion')}</small><strong>{observation?.browserVersion ?? browserBinding.version ?? t('unknown')}</strong></div>
+      <div><small>{t('browserVersion')}</small><strong>{currentObservation?.browserVersion ?? browserBinding.version ?? t('unknown')}</strong></div>
       <div><small>{t('routerRequirement')}</small><strong>Google Chrome {CHROME_PROMPT_API_MIN_MAJOR}+</strong></div>
     </div>
     <div class="router-status-row">
       <div class="router-availability" data-testid="router-availability">
-        <span class:ok={availability === 'available'} class:warning={availability === 'downloadable' || availability === 'downloading'} class:error={availability === 'unavailable' || availability === 'unsupported' || availability === 'blocked'} class="status-dot"></span>
-        <span><small>{t('availability')}</small><strong>{availability}</strong>{#if downloadProgress !== null}<small>{t('downloadProgress')}: {downloadProgress}%</small>{/if}</span>
+        <span class:ok={displayedAvailability === 'available'} class:warning={displayedAvailability === 'downloadable' || displayedAvailability === 'downloading'} class:error={displayedAvailability === 'unavailable' || displayedAvailability === 'unsupported' || displayedAvailability === 'blocked'} class="status-dot"></span>
+        <span><small>{t('availability')}</small><strong>{displayedAvailability}</strong>{#if displayedDownloadProgress !== null}<small>{t('downloadProgress')}: {displayedDownloadProgress}%</small>{/if}</span>
       </div>
       <button class="icon-button subtle" type="button" disabled={!enabled} aria-label={t('refresh')} title={t('refresh')} onclick={refreshAvailability}>
         <RefreshCw size={15} />
       </button>
     </div>
-    {#if downloadProgress === 0}<div class="inline-feedback warning" data-testid="router-download-zero">{t('downloadZeroHelp')}</div>{/if}
-    {#if availabilityError}<div class="inline-feedback error" role="alert">{availabilityError}</div>{/if}
+    {#if displayedDownloadProgress === 0}<div class="inline-feedback warning" data-testid="router-download-zero">{t('downloadZeroHelp')}</div>{/if}
+    {#if displayedAvailabilityError}<div class="inline-feedback error" role="alert">{displayedAvailabilityError}</div>{/if}
+    {#if formError}<div class="inline-feedback error" role="alert" data-testid="router-error">{formError}</div>{/if}
   </section>
 
   <section class="settings-section system-card router-setup" data-testid="router-chrome-setup">
@@ -262,37 +348,12 @@
     <p>{t('chromeModelVersionHelp')}</p>
   </section>
 
-  <form class="settings-section system-card router-config" onsubmit={save} data-testid="router-config-form">
-    <div class="settings-section-title">
-      <div><h2>{t('routerProviders')}</h2><p>{t('routerProvidersHelp')}</p></div>
-    </div>
-    <p class="router-provider-note">{t('routerProviderToggleHelp')}</p>
-    <div class="router-provider-list">
-      {#each providers as provider (provider.id)}
-        {@const state = providerState(provider)}
-        {@const model = selectedModel(provider)}
-        <div class:disabled={state?.enabled !== true} class="router-provider-row" data-testid={`router-provider-${provider.id}`}>
-          <div class="router-provider-identity">
-            <span class="provider-glyph">{provider.label.slice(0, 1)}</span>
-            <span><strong>{provider.label}</strong><small>{provider.id} · {state?.enabled === true ? t('enabled') : t('disabled')}</small></span>
-          </div>
-          <div class="router-provider-model"><small>{t('model')}</small><strong>{model ?? t('providerDefaultModel')}</strong></div>
-          <label class="field router-tasks-field"><span>{t('suitableTasks')}</span><textarea bind:value={providerTasks[provider.id]} disabled={state?.enabled !== true || busy} maxlength="500" placeholder={t('providerSuitableTasksPlaceholder')} data-testid={`router-provider-tasks-${provider.id}`}></textarea></label>
-        </div>
-      {:else}
-        <p class="router-empty">{t('routerNeedsEnabledProviders')}</p>
-      {/each}
-    </div>
-    <div class="form-actions"><button class="button primary" type="submit" disabled={busy} data-testid="router-save">{t('save')}</button></div>
-  </form>
-
   <section class="settings-section system-card router-run-card">
     <div class="settings-section-title"><div><h2>{t('routerTest')}</h2><p>{t('routerTestHelp')}</p></div></div>
     <label class="field"><span>{t('taskPrompt')}</span><textarea bind:value={task} maxlength="4000" placeholder={t('taskPromptPlaceholder')} data-testid="router-prompt"></textarea></label>
     {#if enabledProviderCount === 0}<div class="inline-feedback error" data-testid="router-provider-block">{t('routerNeedsEnabledProviders')}</div>
     {:else if candidates.length === 0}<div class="inline-feedback warning" data-testid="router-provider-block">{t('routerNeedsProviderRules')}</div>{/if}
-    <div class="form-actions"><button class="button primary" type="button" disabled={!enabled || running || busy || availability === 'checking' || observation?.supported === false || candidates.length === 0} onclick={run} data-testid="router-run">{running ? t('routerRunning') : t('runSemanticRouter')}</button></div>
-    {#if formError}<div class="inline-feedback error" role="alert" data-testid="router-error">{formError}</div>{/if}
+    <div class="form-actions"><button class="button primary" type="button" disabled={!enabled || running || busy || displayedAvailability === 'checking' || currentObservation?.supported === false || candidates.length === 0} onclick={run} data-testid="router-run">{running ? t('routerRunning') : t('runSemanticRouter')}</button></div>
     {#if result}<div class="router-result" data-testid="router-result"><h3>{t('routerResult')}</h3><pre>{JSON.stringify(result, null, 2)}</pre></div>{/if}
   </section>
 </section>

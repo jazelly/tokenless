@@ -32,6 +32,7 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
     const consoleFailures = []
     const snapshotStatuses = []
     let page
+    let bindingConfigPage
 
     try {
       const context = await manager.ensureContext(browserProfile, 'auto')
@@ -202,14 +203,52 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       assert.equal(runtimeConfig.browser, 'chrome')
       assert.equal(runtimeConfig.browserExecutablePath, null)
 
-      await activateNavigation(page, 'routing')
+      assert.equal(await page.locator('.rail [data-nav="routing"]').count(), 0)
+      await activateNavigation(page, 'providers')
+      await page.getByTestId('providers-view').waitFor()
       await page.getByTestId('routing-view').waitFor()
+      const providerGridBox = await page.locator('.provider-card-grid').boundingBox()
+      const routerBox = await page.getByTestId('routing-view').boundingBox()
+      assert.equal(providerGridBox !== null && routerBox !== null && providerGridBox.y < routerBox.y, true)
       assert.equal(await page.getByTestId('router-enabled').isChecked(), false)
       assert.equal(await page.getByTestId('router-availability').locator('strong').textContent(), 'disabled')
       assert.match(await page.getByTestId('router-compatibility').textContent(), /Google Chrome 148\+/)
       assert.match(await page.getByTestId('router-chrome-setup').textContent(), /on-device-internals|experimental AI/i)
-      await page.waitForFunction(() => !document.querySelector('[data-testid="router-enabled"]')?.disabled)
-      await page.getByTestId('router-enabled-control').click()
+
+      bindingConfigPage = await context.acquireReservedPage({ key: 'tokenless:control-plane:web-e2e-binding' })
+      await bindingConfigPage.goto(`${consoleOrigin}/`, { waitUntil: 'networkidle' })
+      await bindingConfigPage.getByTestId('app-shell').waitFor()
+      await activateNavigation(bindingConfigPage, 'system')
+      await bindingConfigPage.getByTestId('config-browser').selectOption('brave')
+      const braveConfigSaved = bindingConfigPage.waitForResponse((response) => (
+        new URL(response.url()).pathname === '/ui-api/v1/config' &&
+        response.request().method() === 'PATCH'
+      ))
+      await bindingConfigPage.getByTestId('config-save').click()
+      assert.equal((await braveConfigSaved).status(), 200)
+      await page.waitForFunction(() => document.querySelector('[data-testid="router-compatibility"] strong')?.textContent === 'system · brave')
+
+      await activateNavigation(bindingConfigPage, 'providers')
+      await bindingConfigPage.getByTestId('routing-view').waitFor()
+      const routerEnabledSaved = bindingConfigPage.waitForResponse((response) => (
+        new URL(response.url()).pathname === '/ui-api/v1/config' &&
+        response.request().method() === 'PATCH'
+      ))
+      await bindingConfigPage.getByTestId('router-enabled-control').click()
+      assert.equal((await routerEnabledSaved).status(), 200)
+      await page.waitForFunction(() => document.querySelector('[data-testid="router-enabled"]')?.checked === true)
+      await page.waitForFunction(() => document.querySelector('[data-testid="router-availability"] strong')?.textContent === 'blocked')
+
+      await activateNavigation(bindingConfigPage, 'system')
+      await bindingConfigPage.getByTestId('config-browser').selectOption('chrome')
+      const chromeConfigSaved = bindingConfigPage.waitForResponse((response) => (
+        new URL(response.url()).pathname === '/ui-api/v1/config' &&
+        response.request().method() === 'PATCH'
+      ))
+      await bindingConfigPage.getByTestId('config-save').click()
+      assert.equal((await chromeConfigSaved).status(), 200)
+      await page.waitForFunction(() => document.querySelector('[data-testid="router-compatibility"] strong')?.textContent === 'system · chrome')
+
       const promptApiExposed = await page.evaluate(() => typeof window.LanguageModel !== 'undefined')
       const googleChromeMajor = await page.evaluate(() => {
         const chrome = navigator.userAgentData?.brands?.find((brand) => brand.brand === 'Google Chrome')
@@ -223,16 +262,70 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       } else {
         assert.equal(promptApiExposed ? ['available', 'downloadable', 'downloading', 'unavailable'].includes(routerAvailability) : routerAvailability === 'unsupported', true)
       }
-      assert.equal(await page.getByTestId('router-provider-chatgpt').locator('textarea').isEnabled(), true)
-      assert.equal(await page.getByTestId('router-provider-gemini').locator('textarea').isDisabled(), true)
-      await page.getByTestId('router-provider-tasks-chatgpt').fill('Writing, editing, and tone-sensitive content')
-      await page.getByTestId('router-provider-tasks-claude').fill('Coding and complex analysis')
-      const routerSaved = page.waitForResponse((response) => (
+
+      await activateNavigation(bindingConfigPage, 'providers')
+      const routerDisabledSaved = bindingConfigPage.waitForResponse((response) => (
         new URL(response.url()).pathname === '/ui-api/v1/config' &&
         response.request().method() === 'PATCH'
       ))
-      await page.getByTestId('router-save').click()
-      assert.equal((await routerSaved).status(), 200)
+      await bindingConfigPage.getByTestId('router-enabled-control').click()
+      assert.equal((await routerDisabledSaved).status(), 200)
+      await page.waitForFunction(() => document.querySelector('[data-testid="router-enabled"]')?.checked === false)
+      assert.equal(await page.getByTestId('router-availability').locator('strong').textContent(), 'disabled')
+      assert.equal(await page.locator('.routing-api-card [role="alert"]').count(), 0)
+      assert.equal(await page.getByTestId('router-run').isDisabled(), true)
+
+      const routerReenabledSaved = bindingConfigPage.waitForResponse((response) => (
+        new URL(response.url()).pathname === '/ui-api/v1/config' &&
+        response.request().method() === 'PATCH'
+      ))
+      await bindingConfigPage.getByTestId('router-enabled-control').click()
+      assert.equal((await routerReenabledSaved).status(), 200)
+      await page.waitForFunction(() => document.querySelector('[data-testid="router-enabled"]')?.checked === true)
+      assert.equal(await page.getByTestId('router-enabled').isChecked(), true)
+      await page.waitForFunction(() => document.querySelector('[data-testid="router-availability"] strong')?.textContent !== 'checking')
+
+      await bindingConfigPage.getByTestId('provider-details-chatgpt').click()
+      await bindingConfigPage.getByTestId('provider-role-chatgpt').fill('Externally configured writing tasks')
+      const externalRoleSaved = bindingConfigPage.waitForResponse((response) => (
+        new URL(response.url()).pathname === '/ui-api/v1/config' &&
+        response.request().method() === 'PATCH'
+      ))
+      await bindingConfigPage.getByTestId('provider-role-save-chatgpt').click()
+      assert.equal((await externalRoleSaved).status(), 200)
+      await page.waitForFunction(() => document.querySelector('[data-testid="provider-card-chatgpt"] .provider-routing-summary strong')?.textContent === 'Externally configured writing tasks')
+
+      assert.equal(await page.getByTestId('provider-readiness-chatgpt').isEnabled(), true)
+      await page.getByTestId('provider-details-chatgpt').click()
+      await page.getByTestId('provider-detail-chatgpt').waitFor()
+      assert.equal(await page.getByTestId('provider-detail-readiness-chatgpt').isEnabled(), true)
+      assert.equal(await page.getByTestId('provider-detail-controls-chatgpt').isEnabled(), true)
+      assert.equal(await page.getByTestId('provider-role-chatgpt').isEnabled(), true)
+      await page.getByTestId('provider-role-chatgpt').fill('Writing, editing, and tone-sensitive content')
+      const chatgptRoleSaved = page.waitForResponse((response) => (
+        new URL(response.url()).pathname === '/ui-api/v1/config' &&
+        response.request().method() === 'PATCH'
+      ))
+      await page.getByTestId('provider-role-save-chatgpt').click()
+      assert.equal((await chatgptRoleSaved).status(), 200)
+      await page.getByTestId('provider-detail-back').click()
+
+      await page.getByTestId('provider-details-gemini').click()
+      await page.getByTestId('provider-detail-gemini').waitFor()
+      assert.equal(await page.getByTestId('provider-role-gemini').isDisabled(), true)
+      assert.equal(await page.getByTestId('provider-role-save-gemini').isDisabled(), true)
+      assert.match(await page.getByTestId('provider-role-disabled').textContent(), /disabled|Enable it/i)
+      await page.getByTestId('provider-detail-back').click()
+
+      await page.getByTestId('provider-details-claude').click()
+      await page.getByTestId('provider-detail-claude').waitFor()
+      await page.getByTestId('provider-role-claude').fill('Coding and complex analysis')
+      const claudeRoleSaved = page.waitForResponse((response) => (
+        new URL(response.url()).pathname === '/ui-api/v1/config' &&
+        response.request().method() === 'PATCH'
+      ))
+      await page.getByTestId('provider-role-save-claude').click()
+      assert.equal((await claudeRoleSaved).status(), 200)
       assert.deepEqual(JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8')).router, {
         enabled: true,
         engine: 'chrome-prompt-api',
@@ -242,13 +335,16 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
         ],
       })
       await page.reload({ waitUntil: 'networkidle' })
-      await page.getByTestId('routing-view').waitFor()
+      await page.getByTestId('providers-view').waitFor()
       assert.equal(await page.getByTestId('router-enabled').isChecked(), true)
       assert.equal(await page.getByTestId('router-engine').inputValue(), 'chrome-prompt-api')
-      assert.equal(await page.getByTestId('router-provider-tasks-chatgpt').inputValue(), 'Writing, editing, and tone-sensitive content')
-      assert.equal(await page.getByTestId('router-provider-tasks-claude').inputValue(), 'Coding and complex analysis')
+      await page.getByTestId('provider-details-chatgpt').click()
+      assert.equal(await page.getByTestId('provider-role-chatgpt').inputValue(), 'Writing, editing, and tone-sensitive content')
+      await page.getByTestId('provider-detail-back').click()
+      await page.getByTestId('provider-details-claude').click()
+      assert.equal(await page.getByTestId('provider-role-claude').inputValue(), 'Coding and complex analysis')
+      await page.getByTestId('provider-detail-back').click()
 
-      await activateNavigation(page, 'providers')
       while (await page.locator('.provider-card .switch:has(input:checked)').count() > 0) {
         const providerUpdated = page.waitForResponse((response) => (
           new URL(response.url()).pathname === '/ui-api/v1/profiles/work' &&
@@ -257,7 +353,6 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
         await page.locator('.provider-card .switch:has(input:checked)').first().click()
         assert.equal((await providerUpdated).status(), 200)
       }
-      await activateNavigation(page, 'routing')
       await page.waitForFunction(() => document.querySelector('[data-testid="router-provider-block"]')?.textContent?.includes('Enable at least one AI provider'))
       assert.match(await page.getByTestId('router-provider-block').textContent(), /Enable at least one AI provider/)
       assert.equal(await page.getByTestId('router-run').isDisabled(), true)
@@ -274,7 +369,7 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       assert.match(await page.getByTestId('overview-output-savings').getAttribute('title'), /Token 汇总统计不可用/)
       await page.reload({ waitUntil: 'networkidle' })
       await page.getByTestId('app-shell').waitFor()
-      await activateNavigation(page, 'routing')
+      await activateNavigation(page, 'providers')
       assert.match(await page.getByTestId('router-chrome-setup').textContent(), /启用 Chrome 实验性 AI|模型信息/)
       await activateNavigation(page, 'system')
       await page.getByTestId('system-view').waitFor()
@@ -294,6 +389,7 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       assert.equal(new URL(page.url()).pathname, '/ui/')
       assert.deepEqual(consoleFailures, [])
     } finally {
+      await bindingConfigPage?.goto('about:blank').catch(() => undefined)
       await page?.goto('about:blank').catch(() => undefined)
       await manager.detach()
     }
