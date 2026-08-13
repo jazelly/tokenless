@@ -247,10 +247,17 @@ a.data-row:hover, button.data-row:hover { background: #faf9f7; }
 .router-setup ol { display: grid; gap: 8px; margin: 14px 0 12px 18px; color: var(--muted); font-size: 10px; line-height: 1.5; }
 .router-setup code { color: var(--ink); font-size: 9px; }
 .router-setup > p { color: var(--muted); font-size: 10px; line-height: 1.5; }
-.router-model-list { display: flex; flex-direction: column; gap: 10px; margin: 16px 0; }
-.router-model-row { display: grid; grid-template-columns: minmax(130px, .65fr) minmax(160px, .8fr) minmax(260px, 1.55fr) 34px; align-items: end; gap: 10px; padding: 12px; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--surface-muted); }
-.router-model-row .field > input { background: var(--surface); }
-.router-remove { margin-bottom: 2px; }
+.router-provider-note { margin-top: 12px; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.router-provider-list { display: flex; flex-direction: column; gap: 10px; margin: 14px 0; }
+.router-provider-row { display: grid; grid-template-columns: minmax(150px, .7fr) minmax(150px, .7fr) minmax(300px, 1.6fr); align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--surface-muted); }
+.router-provider-row.disabled { opacity: .55; }
+.router-provider-identity { display: flex; min-width: 0; align-items: center; gap: 9px; }
+.router-provider-identity > span:last-child, .router-provider-model { min-width: 0; }
+.router-provider-identity strong, .router-provider-identity small, .router-provider-model strong, .router-provider-model small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.router-provider-identity strong { font-size: 11px; }
+.router-provider-identity small, .router-provider-model small { margin-top: 3px; color: var(--muted); font-size: 9px; }
+.router-provider-model strong { margin-top: 4px; font-size: 10px; font-weight: 560; }
+.router-provider-row textarea { width: 100%; min-height: 68px; resize: vertical; padding: 9px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); font-size: 11px; line-height: 1.45; }
 .router-empty { padding: 18px; border: 1px dashed var(--line); border-radius: 8px; color: var(--muted); font-size: 11px; text-align: center; }
 .router-run-card textarea { width: 100%; min-height: 112px; resize: vertical; padding: 10px 11px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); font-size: 12px; line-height: 1.55; }
 .router-run-card .form-actions { margin-top: 12px; }
@@ -434,10 +441,8 @@ pre { max-width: 100%; max-height: 260px; overflow: auto; margin: 0; padding: 12
   .job-row .mono-label, .job-row time { display: none; }
   .system-grid { grid-template-columns: 1fr; }
   .system-actions { grid-column: auto; }
-  .router-model-row { grid-template-columns: 1fr 34px; }
+  .router-provider-row { grid-template-columns: 1fr; }
   .router-compatibility { grid-template-columns: 1fr; }
-  .router-model-row .field { grid-column: 1 / -1; }
-  .router-model-row .router-remove { grid-column: 2; grid-row: 1; }
   .modal-backdrop { align-items: end; padding: 0; }
   .modal, .modal.wide { width: 100%; max-height: calc(100vh - 24px); border-radius: 14px 14px 0 0; }
   .modal-body { max-height: calc(100vh - 88px); }

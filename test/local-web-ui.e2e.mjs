@@ -216,14 +216,10 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       } else {
         assert.equal(promptApiExposed ? ['available', 'downloadable', 'downloading', 'unavailable'].includes(routerAvailability) : routerAvailability === 'unsupported', true)
       }
-      await page.getByTestId('router-add-model').click()
-      await page.getByTestId('router-model-0').locator('input').nth(0).fill('fast-local')
-      await page.getByTestId('router-model-0').locator('input').nth(1).fill('Fast local model')
-      await page.getByTestId('router-model-0').locator('input').nth(2).fill('Summaries and simple extraction')
-      await page.getByTestId('router-add-model').click()
-      await page.getByTestId('router-model-1').locator('input').nth(0).fill('deep-reasoning')
-      await page.getByTestId('router-model-1').locator('input').nth(1).fill('Deep reasoning model')
-      await page.getByTestId('router-model-1').locator('input').nth(2).fill('Complex analysis and multi-step reasoning')
+      assert.equal(await page.getByTestId('router-provider-chatgpt').locator('textarea').isEnabled(), true)
+      assert.equal(await page.getByTestId('router-provider-gemini').locator('textarea').isDisabled(), true)
+      await page.getByTestId('router-provider-tasks-chatgpt').fill('Writing, editing, and tone-sensitive content')
+      await page.getByTestId('router-provider-tasks-claude').fill('Coding and complex analysis')
       const routerSaved = page.waitForResponse((response) => (
         new URL(response.url()).pathname === '/ui-api/v1/config' &&
         response.request().method() === 'PATCH'
@@ -233,17 +229,31 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       assert.deepEqual(JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8')).router, {
         enabled: true,
         engine: 'chrome-prompt-api',
-        models: [
-          { id: 'fast-local', label: 'Fast local model', suitableTasks: 'Summaries and simple extraction' },
-          { id: 'deep-reasoning', label: 'Deep reasoning model', suitableTasks: 'Complex analysis and multi-step reasoning' },
+        providers: [
+          { id: 'chatgpt', suitableTasks: 'Writing, editing, and tone-sensitive content' },
+          { id: 'claude', suitableTasks: 'Coding and complex analysis' },
         ],
       })
       await page.reload({ waitUntil: 'networkidle' })
       await page.getByTestId('routing-view').waitFor()
       assert.equal(await page.getByTestId('router-enabled').isChecked(), true)
       assert.equal(await page.getByTestId('router-engine').inputValue(), 'chrome-prompt-api')
-      assert.equal(await page.getByTestId('router-model-0').locator('input').nth(0).inputValue(), 'fast-local')
-      assert.equal(await page.getByTestId('router-model-1').locator('input').nth(2).inputValue(), 'Complex analysis and multi-step reasoning')
+      assert.equal(await page.getByTestId('router-provider-tasks-chatgpt').inputValue(), 'Writing, editing, and tone-sensitive content')
+      assert.equal(await page.getByTestId('router-provider-tasks-claude').inputValue(), 'Coding and complex analysis')
+
+      await activateNavigation(page, 'providers')
+      while (await page.locator('.provider-card .switch:has(input:checked)').count() > 0) {
+        const providerUpdated = page.waitForResponse((response) => (
+          new URL(response.url()).pathname === '/ui-api/v1/profiles/work' &&
+          response.request().method() === 'PATCH'
+        ))
+        await page.locator('.provider-card .switch:has(input:checked)').first().click()
+        assert.equal((await providerUpdated).status(), 200)
+      }
+      await activateNavigation(page, 'routing')
+      await page.waitForFunction(() => document.querySelector('[data-testid="router-provider-block"]')?.textContent?.includes('Enable at least one AI provider'))
+      assert.match(await page.getByTestId('router-provider-block').textContent(), /Enable at least one AI provider/)
+      assert.equal(await page.getByTestId('router-run').isDisabled(), true)
 
       await activateNavigation(page, 'system')
 

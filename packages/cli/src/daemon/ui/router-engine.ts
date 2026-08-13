@@ -19,14 +19,16 @@ export type RouterEngineObservation = {
   minimumChromeMajor: number
 }
 
-export type RouterModel = {
-  id: string
+export type RouterProviderCandidate = {
+  providerId: string
   label: string
   suitableTasks: string
+  model: string | null
 }
 
 export type RouterResult = {
-  modelId: string
+  providerId: string
+  model: string | null
   taskType: string
   complexity: 'low' | 'medium' | 'high'
   reason: string
@@ -73,7 +75,7 @@ export function createRouterEngine(engine: RouterEngineId) {
 
     async route(
       task: string,
-      models: RouterModel[],
+      providers: RouterProviderCandidate[],
       browserBinding: RouterBrowserBinding,
       callbacks: {
         onObservation: (observation: RouterEngineObservation) => void
@@ -108,23 +110,26 @@ export function createRouterEngine(engine: RouterEngineId) {
         callbacks.onDownloadProgress(null)
         const response = await session.prompt(`${semanticInstruction}\n${JSON.stringify({
           task,
-          modelConfiguration: models,
+          providerConfiguration: providers,
         })}`, {
           responseConstraint: {
             type: 'object',
             properties: {
-              modelId: { type: 'string', enum: models.map((model) => model.id) },
+              providerId: { type: 'string', enum: providers.map((provider) => provider.providerId) },
+              model: { enum: [...new Set(providers.map((provider) => provider.model))] },
               taskType: { type: 'string' },
               complexity: { type: 'string', enum: ['low', 'medium', 'high'] },
               reason: { type: 'string' },
             },
-            required: ['modelId', 'taskType', 'complexity', 'reason'],
+            required: ['providerId', 'model', 'taskType', 'complexity', 'reason'],
             additionalProperties: false,
           },
         })
         const parsed = JSON.parse(response) as Partial<RouterResult>
+        const selectedProvider = providers.find((provider) => provider.providerId === parsed.providerId)
         if (
-          !models.some((model) => model.id === parsed.modelId) ||
+          !selectedProvider ||
+          parsed.model !== selectedProvider.model ||
           typeof parsed.taskType !== 'string' ||
           !['low', 'medium', 'high'].includes(String(parsed.complexity)) ||
           typeof parsed.reason !== 'string'
@@ -207,4 +212,4 @@ function languageModelApi() {
   return (window as Window & { LanguageModel?: LanguageModelApi }).LanguageModel
 }
 
-const semanticInstruction = 'Analyze the task. Choose the candidate model whose suitableTasks best matches it. Return the task type, complexity, and a concise reason.'
+const semanticInstruction = 'Analyze the task. Choose the enabled AI provider whose suitableTasks best matches it. Return that provider ID, its configured model, the task type, complexity, and a concise reason.'

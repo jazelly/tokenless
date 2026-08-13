@@ -347,14 +347,13 @@
         "required": ["roleLabel", "enabledProviders", "browserVisibility", "proxy"],
         "additionalProperties": false
       },
-      "RouterModel": {
+      "RouterProviderRule": {
         "type": "object",
         "properties": {
-          "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
-          "label": { "type": "string", "minLength": 1, "maxLength": 80 },
+          "id": { "$ref": "#/components/schemas/ProviderId" },
           "suitableTasks": { "type": "string", "minLength": 1, "maxLength": 500 }
         },
-        "required": ["id", "label", "suitableTasks"],
+        "required": ["id", "suitableTasks"],
         "additionalProperties": false
       },
       "RouterConfig": {
@@ -362,9 +361,9 @@
         "properties": {
           "enabled": { "type": "boolean" },
           "engine": { "type": "string", "enum": ["chrome-prompt-api"] },
-          "models": { "type": "array", "maxItems": 20, "items": { "$ref": "#/components/schemas/RouterModel" } }
+          "providers": { "type": "array", "maxItems": 20, "items": { "$ref": "#/components/schemas/RouterProviderRule" } }
         },
-        "required": ["enabled", "engine", "models"],
+        "required": ["enabled", "engine", "providers"],
         "additionalProperties": false
       },
       "UiConfig": {

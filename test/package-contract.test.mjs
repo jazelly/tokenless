@@ -82,7 +82,7 @@ test('persistent config preserves native Chrome or Brave and removes managed bro
   try {
     const defaults = await runtime.readTokenlessConfig(homeDir)
     assert.deepEqual(defaults.outputSavings, { enabled: true })
-    assert.deepEqual(defaults.router, { enabled: false, engine: 'chrome-prompt-api', models: [] })
+    assert.deepEqual(defaults.router, { enabled: false, engine: 'chrome-prompt-api', providers: [] })
     assert.equal(defaults.browser, 'chrome')
     assert.equal(Object.hasOwn(defaults, 'browserConnectionMode'), false)
     assert.equal(defaults.browserExecutablePath, null)
@@ -98,9 +98,9 @@ test('persistent config preserves native Chrome or Brave and removes managed bro
     const router = {
       enabled: true,
       engine: 'chrome-prompt-api',
-      models: [
-        { id: 'fast-local', label: 'Fast local model', suitableTasks: 'Summaries and simple extraction' },
-        { id: 'deep-reasoning', label: 'Deep reasoning model', suitableTasks: 'Complex analysis' },
+      providers: [
+        { id: 'chatgpt', suitableTasks: 'Writing and editing' },
+        { id: 'claude', suitableTasks: 'Coding and complex analysis' },
       ],
     }
     assert.deepEqual((await runtime.writeTokenlessConfig({ homeDir, router })).router, router)
@@ -108,20 +108,27 @@ test('persistent config preserves native Chrome or Brave and removes managed bro
     await assert.rejects(
       runtime.writeTokenlessConfig({
         homeDir,
-        router: { ...router, models: [...router.models, { ...router.models[0] }] },
+        router: { ...router, providers: [...router.providers, { ...router.providers[0] }] },
       }),
       /Invalid Tokenless router configuration/,
     )
     const configFile = path.join(homeDir, 'config.json')
     const savedConfig = JSON.parse(fs.readFileSync(configFile, 'utf8'))
     assert.equal(Object.hasOwn(savedConfig, 'browserConnectionMode'), false)
-    delete savedConfig.router
-    savedConfig.semanticRouter = { models: router.models }
+    savedConfig.router = {
+      enabled: true,
+      engine: 'chrome-prompt-api',
+      models: [
+        { id: 'chatgpt', label: 'ChatGPT', suitableTasks: 'Writing and editing' },
+        { id: 'fast-local', label: 'Fast local model', suitableTasks: 'Summaries' },
+      ],
+    }
     fs.writeFileSync(configFile, `${JSON.stringify(savedConfig, null, 2)}\n`)
-    assert.deepEqual((await runtime.readTokenlessConfig(homeDir)).router, router)
+    const migratedRouter = { ...router, providers: [router.providers[0]] }
+    assert.deepEqual((await runtime.readTokenlessConfig(homeDir)).router, migratedRouter)
     const migratedConfig = JSON.parse(fs.readFileSync(configFile, 'utf8'))
     assert.equal(Object.hasOwn(migratedConfig, 'semanticRouter'), false)
-    assert.deepEqual(migratedConfig.router, router)
+    assert.deepEqual(migratedConfig.router, migratedRouter)
     await runtime.writeTokenlessConfig({ homeDir, browser: 'brave' })
     assert.equal((await runtime.readTokenlessConfig(homeDir)).browser, 'brave')
     const nativeExecutablePath = path.join(homeDir, 'user-provided', 'brave')

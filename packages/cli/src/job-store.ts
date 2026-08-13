@@ -68,12 +68,11 @@ export type RouterEngine = typeof ROUTER_ENGINES[number]
 export type RouterConfig = {
   enabled: boolean
   engine: RouterEngine
-  models: RouterModel[]
+  providers: RouterProviderRule[]
 }
 
-export type RouterModel = {
+export type RouterProviderRule = {
   id: string
-  label: string
   suitableTasks: string
 }
 
@@ -196,7 +195,7 @@ async function readTokenlessConfigUnlocked(homeDir: string) {
   if (payload.directProvider !== undefined && !isDirectProviderConfig(payload.directProvider)) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
-  if (payload.router !== undefined && !isRouterConfig(payload.router)) {
+  if (payload.router !== undefined && !isRouterConfig(payload.router) && !isLegacyRouterConfig(payload.router)) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
   if (payload.semanticRouter !== undefined && !isLegacySemanticRouterConfig(payload.semanticRouter)) {
@@ -435,36 +434,65 @@ function validateDirectProviderConfig(value: unknown): DirectProviderConfig {
 }
 
 function isRouterConfig(value: unknown): value is RouterConfig {
-  if (!isJsonRecord(value) || Object.keys(value).length !== 3 || !Array.isArray(value.models)) return false
+  if (!isJsonRecord(value) || Object.keys(value).length !== 3 || !Array.isArray(value.providers)) return false
   if (typeof value.enabled !== 'boolean' || !ROUTER_ENGINES.includes(value.engine as RouterEngine)) return false
-  return isRouterModels(value.models)
+  return isRouterProviderRules(value.providers)
 }
 
-function isLegacySemanticRouterConfig(value: unknown): value is { models: RouterModel[] } {
-  return isJsonRecord(value) && Object.keys(value).length === 1 && Array.isArray(value.models) && isRouterModels(value.models)
+type LegacyRouterModel = { id: string; label: string; suitableTasks: string }
+
+function isLegacyRouterConfig(value: unknown): value is { enabled: boolean; engine: RouterEngine; models: LegacyRouterModel[] } {
+  return isJsonRecord(value) &&
+    Object.keys(value).length === 3 &&
+    typeof value.enabled === 'boolean' &&
+    ROUTER_ENGINES.includes(value.engine as RouterEngine) &&
+    Array.isArray(value.models) &&
+    isLegacyRouterModels(value.models)
 }
 
-function isRouterModels(models: unknown[]): models is RouterModel[] {
-  if (models.length > 20) return false
+function isLegacySemanticRouterConfig(value: unknown): value is { models: LegacyRouterModel[] } {
+  return isJsonRecord(value) && Object.keys(value).length === 1 && Array.isArray(value.models) && isLegacyRouterModels(value.models)
+}
+
+function isRouterProviderRules(providers: unknown[]): providers is RouterProviderRule[] {
+  if (providers.length > 20) return false
   const ids = new Set<string>()
-  for (const model of models) {
-    if (!isJsonRecord(model) || Object.keys(model).length !== 3) return false
-    if (typeof model.id !== 'string' || !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(model.id)) return false
-    if (ids.has(model.id)) return false
-    if (typeof model.label !== 'string' || !model.label.trim() || model.label.length > 80) return false
-    if (typeof model.suitableTasks !== 'string' || !model.suitableTasks.trim() || model.suitableTasks.length > 500) return false
-    ids.add(model.id)
+  for (const provider of providers) {
+    if (!isJsonRecord(provider) || Object.keys(provider).length !== 2) return false
+    if (typeof provider.id !== 'string' || !providerRegistry.resolve(provider.id) || ids.has(provider.id)) return false
+    if (typeof provider.suitableTasks !== 'string' || !provider.suitableTasks.trim() || provider.suitableTasks.length > 500) return false
+    ids.add(provider.id)
   }
   return true
 }
 
+function isLegacyRouterModels(models: unknown[]): models is LegacyRouterModel[] {
+  if (models.length > 20) return false
+  const ids = new Set<string>()
+  return models.every((model) => {
+    if (!isJsonRecord(model) || Object.keys(model).length !== 3) return false
+    if (typeof model.id !== 'string' || !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(model.id) || ids.has(model.id)) return false
+    if (typeof model.label !== 'string' || !model.label.trim() || model.label.length > 80) return false
+    if (typeof model.suitableTasks !== 'string' || !model.suitableTasks.trim() || model.suitableTasks.length > 500) return false
+    ids.add(model.id)
+    return true
+  })
+}
+
 function normalizeRouterConfig(value: unknown, legacyValue?: unknown): RouterConfig {
   if (isRouterConfig(value)) return copyRouterConfig(value)
+  if (isLegacyRouterConfig(value)) {
+    return {
+      enabled: value.enabled,
+      engine: value.engine,
+      providers: providerRulesFromLegacyModels(value.models),
+    }
+  }
   if (isLegacySemanticRouterConfig(legacyValue)) {
     return {
       enabled: true,
       engine: 'chrome-prompt-api',
-      models: legacyValue.models.map((model) => ({ ...model })),
+      providers: providerRulesFromLegacyModels(legacyValue.models),
     }
   }
   return defaultRouterConfig()
@@ -481,16 +509,21 @@ function copyRouterConfig(value: RouterConfig): RouterConfig {
   return {
     enabled: value.enabled,
     engine: value.engine,
-    models: value.models.map((model) => ({
-      id: model.id,
-      label: model.label.trim(),
-      suitableTasks: model.suitableTasks.trim(),
+    providers: value.providers.map((provider) => ({
+      id: provider.id,
+      suitableTasks: provider.suitableTasks.trim(),
     })),
   }
 }
 
 function defaultRouterConfig(): RouterConfig {
-  return { enabled: false, engine: 'chrome-prompt-api', models: [] }
+  return { enabled: false, engine: 'chrome-prompt-api', providers: [] }
+}
+
+function providerRulesFromLegacyModels(models: LegacyRouterModel[]) {
+  return models.flatMap((model) => providerRegistry.resolve(model.id)
+    ? [{ id: model.id, suitableTasks: model.suitableTasks.trim() }]
+    : [])
 }
 
 function isOutputSavingsConfig(value: unknown): value is OutputSavingsConfig {

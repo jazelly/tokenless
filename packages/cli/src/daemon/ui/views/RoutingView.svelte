@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte'
-  import { Plus, RefreshCw, Trash2 } from '@lucide/svelte'
+  import { RefreshCw } from '@lucide/svelte'
   import PageHeader from '../components/PageHeader.svelte'
   import {
     CHROME_PROMPT_API_MIN_MAJOR,
@@ -9,7 +9,7 @@
     type RouterBrowserBinding,
     type RouterEngineId,
     type RouterEngineObservation,
-    type RouterModel,
+    type RouterProviderCandidate,
     type RouterResult,
   } from '../router-engine.js'
   import type { JsonRecord } from '../types.js'
@@ -31,9 +31,15 @@
 
   const initialRouter = untrack(() => snapshot.config.router ?? {})
   const initialEnabled = initialRouter.enabled === true
+  const initialProviderTasks = Object.fromEntries((initialRouter.providers ?? []).map((provider: JsonRecord) => (
+    [provider.id, provider.suitableTasks]
+  )))
+  const initialProviders = untrack(() => snapshot.providers.map((provider: JsonRecord) => ({ ...provider })))
   let enabled = $state(initialEnabled)
   let engine = $state<RouterEngineId>(initialRouter.engine === 'chrome-prompt-api' ? initialRouter.engine : 'chrome-prompt-api')
-  let models = $state<RouterModel[]>(initialRouter.models?.map((model: RouterModel) => ({ ...model })) ?? [])
+  let providerTasks = $state<Record<string, string>>(Object.fromEntries(initialProviders.map((provider: JsonRecord) => (
+    [provider.id, initialProviderTasks[provider.id] ?? '']
+  ))))
   let task = $state('')
   let availability = $state(initialEnabled ? 'checking' : 'disabled')
   let downloadProgress = $state<number | null>(null)
@@ -43,6 +49,9 @@
   let result = $state<RouterResult | null>(null)
   let observation = $state<RouterEngineObservation | null>(null)
   const browserBinding = $derived(selectedBrowserBinding())
+  const providers = $derived(snapshot.providers.filter((provider: JsonRecord) => provider.stage !== 'disabled'))
+  const candidates = $derived(buildProviderCandidates())
+  const enabledProviderCount = $derived(providers.filter((provider: JsonRecord) => providerState(provider)?.enabled === true).length)
 
   onMount(() => { void refreshAvailability() })
 
@@ -122,44 +131,45 @@
     }
   }
 
-  function addModel() {
-    if (models.length >= 20) return
-    models = [...models, { id: '', label: '', suitableTasks: '' }]
+  function selectedProfileState() {
+    return snapshot.profiles?.find((profile: JsonRecord) => profile.slug === selectedProfile || profile.id === selectedProfile)
   }
 
-  function removeModel(index: number) {
-    models = models.filter((_, candidate) => candidate !== index)
+  function providerState(provider: JsonRecord) {
+    const profile = selectedProfileState()
+    return provider.profiles?.find((state: JsonRecord) => state.profileId === profile?.slug)
   }
 
-  function normalizedModels() {
-    return models.map((model) => ({
-      id: model.id.trim(),
-      label: model.label.trim(),
-      suitableTasks: model.suitableTasks.trim(),
-    }))
+  function selectedModel(provider: JsonRecord) {
+    const choices = providerState(provider)?.controls?.model
+    const selected = Array.isArray(choices) ? choices.find((choice: JsonRecord) => choice.selected === true) : null
+    return typeof selected?.label === 'string' ? selected.label : null
   }
 
-  function validateModels(requireCandidate = false) {
-    const normalized = normalizedModels()
-    if (requireCandidate && normalized.length === 0) return t('routerNeedsModels')
-    const ids = new Set<string>()
-    for (const model of normalized) {
-      if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(model.id) || !model.label || !model.suitableTasks || ids.has(model.id)) {
-        return t('routerConfigInvalid')
-      }
-      ids.add(model.id)
-    }
-    return ''
+  function normalizedProviderRules(): Array<{ id: string; suitableTasks: string }> {
+    return providers.flatMap((provider: JsonRecord) => {
+      const suitableTasks = providerTasks[provider.id]?.trim()
+      return suitableTasks ? [{ id: provider.id, suitableTasks }] : []
+    })
+  }
+
+  function buildProviderCandidates(): RouterProviderCandidate[] {
+    return providers.flatMap((provider: JsonRecord) => {
+      const suitableTasks = providerTasks[provider.id]?.trim()
+      if (providerState(provider)?.enabled !== true || !suitableTasks) return []
+      return [{ providerId: provider.id, label: provider.label, suitableTasks, model: selectedModel(provider) }]
+    })
   }
 
   async function save(event: SubmitEvent) {
     event.preventDefault()
-    formError = validateModels()
-    if (formError) return
+    formError = ''
     try {
-      const normalized = normalizedModels()
-      await onmutate('/config', { router: { enabled, engine, models: normalized } }, 'PATCH')
-      models = normalized
+      const normalized = normalizedProviderRules()
+      await onmutate('/config', { router: { enabled, engine, providers: normalized } }, 'PATCH')
+      providerTasks = Object.fromEntries(providers.map((provider: JsonRecord) => (
+        [provider.id, normalized.find((rule) => rule.id === provider.id)?.suitableTasks ?? '']
+      )))
     } catch (error) {
       formError = error instanceof Error ? error.message : t('requestFailed')
     }
@@ -170,8 +180,14 @@
       formError = t('routerDisabledError')
       return
     }
-    formError = validateModels(true)
-    if (formError) return
+    if (enabledProviderCount === 0) {
+      formError = t('routerNeedsEnabledProviders')
+      return
+    }
+    if (candidates.length === 0) {
+      formError = t('routerNeedsProviderRules')
+      return
+    }
     if (!task.trim()) {
       formError = t('routerTaskRequired')
       return
@@ -180,7 +196,6 @@
     running = true
     downloadProgress = null
     try {
-      const candidates = normalizedModels()
       result = await createRouterEngine(engine).route(task.trim(), candidates, selectedBrowserBinding(), {
         onObservation(value) { observation = value },
         onAvailability(value) { availability = value },
@@ -249,19 +264,23 @@
 
   <form class="settings-section system-card router-config" onsubmit={save} data-testid="router-config-form">
     <div class="settings-section-title">
-      <div><h2>{t('routerModels')}</h2><p>{t('routerModelsHelp')}</p></div>
-      <button class="button secondary icon-label" type="button" disabled={models.length >= 20 || busy} onclick={addModel} data-testid="router-add-model"><Plus size={15} />{t('addModel')}</button>
+      <div><h2>{t('routerProviders')}</h2><p>{t('routerProvidersHelp')}</p></div>
     </div>
-    <div class="router-model-list">
-      {#each models as model, index}
-        <div class="router-model-row" data-testid={`router-model-${index}`}>
-          <label class="field"><span>{t('modelId')}</span><input bind:value={model.id} required maxlength="64" autocomplete="off" spellcheck="false" /></label>
-          <label class="field"><span>{t('modelLabel')}</span><input bind:value={model.label} required maxlength="80" autocomplete="off" /></label>
-          <label class="field router-tasks-field"><span>{t('suitableTasks')}</span><input bind:value={model.suitableTasks} required maxlength="500" placeholder={t('suitableTasksPlaceholder')} autocomplete="off" /></label>
-          <button class="icon-button subtle router-remove" type="button" aria-label={t('remove')} title={t('remove')} onclick={() => removeModel(index)}><Trash2 size={15} /></button>
+    <p class="router-provider-note">{t('routerProviderToggleHelp')}</p>
+    <div class="router-provider-list">
+      {#each providers as provider (provider.id)}
+        {@const state = providerState(provider)}
+        {@const model = selectedModel(provider)}
+        <div class:disabled={state?.enabled !== true} class="router-provider-row" data-testid={`router-provider-${provider.id}`}>
+          <div class="router-provider-identity">
+            <span class="provider-glyph">{provider.label.slice(0, 1)}</span>
+            <span><strong>{provider.label}</strong><small>{provider.id} · {state?.enabled === true ? t('enabled') : t('disabled')}</small></span>
+          </div>
+          <div class="router-provider-model"><small>{t('model')}</small><strong>{model ?? t('providerDefaultModel')}</strong></div>
+          <label class="field router-tasks-field"><span>{t('suitableTasks')}</span><textarea bind:value={providerTasks[provider.id]} disabled={state?.enabled !== true || busy} maxlength="500" placeholder={t('providerSuitableTasksPlaceholder')} data-testid={`router-provider-tasks-${provider.id}`}></textarea></label>
         </div>
       {:else}
-        <p class="router-empty">{t('routerNeedsModels')}</p>
+        <p class="router-empty">{t('routerNeedsEnabledProviders')}</p>
       {/each}
     </div>
     <div class="form-actions"><button class="button primary" type="submit" disabled={busy} data-testid="router-save">{t('save')}</button></div>
@@ -270,7 +289,9 @@
   <section class="settings-section system-card router-run-card">
     <div class="settings-section-title"><div><h2>{t('routerTest')}</h2><p>{t('routerTestHelp')}</p></div></div>
     <label class="field"><span>{t('taskPrompt')}</span><textarea bind:value={task} maxlength="4000" placeholder={t('taskPromptPlaceholder')} data-testid="router-prompt"></textarea></label>
-    <div class="form-actions"><button class="button primary" type="button" disabled={!enabled || running || busy || availability === 'checking' || observation?.supported === false} onclick={run} data-testid="router-run">{running ? t('routerRunning') : t('runSemanticRouter')}</button></div>
+    {#if enabledProviderCount === 0}<div class="inline-feedback error" data-testid="router-provider-block">{t('routerNeedsEnabledProviders')}</div>
+    {:else if candidates.length === 0}<div class="inline-feedback warning" data-testid="router-provider-block">{t('routerNeedsProviderRules')}</div>{/if}
+    <div class="form-actions"><button class="button primary" type="button" disabled={!enabled || running || busy || availability === 'checking' || observation?.supported === false || candidates.length === 0} onclick={run} data-testid="router-run">{running ? t('routerRunning') : t('runSemanticRouter')}</button></div>
     {#if formError}<div class="inline-feedback error" role="alert" data-testid="router-error">{formError}</div>{/if}
     {#if result}<div class="router-result" data-testid="router-result"><h3>{t('routerResult')}</h3><pre>{JSON.stringify(result, null, 2)}</pre></div>{/if}
   </section>
