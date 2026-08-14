@@ -1,12 +1,14 @@
 # Tokenless Roadmaps
 
-Status: active product direction | Last reviewed: 2026-08-11
+Status: active product direction | Last reviewed: 2026-08-15
 
 This directory contains long-horizon product and engineering roadmaps. It is separate from `plans/`, which contains bounded implementation plans for individual pieces of work.
 
 Roadmaps describe intended outcomes, sequencing, evidence, and acceptance criteria. They are not release promises, fixed dates, or compatibility guarantees. A capability becomes supported only after the implementation and real-boundary verification required by the relevant roadmap are complete.
 
 ## Two Parallel P0 Product Lines
+
+[OpenAI Tool Calling, Structured Output, and Portable Provider Context](P0-openai-tool-calling-structured-output-and-portable-context.md) is the highest-priority shared compatibility contract across both product lines. It owns the universal OpenAI-compatible tool/JSON boundary and portable model history; it does not merge the Web Agent Harness with provider execution.
 
 | Product line | Owning roadmaps | Outcome |
 | --- | --- | --- |
@@ -45,6 +47,7 @@ Every roadmap filename must begin with its product priority (`P0-`, `P1-`, `P2-`
 
 | Roadmap | Outcome | Current priority |
 | --- | --- | --- |
+| [OpenAI Tool Calling, Structured Output, and Portable Provider Context](P0-openai-tool-calling-structured-output-and-portable-context.md) | Guarantee modern OpenAI tool calls and structured JSON across native and prompt-emulated providers, verify the universal API with the real local DSH and frozen SWE-rebench tasks, ground the design in current provider endpoint contracts, and support explicit auto routing without losing tool-call context. | P0 — highest active delivery priority |
 | [Real Provider Browser E2E and Native Projects](P0-real-provider-browser-e2e-and-native-projects.md) | Advance the Web Provider line by proving every advertised visible capability against real provider websites and adding real Claude and Grok native Project creation, reuse, and continuation. | P0 |
 | [Provider Expansion and Parity](P0-provider-expansion.md) | Advance the Web Provider line with high-value AI websites and an evidence-backed visible capability catalog and routing matrix. | P0 |
 | [Web AI → API: Provider Direct Protocol](P0-direct-provider-protocol.md) | Advance the Web AI → API line through the existing authenticated local API: install one pinned private GPT4Free service for broad direct-provider coverage, retain native adapters behind `providerBackend`, and internalize provider implementations through real A/B evidence. | P0 |
@@ -60,7 +63,7 @@ Every roadmap filename must begin with its product priority (`P0-`, `P1-`, `P2-`
 | [Optional Output Savings Measurement](P1-optional-output-savings-measurement.md) | Attribute versioned estimates of visible assistant output to durable jobs through a default-on, opt-out, lazily downloaded, low-duty-cycle local tokenizer. | P1 |
 | [Token Savings Real-Project Test Matrix](P1-token-savings-evidence-across-adoption-paths.md) | Run one reviewed real-project prompt across all enabled providers and three adoption paths, then extend the same evidence into Harness context, System Prompt, Skill, Bash, MCP, and multi-turn behavior. | P1 |
 
-The two product-line owners are listed first. Priority describes product importance, not a promise that all work proceeds serially.
+The highest-priority shared compatibility contract is listed first, followed by the two product-line owners. Priority describes product importance, not a promise that all work proceeds serially.
 
 ## Backlog and Archive
 
@@ -73,6 +76,7 @@ The two product-line owners are listed first. Priority describes product importa
 flowchart LR
   Caller["Trusted local caller<br/>HTTP create + polling"]
   UI["Local web control plane<br/>profiles + providers + jobs"]
+  Compat["OpenAI tool/JSON contract<br/>canonical portable history"]
   API["Authenticated local API + proxy<br/>OpenAI-shaped requests + job reads"]
   Session["Agent session binding<br/>session tree + thread + working directory"]
   Codex["Codex guided delegation<br/>AGENTS + hooks + App Server enrichment"]
@@ -90,7 +94,9 @@ flowchart LR
   Workspace["Provider workspace mirror<br/>Project or conversation"]
   Task["Web-agent task<br/>exact session and project context"]
 
-  Caller --> API
+  Caller --> Compat
+  Compat --> API
+  Compat -. shared canonical blocks .-> Harness
   UI --> API
   Session --> API
   Session --> Codex
@@ -118,8 +124,9 @@ flowchart LR
 
 The two product lines can proceed in parallel; their first tangible slices are:
 
-1. For Web Provider, keep visible-browser automation on the real provider evidence path and expand only verified capabilities.
-2. For Web AI → API, install and manage one pinned private GPT4Free HTTP service, define explicit auth contexts and lifetimes, route direct providers through `native | g4f`, and expose verified capabilities through the existing authenticated local API while retaining native implementations for A/B and gradual internalization.
+1. For the shared compatibility contract, compare current OpenAI, Anthropic, Gemini, DeepSeek, and open-source vLLM endpoint semantics; complete one real local DSH tool loop and repository-grounding run through the packaged Tokenless daemon; then prove the finished contract on a frozen three-task SWE-rebench interoperability cohort before continuing through structured JSON and portable-context phases.
+2. For Web Provider, keep visible-browser automation on the real provider evidence path and expand only verified capabilities.
+3. For Web AI → API, install and manage one pinned private GPT4Free HTTP service, define explicit auth contexts and lifetimes, route direct providers through `native | g4f`, and expose verified capabilities through the existing authenticated local API while retaining native implementations for A/B and gradual internalization.
 
 Shared substrate and later product work follow:
 

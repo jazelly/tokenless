@@ -8,6 +8,8 @@ Status: active planning | Priority: P0 | Benchmark: FeatureBench full
 
 唯一正式 benchmark 是 [FeatureBench](https://github.com/LiberCoders/FeatureBench) `full` split。Tokenless 自己实现 agent runtime、provider 接口和 tool loop，FeatureBench 负责提供真实 feature-level 任务、隔离环境与最终 evaluator。
 
+[OpenAI Tool Calling、Structured Output 与可移植 Provider Context](P0-openai-tool-calling-structured-output-and-portable-context.md) 另有一条本机 DSH → Tokenless universal API 的小型 SWE-rebench interoperability cohort。它验证外部 Harness 的长链 tool protocol，不是 Tokenless 自有 scaffold 的正式 benchmark，不汇入本 roadmap 的 FeatureBench 分数或 leaderboard claim。
+
 `lite` 和 `fast` 只可用于接线与故障定位，不能作为 full 成绩或主要产品宣称。
 
 选择它不是因为 GitHub stars，而是因为它与产品边界直接匹配：任务要求 agent 在真实 repository 中完成完整 feature，论文提供 200 个任务和 3,825 个可执行环境，上游又已经提供 Codex、Claude Code、OpenHands、Gemini CLI 等 inference adapter。成绩最终由 tests 执行判定，而不是比较回复文字。
@@ -74,7 +76,7 @@ flowchart LR
 
 ## Prompt 规则
 
-所有用于 provider 开发、local test、integration 和 real-provider E2E 的 coding prompt，都直接来自固定 revision 的 FeatureBench `problem_statement`。不得改写成 `reply with exactly <marker>`、token 回显、Hello World 或自行缩短的玩具需求。
+所有由本 FeatureBench roadmap 拥有、用于 Tokenless 自有 scaffold 的 provider 开发、local test、integration 和 real-provider E2E coding prompt，都直接来自固定 revision 的 FeatureBench `problem_statement`。不得改写成 `reply with exactly <marker>`、token 回显、Hello World 或自行缩短的玩具需求。其他 roadmap 明确拥有且不汇入 FeatureBench score 的 external-Harness interoperability evidence使用其自己固定的上游 task contract。
 
 - prompt 必须按 upstream `instance_id` 选择并原样交付；本地 metadata 承担 job correlation。
 - repository context 通过 `/testbed` 和真实 tools 提供，不能把 repository task 降格成孤立问答。
@@ -171,7 +173,7 @@ Exit：showcase 能说明 Tokenless 在相同 evaluator 下完成了哪些 featu
 
 - 唯一正式 benchmark 是 FeatureBench `full`，报告覆盖固定 revision 的 200/200 tasks。
 - Tokenless 以独立 scaffold 名称进入 FeatureBench inference 流程，并输出官方兼容 `output.jsonl`。
-- 所有 provider coding 测试使用真实 FeatureBench task，不存在 marker-only 或玩具 prompt。
+- 所有由本 roadmap 拥有的 provider coding 测试使用真实 FeatureBench task，不存在 marker-only 或玩具 prompt。
 - 每个成功 task 都有真实 repository patch 和官方 execution verdict；不使用 LLM-as-a-judge。
 - tool-call showcase 来自真实 container execution，并且 provider/session credentials 从未进入 task container、model context、日志或报告。
 - 成绩完整标注 model、provider、execution mode、scaffold、revisions、attempts 和 limits。
@@ -179,7 +181,7 @@ Exit：showcase 能说明 Tokenless 在相同 evaluator 下完成了哪些 featu
 
 ## 非目标
 
-- 不维护第二套 benchmark collection，也不混入 SWE-bench、Terminal-Bench、HumanEval 或 multilingual 数据集。
+- 本 roadmap 不维护第二套 benchmark collection，也不把 DSH interoperability cohort、SWE-bench、Terminal-Bench、HumanEval 或 multilingual 数据集混入 FeatureBench 成绩。
 - 不重新实现 FeatureBench evaluator、container images 或 leaderboard。
 - 不为首轮运行增加 durable queue、自动恢复、结果数据库或分布式调度。
 - 不把 FeatureBench 成绩泛化为所有软件工程能力，也不以 GitHub stars 证明 benchmark 质量。
