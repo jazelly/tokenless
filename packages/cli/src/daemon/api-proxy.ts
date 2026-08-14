@@ -398,9 +398,6 @@ export function normalizeOpenAiRequest(body: unknown): NormalizedRequest {
   const tools = normalizeToolCatalog(record.tools)
   normalizeToolChoice(record.tool_choice)
   normalizeParallelToolCalls(record.parallel_tool_calls)
-  if (tools.length > 0 && record.stream === true) {
-    throw new ApiProxyError(400, 'unsupported_parameter', 'streaming tool calls are not supported in this API version', 'stream')
-  }
   const messages = normalizeToolHistory(rawMessages, tools)
   const options = normalizeTokenlessOptions(record.tokenless)
   return {
@@ -784,6 +781,28 @@ export function openAiStreamFrames(completion: ApiProxyCompletion, requestedMode
   const id = `chatcmpl-${completion.jobId}`
   const created = Math.floor(Date.now() / 1000)
   const base = { id, object: 'chat.completion.chunk', created, model: requestedModel }
+  if (completion.toolCall) {
+    return [
+      sseData({
+        ...base,
+        choices: [{
+          index: 0,
+          delta: {
+            role: 'assistant',
+            tool_calls: [{
+              index: 0,
+              id: completion.toolCall.id,
+              type: 'function',
+              function: { name: completion.toolCall.name, arguments: completion.toolCall.arguments },
+            }],
+          },
+          finish_reason: null,
+        }],
+      }),
+      sseData({ ...base, choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] }),
+      'data: [DONE]\n\n',
+    ]
+  }
   return [
     sseData({ ...base, choices: [{ index: 0, delta: { role: 'assistant', content: completion.text }, finish_reason: null }] }),
     sseData({ ...base, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }),

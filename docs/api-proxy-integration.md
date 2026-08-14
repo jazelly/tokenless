@@ -103,7 +103,7 @@ A well-formed name for a provider that does not exist or is not built in returns
 
 Roles: `system`, `user`, `assistant`, `developer` (`developer` is normalized to `system`).
 
-Modern OpenAI function tools are accepted for non-streaming requests. The current V1 supports one declared call per turn, `tool_choice` omitted or `auto`, and `parallel_tool_calls` omitted or `false`:
+Modern OpenAI function tools are accepted for non-streaming and streaming requests. The current V1 supports one declared call per turn, `tool_choice` omitted or `auto`, and `parallel_tool_calls` omitted or `false`:
 
 ```json
 {
@@ -170,15 +170,16 @@ Any other part type — `image_url`, `image`, `input_audio`, `document`, `tool_r
 | --- | --- |
 | `model`, `messages` | Required |
 | `system` (Anthropic) | Honored as a system message |
-| `stream` | Honored for text; rejected when `tools` is present |
-| `tools` | Modern OpenAI function tools honored for one non-streaming call |
+| `stream` | Honored for text and one function tool call |
+| `stream_options` | Accepted and ignored; no streaming usage is fabricated |
+| `tools` | Modern OpenAI function tools honored for one call |
 | `tools[].function.strict` | Omitted or `false`; `true` is reserved for a later milestone |
 | `tool_choice` | Omitted or `auto`; other forms rejected with 400 |
 | `parallel_tool_calls` | Omitted or `false`; `true` and other forms rejected with 400 |
 | `functions`, `function_call`, `response_format` | **Rejected with 400** |
 | `temperature`, `top_p`, `max_tokens`, `seed`, `stop`, everything else | **Silently ignored** |
 
-Deprecated function fields, structured final output, forced choices, multiple calls, and streaming calls remain fail-closed. They are later milestones, not silently ignored compatibility.
+Deprecated function fields, structured final output, forced choices, and multiple calls remain fail-closed. They are later milestones, not silently ignored compatibility.
 
 The ignored group is the sharper trap: **sampling parameters have no effect.** `temperature: 0` does not make the provider deterministic, and `max_tokens` does not bound the reply. If your code depends on either, the proxy is the wrong transport for that call path. `max_tokens` is ignored rather than rejected only because the Anthropic API requires it.
 
@@ -274,8 +275,6 @@ Log `job_id`. It is the only handle that ties a client-side failure to a durable
 
 `stream: true` returns `text/event-stream` with the correct event sequence for the dialect.
 
-Streaming requests with `tools` are rejected in this milestone. Use non-streaming tool turns.
-
 **There is no incremental text.** A visible provider reply is only readable once it has finished rendering, so the whole response arrives as one terminal chunk after the full latency. The event sequence is preserved so that otherwise-compatible clients keep working; refusing `stream` would break them for no benefit.
 
 OpenAI frames:
@@ -287,6 +286,18 @@ data: {"id":"chatcmpl-...","object":"chat.completion.chunk",...,"choices":[{"ind
 
 data: [DONE]
 ```
+
+A validated tool call uses the same terminal delivery model. Its first frame contains `delta.tool_calls[0]` with stable `index: 0`, `id`, `name`, and the complete arguments string. A second frame carries `finish_reason: "tool_calls"`, followed by `[DONE]`:
+
+```
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk",...,"choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_...","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"package.json\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk",...,"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+```
+
+`stream_options` is accepted for client compatibility but ignored. Tokenless emits no usage frame because it cannot measure provider tokens.
 
 Anthropic frames, in order: `message_start`, `content_block_start`, `content_block_delta` (carries the full text), `content_block_stop`, `message_delta`, `message_stop`.
 
@@ -350,7 +361,7 @@ The status is the signal to branch on. Read `code` for the specific cause and tr
 | --- | --- | --- | --- |
 | 400 | `invalid_request_error` | Malformed body, tool catalog, arguments, or unpaired history | No — fix the request |
 | 400 | `invalid_json` | Body is empty or not JSON | No |
-| 400 | `unsupported_parameter` | Legacy functions, structured output, non-`auto` choice, parallel calls, or streaming tools | No |
+| 400 | `unsupported_parameter` | Legacy functions, structured output, non-`auto` choice, or parallel calls | No |
 | 401 | `control_auth_missing` | No bearer token | No |
 | 403 | `control_auth_rejected` | Wrong bearer token | No |
 | 404 | `model_not_found` | `model` names a provider that does not exist or is not built in | No |
@@ -377,13 +388,13 @@ Design around these, not against them.
 | Latency | Seconds to minutes. Real browser navigation, page settle, typing, submit, and render. |
 | Timeout | 10 minutes, then 504. The underlying job may still be running — check `job_id`. |
 | Concurrency | Effectively serial per profile. One browser, one provider tab. |
-| Tool use | One non-streaming modern function call; caller executes it. |
+| Tool use | One modern function call, non-streaming or terminal SSE; caller executes it. |
 | Structured output | Unsupported, rejected. |
 | Sampling control | Silently ignored. |
 | Token accounting | None. |
 | Multimodal input | Text only. |
 
-Route human-paced Q&A and single external-tool turns through this. Keep structured final output, multiple or streaming calls, low latency, and parallelism on another route.
+Route human-paced Q&A and single external-tool turns through this. Keep structured final output, multiple calls, low latency, and parallelism on another route.
 
 ### Account risk
 
@@ -456,7 +467,8 @@ Note both SDKs need their default timeout raised and their retry count zeroed. D
 - [ ] Read the token from `~/.tokenless/daemon.token`; never log it.
 - [ ] Name models `tokenless/<provider>`; validate against `GET /v1/openai/models`.
 - [ ] For tools, send modern `tools`, use `tool_choice: auto`, set `parallel_tool_calls: false`, execute calls outside Tokenless, and resend complete paired history.
-- [ ] Keep `strict: true`, `functions`, `function_call`, `response_format`, multiple calls, and streaming tool calls on another route.
+- [ ] Keep `strict: true`, `functions`, `function_call`, `response_format`, and multiple calls on another route.
+- [ ] Treat `stream_options` as ignored and do not expect a usage frame.
 - [ ] Do not depend on `temperature`, `max_tokens`, or any sampling field.
 - [ ] Do not read `usage` for cost.
 - [ ] Raise client timeout above 10 minutes; set retries to 0 and handle retries yourself.
@@ -473,6 +485,8 @@ The packaged daemon completed a non-streaming single-tool loop through the real 
 - Job `8a709343-5fd4-46b4-801c-434c5b4a8da0` returned a standard assistant `tool_calls` response for `read_file` with `package.json`.
 - The caller executed the local tool and returned its actual result as paired `role: tool` history.
 - Job `8a3d2c42-e05c-478f-8518-22acb5a39467` returned a final `finish_reason: stop` answer grounded in that package metadata.
+
+An [unmodified DSH streaming run](evidence/dsh-streaming-tool-loop-2026-08-15.md) then completed two sequential single tool turns and a grounded final answer through the packaged daemon and real DeepSeek browser route. DSH reconstructed stable ids, names, index 0, complete arguments, terminal `tool_calls`, and `[DONE]`; DSH—not Tokenless—executed both tools.
 
 ## Known gaps
 

@@ -12,7 +12,6 @@ const addFormats = (AddFormatsModule.default ?? AddFormatsModule) as unknown as 
 export const OPENAI_TOOL_PROTOCOL = 'tokenless.openai-tools/v1'
 
 const MAX_TOOLS = 128
-const MAX_TOOL_DESCRIPTION_LENGTH = 1_024
 const MAX_TOOL_SCHEMA_BYTES = 64 * 1024
 const MAX_RESPONSE_BYTES = 1024 * 1024
 const MAX_PROVIDER_CHROME_BYTES = 256
@@ -61,11 +60,8 @@ export function normalizeOpenAiTools(value: unknown): OpenAiFunctionTool[] {
     }
     if (names.has(definition.name)) fail(`tools contains duplicate function name '${definition.name}'`)
     names.add(definition.name)
-    if (definition.description !== undefined && (
-      typeof definition.description !== 'string' ||
-      definition.description.length > MAX_TOOL_DESCRIPTION_LENGTH
-    )) {
-      fail(`tools[${index}].function.description must be a string of at most ${MAX_TOOL_DESCRIPTION_LENGTH} characters`)
+    if (definition.description !== undefined && typeof definition.description !== 'string') {
+      fail(`tools[${index}].function.description must be a string`)
     }
     if (definition.strict !== undefined && definition.strict !== false) {
       fail(`tools[${index}].function.strict currently supports only false`)

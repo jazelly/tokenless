@@ -303,6 +303,8 @@ DSH 的两个现成 surface承担不同证据：
 
 “unmodified DSH”表示不改 DSH source或为 Tokenless加入 parser special case；配置 base URL、credential reference、provider/model和隔离 workspace属于正常 OpenAI-compatible client setup。
 
+Lifecycle note（2026-08-15）：固定 revision 的 unmodified DSH 已通过 packaged daemon 与真实 DeepSeek browser route 完成两个连续 single-call streaming tool turn 和 grounded final answer；[脱敏证据](../evidence/dsh-streaming-tool-loop-2026-08-15.md)记录 session identity、JSONL digest、stable call ids、terminal finish reasons 与 job state。首次运行在 provider submission 前暴露非契约性的 1,024 字符 tool-description 上限；删除该重复限制并继续依赖现有 1 MiB compiled-prompt bound 后，真实运行通过。
+
 ### Evidence lane A：Tokenless repository grounding
 
 先在 Tokenless repository 的 disposable worktree 或明确 read-only run中提出一个只有读取本地 source 才能正确回答的问题，例如定位 API proxy 当前如何拒绝 `tools`、列出 request normalization 到 provider dispatch 的实际 call path，并引用真实 file/symbol。成功必须同时满足：

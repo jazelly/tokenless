@@ -71,10 +71,11 @@ test('api proxy rejects a model that does not name a provider explicitly', async
   })
 })
 
-test('api proxy accepts modern function tools and complete tool history before profile readiness', async () => {
+test('api proxy accepts streaming function tools and complete tool history before profile readiness', async () => {
   await withDaemon(async (daemon) => {
     await enableApiProxy(daemon.homeDir)
     const tool = functionTool('read_file')
+    tool.function.description = 'Read one UTF-8 file and return its exact contents to the external harness. '.repeat(24)
     const firstTurn = await call(daemon, 'POST', '/v1/openai/chat/completions', {
       model: 'tokenless/chatgpt',
       messages: [
@@ -84,6 +85,8 @@ test('api proxy accepts modern function tools and complete tool history before p
       tools: [tool],
       tool_choice: 'auto',
       parallel_tool_calls: false,
+      stream: true,
+      stream_options: { include_usage: true },
     })
     assert.equal(firstTurn.status, 409)
     assert.equal(firstTurn.body.error.code, 'profile_not_configured')
@@ -215,13 +218,11 @@ test('api proxy keeps legacy and later tool controls explicitly unsupported', as
       ['tool_choice', 'required'],
       ['parallel_tool_calls', true],
       ['parallel_tool_calls', 'false'],
-      ['stream', true],
     ]
     for (const [field, value] of cases) {
       const response = await call(daemon, 'POST', '/v1/openai/chat/completions', {
         model: 'tokenless/chatgpt',
         messages: [{ role: 'user', content: 'hello' }],
-        tools: field === 'stream' ? [functionTool('read_file')] : undefined,
         [field]: value,
       })
       assert.equal(response.status, 400, field)

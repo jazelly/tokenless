@@ -304,7 +304,7 @@
       "post": {
         "operationId": "createApiProxyChatCompletionOnDefaultPath",
         "summary": "Run an OpenAI-compatible chat completion on the default OpenAI path",
-        "description": "Accepts the OpenAI chat-completions request shape and returns the visible provider response. Non-streaming modern function tools and tool-result history are validated and compiled into a request-scoped provider protocol; Tokenless returns one validated standard tool call or final text and never executes caller tools. Only a safely framed, nonce-correlated kind: final envelope whose strict JSON fails on string escaping receives one bounded correction on the same provider and execution strategy; every other protocol failure terminates immediately. Tool definitions may carry strict: false, and parallel_tool_calls may be omitted or false. Streaming tools, strict: true, parallel calls, non-auto tool_choice, deprecated functions/function_call, and response_format are rejected. Text streaming replays the documented event sequence as one terminal chunk. This path is an alias of the /v1/openai prefixed route so an unmodified OpenAI client works with only a baseURL override.",
+        "description": "Accepts the OpenAI chat-completions request shape and returns the visible provider response. Modern function tools and tool-result history are validated and compiled into a request-scoped provider protocol; Tokenless returns one validated standard tool call or final text and never executes caller tools. Streaming returns one terminal text or tool-call delta, a terminal finish-reason choice, and [DONE]; stream_options is accepted but ignored, and no streaming usage is fabricated. Only a safely framed, nonce-correlated kind: final envelope whose strict JSON fails on string escaping receives one bounded correction on the same provider and execution strategy; every other protocol failure terminates immediately. Tool definitions may carry strict: false, and parallel_tool_calls may be omitted or false. Strict: true, parallel calls, non-auto tool_choice, deprecated functions/function_call, and response_format are rejected. This path is an alias of the /v1/openai prefixed route so an unmodified OpenAI client works with only a baseURL override.",
         "requestBody": {
           "required": true,
           "content": {
@@ -1245,7 +1245,7 @@
       "post": {
         "operationId": "createApiProxyChatCompletion",
         "summary": "Run an OpenAI-compatible chat completion through a visible provider page",
-        "description": "Accepts the OpenAI chat-completions request shape and returns the visible provider response. Non-streaming modern function tools and tool-result history are validated and compiled into a request-scoped provider protocol; Tokenless returns one validated standard tool call or final text and never executes caller tools. Only a safely framed, nonce-correlated kind: final envelope whose strict JSON fails on string escaping receives one bounded correction on the same provider and execution strategy; every other protocol failure terminates immediately. Tool definitions may carry strict: false, and parallel_tool_calls may be omitted or false. Streaming tools, strict: true, parallel calls, non-auto tool_choice, deprecated functions/function_call, and response_format are rejected. Text streaming replays the documented event sequence as one terminal chunk.",
+        "description": "Accepts the OpenAI chat-completions request shape and returns the visible provider response. Modern function tools and tool-result history are validated and compiled into a request-scoped provider protocol; Tokenless returns one validated standard tool call or final text and never executes caller tools. Streaming returns one terminal text or tool-call delta, a terminal finish-reason choice, and [DONE]; stream_options is accepted but ignored, and no streaming usage is fabricated. Only a safely framed, nonce-correlated kind: final envelope whose strict JSON fails on string escaping receives one bounded correction on the same provider and execution strategy; every other protocol failure terminates immediately. Tool definitions may carry strict: false, and parallel_tool_calls may be omitted or false. Strict: true, parallel calls, non-auto tool_choice, deprecated functions/function_call, and response_format are rejected.",
         "requestBody": {
           "required": true,
           "content": {
@@ -5253,8 +5253,7 @@
             "pattern": "^[A-Za-z0-9_-]{1,64}$"
           },
           "description": {
-            "type": "string",
-            "maxLength": 1024
+            "type": "string"
           },
           "parameters": {
             "type": "object",
@@ -5338,6 +5337,10 @@
           },
           "stream": {
             "type": "boolean"
+          },
+          "stream_options": {
+            "type": "object",
+            "description": "Accepted for OpenAI/DSH serializer compatibility and ignored. Streaming responses do not include fabricated usage."
           },
           "tools": {
             "type": "array",
