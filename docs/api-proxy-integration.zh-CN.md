@@ -103,7 +103,7 @@ tokenless/<provider>
 
 支持的 role：`system`、`user`、`assistant`、`developer`（`developer` 会归一化为 `system`）。
 
-非流式和流式请求都支持现代 OpenAI function tools。当前 V1 每轮只支持一个已声明调用；`tool_choice` 可省略或设为 `auto`，`parallel_tool_calls` 可省略或设为 `false`：
+非流式和流式请求都支持现代 OpenAI function tools。当前 V1 每轮只支持一个已声明调用，`parallel_tool_calls` 只能省略或设为 `false`：
 
 ```json
 {
@@ -120,13 +120,22 @@ tokenless/<provider>
         "required": ["path"],
         "properties": {"path": {"type": "string"}}
       },
-      "strict": false
+      "strict": true
     }
   }],
   "tool_choice": "auto",
   "parallel_tool_calls": false
 }
 ```
+
+`tool_choice` 支持四种单调用模式：
+
+- 省略或 `"auto"`：需要时返回一个已声明调用，否则返回最终文本。
+- `"none"`：只能返回最终文本。
+- `"required"`：必须返回恰好一个已声明调用。
+- `{"type":"function","function":{"name":"read_file"}}`：必须返回指定的已声明调用。
+
+使用 `strict: true` 时，parameters 根节点必须是 object。每个 object schema（包括可空的嵌套 object）都必须设置 `additionalProperties: false`，并在 `required` 中列出所有 property key；可选字段用 nullable type 表示。Tokenless 会在提交 provider 前拒绝不合规的 strict schema，并按声明 schema 校验返回 arguments。
 
 调用方负责执行返回的 tool。下一次请求要重发同一 catalog 和完整、有序的调用/结果配对：
 
@@ -173,13 +182,13 @@ Tokenless 会在提交 provider 前校验 call id 唯一性、已声明名称、
 | `stream` | 文本与单个 function tool call 均生效 |
 | `stream_options` | 接受但忽略；不会伪造 streaming usage |
 | `tools` | 支持一个现代 OpenAI function call |
-| `tools[].function.strict` | 可省略或设为 `false`；`true` 留待后续 milestone |
-| `tool_choice` | 可省略或设为 `auto`；其他形式返回 400 |
+| `tools[].function.strict` | Boolean；`true` 要求递归 closed object 且每个 property 都是 required |
+| `tool_choice` | 省略/`auto`、`none`、`required` 或一个精确的已声明 function |
 | `parallel_tool_calls` | 可省略或设为 `false`；`true` 与其他形式返回 400 |
 | `functions`、`function_call`、`response_format` | **返回 400 拒绝** |
 | `temperature`、`top_p`、`max_tokens`、`seed`、`stop` 及其他全部字段 | **静默忽略** |
 
-旧版 function 字段、结构化最终输出、强制 choice 与多调用仍会 fail closed。它们属于后续 milestone，不会被静默兼容。
+旧版 function 字段、结构化最终输出与多调用仍会 fail closed。它们属于后续 milestone，不会被静默兼容。
 
 被忽略的那组才是更隐蔽的坑：**采样参数完全无效。** `temperature: 0` 不会让 provider 变得确定，`max_tokens` 也不会约束回复长度。如果你的代码依赖其中任何一个，那条调用路径就不该走这个 proxy。`max_tokens` 之所以只被忽略而非拒绝，仅仅因为 Anthropic API 强制要求它。
 
@@ -339,7 +348,7 @@ Tokenless 会对**除最后一条 user message 之外**的全部消息做指纹�
 
 所有失败都会按对应方言的错误信封返回。
 
-仅对 tool 请求，一种狭窄 failure 可在同一 provider 与 execution strategy 上获得 bounded correction：安全 marker/chrome framing 必须已按精确顺序识别本请求的 protocol、nonce 与 `kind: final`，而 strict JSON parsing 失败于 final-content escaping。Framing、correlation、duplicate-key、tool-call、arguments/schema 与 valid-envelope shape failure 会立即返回 `provider_output_protocol_error`。Correction 必须返回同一 final outcome，并且只校验一次；transport failure、timeout、ambiguous submission、已暴露 call 与调用方 tool execution 都不会重试。
+仅对 tool 请求，一种狭窄 failure 可在同一 provider 与 execution strategy 上获得 bounded correction：安全 marker/chrome framing 必须已按精确顺序识别本请求的 protocol、nonce 与当前允许的 `kind: final`，而 strict JSON parsing 失败于 final-content escaping。Framing、correlation、duplicate-key、tool-choice、tool-call、arguments/schema 与 valid-envelope shape failure 会立即返回 `provider_output_protocol_error`。Correction 必须返回同一 final outcome，并且只校验一次；transport failure、timeout、ambiguous submission、已暴露 call 与调用方 tool execution 都不会重试。
 
 OpenAI，其中 `param` 会在可定位时指出出错字段：
 
@@ -359,9 +368,9 @@ Anthropic：
 
 | 状态码 | Code | 根因 | 可否重试 |
 | --- | --- | --- | --- |
-| 400 | `invalid_request_error` | 请求体、tool catalog、arguments 或历史配对错误 | 否 —— 修正请求 |
+| 400 | `invalid_request_error` | 请求体、tool catalog、tool choice、arguments 或历史配对错误 | 否 —— 修正请求 |
 | 400 | `invalid_json` | 请求体为空或不是 JSON | 否 |
-| 400 | `unsupported_parameter` | 旧版 functions、结构化输出、非 `auto` choice 或 parallel calls | 否 |
+| 400 | `unsupported_parameter` | 旧版 functions、结构化输出或 parallel calls | 否 |
 | 401 | `control_auth_missing` | 缺少 bearer token | 否 |
 | 403 | `control_auth_rejected` | bearer token 错误 | 否 |
 | 404 | `model_not_found` | `model` 指向不存在或未内置的 provider | 否 |
@@ -466,8 +475,9 @@ console.log(message.content)
 - [ ] 从 `tokenless api-proxy status --json` 读取 base URL，不要用常量。
 - [ ] 从 `~/.tokenless/daemon.token` 读取 token；绝不写入日志。
 - [ ] model 命名为 `tokenless/<provider>`；用 `GET /v1/openai/models` 校验。
-- [ ] Tool 请求使用现代 `tools` 与 `tool_choice: auto`，设置 `parallel_tool_calls: false`，在 Tokenless 外执行调用，并重发完整配对历史。
-- [ ] `strict: true`、`functions`、`function_call`、`response_format` 与多调用继续走其他 route。
+- [ ] Tool 请求使用现代 `tools`，选择所需 `tool_choice`，设置 `parallel_tool_calls: false`，在 Tokenless 外执行调用，并重发完整配对历史。
+- [ ] 使用 `strict: true` 时，根节点使用 object，每个 object 都设置 `additionalProperties: false`，要求所有 property，并用 nullable type 表示可选值。
+- [ ] `functions`、`function_call`、`response_format` 与多调用继续走其他 route。
 - [ ] 把 `stream_options` 视为已忽略，且不要期待 usage 帧。
 - [ ] 不要依赖 `temperature`、`max_tokens` 或任何采样字段。
 - [ ] 不要用 `usage` 计算成本。

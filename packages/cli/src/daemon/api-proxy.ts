@@ -17,6 +17,7 @@ import {
   parseOpenAiToolResponse,
   type OpenAiFunctionTool,
   type OpenAiProtocolMessage,
+  type OpenAiToolChoice,
 } from './openai-tool-protocol.js'
 
 /**
@@ -66,7 +67,7 @@ type NormalizedRequest = {
   executionMode: 'browser' | 'direct' | null
   providerBackend: ProviderBackend | null
   authContextId: string | null
-  toolProtocol: { nonce: string; tools: OpenAiFunctionTool[] } | null
+  toolProtocol: { nonce: string; tools: OpenAiFunctionTool[]; choice: OpenAiToolChoice } | null
 }
 
 export type ApiProxyCompletion = {
@@ -313,7 +314,12 @@ function newConversationPlan(request: NormalizedRequest) {
 
 function requestPrompt(request: NormalizedRequest) {
   const prompt = request.toolProtocol
-    ? compileOpenAiToolPrompt(request.messages, request.toolProtocol.tools, request.toolProtocol.nonce)
+    ? compileOpenAiToolPrompt(
+        request.messages,
+        request.toolProtocol.tools,
+        request.toolProtocol.nonce,
+        request.toolProtocol.choice,
+      )
     : flattenTranscript(request.messages)
   assertPromptSize(prompt)
   return prompt
@@ -396,7 +402,7 @@ export function normalizeOpenAiRequest(body: unknown): NormalizedRequest {
   }
   rejectUnsupportedOpenAiFields(record)
   const tools = normalizeToolCatalog(record.tools)
-  normalizeToolChoice(record.tool_choice)
+  const choice = normalizeToolChoice(record.tool_choice, tools)
   normalizeParallelToolCalls(record.parallel_tool_calls)
   const messages = normalizeToolHistory(rawMessages, tools)
   const options = normalizeTokenlessOptions(record.tokenless)
@@ -406,7 +412,7 @@ export function normalizeOpenAiRequest(body: unknown): NormalizedRequest {
     stream: record.stream === true,
     requestedModel: String(record.model),
     upstreamModel: model.upstreamModel,
-    toolProtocol: tools.length > 0 ? { nonce: randomUUID(), tools } : null,
+    toolProtocol: tools.length > 0 ? { nonce: randomUUID(), tools, choice } : null,
     ...options,
   }
 }
@@ -446,11 +452,7 @@ export function normalizeAnthropicRequest(body: unknown): NormalizedRequest {
   }
 }
 
-/**
- * Tool use, forced tool choice, and structured-output contracts have no visible
- * page equivalent. Accepting them silently would return prose where the caller
- * expects a tool call, so the proxy fails closed instead.
- */
+/** Deprecated function fields and structured final output remain fail-closed. */
 function rejectUnsupportedOpenAiFields(record: Record<string, unknown>) {
   for (const field of ['functions', 'function_call', 'response_format']) {
     if (record[field] !== undefined) {
@@ -493,14 +495,32 @@ function normalizeToolHistory(messages: unknown[], tools: readonly OpenAiFunctio
   }
 }
 
-function normalizeToolChoice(value: unknown) {
-  if (value === undefined || value === 'auto') return
-  throw new ApiProxyError(
-    400,
-    'unsupported_parameter',
-    'tool_choice currently supports only auto; other forms are reserved for a later API version',
-    'tool_choice',
-  )
+function normalizeToolChoice(value: unknown, tools: readonly OpenAiFunctionTool[]): OpenAiToolChoice {
+  if (value === undefined || value === 'auto') return { mode: 'auto' }
+  if (value === 'none') return { mode: 'none' }
+  if (value === 'required') {
+    if (tools.length === 0) throw badRequest('tool_choice required needs a non-empty tools catalog', 'tool_choice')
+    return { mode: 'required' }
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw badRequest('tool_choice must be auto, none, required, or a named function choice', 'tool_choice')
+  }
+  const choice = value as Record<string, unknown>
+  if (Object.keys(choice).length !== 2 || choice.type !== 'function' || !Object.hasOwn(choice, 'function')) {
+    throw badRequest('named tool_choice must contain exactly type and function', 'tool_choice')
+  }
+  const fn = choice.function
+  if (!fn || typeof fn !== 'object' || Array.isArray(fn)) {
+    throw badRequest('named tool_choice.function must be an object', 'tool_choice')
+  }
+  const named = fn as Record<string, unknown>
+  if (Object.keys(named).length !== 1 || typeof named.name !== 'string') {
+    throw badRequest('named tool_choice.function must contain exactly one string name', 'tool_choice')
+  }
+  if (!tools.some((tool) => tool.name === named.name)) {
+    throw badRequest(`tool_choice references undeclared function '${named.name}'`, 'tool_choice')
+  }
+  return { mode: 'named', name: named.name }
 }
 
 function normalizeParallelToolCalls(value: unknown) {
@@ -625,7 +645,12 @@ async function validatedCompletion(
   let completion = initial
   let result
   try {
-    result = parseOpenAiToolResponse(completion.text, request.toolProtocol.nonce, request.toolProtocol.tools)
+    result = parseOpenAiToolResponse(
+      completion.text,
+      request.toolProtocol.nonce,
+      request.toolProtocol.tools,
+      request.toolProtocol.choice,
+    )
   } catch (error) {
     const validationError = error instanceof Error ? error.message : 'invalid output'
     if (!(error instanceof OpenAiToolResponseProtocolError) || !error.correctionEligible) {
@@ -641,7 +666,12 @@ async function validatedCompletion(
     }
     completion = await correct(prompt)
     try {
-      result = parseOpenAiToolResponse(completion.text, request.toolProtocol.nonce, request.toolProtocol.tools)
+      result = parseOpenAiToolResponse(
+        completion.text,
+        request.toolProtocol.nonce,
+        request.toolProtocol.tools,
+        request.toolProtocol.choice,
+      )
     } catch (correctedError) {
       throw providerOutputProtocolError(correctedError instanceof Error ? correctedError.message : 'invalid corrected output')
     }

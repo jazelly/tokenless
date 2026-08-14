@@ -103,7 +103,7 @@ A well-formed name for a provider that does not exist or is not built in returns
 
 Roles: `system`, `user`, `assistant`, `developer` (`developer` is normalized to `system`).
 
-Modern OpenAI function tools are accepted for non-streaming and streaming requests. The current V1 supports one declared call per turn, `tool_choice` omitted or `auto`, and `parallel_tool_calls` omitted or `false`:
+Modern OpenAI function tools are accepted for non-streaming and streaming requests. The current V1 supports one declared call per turn and keeps `parallel_tool_calls` omitted or `false`:
 
 ```json
 {
@@ -120,13 +120,22 @@ Modern OpenAI function tools are accepted for non-streaming and streaming reques
         "required": ["path"],
         "properties": {"path": {"type": "string"}}
       },
-      "strict": false
+      "strict": true
     }
   }],
   "tool_choice": "auto",
   "parallel_tool_calls": false
 }
 ```
+
+`tool_choice` supports four single-call modes:
+
+- Omitted or `"auto"`: return one declared call when needed, otherwise final text.
+- `"none"`: return final text only.
+- `"required"`: return exactly one declared call.
+- `{"type":"function","function":{"name":"read_file"}}`: return exactly that declared call.
+
+For `strict: true`, the parameters root must be an object. Every object schema, including nullable nested objects, must set `additionalProperties: false` and list every property key in `required`; represent optional fields with a nullable type. Tokenless rejects malformed strict schemas before provider submission and validates returned arguments against the declared schema.
 
 The caller executes returned tools. On the next request, resend the same catalog and the complete ordered pair:
 
@@ -173,13 +182,13 @@ Any other part type — `image_url`, `image`, `input_audio`, `document`, `tool_r
 | `stream` | Honored for text and one function tool call |
 | `stream_options` | Accepted and ignored; no streaming usage is fabricated |
 | `tools` | Modern OpenAI function tools honored for one call |
-| `tools[].function.strict` | Omitted or `false`; `true` is reserved for a later milestone |
-| `tool_choice` | Omitted or `auto`; other forms rejected with 400 |
+| `tools[].function.strict` | Boolean; `true` requires recursive closed objects with every property required |
+| `tool_choice` | Omitted/`auto`, `none`, `required`, or one exact declared function |
 | `parallel_tool_calls` | Omitted or `false`; `true` and other forms rejected with 400 |
 | `functions`, `function_call`, `response_format` | **Rejected with 400** |
 | `temperature`, `top_p`, `max_tokens`, `seed`, `stop`, everything else | **Silently ignored** |
 
-Deprecated function fields, structured final output, forced choices, and multiple calls remain fail-closed. They are later milestones, not silently ignored compatibility.
+Deprecated function fields, structured final output, and multiple calls remain fail-closed. They are later milestones, not silently ignored compatibility.
 
 The ignored group is the sharper trap: **sampling parameters have no effect.** `temperature: 0` does not make the provider deterministic, and `max_tokens` does not bound the reply. If your code depends on either, the proxy is the wrong transport for that call path. `max_tokens` is ignored rather than rejected only because the Anthropic API requires it.
 
@@ -339,7 +348,7 @@ If your client rewrites history at all, prefer `new-conversation` — you get th
 
 Every failure returns the dialect's own error envelope.
 
-For a tool request only, one narrow failure may receive a bounded correction on the same provider and execution strategy: safe marker/chrome framing must already identify this request's protocol, nonce, and `kind: final` in exact order, while strict JSON parsing fails on final-content escaping. Framing, correlation, duplicate-key, tool-call, argument/schema, and valid-envelope shape failures return `provider_output_protocol_error` immediately. The correction must return the same final outcome and is validated once; transport failures, timeouts, ambiguous submissions, exposed calls, and caller tool execution are never retried.
+For a tool request only, one narrow failure may receive a bounded correction on the same provider and execution strategy: safe marker/chrome framing must already identify this request's protocol, nonce, and an allowed `kind: final` in exact order, while strict JSON parsing fails on final-content escaping. Framing, correlation, duplicate-key, tool-choice, tool-call, argument/schema, and valid-envelope shape failures return `provider_output_protocol_error` immediately. The correction must return the same final outcome and is validated once; transport failures, timeouts, ambiguous submissions, exposed calls, and caller tool execution are never retried.
 
 OpenAI, where `param` names the offending field when there is one:
 
@@ -359,9 +368,9 @@ The status is the signal to branch on. Read `code` for the specific cause and tr
 
 | Status | Code | Cause | Retry? |
 | --- | --- | --- | --- |
-| 400 | `invalid_request_error` | Malformed body, tool catalog, arguments, or unpaired history | No — fix the request |
+| 400 | `invalid_request_error` | Malformed body, tool catalog, tool choice, arguments, or unpaired history | No — fix the request |
 | 400 | `invalid_json` | Body is empty or not JSON | No |
-| 400 | `unsupported_parameter` | Legacy functions, structured output, non-`auto` choice, or parallel calls | No |
+| 400 | `unsupported_parameter` | Legacy functions, structured output, or parallel calls | No |
 | 401 | `control_auth_missing` | No bearer token | No |
 | 403 | `control_auth_rejected` | Wrong bearer token | No |
 | 404 | `model_not_found` | `model` names a provider that does not exist or is not built in | No |
@@ -466,8 +475,9 @@ Note both SDKs need their default timeout raised and their retry count zeroed. D
 - [ ] Read base URL from `tokenless api-proxy status --json`, not a constant.
 - [ ] Read the token from `~/.tokenless/daemon.token`; never log it.
 - [ ] Name models `tokenless/<provider>`; validate against `GET /v1/openai/models`.
-- [ ] For tools, send modern `tools`, use `tool_choice: auto`, set `parallel_tool_calls: false`, execute calls outside Tokenless, and resend complete paired history.
-- [ ] Keep `strict: true`, `functions`, `function_call`, `response_format`, and multiple calls on another route.
+- [ ] For tools, send modern `tools`, choose the required `tool_choice`, set `parallel_tool_calls: false`, execute calls outside Tokenless, and resend complete paired history.
+- [ ] For `strict: true`, use an object root, close every object with `additionalProperties: false`, require every property, and use nullable types for optional values.
+- [ ] Keep `functions`, `function_call`, `response_format`, and multiple calls on another route.
 - [ ] Treat `stream_options` as ignored and do not expect a usage frame.
 - [ ] Do not depend on `temperature`, `max_tokens`, or any sampling field.
 - [ ] Do not read `usage` for cost.

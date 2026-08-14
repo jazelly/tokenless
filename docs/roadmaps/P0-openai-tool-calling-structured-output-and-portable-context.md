@@ -305,6 +305,8 @@ DSH 的两个现成 surface承担不同证据：
 
 Lifecycle note（2026-08-15）：固定 revision 的 unmodified DSH 已通过 packaged daemon 与真实 DeepSeek browser route 完成两个连续 single-call streaming tool turn 和 grounded final answer；[脱敏证据](../evidence/dsh-streaming-tool-loop-2026-08-15.md)记录 session identity、JSONL digest、stable call ids、terminal finish reasons 与 job state。首次运行在 provider submission 前暴露非契约性的 1,024 字符 tool-description 上限；删除该重复限制并继续依赖现有 1 MiB compiled-prompt bound 后，真实运行通过。
 
+Lifecycle note（2026-08-15）：packaged daemon 与真实 DeepSeek browser route 已分别证明 single-call `tool_choice` 的 `none`、`required` 与 exact named function，以及递归 closed `strict: true` object schema 的 schema-valid arguments；[脱敏证据](../evidence/openai-tool-choice-strict-deepseek-2026-08-15.md)记录 public finish reason、call count/name、validation outcome 与 job id。Choice/schema violation 在 public parser boundary fail closed，且 valid-but-choice-violating output 不进入已有 bounded final correction。Multiple calls 与 `parallel_tool_calls: true` 仍未实现或公开。
+
 ### Evidence lane A：Tokenless repository grounding
 
 先在 Tokenless repository 的 disposable worktree 或明确 read-only run中提出一个只有读取本地 source 才能正确回答的问题，例如定位 API proxy 当前如何拒绝 `tools`、列出 request normalization 到 provider dispatch 的实际 call path，并引用真实 file/symbol。成功必须同时满足：

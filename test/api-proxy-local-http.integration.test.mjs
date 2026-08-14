@@ -115,6 +115,48 @@ test('api proxy accepts streaming function tools and complete tool history befor
   })
 })
 
+test('api proxy accepts every single-call tool choice and recursive strict schemas before profile readiness', async () => {
+  await withDaemon(async (daemon) => {
+    await enableApiProxy(daemon.homeDir)
+    const strictTool = functionTool('read_file')
+    strictTool.function.strict = true
+    strictTool.function.parameters = {
+      type: 'object',
+      additionalProperties: false,
+      required: ['path', 'options'],
+      properties: {
+        path: { type: 'string', minLength: 1 },
+        options: {
+          type: ['object', 'null'],
+          additionalProperties: false,
+          required: ['encoding'],
+          properties: { encoding: { type: ['string', 'null'] } },
+        },
+      },
+    }
+    const choices = [
+      undefined,
+      'auto',
+      'none',
+      'required',
+      { type: 'function', function: { name: 'read_file' } },
+    ]
+    for (const toolChoice of choices) {
+      const response = await call(daemon, 'POST', '/v1/openai/chat/completions', {
+        model: 'tokenless/chatgpt',
+        messages: [{ role: 'user', content: 'Read package.json.' }],
+        tools: [strictTool],
+        ...(toolChoice === undefined ? {} : { tool_choice: toolChoice }),
+        parallel_tool_calls: false,
+      })
+      assert.equal(response.status, 409, JSON.stringify(toolChoice))
+      assert.equal(response.body.error.code, 'profile_not_configured', JSON.stringify(toolChoice))
+    }
+    const jobs = await call(daemon, 'GET', '/jobs')
+    assert.equal(jobs.body.length, 0)
+  })
+})
+
 test('api proxy rejects malformed tool catalogs and history before creating a job', async () => {
   await withDaemon(async (daemon) => {
     await enableApiProxy(daemon.homeDir)
@@ -133,14 +175,44 @@ test('api proxy rejects malformed tool catalogs and history before creating a jo
         },
         param: 'tools',
       },
-      {
-        name: 'strict tool schema reserved for later milestone',
+      ...[
+        { name: 'strict must be boolean', strict: 'true' },
+        { name: 'strict parameters root is not an object', strict: true, parameters: { type: 'string' } },
+        {
+          name: 'strict parameters root is nullable',
+          strict: true,
+          parameters: { ...validTool.function.parameters, type: ['object', 'null'] },
+        },
+        {
+          name: 'strict root object allows extra properties',
+          strict: true,
+          parameters: { ...validTool.function.parameters, additionalProperties: true },
+        },
+        {
+          name: 'strict root object omits a required property',
+          strict: true,
+          parameters: { ...validTool.function.parameters, required: [] },
+        },
+        {
+          name: 'strict nested nullable object allows extra properties',
+          strict: true,
+          parameters: {
+            ...validTool.function.parameters,
+            required: ['path', 'options'],
+            properties: {
+              ...validTool.function.parameters.properties,
+              options: { type: ['object', 'null'], properties: { encoding: { type: 'string' } }, required: ['encoding'] },
+            },
+          },
+        },
+      ].map(({ name, strict, parameters = validTool.function.parameters }) => ({
+        name,
         body: {
           messages: [{ role: 'user', content: 'hello' }],
-          tools: [{ ...validTool, function: { ...validTool.function, strict: true } }],
+          tools: [{ ...validTool, function: { ...validTool.function, strict, parameters } }],
         },
         param: 'tools',
-      },
+      })),
       {
         name: 'undeclared history name',
         body: {
@@ -193,6 +265,24 @@ test('api proxy rejects malformed tool catalogs and history before creating a jo
         },
         param: 'messages',
       },
+      ...[
+        { name: 'unknown string tool choice', toolChoice: 'sometimes' },
+        { name: 'named tool choice references undeclared function', toolChoice: { type: 'function', function: { name: 'write_file' } } },
+        { name: 'named tool choice has invalid shape', toolChoice: { type: 'function', function: { name: 'read_file', extra: true } } },
+      ].map(({ name, toolChoice }) => ({
+        name,
+        body: {
+          messages: [{ role: 'user', content: 'hello' }],
+          tools: [validTool],
+          tool_choice: toolChoice,
+        },
+        param: 'tool_choice',
+      })),
+      {
+        name: 'required tool choice has no catalog',
+        body: { messages: [{ role: 'user', content: 'hello' }], tool_choice: 'required' },
+        param: 'tool_choice',
+      },
     ]
     for (const entry of cases) {
       const response = await call(daemon, 'POST', '/v1/openai/chat/completions', {
@@ -208,14 +298,13 @@ test('api proxy rejects malformed tool catalogs and history before creating a jo
   })
 })
 
-test('api proxy keeps legacy and later tool controls explicitly unsupported', async () => {
+test('api proxy keeps legacy structured output and parallel calls explicitly unsupported', async () => {
   await withDaemon(async (daemon) => {
     await enableApiProxy(daemon.homeDir)
     const cases = [
       ['functions', []],
       ['function_call', 'auto'],
       ['response_format', { type: 'json_object' }],
-      ['tool_choice', 'required'],
       ['parallel_tool_calls', true],
       ['parallel_tool_calls', 'false'],
     ]
