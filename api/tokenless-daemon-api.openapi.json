@@ -304,7 +304,7 @@
       "post": {
         "operationId": "createApiProxyChatCompletionOnDefaultPath",
         "summary": "Run an OpenAI-compatible chat completion on the default OpenAI path",
-        "description": "Accepts the OpenAI chat-completions request shape and returns the visible provider response. Tools, tool_choice, functions, function_call, and response_format are rejected because visible pages expose no equivalent control. Streaming responses replay the documented event sequence as one terminal chunk. This path is an alias of the /v1/openai prefixed route so an unmodified OpenAI client works with only a baseURL override.",
+        "description": "Accepts the OpenAI chat-completions request shape and returns the visible provider response. Non-streaming modern function tools and tool-result history are validated and compiled into a request-scoped provider protocol; Tokenless returns one validated standard tool call or final text and never executes caller tools. Only a safely framed, nonce-correlated kind: final envelope whose strict JSON fails on string escaping receives one bounded correction on the same provider and execution strategy; every other protocol failure terminates immediately. Tool definitions may carry strict: false, and parallel_tool_calls may be omitted or false. Streaming tools, strict: true, parallel calls, non-auto tool_choice, deprecated functions/function_call, and response_format are rejected. Text streaming replays the documented event sequence as one terminal chunk. This path is an alias of the /v1/openai prefixed route so an unmodified OpenAI client works with only a baseURL override.",
         "requestBody": {
           "required": true,
           "content": {
@@ -1245,7 +1245,7 @@
       "post": {
         "operationId": "createApiProxyChatCompletion",
         "summary": "Run an OpenAI-compatible chat completion through a visible provider page",
-        "description": "Accepts the OpenAI chat-completions request shape and returns the visible provider response. Tools, tool_choice, functions, function_call, and response_format are rejected because visible pages expose no equivalent control. Streaming responses replay the documented event sequence as one terminal chunk.",
+        "description": "Accepts the OpenAI chat-completions request shape and returns the visible provider response. Non-streaming modern function tools and tool-result history are validated and compiled into a request-scoped provider protocol; Tokenless returns one validated standard tool call or final text and never executes caller tools. Only a safely framed, nonce-correlated kind: final envelope whose strict JSON fails on string escaping receives one bounded correction on the same provider and execution strategy; every other protocol failure terminates immediately. Tool definitions may carry strict: false, and parallel_tool_calls may be omitted or false. Streaming tools, strict: true, parallel calls, non-auto tool_choice, deprecated functions/function_call, and response_format are rejected. Text streaming replays the documented event sequence as one terminal chunk.",
         "requestBody": {
           "required": true,
           "content": {
@@ -5186,18 +5186,25 @@
       "ApiProxyMessage": {
         "type": "object",
         "required": [
-          "role",
-          "content"
+          "role"
         ],
         "properties": {
           "role": {
-            "type": "string",
-            "minLength": 1
+            "enum": [
+              "system",
+              "developer",
+              "user",
+              "assistant",
+              "tool"
+            ]
           },
           "content": {
             "oneOf": [
               {
                 "type": "string"
+              },
+              {
+                "type": "null"
               },
               {
                 "type": "array",
@@ -5218,6 +5225,96 @@
                 }
               }
             ]
+          },
+          "tool_call_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,128}$"
+          },
+          "tool_calls": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/ApiProxyOpenAiToolCall"
+            }
+          }
+        }
+      },
+      "ApiProxyOpenAiFunctionDefinition": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "parameters"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,64}$"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "parameters": {
+            "type": "object",
+            "description": "A valid JSON Schema of at most 64 KiB. Tokenless validates tool-call arguments against it."
+          },
+          "strict": {
+            "const": false,
+            "description": "Accepted for current DSH/OpenAI serializer compatibility. Strict true is reserved for a later milestone."
+          }
+        }
+      },
+      "ApiProxyOpenAiFunctionTool": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "function"
+        ],
+        "properties": {
+          "type": {
+            "const": "function"
+          },
+          "function": {
+            "$ref": "#/components/schemas/ApiProxyOpenAiFunctionDefinition"
+          }
+        }
+      },
+      "ApiProxyOpenAiToolCall": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "type",
+          "function"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,128}$"
+          },
+          "type": {
+            "const": "function"
+          },
+          "function": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "arguments"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,64}$"
+              },
+              "arguments": {
+                "type": "string",
+                "description": "A strict JSON object serialized as a string."
+              }
+            }
           }
         }
       },
@@ -5241,6 +5338,20 @@
           },
           "stream": {
             "type": "boolean"
+          },
+          "tools": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 128,
+            "items": {
+              "$ref": "#/components/schemas/ApiProxyOpenAiFunctionTool"
+            }
+          },
+          "tool_choice": {
+            "const": "auto"
+          },
+          "parallel_tool_calls": {
+            "const": false
           }
         }
       },
@@ -5418,12 +5529,30 @@
                       "const": "assistant"
                     },
                     "content": {
-                      "type": "string"
+                      "oneOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "tool_calls": {
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": 1,
+                      "items": {
+                        "$ref": "#/components/schemas/ApiProxyOpenAiToolCall"
+                      }
                     }
                   }
                 },
                 "finish_reason": {
-                  "const": "stop"
+                  "enum": [
+                    "stop",
+                    "tool_calls"
+                  ]
                 }
               }
             }

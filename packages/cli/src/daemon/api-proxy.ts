@@ -8,6 +8,16 @@ import { getProviderInstanceById, providerRegistry } from '../providers/registry
 import type { Job, JobStore } from './job-store.js'
 import type { G4fServiceClient } from '../g4f/client.js'
 import { ProviderProtocolRouter } from '../providers/direct/protocol-router.js'
+import {
+  compileOpenAiToolCorrectionPrompt,
+  compileOpenAiToolPrompt,
+  normalizeOpenAiMessages,
+  normalizeOpenAiTools,
+  OpenAiToolResponseProtocolError,
+  parseOpenAiToolResponse,
+  type OpenAiFunctionTool,
+  type OpenAiProtocolMessage,
+} from './openai-tool-protocol.js'
 
 /**
  * Callers reach this surface with vendor SDKs that branch on the HTTP status, so
@@ -47,20 +57,16 @@ const DEFAULT_JOB_TIMEOUT_MS = 10 * 60_000
 
 export type ApiProxyDialect = 'openai' | 'anthropic'
 
-type NormalizedMessage = {
-  role: 'system' | 'user' | 'assistant'
-  text: string
-}
-
 type NormalizedRequest = {
   provider: string
-  messages: NormalizedMessage[]
+  messages: OpenAiProtocolMessage[]
   stream: boolean
   requestedModel: string
   upstreamModel: string
   executionMode: 'browser' | 'direct' | null
   providerBackend: ProviderBackend | null
   authContextId: string | null
+  toolProtocol: { nonce: string; tools: OpenAiFunctionTool[] } | null
 }
 
 export type ApiProxyCompletion = {
@@ -71,6 +77,12 @@ export type ApiProxyCompletion = {
   conversationMode: ApiProxyConversationMode
   executionMode: 'browser' | 'direct'
   providerBackend: 'browser' | ProviderBackend
+  toolCall?: { id: string; name: string; arguments: string }
+}
+
+type RawApiProxyCompletion = {
+  text: string
+  base: Omit<ApiProxyCompletion, 'text' | 'toolCall'>
 }
 
 export class ApiProxyAdapter {
@@ -99,6 +111,7 @@ export class ApiProxyAdapter {
     // mistake and must be rejected the same way whether or not this
     // installation happens to have a usable profile yet.
     assertProviderSupported(request.provider)
+    if (request.toolProtocol) requestPrompt(request)
     const profile = await this.profiles.resolveProfile()
     if (profile.lifecycle !== 'ready') {
       throw new ApiProxyError(
@@ -122,27 +135,12 @@ export class ApiProxyAdapter {
       ? this.protocolRouter.backend(config.directProvider, request.provider, request.providerBackend ?? undefined)
       : 'browser'
     if (executionMode === 'direct' && providerBackend === 'g4f') {
-      try {
-        const completion = await this.protocolRouter.completeG4f({
-          provider: request.provider,
-          messages: request.messages.map((message) => ({ role: message.role, content: message.text })),
-          model: request.upstreamModel,
-          ...(request.authContextId ? { authContextId: request.authContextId } : {}),
-          signal,
-        })
-        return {
-          provider: request.provider,
-          text: completion.text,
-          citations: completion.citations,
-          jobId: completion.requestId,
-          conversationMode: config.apiProxy.conversationMode,
-          executionMode,
-          providerBackend,
-        }
-      } catch (error) {
-        const directError = safeDirectError(error)
-        throw new ApiProxyError(502, directError.code, directError.message)
-      }
+      const messages = providerMessages(request)
+      const completion = await this.completeG4f(request, messages, signal)
+      return await validatedCompletion(request, directRawCompletion(request, completion, config.apiProxy.conversationMode), async (prompt) => {
+        const corrected = await this.completeG4f(request, [...messages, { role: 'user', content: prompt }], signal)
+        return directRawCompletion(request, corrected, config.apiProxy.conversationMode)
+      })
     }
 
     const mode = config.apiProxy.conversationMode
@@ -153,43 +151,115 @@ export class ApiProxyAdapter {
       ? continuationPlan(request, profile.id, this.store)
       : newConversationPlan(request)
 
+    const completion = await this.completeManagedPrompt({
+      request,
+      profileId: profile.id,
+      taskId: plan.taskId,
+      promptText: plan.promptText,
+      targetUrl: plan.targetUrl,
+      conversationMode: mode,
+      executionMode,
+      providerBackend,
+      signal,
+    })
+    return await validatedCompletion(request, completion, async (prompt) => {
+      const mapping = this.store.resolveProviderTaskConversation({
+        provider: request.provider,
+        profile_id: profile.id,
+        task_id: plan.taskId,
+      })
+      return await this.completeManagedPrompt({
+        request,
+        profileId: profile.id,
+        taskId: plan.taskId,
+        promptText: prompt,
+        targetUrl: mapping?.canonical_url ?? plan.targetUrl,
+        conversationMode: mode,
+        executionMode,
+        providerBackend,
+        signal,
+      })
+    })
+  }
+
+  private async completeG4f(
+    request: NormalizedRequest,
+    messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
+    signal?: AbortSignal,
+  ) {
+    try {
+      return await this.protocolRouter.completeG4f({
+        provider: request.provider,
+        messages,
+        model: request.upstreamModel,
+        ...(request.authContextId ? { authContextId: request.authContextId } : {}),
+        signal,
+      })
+    } catch (error) {
+      const directError = safeDirectError(error)
+      throw new ApiProxyError(502, directError.code, directError.message)
+    }
+  }
+
+  private async completeManagedPrompt({
+    request,
+    profileId,
+    taskId,
+    promptText,
+    targetUrl,
+    conversationMode,
+    executionMode,
+    providerBackend,
+    signal,
+  }: {
+    request: NormalizedRequest
+    profileId: string
+    taskId: string
+    promptText: string
+    targetUrl: string | null
+    conversationMode: ApiProxyConversationMode
+    executionMode: 'browser' | 'direct'
+    providerBackend: 'browser' | ProviderBackend
+    signal: AbortSignal | undefined
+  }): Promise<RawApiProxyCompletion> {
     const requestJson = createManagedPlaywrightJobRequest({
       provider: request.provider,
-      taskId: plan.taskId,
+      taskId,
       browserVisibility: 'auto',
       userHandoff: false,
       executionMode,
-      ...(plan.targetUrl ? { target: { kind: 'provider_home' as const, url: plan.targetUrl } } : {}),
+      ...(targetUrl ? { target: { kind: 'provider_home' as const, url: targetUrl } } : {}),
       actions: [
         createVisibleActionRequest({
           provider: request.provider,
           action: VISIBLE_ACTIONS.PROMPT_INPUT,
-          payload: { text: plan.promptText },
+          payload: { text: promptText },
         }),
         createVisibleActionRequest({ provider: request.provider, action: VISIBLE_ACTIONS.PROMPT_SUBMIT, payload: {} }),
         createVisibleActionRequest({ provider: request.provider, action: VISIBLE_ACTIONS.RESPONSE_READ, payload: {} }),
       ],
     })
-
     const job = this.store.createJob({
       provider: request.provider,
       action: MANAGED_PLAYWRIGHT_JOB_ACTION,
       request_json: requestJson,
       execution_backend: 'playwright',
-      profile_id: profile.id,
+      profile_id: profileId,
     })
     await this.wake()
     const settled = await this.awaitTerminalJob(job.job_id, signal)
     const result = visibleResponse(settled.result_json)
     if (settled.status !== 'succeeded' || !result) throw apiProxyJobFailure(settled)
     return {
-      provider: request.provider,
       text: result.text,
-      citations: result.citations,
-      jobId: settled.job_id,
-      conversationMode: mode,
-      executionMode,
-      providerBackend,
+      base: {
+        provider: request.provider,
+        citations: result.citations,
+        jobId: settled.job_id,
+        conversationMode,
+        executionMode,
+        providerBackend,
+      },
     }
   }
 
@@ -236,9 +306,25 @@ export function apiProxyDisabled() {
 function newConversationPlan(request: NormalizedRequest) {
   return {
     taskId: `api-proxy:${randomUUID()}`,
-    promptText: flattenTranscript(request.messages),
+    promptText: requestPrompt(request),
     targetUrl: null as string | null,
   }
+}
+
+function requestPrompt(request: NormalizedRequest) {
+  const prompt = request.toolProtocol
+    ? compileOpenAiToolPrompt(request.messages, request.toolProtocol.tools, request.toolProtocol.nonce)
+    : flattenTranscript(request.messages)
+  assertPromptSize(prompt)
+  return prompt
+}
+
+function providerMessages(request: NormalizedRequest): { role: 'system' | 'user' | 'assistant'; content: string }[] {
+  if (request.toolProtocol) return [{ role: 'user', content: requestPrompt(request) }]
+  return request.messages.map((message) => {
+    if (message.role === 'tool') throw badRequest('tool history requires a current tools catalog', 'messages')
+    return { role: message.role, content: message.content ?? '' }
+  })
 }
 
 /**
@@ -248,6 +334,7 @@ function newConversationPlan(request: NormalizedRequest) {
  * transcript the provider no longer shares.
  */
 function continuationPlan(request: NormalizedRequest, profileId: string, store: JobStore) {
+  if (request.toolProtocol) return newConversationPlan(request)
   const trailing = request.messages.at(-1)
   if (!trailing || trailing.role !== 'user') return newConversationPlan(request)
   const history = request.messages.slice(0, -1)
@@ -261,27 +348,33 @@ function continuationPlan(request: NormalizedRequest, profileId: string, store: 
   if (!mapping?.canonical_url) {
     return { taskId, promptText: flattenTranscript(request.messages), targetUrl: null }
   }
-  return { taskId, promptText: trailing.text, targetUrl: mapping.canonical_url }
+  return { taskId, promptText: messageText(trailing), targetUrl: mapping.canonical_url }
 }
 
-function transcriptFingerprint(messages: readonly NormalizedMessage[]) {
+function transcriptFingerprint(messages: readonly OpenAiProtocolMessage[]) {
   const hash = createHash('sha256')
-  for (const message of messages) hash.update(JSON.stringify([message.role, message.text]))
+  for (const message of messages) hash.update(JSON.stringify([message.role, messageText(message)]))
   return hash.digest('hex').slice(0, 32)
 }
 
-function flattenTranscript(messages: readonly NormalizedMessage[]) {
+function flattenTranscript(messages: readonly OpenAiProtocolMessage[]) {
   const rendered = messages
-    .map((message) => `[${roleLabel(message.role)}]\n${message.text}`)
+    .map((message) => `[${roleLabel(message.role)}]\n${messageText(message)}`)
     .join('\n\n')
   assertPromptSize(rendered)
   return rendered
 }
 
-function roleLabel(role: NormalizedMessage['role']) {
+function roleLabel(role: OpenAiProtocolMessage['role']) {
   if (role === 'system') return 'System'
   if (role === 'assistant') return 'Assistant'
+  if (role === 'tool') return 'Tool'
   return 'User'
+}
+
+function messageText(message: OpenAiProtocolMessage) {
+  if (message.role === 'tool') return message.content
+  return message.content ?? ''
 }
 
 function assertPromptSize(text: string) {
@@ -301,17 +394,24 @@ export function normalizeOpenAiRequest(body: unknown): NormalizedRequest {
   if (rawMessages.length > MAX_MESSAGES) {
     throw badRequest(`messages must contain at most ${MAX_MESSAGES} entries`, 'messages')
   }
-  const messages = rawMessages.map((entry): NormalizedMessage => {
-    const message = plainRecord(entry)
-    const role = message.role
-    // `developer` is the current OpenAI spelling of the system role.
-    if (role === 'developer' || role === 'system') return { role: 'system', text: openAiContentText(message.content) }
-    if (role === 'user' || role === 'assistant') return { role, text: openAiContentText(message.content) }
-    throw badRequest(`unsupported message role: ${String(role)}`, 'messages')
-  })
-  rejectUnsupportedToolFields(record)
+  rejectUnsupportedOpenAiFields(record)
+  const tools = normalizeToolCatalog(record.tools)
+  normalizeToolChoice(record.tool_choice)
+  normalizeParallelToolCalls(record.parallel_tool_calls)
+  if (tools.length > 0 && record.stream === true) {
+    throw new ApiProxyError(400, 'unsupported_parameter', 'streaming tool calls are not supported in this API version', 'stream')
+  }
+  const messages = normalizeToolHistory(rawMessages, tools)
   const options = normalizeTokenlessOptions(record.tokenless)
-  return { provider: model.provider, messages, stream: record.stream === true, requestedModel: String(record.model), upstreamModel: model.upstreamModel, ...options }
+  return {
+    provider: model.provider,
+    messages,
+    stream: record.stream === true,
+    requestedModel: String(record.model),
+    upstreamModel: model.upstreamModel,
+    toolProtocol: tools.length > 0 ? { nonce: randomUUID(), tools } : null,
+    ...options,
+  }
 }
 
 export function normalizeAnthropicRequest(body: unknown): NormalizedRequest {
@@ -324,9 +424,9 @@ export function normalizeAnthropicRequest(body: unknown): NormalizedRequest {
   if (rawMessages.length > MAX_MESSAGES) {
     throw badRequest(`messages must contain at most ${MAX_MESSAGES} entries`, 'messages')
   }
-  const messages: NormalizedMessage[] = []
+  const messages: OpenAiProtocolMessage[] = []
   if (record.system !== undefined) {
-    messages.push({ role: 'system', text: anthropicContentText(record.system) })
+    messages.push({ role: 'system', content: anthropicContentText(record.system) })
   }
   for (const entry of rawMessages) {
     const message = plainRecord(entry)
@@ -334,11 +434,19 @@ export function normalizeAnthropicRequest(body: unknown): NormalizedRequest {
     if (role !== 'user' && role !== 'assistant') {
       throw badRequest(`unsupported message role: ${String(role)}`, 'messages')
     }
-    messages.push({ role, text: anthropicContentText(message.content) })
+    messages.push({ role, content: anthropicContentText(message.content) })
   }
-  rejectUnsupportedToolFields(record)
+  rejectUnsupportedAnthropicToolFields(record)
   const options = normalizeTokenlessOptions(record.tokenless)
-  return { provider: model.provider, messages, stream: record.stream === true, requestedModel: String(record.model), upstreamModel: model.upstreamModel, ...options }
+  return {
+    provider: model.provider,
+    messages,
+    stream: record.stream === true,
+    requestedModel: String(record.model),
+    upstreamModel: model.upstreamModel,
+    toolProtocol: null,
+    ...options,
+  }
 }
 
 /**
@@ -346,8 +454,8 @@ export function normalizeAnthropicRequest(body: unknown): NormalizedRequest {
  * page equivalent. Accepting them silently would return prose where the caller
  * expects a tool call, so the proxy fails closed instead.
  */
-function rejectUnsupportedToolFields(record: Record<string, unknown>) {
-  for (const field of ['tools', 'tool_choice', 'functions', 'function_call', 'response_format']) {
+function rejectUnsupportedOpenAiFields(record: Record<string, unknown>) {
+  for (const field of ['functions', 'function_call', 'response_format']) {
     if (record[field] !== undefined) {
       throw new ApiProxyError(
         400,
@@ -357,6 +465,55 @@ function rejectUnsupportedToolFields(record: Record<string, unknown>) {
       )
     }
   }
+}
+
+function rejectUnsupportedAnthropicToolFields(record: Record<string, unknown>) {
+  for (const field of ['tools', 'tool_choice', 'functions', 'function_call', 'response_format']) {
+    if (record[field] !== undefined) {
+      throw new ApiProxyError(
+        400,
+        'unsupported_parameter',
+        `api proxy does not support Anthropic ${field}`,
+        field,
+      )
+    }
+  }
+}
+
+function normalizeToolCatalog(value: unknown) {
+  try {
+    return normalizeOpenAiTools(value)
+  } catch (error) {
+    throw badRequest(error instanceof Error ? error.message : 'tools is invalid', 'tools')
+  }
+}
+
+function normalizeToolHistory(messages: unknown[], tools: readonly OpenAiFunctionTool[]) {
+  try {
+    return normalizeOpenAiMessages(messages, tools)
+  } catch (error) {
+    throw badRequest(error instanceof Error ? error.message : 'messages is invalid', 'messages')
+  }
+}
+
+function normalizeToolChoice(value: unknown) {
+  if (value === undefined || value === 'auto') return
+  throw new ApiProxyError(
+    400,
+    'unsupported_parameter',
+    'tool_choice currently supports only auto; other forms are reserved for a later API version',
+    'tool_choice',
+  )
+}
+
+function normalizeParallelToolCalls(value: unknown) {
+  if (value === undefined || value === false) return
+  throw new ApiProxyError(
+    400,
+    'unsupported_parameter',
+    'parallel_tool_calls currently supports only false; multiple calls are reserved for a later API version',
+    'parallel_tool_calls',
+  )
 }
 
 function providerFromModel(value: unknown) {
@@ -395,21 +552,6 @@ function normalizeTokenlessOptions(value: unknown): Pick<NormalizedRequest, 'exe
     providerBackend: providerBackend ?? null,
     authContextId: authContextId ?? null,
   }
-}
-
-function openAiContentText(content: unknown): string {
-  if (typeof content === 'string') return content
-  if (Array.isArray(content)) {
-    const parts = content.map((part) => {
-      const record = plainRecord(part)
-      if (record.type !== 'text' || typeof record.text !== 'string') {
-        throw badRequest('api proxy supports only text content parts', 'messages')
-      }
-      return record.text
-    })
-    return parts.join('\n')
-  }
-  throw badRequest('message content must be a string or an array of text parts', 'messages')
 }
 
 function anthropicContentText(content: unknown): string {
@@ -477,6 +619,59 @@ function visibleResponse(value: unknown): { text: string; citations: { url: stri
   return null
 }
 
+async function validatedCompletion(
+  request: NormalizedRequest,
+  initial: RawApiProxyCompletion,
+  correct: (prompt: string) => Promise<RawApiProxyCompletion>,
+): Promise<ApiProxyCompletion> {
+  if (!request.toolProtocol) return { ...initial.base, text: initial.text }
+  let completion = initial
+  let result
+  try {
+    result = parseOpenAiToolResponse(completion.text, request.toolProtocol.nonce, request.toolProtocol.tools)
+  } catch (error) {
+    const validationError = error instanceof Error ? error.message : 'invalid output'
+    if (!(error instanceof OpenAiToolResponseProtocolError) || !error.correctionEligible) {
+      throw providerOutputProtocolError(validationError)
+    }
+    const prompt = compileOpenAiToolCorrectionPrompt(
+      request.toolProtocol.nonce,
+      validationError,
+      completion.text,
+    )
+    if (Buffer.byteLength(prompt, 'utf8') > MAX_PROMPT_BYTES) {
+      throw providerOutputProtocolError('bounded correction prompt exceeds the 1 MiB visible-prompt limit')
+    }
+    completion = await correct(prompt)
+    try {
+      result = parseOpenAiToolResponse(completion.text, request.toolProtocol.nonce, request.toolProtocol.tools)
+    } catch (correctedError) {
+      throw providerOutputProtocolError(correctedError instanceof Error ? correctedError.message : 'invalid corrected output')
+    }
+    if (result.kind !== 'final') {
+      throw providerOutputProtocolError('bounded final correction returned a tool call')
+    }
+  }
+  if (result.kind === 'final') return { ...completion.base, text: result.content }
+  return {
+    ...completion.base,
+    text: '',
+    toolCall: {
+      id: `call_${randomUUID().replaceAll('-', '')}`,
+      name: result.name,
+      arguments: JSON.stringify(result.arguments),
+    },
+  }
+}
+
+function providerOutputProtocolError(detail: string) {
+  return new ApiProxyError(
+    502,
+    'provider_output_protocol_error',
+    `Provider response did not satisfy the Tokenless tool protocol: ${detail}.`,
+  )
+}
+
 function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -493,16 +688,31 @@ export function unmeteredUsage(dialect: ApiProxyDialect) {
 }
 
 export function openAiCompletionBody(completion: ApiProxyCompletion, requestedModel: string) {
+  const choice = completion.toolCall
+    ? {
+        index: 0,
+        message: {
+          role: 'assistant',
+          content: null,
+          tool_calls: [{
+            id: completion.toolCall.id,
+            type: 'function',
+            function: { name: completion.toolCall.name, arguments: completion.toolCall.arguments },
+          }],
+        },
+        finish_reason: 'tool_calls',
+      }
+    : {
+        index: 0,
+        message: { role: 'assistant', content: completion.text },
+        finish_reason: 'stop',
+      }
   return {
     id: `chatcmpl-${completion.jobId}`,
     object: 'chat.completion',
     created: Math.floor(Date.now() / 1000),
     model: requestedModel,
-    choices: [{
-      index: 0,
-      message: { role: 'assistant', content: completion.text },
-      finish_reason: 'stop',
-    }],
+    choices: [choice],
     usage: unmeteredUsage('openai'),
     tokenless: tokenlessMetadata(completion),
   }
@@ -544,6 +754,24 @@ function safeDirectError(error: unknown) {
     return { code, message: `G4F provider '${provider}' failed with ${type} (upstream HTTP ${status}).` }
   }
   return { code, message: `Direct provider request failed: ${code}.` }
+}
+
+function directRawCompletion(
+  request: NormalizedRequest,
+  completion: Awaited<ReturnType<ProviderProtocolRouter['completeG4f']>>,
+  conversationMode: ApiProxyConversationMode,
+): RawApiProxyCompletion {
+  return {
+    text: completion.text,
+    base: {
+      provider: request.provider,
+      citations: completion.citations,
+      jobId: completion.requestId,
+      conversationMode,
+      executionMode: 'direct',
+      providerBackend: 'g4f',
+    },
+  }
 }
 
 /**

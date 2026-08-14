@@ -71,17 +71,162 @@ test('api proxy rejects a model that does not name a provider explicitly', async
   })
 })
 
-test('api proxy rejects capabilities a visible page cannot honour', async () => {
+test('api proxy accepts modern function tools and complete tool history before profile readiness', async () => {
   await withDaemon(async (daemon) => {
     await enableApiProxy(daemon.homeDir)
-    for (const field of ['tools', 'tool_choice', 'functions', 'function_call', 'response_format']) {
+    const tool = functionTool('read_file')
+    const firstTurn = await call(daemon, 'POST', '/v1/openai/chat/completions', {
+      model: 'tokenless/chatgpt',
+      messages: [
+        { role: 'developer', content: 'Use tools when needed.' },
+        { role: 'user', content: 'Read package.json.' },
+      ],
+      tools: [tool],
+      tool_choice: 'auto',
+      parallel_tool_calls: false,
+    })
+    assert.equal(firstTurn.status, 409)
+    assert.equal(firstTurn.body.error.code, 'profile_not_configured')
+
+    const continuation = await call(daemon, 'POST', '/v1/openai/chat/completions', {
+      model: 'tokenless/chatgpt',
+      messages: [
+        { role: 'user', content: 'Read package.json.' },
+        {
+          role: 'assistant',
+          content: null,
+          tool_calls: [{
+            id: 'call_from_previous_turn',
+            type: 'function',
+            function: { name: 'read_file', arguments: '{"path":"package.json"}' },
+          }],
+        },
+        { role: 'tool', tool_call_id: 'call_from_previous_turn', content: '{"name":"tokenless"}' },
+      ],
+      tools: [tool],
+    })
+    assert.equal(continuation.status, 409)
+    assert.equal(continuation.body.error.code, 'profile_not_configured')
+    const jobs = await call(daemon, 'GET', '/jobs')
+    assert.equal(jobs.body.length, 0)
+  })
+})
+
+test('api proxy rejects malformed tool catalogs and history before creating a job', async () => {
+  await withDaemon(async (daemon) => {
+    await enableApiProxy(daemon.homeDir)
+    const validTool = functionTool('read_file')
+    const cases = [
+      {
+        name: 'duplicate tool name',
+        body: { messages: [{ role: 'user', content: 'hello' }], tools: [validTool, validTool] },
+        param: 'tools',
+      },
+      {
+        name: 'invalid parameter schema',
+        body: {
+          messages: [{ role: 'user', content: 'hello' }],
+          tools: [{ type: 'function', function: { name: 'read_file', parameters: { type: 'not-a-json-schema-type' } } }],
+        },
+        param: 'tools',
+      },
+      {
+        name: 'strict tool schema reserved for later milestone',
+        body: {
+          messages: [{ role: 'user', content: 'hello' }],
+          tools: [{ ...validTool, function: { ...validTool.function, strict: true } }],
+        },
+        param: 'tools',
+      },
+      {
+        name: 'undeclared history name',
+        body: {
+          messages: [
+            { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'write_file', arguments: '{}' } }] },
+            { role: 'tool', tool_call_id: 'call_1', content: 'done' },
+          ],
+          tools: [validTool],
+        },
+        param: 'messages',
+      },
+      {
+        name: 'arguments fail schema',
+        body: {
+          messages: [
+            { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'read_file', arguments: '{"path":4}' } }] },
+            { role: 'tool', tool_call_id: 'call_1', content: 'done' },
+          ],
+          tools: [validTool],
+        },
+        param: 'messages',
+      },
+      {
+        name: 'duplicate argument key',
+        body: {
+          messages: [
+            { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'read_file', arguments: '{"path":"a","path":"b"}' } }] },
+            { role: 'tool', tool_call_id: 'call_1', content: 'done' },
+          ],
+          tools: [validTool],
+        },
+        param: 'messages',
+      },
+      {
+        name: 'unpaired call',
+        body: {
+          messages: [{ role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'read_file', arguments: '{"path":"a"}' } }] }],
+          tools: [validTool],
+        },
+        param: 'messages',
+      },
+      {
+        name: 'mismatched result',
+        body: {
+          messages: [
+            { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'read_file', arguments: '{"path":"a"}' } }] },
+            { role: 'tool', tool_call_id: 'call_other', content: 'done' },
+          ],
+          tools: [validTool],
+        },
+        param: 'messages',
+      },
+    ]
+    for (const entry of cases) {
+      const response = await call(daemon, 'POST', '/v1/openai/chat/completions', {
+        model: 'tokenless/chatgpt',
+        ...entry.body,
+      })
+      assert.equal(response.status, 400, entry.name)
+      assert.equal(response.body.error.code, 'invalid_request_error', entry.name)
+      assert.equal(response.body.error.param, entry.param, entry.name)
+    }
+    const jobs = await call(daemon, 'GET', '/jobs')
+    assert.equal(jobs.body.length, 0)
+  })
+})
+
+test('api proxy keeps legacy and later tool controls explicitly unsupported', async () => {
+  await withDaemon(async (daemon) => {
+    await enableApiProxy(daemon.homeDir)
+    const cases = [
+      ['functions', []],
+      ['function_call', 'auto'],
+      ['response_format', { type: 'json_object' }],
+      ['tool_choice', 'required'],
+      ['parallel_tool_calls', true],
+      ['parallel_tool_calls', 'false'],
+      ['stream', true],
+    ]
+    for (const [field, value] of cases) {
       const response = await call(daemon, 'POST', '/v1/openai/chat/completions', {
         model: 'tokenless/chatgpt',
         messages: [{ role: 'user', content: 'hello' }],
-        [field]: field === 'tool_choice' ? 'auto' : [],
+        tools: field === 'stream' ? [functionTool('read_file')] : undefined,
+        [field]: value,
       })
       assert.equal(response.status, 400, field)
-      assert.match(response.body.error.message, new RegExp(`does not support ${field}`))
+      assert.equal(response.body.error.code, 'unsupported_parameter', field)
+      assert.equal(response.body.error.param, field, field)
     }
   })
 })
@@ -157,10 +302,10 @@ test('api proxy distinguishes each caller mistake by status so clients can decid
         code: 'model_not_found',
       },
       {
-        name: 'unsupported tool field',
+        name: 'malformed tool field',
         body: { model: 'tokenless/chatgpt', messages: [{ role: 'user', content: 'hi' }], tools: [] },
         status: 400,
-        code: 'unsupported_parameter',
+        code: 'invalid_request_error',
       },
       {
         name: 'oversized body',
@@ -215,6 +360,23 @@ test('api proxy conversation mode round-trips through the persisted config', asy
 async function enableApiProxy(homeDir, conversationMode = 'new-conversation') {
   const { writeTokenlessConfig } = await import(runtimeModule)
   await writeTokenlessConfig({ homeDir, apiProxy: { enabled: true, conversationMode } })
+}
+
+function functionTool(name) {
+  return {
+    type: 'function',
+    function: {
+      name,
+      description: 'Read one UTF-8 file.',
+      strict: false,
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['path'],
+        properties: { path: { type: 'string', minLength: 1 } },
+      },
+    },
+  }
 }
 
 async function call(daemon, method, route, body) {

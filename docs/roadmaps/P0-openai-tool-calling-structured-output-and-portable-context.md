@@ -280,6 +280,8 @@ invalid provider output
 
 Correction 只能发生在 tool call/structured final 尚未暴露给 caller 之前。已经返回给外部 Harness 的 call、已经执行的 tool result、可能已提交的 provider mutation 与 ambiguous provider outcome不得内部重放。每个 admitted correction mechanism 必须在 roadmap lifecycle note 中记录触发它的真实重复失败。
 
+Lifecycle note（2026-08-15）：同一 DeepSeek prompt-emulated strategy 在两个真实 continuation run 中，都返回了 markers、nonce 与 `kind: final` 正确、但把 tool result 的 raw JSON 双引号未转义地复制进 `final.content` 的无效 strict JSON；第二次发生在明确加强 JSON escaping prompt 后。两次都在任何 response 暴露前以 `provider_output_protocol_error` 终止，直接阻塞 TC-002，因此只为安全 framing 已通过、protocol/nonce/`kind: final` prefix 顺序精确匹配、且 strict JSON 因 final string escaping 失败的同类输出，准入一次 same-provider/same-strategy bounded correction。Correction 只请求同一 final outcome，携带本轮 protocol/nonce、validation error 与受大小限制的 invalid output，校验一次后成功或终止；framing、correlation、duplicate-key、tool-call、arguments/schema、valid-envelope shape、transport error、ambiguous submission、已暴露 call 与 tool execution 均不重试。
+
 ## 本机 DSH Interoperability 与真实 SWE Task 证据
 
 ### 固定真实边界

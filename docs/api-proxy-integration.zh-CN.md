@@ -103,6 +103,42 @@ tokenless/<provider>
 
 支持的 role：`system`、`user`、`assistant`、`developer`（`developer` 会归一化为 `system`）。
 
+非流式请求支持现代 OpenAI function tools。当前 V1 每轮只支持一个已声明调用；`tool_choice` 可省略或设为 `auto`，`parallel_tool_calls` 可省略或设为 `false`：
+
+```json
+{
+  "model": "tokenless/chatgpt",
+  "messages": [{"role": "user", "content": "Read package.json"}],
+  "tools": [{
+    "type": "function",
+    "function": {
+      "name": "read_file",
+      "description": "Read one UTF-8 file.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path"],
+        "properties": {"path": {"type": "string"}}
+      },
+      "strict": false
+    }
+  }],
+  "tool_choice": "auto",
+  "parallel_tool_calls": false
+}
+```
+
+调用方负责执行返回的 tool。下一次请求要重发同一 catalog 和完整、有序的调用/结果配对：
+
+```json
+[
+  {"role":"assistant","content":null,"tool_calls":[{"id":"call_abc","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"package.json\"}"}}]},
+  {"role":"tool","tool_call_id":"call_abc","content":"{\"name\":\"tokenless\"}"}
+]
+```
+
+Tokenless 会在提交 provider 前校验 call id 唯一性、已声明名称、严格 arguments JSON、参数 schema 和调用/结果配对。它不会执行调用方 tool，也不会保存 catalog。
+
 ### Anthropic
 
 ```json
@@ -134,11 +170,15 @@ tokenless/<provider>
 | --- | --- |
 | `model`、`messages` | 必填 |
 | `system`（Anthropic） | 作为 system message 生效 |
-| `stream` | 生效——见 [Streaming](#streaming) |
-| `tools`、`tool_choice`、`functions`、`function_call`、`response_format` | **返回 400 拒绝** |
+| `stream` | 文本请求生效；与 `tools` 同用时拒绝 |
+| `tools` | 支持一个非流式现代 OpenAI function call |
+| `tools[].function.strict` | 可省略或设为 `false`；`true` 留待后续 milestone |
+| `tool_choice` | 可省略或设为 `auto`；其他形式返回 400 |
+| `parallel_tool_calls` | 可省略或设为 `false`；`true` 与其他形式返回 400 |
+| `functions`、`function_call`、`response_format` | **返回 400 拒绝** |
 | `temperature`、`top_p`、`max_tokens`、`seed`、`stop` 及其他全部字段 | **静默忽略** |
 
-被拒绝的那组是 fail closed：可见页面没有对应控件，在调用方期待 tool call 时返回散文，比直接报错更糟。
+旧版 function 字段、结构化最终输出、强制 choice、多调用与流式调用仍会 fail closed。它们属于后续 milestone，不会被静默兼容。
 
 被忽略的那组才是更隐蔽的坑：**采样参数完全无效。** `temperature: 0` 不会让 provider 变得确定，`max_tokens` 也不会约束回复长度。如果你的代码依赖其中任何一个，那条调用路径就不该走这个 proxy。`max_tokens` 之所以只被忽略而非拒绝，仅仅因为 Anthropic API 强制要求它。
 
@@ -149,6 +189,8 @@ tokenless/<provider>
 | HTTP body | 2 MiB |
 | `messages` 条数 | 256 |
 | 打平后的 prompt 文本 | 1 MiB |
+| Function tools | 128 |
+| 单个 function parameter schema | 64 KiB |
 
 ## 响应体
 
@@ -177,6 +219,22 @@ tokenless/<provider>
 }
 ```
 
+通过校验的调用使用标准 OpenAI 形状。Tokenless 仅在 provider 输出通过校验后分配公开 id：
+
+```json
+{
+  "choices": [{
+    "index": 0,
+    "message": {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [{"id":"call_abc","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"package.json\"}"}}]
+    },
+    "finish_reason": "tool_calls"
+  }]
+}
+```
+
 ### Anthropic
 
 ```json
@@ -193,7 +251,7 @@ tokenless/<provider>
 }
 ```
 
-`finish_reason` 恒为 `stop`，`stop_reason` 恒为 `end_turn`。可见页面没有截断或拒答的信号，所以不要基于这两个字段做分支。
+OpenAI 文本使用 `finish_reason: stop`；通过校验的 function call 使用 `finish_reason: tool_calls`。Anthropic `stop_reason` 仍为 `end_turn`。
 
 ### usage 恒为 0
 
@@ -215,6 +273,8 @@ tokenless/<provider>
 ## Streaming
 
 `stream: true` 会返回 `text/event-stream`，并按该方言的正确事件序列下发。
+
+本 milestone 会拒绝带 `tools` 的流式请求。Tool turn 请使用非流式请求。
 
 **但没有增量文本。** 可见 provider 回复只有渲染完成后才可读，因此整段响应会在完整延迟之后作为一个终态 chunk 一次性到达。保留事件序列是为了让本来兼容的客户端继续可用；直接拒绝 `stream` 只会白白让它们崩掉。
 
@@ -250,6 +310,8 @@ What is 2+2?
 
 无状态、可预测。相同请求不依赖任何本地既有状态。代价是长对话每轮都要重发全部历史，且 provider 看不到轮次之间的连续性。
 
+无论配置了哪种 conversation mode，tool 请求都会使用这种 request-scoped 完整历史行为。Catalog、nonce 与不可信 canonical history 会被编译为严格的单轮 protocol envelope。
+
 **客户端要做的：** 每次调用都发送完整历史，和面对真实 API 时完全一样。除此之外无需处理。
 
 ### continue-conversation
@@ -265,6 +327,8 @@ Tokenless 会对**除最后一条 user message 之外**的全部消息做指纹�
 ## 错误
 
 所有失败都会按对应方言的错误信封返回。
+
+仅对 tool 请求，一种狭窄 failure 可在同一 provider 与 execution strategy 上获得 bounded correction：安全 marker/chrome framing 必须已按精确顺序识别本请求的 protocol、nonce 与 `kind: final`，而 strict JSON parsing 失败于 final-content escaping。Framing、correlation、duplicate-key、tool-call、arguments/schema 与 valid-envelope shape failure 会立即返回 `provider_output_protocol_error`。Correction 必须返回同一 final outcome，并且只校验一次；transport failure、timeout、ambiguous submission、已暴露 call 与调用方 tool execution 都不会重试。
 
 OpenAI，其中 `param` 会在可定位时指出出错字段：
 
@@ -284,9 +348,9 @@ Anthropic：
 
 | 状态码 | Code | 根因 | 可否重试 |
 | --- | --- | --- | --- |
-| 400 | `invalid_request_error` | 请求体格式错误、model 名语法错误、role 或 content part 不受支持 | 否 —— 修正请求 |
+| 400 | `invalid_request_error` | 请求体、tool catalog、arguments 或历史配对错误 | 否 —— 修正请求 |
 | 400 | `invalid_json` | 请求体为空或不是 JSON | 否 |
-| 400 | `unsupported_parameter` | 传入了 `tools`、`tool_choice`、`functions`、`function_call` 或 `response_format` | 否 |
+| 400 | `unsupported_parameter` | 旧版 functions、结构化输出、非 `auto` choice、parallel calls 或流式 tools | 否 |
 | 401 | `control_auth_missing` | 缺少 bearer token | 否 |
 | 403 | `control_auth_rejected` | bearer token 错误 | 否 |
 | 404 | `model_not_found` | `model` 指向不存在或未内置的 provider | 否 |
@@ -294,6 +358,7 @@ Anthropic：
 | 499 | `client_closed_request` | 客户端先断开了连接 | 否 —— 已无接收方 |
 | 500 | — | 本地 daemon 故障，message 刻意保持通用 | 可重试一次 |
 | 502 | `upstream_error` | provider 页面没有产生可见回复：登录 blocker、CAPTCHA 或 job 失败 | 用户清除 blocker 后可重试 |
+| 502 | `provider_output_protocol_error` | Tool protocol 校验失败；只有 correlated `kind: final` string-escaping failure 会获得一次 bounded correction | 不再重试 |
 | 503 | `api_proxy_disabled` | proxy 未开启 | 否 —— 请先开启 |
 | 503 | `profile_not_ready` | managed profile 需要先执行 `tokenless setup` | 否 —— 请先完成 setup |
 | 503 | `model_not_available` | 该 provider 未在解析出的 profile 上启用 | 否 —— 请先启用 |
@@ -312,13 +377,13 @@ Anthropic：
 | 延迟 | 秒到分钟级。真实浏览器导航、页面稳定、输入、提交、渲染。 |
 | 超时 | 10 分钟，随后返回 504。底层 job 可能仍在运行——请用 `job_id` 查询。 |
 | 并发 | 单 profile 基本串行。一个浏览器、一个 provider 标签页。 |
-| Tool use | 不支持，直接拒绝。 |
+| Tool use | 支持一个非流式现代 function call；由调用方执行。 |
 | 结构化输出 | 不支持，直接拒绝。 |
 | 采样控制 | 静默忽略。 |
 | Token 计量 | 无。 |
 | 多模态输入 | 仅文本。 |
 
-只把人类节奏的一问一答放到这条通道上：分析、总结、评审、研究性问题。凡是需要 tool call、schema 合法输出、低延迟或并行的调用，继续走真实 API。
+可把人类节奏的一问一答和单个外部 tool turn 放到这条通道上。结构化最终输出、多调用或流式调用、低延迟与并行仍应走其他 route。
 
 ### 账号风险
 
@@ -390,7 +455,8 @@ console.log(message.content)
 - [ ] 从 `tokenless api-proxy status --json` 读取 base URL，不要用常量。
 - [ ] 从 `~/.tokenless/daemon.token` 读取 token；绝不写入日志。
 - [ ] model 命名为 `tokenless/<provider>`；用 `GET /v1/openai/models` 校验。
-- [ ] 发送前剥离 `tools`、`tool_choice`、`functions`、`function_call`、`response_format`，或把这些调用路径留在真实 API。
+- [ ] Tool 请求使用现代 `tools` 与 `tool_choice: auto`，设置 `parallel_tool_calls: false`，在 Tokenless 外执行调用，并重发完整配对历史。
+- [ ] `strict: true`、`functions`、`function_call`、`response_format`、多调用和流式 tool call 继续走其他 route。
 - [ ] 不要依赖 `temperature`、`max_tokens` 或任何采样字段。
 - [ ] 不要用 `usage` 计算成本。
 - [ ] 把客户端超时提到 10 分钟以上；重试设为 0，改由自己控制重试。
@@ -399,6 +465,14 @@ console.log(message.content)
 - [ ] 每次调用都记录 `tokenless.job_id`。
 - [ ] 按串行执行预期设计；不要并发扇出请求。
 - [ ] 确认当前 conversation 模式；若客户端会重写历史，使用 `new-conversation`。
+
+## 已验证的 DeepSeek tool loop
+
+Packaged daemon 已通过真实 DeepSeek browser route 完成一次非流式单 tool loop：
+
+- Job `8a709343-5fd4-46b4-801c-434c5b4a8da0` 返回标准 assistant `tool_calls`，调用 `read_file` 读取 `package.json`。
+- 调用方执行本地 tool，并将实际结果作为配对的 `role: tool` 历史返回。
+- Job `8a3d2c42-e05c-478f-8518-22acb5a39467` 返回基于该 package metadata 的最终回答，`finish_reason: stop`。
 
 ## 已知不足
 
