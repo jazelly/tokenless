@@ -50,6 +50,15 @@ export {
   trustedProviderSignInNavigation,
 } from './navigation-policy.js'
 export { PROVIDER_NAVIGATION_CATALOG } from './provider-navigation-catalog.js'
+export {
+  resolveApiProxyStructuredControlRoutes,
+} from './api-proxy-capabilities.js'
+export type {
+  ApiProxyStructuredControlCandidate,
+  ApiProxyStructuredControlRequirements,
+  ApiProxyStructuredControlRoute,
+  ApiProxyStructuredControlStrategy,
+} from './api-proxy-capabilities.js'
 export type {
   CanonicalProviderTarget,
   ProviderNavigationClassification,

@@ -493,6 +493,8 @@ Exit: Chat Completions 与 Responses clients观察到同一 tool/JSON语义；cu
 - 记录 public canonical ids、provider attempt history、selected strategy与route failure；不记录 provider credentials或hidden reasoning。
 - 在 target history不兼容、context不足、outcome ambiguous或exact continuation必需时 fail closed。
 
+Lifecycle note（2026-08-15）：`tokenless/auto` 已在 packaged daemon 的 OpenAI Chat/Responses browser `new-conversation` scope 实现。真实 external Harness session 由 DeepSeek 生成带 origin 的 strict call，caller 实际读取 local `package.json`，再在下一 turn 的 safe boundary 改由 ChatGPT 接收未变 public id 与完整 canonical pair，最终答案准确使用 `tokenless`/`0.1.0`；两个 provider job 各一次 attempt。ChatGPT 与 DeepSeek 也分别以 `prompt_json_envelope` 返回相同 schema-valid payload。重复出现的 structured final double-serialization failure 只准入一个内部 grammar repair：structured `final.content` 直接为 object，text 仍为 string，public response 仍在 exact-number/schema validation 后序列化为 JSON text；combined tool+schema 真实 loop 证明 tool arguments 保留既有普通 parse。最终代码下的 Gemini exact diagnostic 在 non-null `provider_submitted_at` 后以一个 attempt terminal failure，且 Gemini 不在 auto matrix。完整记录见[脱敏 evidence](../evidence/openai-auto-provider-routing-2026-08-15.md)。
+
 Exit: 两个真实 provider在一个 external Harness逻辑会话中完成可审计、无 silent degradation的跨 provider tool continuation；post-submission replay仍被禁止。
 
 ## Real-Boundary Verification Matrix

@@ -70,7 +70,7 @@ Token 位于 `<TOKENLESS_HOME>/daemon.token`，默认 `~/.tokenless/daemon.token
 
 ## Model 命名
 
-`model` 是唯一能指明 provider 的位置，因此必须显式指明：
+调用方自行选择 provider 时，请使用固定 provider model：
 
 ```
 tokenless/<provider>
@@ -88,6 +88,22 @@ tokenless/<provider>
 ```
 
 若名称格式正确但该 provider 不存在或未内置，则返回 `404` / `model_not_found`，与真实 API 遇到未知 model 的行为一致。
+
+### 显式 auto routing
+
+`tokenless/auto` 是 OpenAI Chat Completions 与 Responses 上保留的 opt-in model。它不是普通 chat 的 alias，也绝不会改变精确 `tokenless/<provider>` 请求的行为。
+
+当前 scope 刻意保持狭窄：
+
+- 仅 browser execution、`new-conversation`，且请求必须包含 function tools、`json_object` 或 `json_schema`。
+- Candidate 必须在 selected profile 上启用、具有当前可用的 observed access、拥有 evidence-backed `conversation.chat` route，并满足全部 structured-control requirements。
+- Tool requirements 会区分调用、strict schema、完整 tool history 与 multiple-call output。只有当前 `tool_choice` 可能返回多个调用时，`parallel_tool_calls: true` 才要求 multiple-call evidence；`none` 与精确 named choice 不要求。
+- DeepSeek 凭已验证的 multiple/strict/history 与 JSON control 纳入；ChatGPT 凭已验证的 single-call strict/history 与 JSON control 纳入。Gemini tool control 因真实输出未通过 strict whole-response boundary 而排除。当前双 provider routing 与 schema 实跑记录见[脱敏 evidence](evidence/openai-auto-provider-routing-2026-08-15.md)。
+- Plain text、direct execution、provider backend/auth options、provider-local continuation、opaque replay 或不完整 candidate set 都会在创建 job 前失败。
+
+Auto call 使用只编码 provider origin 的版本化 opaque public id。后续 full-history turn 会在重新检查 current eligibility 后优先该 provider；调用方影响 id 也无法绕过 filter。Responses `previous_response_id` 以相同方式使用现有 ledger provider——它是 portable affinity，不是 hard pin。
+
+切换 provider 时，始终用完整 canonical assistant call 与 caller result 在 target provider 新建会话。Provider URL 与 opaque state 永不 replay。现有 Managed Playwright fallback plan 只可在 `provider_submitted_at` 前切换；submission 后任何 malformed、failed 或 ambiguous outcome 都是 terminal。Bounded final-escaping correction 固定在 settled provider 与 strategy 上，不再执行 auto resolution 或 fallback。
 
 ## 请求体
 
@@ -221,6 +237,8 @@ Ledger 不持久化 tool definition。两种形式都会根据当前请求中的
 
 本地 ledger 保留 canonical public transcript item 24 小时，最多 1,000 个 response。下次写入会清除全部过期 row；查询某个确切的过期 id 时只删除该 row，并为触发请求返回 `response_expired`。它不保存 credential、browser session、hidden reasoning，也不伪造 opaque item。因容量淘汰、未知或已删除而再次请求的 id 返回 `response_not_found`；更换 provider、exact model 或 execution mode 会在提交前返回 `response_route_mismatch`。当前 prompt-emulated route 不产生 provider opaque/reasoning item，因此 unknown reasoning 或 opaque replay 返回 `unverifiable_replay_item`。
 
+对于 `tokenless/auto`，portable ledger continuation 可在下一个 caller turn 选择另一 eligible provider。Exact provider model 仍保持 hard provider/model/execution affinity。
+
 Responses V1 明确不包括 Conversations、background、WebSocket、hosted tools、retrieve/delete、非文本 input 与 array-valued function output。
 
 ### Anthropic
@@ -303,6 +321,10 @@ Responses V1 明确不包括 Conversations、background、WebSocket、hosted too
     "provider": "chatgpt",
     "job_id": "20aa1107-6cd5-4981-bfe6-853640420dd4",
     "conversation_mode": "new-conversation",
+    "execution_mode": "browser",
+    "provider_backend": "browser",
+    "structured_control_strategy": null,
+    "provider_attempts": [{"attempt":1,"provider":"chatgpt","status":"succeeded","started_at":"...","completed_at":"...","blocker_code":null,"blocker_classification":null}],
     "citations": [{"url": "https://example.com", "title": "Example"}]
   }
 }
@@ -355,9 +377,12 @@ OpenAI 文本使用 `finish_reason: stop`；通过校验的 function call 使用
 
 | 字段 | 用途 |
 | --- | --- |
-| `provider` | 实际回答的 provider |
+| `provider` | 实际回答的 provider，包括 settle 后的 fallback provider |
 | `job_id` | 持久 job id——可传给 `tokenless state --job-id <id> --json` 查看具体发生了什么 |
 | `conversation_mode` | 本次请求使用的映射模式 |
+| `execution_mode` / `provider_backend` | 实际 execution route |
+| `structured_control_strategy` | `prompt_tool_envelope`、`prompt_json_envelope`，或 plain text 的 `null` |
+| `provider_attempts` | 单个 durable job 的脱敏 attempt 顺序/status 与 blocker classification |
 | `citations` | provider 渲染出的可见来源链接（如果有） |
 
 请记录 `job_id`。它是把客户端侧失败关联到本地持久记录的唯一句柄。
@@ -455,6 +480,8 @@ Anthropic：
 | 400 | `invalid_request_error` | 请求体、tool catalog、tool choice、response format/schema、arguments 或历史配对错误 | 否 —— 修正请求 |
 | 400 | `invalid_json` | 请求体为空或不是 JSON | 否 |
 | 400 | `unsupported_parameter` | 旧版 `functions` / `function_call`，或 Anthropic tools/structured output | 否 |
+| 400 | `auto_structured_control_required` | `tokenless/auto` 收到 plain-text 请求 | 否 —— 请选择 exact provider 或加入 tools/structured output |
+| 400 | `auto_execution_mode_unsupported` / `auto_conversation_mode_unsupported` / `auto_dialect_unsupported` | Auto 被要求使用 direct/provider-local/Anthropic state | 否 —— 使用已文档化的 OpenAI browser scope |
 | 401 | `control_auth_missing` | 缺少 bearer token | 否 |
 | 403 | `control_auth_rejected` | bearer token 错误 | 否 |
 | 404 | `model_not_found` | `model` 指向不存在或未内置的 provider | 否 |
@@ -466,6 +493,7 @@ Anthropic：
 | 503 | `api_proxy_disabled` | proxy 未开启 | 否 —— 请先开启 |
 | 503 | `profile_not_ready` | managed profile 需要先执行 `tokenless setup` | 否 —— 请先完成 setup |
 | 503 | `model_not_available` | 该 provider 未在解析出的 profile 上启用 | 否 —— 请先启用 |
+| 503 | `auto_route_unavailable` | 没有 enabled、当前可用且有 evidence 的 provider 能满足完整 request | 否 —— 调整 scope 或 provider readiness |
 | 504 | `completion_timeout` | provider 在 10 分钟内没有回复 | 可重试，但原 job 可能仍在运行 |
 
 除 499 之外的 `4xx` 表示调用方必须做出修改。`502`、`504`、`500` 属于运行期问题：同一请求稍后可能成功。这张表的全部意义就在于这一区分 —— 不要匹配 message 字符串。

@@ -10,6 +10,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const daemonServer = path.join(root, 'packages/cli/dist/src/daemon/server.js')
 const daemonStore = path.join(root, 'packages/cli/dist/src/daemon/job-store.js')
 const runtimeModule = path.join(root, 'packages/cli/dist/src/index.js')
+const profileRegistryModule = path.join(root, 'packages/cli/dist/src/playwright/profiles/registry.js')
 
 const ROUTES = [
   ['GET', '/v1/openai/models'],
@@ -60,6 +61,132 @@ test('api proxy advertises every enabled provider as an explicit tokenless model
       assert.equal(model.owned_by, 'tokenless')
     }
     assert.ok(response.body.data.some((model) => model.id === 'tokenless/chatgpt'))
+    assert.equal(response.body.data.filter((model) => model.id === 'tokenless/auto').length, 1)
+  })
+})
+
+test('explicit auto rejects plain, direct, and unevidenced provider-only requests before creating a job', async () => {
+  await withDaemon(async (daemon) => {
+    await enableApiProxy(daemon.homeDir)
+    const plain = await call(daemon, 'POST', '/v1/chat/completions', {
+      model: 'tokenless/auto',
+      messages: [{ role: 'user', content: 'hello' }],
+    })
+    assert.equal(plain.status, 400)
+    assert.equal(plain.body.error.code, 'auto_structured_control_required')
+
+    const direct = await call(daemon, 'POST', '/v1/chat/completions', {
+      model: 'tokenless/auto',
+      messages: [{ role: 'user', content: 'Read package.json.' }],
+      tools: [functionTool('read_file')],
+      tokenless: { execution_mode: 'direct' },
+    })
+    assert.equal(direct.status, 400)
+    assert.equal(direct.body.error.code, 'auto_execution_mode_unsupported')
+
+    const { ManagedProfileRegistry } = await import(profileRegistryModule)
+    const registry = new ManagedProfileRegistry(daemon.homeDir)
+    await registry.addProfile({ slug: 'web-ai', setDefault: true, lifecycle: 'ready' })
+    await registry.updateProviderStatus('web-ai', {
+      provider: 'gemini',
+      auth: 'authenticated',
+      access: 'signed_in_free',
+      checkedAt: new Date().toISOString(),
+    })
+    const { writeTokenlessConfig } = await import(runtimeModule)
+    await writeTokenlessConfig({
+      homeDir: daemon.homeDir,
+      apiProxy: { enabled: true, conversationMode: 'new-conversation', executionMode: 'browser' },
+      profiles: {
+        'web-ai': {
+          roleLabel: '',
+          enabledProviders: ['gemini'],
+          browserVisibility: 'headed',
+          proxy: null,
+        },
+      },
+    })
+    const unsupported = await call(daemon, 'POST', '/v1/chat/completions', {
+      model: 'tokenless/auto',
+      messages: [{ role: 'user', content: 'Read package.json.' }],
+      tools: [functionTool('read_file')],
+      parallel_tool_calls: false,
+    })
+    assert.equal(unsupported.status, 503)
+    assert.equal(unsupported.body.error.code, 'auto_route_unavailable')
+
+    const jobs = await call(daemon, 'GET', '/jobs')
+    assert.equal(jobs.body.length, 0)
+  })
+})
+
+test('explicit auto applies portable call-id affinity and persists one real fallback job before submission', async () => {
+  await withDaemon(async (daemon) => {
+    const { ManagedProfileRegistry } = await import(profileRegistryModule)
+    const registry = new ManagedProfileRegistry(daemon.homeDir)
+    await registry.addProfile({ slug: 'web-ai', setDefault: true, lifecycle: 'ready' })
+    for (const provider of ['deepseek', 'chatgpt']) {
+      await registry.updateProviderStatus('web-ai', {
+        provider,
+        auth: 'authenticated',
+        access: 'signed_in_free',
+        checkedAt: new Date().toISOString(),
+      })
+    }
+    const { writeTokenlessConfig } = await import(runtimeModule)
+    await writeTokenlessConfig({
+      homeDir: daemon.homeDir,
+      apiProxy: { enabled: true, conversationMode: 'new-conversation', executionMode: 'browser' },
+      profiles: {
+        'web-ai': {
+          roleLabel: '',
+          enabledProviders: ['deepseek', 'chatgpt'],
+          browserVisibility: 'headed',
+          proxy: null,
+        },
+      },
+    })
+
+    const callId = `call_tla1_chatgpt_${'a'.repeat(32)}`
+    const tool = functionTool('read_file')
+    tool.function.strict = true
+    const pending = call(daemon, 'POST', '/v1/chat/completions', {
+      model: 'tokenless/auto',
+      messages: [
+        { role: 'user', content: 'Read package.json.' },
+        {
+          role: 'assistant',
+          content: null,
+          tool_calls: [{
+            id: callId,
+            type: 'function',
+            function: { name: 'read_file', arguments: '{"path":"package.json"}' },
+          }],
+        },
+        { role: 'tool', tool_call_id: callId, content: '{"name":"tokenless"}' },
+      ],
+      tools: [tool],
+      tool_choice: 'none',
+      parallel_tool_calls: true,
+    })
+
+    let job
+    for (let attempt = 0; attempt < 40 && !job; attempt += 1) {
+      job = daemon.store.listJobs({ limit: 1 })[0]
+      if (!job) await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+    assert.ok(job)
+    assert.equal(job.provider, 'chatgpt')
+    assert.equal(job.provider_submitted_at, null)
+    assert.equal(job.request_json.capabilityRoute.provider, 'chatgpt')
+    assert.equal(job.request_json.fallback.alternatives[0].provider, 'deepseek')
+    assert.equal(job.request_json.fallback.alternatives[0].capabilityRoute.provider, 'deepseek')
+    assert.match(job.request_json.actions[0].payload.text, new RegExp(callId))
+    assert.deepEqual(job.provider_attempts_json.map((entry) => entry.provider), ['chatgpt'])
+
+    await daemon.store.cancelJob(job.job_id, 'focused pre-submit routing test completed')
+    const response = await pending
+    assert.equal(response.status, 502)
   })
 })
 

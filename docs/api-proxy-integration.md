@@ -70,7 +70,7 @@ Treat it as a local credential: it authorizes every daemon control route, not ju
 
 ## Model naming
 
-`model` is the only place a provider can be named, so it must name one explicitly:
+Use a fixed provider model when the caller owns provider selection:
 
 ```
 tokenless/<provider>
@@ -88,6 +88,22 @@ A bare model name such as `gpt-4o` is **rejected**, not remapped. This is delibe
 ```
 
 A well-formed name for a provider that does not exist or is not built in returns `404` / `model_not_found`, matching what a real API does with an unknown model.
+
+### Explicit auto routing
+
+`tokenless/auto` is a reserved opt-in model on OpenAI Chat Completions and Responses. It is not an alias for ordinary chat and never changes the behavior of an exact `tokenless/<provider>` request.
+
+The current scope is deliberately narrow:
+
+- Browser execution, `new-conversation`, and a request containing function tools, `json_object`, or `json_schema`.
+- Candidates must be enabled on the selected profile, have currently usable observed access, expose an evidence-backed `conversation.chat` route, and satisfy every structured-control requirement.
+- Tool requirements distinguish calls, strict schemas, complete tool history, and multiple-call output. `parallel_tool_calls: true` requires multiple-call evidence only when the current `tool_choice` may return multiple calls; `none` and an exact named choice do not.
+- DeepSeek is admitted for evidenced multiple/strict/history and JSON control. ChatGPT is admitted for evidenced single-call strict/history and JSON control. Gemini tool control is excluded because its real outputs failed the strict whole-response boundary. The current two-provider routing and schema runs are recorded in [redacted evidence](evidence/openai-auto-provider-routing-2026-08-15.md).
+- Unsupported plain text, direct execution, provider backend/auth options, provider-local continuation, opaque replay, or an incomplete candidate set fails before a job is created.
+
+Auto calls use versioned opaque public ids that encode only their provider origin. A later full-history turn prefers that provider after rechecking current eligibility; a caller-influenced id cannot bypass the filter. Responses `previous_response_id` uses its existing ledger provider the same way—as portable affinity, not a hard pin.
+
+Provider switching always starts a new target-provider conversation with the exact canonical assistant call and caller result. Provider URLs and opaque state are never replayed. The existing Managed Playwright fallback plan may switch only before `provider_submitted_at`; any malformed, failed, or ambiguous post-submission outcome is terminal. The bounded final-escaping correction stays on the settled provider and strategy with no auto resolution or fallback.
 
 ## Request bodies
 
@@ -221,6 +237,8 @@ The ledger does not persist tool definitions. Both forms validate history agains
 
 The local ledger retains canonical public transcript items for 24 hours and at most 1,000 responses. The next write purges all expired rows; looking up an exact expired id deletes only that row and returns `response_expired` for the triggering request. It stores no credentials, browser session, hidden reasoning, or fabricated opaque item. Capacity-evicted, unknown, or subsequently requested deleted ids return `response_not_found`; changing provider, exact model, or execution mode returns `response_route_mismatch` before submission. This prompt-emulated route produces no provider opaque/reasoning items, so unknown reasoning or opaque replay fails with `unverifiable_replay_item`.
 
+For `tokenless/auto`, a portable ledger continuation may select another eligible provider on the next caller turn. Exact provider models remain hard provider/model/execution affine.
+
 Responses V1 intentionally excludes Conversations, background mode, WebSockets, hosted tools, retrieve/delete, non-text inputs, and array-valued function outputs.
 
 ### Anthropic
@@ -303,6 +321,10 @@ Standard vendor shapes plus one `tokenless` object.
     "provider": "chatgpt",
     "job_id": "20aa1107-6cd5-4981-bfe6-853640420dd4",
     "conversation_mode": "new-conversation",
+    "execution_mode": "browser",
+    "provider_backend": "browser",
+    "structured_control_strategy": null,
+    "provider_attempts": [{"attempt":1,"provider":"chatgpt","status":"succeeded","started_at":"...","completed_at":"...","blocker_code":null,"blocker_classification":null}],
     "citations": [{"url": "https://example.com", "title": "Example"}]
   }
 }
@@ -355,9 +377,12 @@ If you need a savings figure, use `tokenless savings status --json`, which measu
 
 | Field | Use |
 | --- | --- |
-| `provider` | Which provider actually answered |
+| `provider` | Which provider actually answered, including the settled fallback provider |
 | `job_id` | Durable job id — pass to `tokenless state --job-id <id> --json` to inspect what happened |
 | `conversation_mode` | Which mapping served this request |
+| `execution_mode` / `provider_backend` | Actual execution route |
+| `structured_control_strategy` | `prompt_tool_envelope`, `prompt_json_envelope`, or `null` for plain text |
+| `provider_attempts` | Redacted attempt order/status and blocker classification from the one durable job |
 | `citations` | Visible source links, when the provider rendered any |
 
 Log `job_id`. It is the only handle that ties a client-side failure to a durable local record.
@@ -455,6 +480,8 @@ The status is the signal to branch on. Read `code` for the specific cause and tr
 | 400 | `invalid_request_error` | Malformed body, tool catalog, tool choice, response format/schema, arguments, or unpaired history | No — fix the request |
 | 400 | `invalid_json` | Body is empty or not JSON | No |
 | 400 | `unsupported_parameter` | Legacy `functions` / `function_call`, or Anthropic tools/structured output | No |
+| 400 | `auto_structured_control_required` | `tokenless/auto` received a plain-text request | No — choose an exact provider or add tools/structured output |
+| 400 | `auto_execution_mode_unsupported` / `auto_conversation_mode_unsupported` / `auto_dialect_unsupported` | Auto was asked to use direct/provider-local/Anthropic state | No — use the documented OpenAI browser scope |
 | 401 | `control_auth_missing` | No bearer token | No |
 | 403 | `control_auth_rejected` | Wrong bearer token | No |
 | 404 | `model_not_found` | `model` names a provider that does not exist or is not built in | No |
@@ -466,6 +493,7 @@ The status is the signal to branch on. Read `code` for the specific cause and tr
 | 503 | `api_proxy_disabled` | The proxy is off | No — enable it |
 | 503 | `profile_not_ready` | The managed profile needs `tokenless setup` | No — finish setup |
 | 503 | `model_not_available` | The provider is not enabled for the resolved profile | No — enable it |
+| 503 | `auto_route_unavailable` | No enabled, currently usable, evidence-backed provider satisfies the complete request | No — change scope or provider readiness |
 | 504 | `completion_timeout` | The provider did not answer within 10 minutes | Yes, but the original job may still be running |
 
 A `4xx` other than 499 means the caller must change something. A `502`, `504`, or `500` is operational: the same request may succeed later. That distinction is the whole point of the table — do not match on message strings.

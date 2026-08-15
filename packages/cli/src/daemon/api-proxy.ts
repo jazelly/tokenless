@@ -4,7 +4,17 @@ import { readTokenlessConfig, type ApiProxyConversationMode, type ProviderBacken
 import { createManagedPlaywrightJobRequest, MANAGED_PLAYWRIGHT_JOB_ACTION } from '../playwright/job-contract.js'
 import { VISIBLE_ACTIONS, createVisibleActionRequest } from '../playwright/actions.js'
 import { ManagedProfileRegistry } from '../playwright/profiles/registry.js'
-import { getProviderInstanceById, providerRegistry } from '../providers/registry.js'
+import {
+  getProviderInstanceById,
+  providerRegistry,
+  resolveApiProxyStructuredControlRoutes,
+  resolveTaskCapabilityRoutes,
+  TASK_CAPABILITIES,
+  type ApiProxyStructuredControlRequirements,
+  type ApiProxyStructuredControlRoute,
+  type ProviderId,
+  type TaskCapabilityRoute,
+} from '../providers/registry.js'
 import {
   type ApiResponseLedgerEntry,
   type Job,
@@ -66,6 +76,8 @@ export type ApiProxyDialect = 'openai' | 'anthropic'
 
 type NormalizedRequest = {
   provider: string
+  auto: boolean
+  affinityProvider: ProviderId | null
   messages: OpenAiProtocolMessage[]
   stream: boolean
   requestedModel: string
@@ -90,6 +102,8 @@ export type ApiProxyCompletion = {
   conversationMode: ApiProxyConversationMode
   executionMode: 'browser' | 'direct'
   providerBackend: 'browser' | ProviderBackend
+  structuredControlStrategy: string | null
+  providerAttempts: readonly Record<string, unknown>[]
   toolCalls?: { id: string; name: string; arguments: string }[]
 }
 
@@ -134,6 +148,9 @@ export class ApiProxyAdapter {
     const config = await readTokenlessConfig(this.store.homeDir)
     if (!config.apiProxy.enabled) throw apiProxyDisabled()
     const request = dialect === 'openai' ? normalizeOpenAiRequest(body) : normalizeAnthropicRequest(body)
+    if (request.auto && dialect !== 'openai') {
+      throw new ApiProxyError(400, 'auto_dialect_unsupported', 'tokenless/auto is available only on OpenAI Chat Completions and Responses.', 'model')
+    }
     return await this.completeRequest(config, request, signal)
   }
 
@@ -167,7 +184,8 @@ export class ApiProxyAdapter {
     // Request-level validation first: an unknown provider is the caller's
     // mistake and must be rejected the same way whether or not this
     // installation happens to have a usable profile yet.
-    assertProviderSupported(request.provider)
+    if (request.auto) assertAutoRequestScope(config, request)
+    else assertProviderSupported(request.provider)
     if (request.toolProtocol) requestPrompt(request)
     const profile = await this.profiles.resolveProfile()
     if (profile.lifecycle !== 'ready') {
@@ -178,7 +196,7 @@ export class ApiProxyAdapter {
       )
     }
     const enabledProviders = config.profiles[profile.slug]?.enabledProviders ?? []
-    if (!enabledProviders.includes(request.provider)) {
+    if (!request.auto && !enabledProviders.includes(request.provider)) {
       throw new ApiProxyError(
         503,
         'model_not_available',
@@ -188,15 +206,30 @@ export class ApiProxyAdapter {
     }
 
     const executionMode = request.executionMode ?? config.apiProxy.executionMode
+    const autoRoutes = request.auto
+      ? autoStructuredControlRoutes(request, profile, enabledProviders)
+      : []
+    if (request.auto && autoRoutes.length === 0) {
+      throw new ApiProxyError(
+        503,
+        'auto_route_unavailable',
+        'No enabled provider with current profile access and real evidence can satisfy the complete structured-control request.',
+        'model',
+      )
+    }
+    const selectedRoute = autoRoutes[0] ?? null
+    const selectedRequest = selectedRoute
+      ? { ...request, provider: selectedRoute.provider, upstreamModel: '' }
+      : request
     const providerBackend = executionMode === 'direct'
-      ? this.protocolRouter.backend(config.directProvider, request.provider, request.providerBackend ?? undefined)
+      ? this.protocolRouter.backend(config.directProvider, selectedRequest.provider, selectedRequest.providerBackend ?? undefined)
       : 'browser'
     if (executionMode === 'direct' && providerBackend === 'g4f') {
-      const messages = providerMessages(request)
-      const completion = await this.completeG4f(request, messages, signal)
-      return await validatedCompletion(request, directRawCompletion(request, completion, config.apiProxy.conversationMode), async (prompt) => {
-        const corrected = await this.completeG4f(request, [...messages, { role: 'user', content: prompt }], signal)
-        return directRawCompletion(request, corrected, config.apiProxy.conversationMode)
+      const messages = providerMessages(selectedRequest)
+      const completion = await this.completeG4f(selectedRequest, messages, signal)
+      return await validatedCompletion(selectedRequest, directRawCompletion(selectedRequest, completion, config.apiProxy.conversationMode), async (prompt) => {
+        const corrected = await this.completeG4f(selectedRequest, [...messages, { role: 'user', content: prompt }], signal)
+        return directRawCompletion(selectedRequest, corrected, config.apiProxy.conversationMode)
       })
     }
 
@@ -205,11 +238,11 @@ export class ApiProxyAdapter {
       throw new ApiProxyError(400, 'unsupported_parameter', 'Native direct execution currently supports only new conversations.')
     }
     const plan = mode === 'continue-conversation'
-      ? continuationPlan(request, profile.id, this.store)
-      : newConversationPlan(request)
+      ? continuationPlan(selectedRequest, profile.id, this.store)
+      : newConversationPlan(selectedRequest)
 
     const completion = await this.completeManagedPrompt({
-      request,
+      request: selectedRequest,
       profileId: profile.id,
       taskId: plan.taskId,
       promptText: plan.promptText,
@@ -217,16 +250,21 @@ export class ApiProxyAdapter {
       conversationMode: mode,
       executionMode,
       providerBackend,
+      capabilityRoute: selectedRoute?.capabilityRoute ?? null,
+      fallbackRoutes: autoRoutes.slice(1),
+      structuredControlStrategy: structuredControlStrategy(selectedRequest, selectedRoute),
       signal,
     })
-    return await validatedCompletion(request, completion, async (prompt) => {
+    return await validatedCompletion(selectedRequest, completion, async (prompt) => {
+      const settledRoute = autoRoutes.find((route) => route.provider === completion.base.provider) ?? selectedRoute
+      const correctionRequest = { ...selectedRequest, provider: completion.base.provider }
       const mapping = this.store.resolveProviderTaskConversation({
-        provider: request.provider,
+        provider: correctionRequest.provider,
         profile_id: profile.id,
         task_id: plan.taskId,
       })
       return await this.completeManagedPrompt({
-        request,
+        request: correctionRequest,
         profileId: profile.id,
         taskId: plan.taskId,
         promptText: prompt,
@@ -234,6 +272,9 @@ export class ApiProxyAdapter {
         conversationMode: mode,
         executionMode,
         providerBackend,
+        capabilityRoute: settledRoute?.capabilityRoute ?? null,
+        fallbackRoutes: [],
+        structuredControlStrategy: structuredControlStrategy(correctionRequest, settledRoute),
         signal,
       })
     })
@@ -267,6 +308,9 @@ export class ApiProxyAdapter {
     conversationMode,
     executionMode,
     providerBackend,
+    capabilityRoute,
+    fallbackRoutes,
+    structuredControlStrategy,
     signal,
   }: {
     request: NormalizedRequest
@@ -277,6 +321,9 @@ export class ApiProxyAdapter {
     conversationMode: ApiProxyConversationMode
     executionMode: 'browser' | 'direct'
     providerBackend: 'browser' | ProviderBackend
+    capabilityRoute: TaskCapabilityRoute | null
+    fallbackRoutes: readonly ApiProxyStructuredControlRoute[]
+    structuredControlStrategy: string | null
     signal: AbortSignal | undefined
   }): Promise<RawApiProxyCompletion> {
     const requestJson = createManagedPlaywrightJobRequest({
@@ -285,6 +332,20 @@ export class ApiProxyAdapter {
       browserVisibility: 'auto',
       userHandoff: false,
       executionMode,
+      capabilityRoute,
+      fallback: fallbackRoutes.length === 0 ? null : {
+        protocol: 'tokenless.provider-fallback.v1',
+        mode: 'automatic',
+        replay: 'from_start',
+        alternatives: fallbackRoutes.slice(0, 5).map((route) => ({
+          provider: route.provider,
+          target: {
+            kind: 'provider_home' as const,
+            url: getProviderInstanceById(route.provider)!.descriptor.navigation.homeUrl,
+          },
+          capabilityRoute: route.capabilityRoute,
+        })),
+      },
       ...(targetUrl ? { target: { kind: 'provider_home' as const, url: targetUrl } } : {}),
       actions: [
         createVisibleActionRequest({
@@ -310,12 +371,14 @@ export class ApiProxyAdapter {
     return {
       text: result.text,
       base: {
-        provider: request.provider,
+        provider: settled.provider,
         citations: result.citations,
         jobId: settled.job_id,
         conversationMode,
         executionMode,
         providerBackend,
+        structuredControlStrategy,
+        providerAttempts: publicProviderAttempts(settled.provider_attempts_json),
       },
     }
   }
@@ -346,6 +409,94 @@ function assertProviderSupported(provider: string) {
   if (!instance || instance.descriptor.stage === 'disabled') {
     throw new ApiProxyError(404, 'model_not_found', `The model '${MODEL_PREFIX}${provider}' does not exist.`, 'model')
   }
+}
+
+function assertAutoRequestScope(
+  config: Awaited<ReturnType<typeof readTokenlessConfig>>,
+  request: NormalizedRequest,
+) {
+  if (!request.toolProtocol) {
+    throw new ApiProxyError(
+      400,
+      'auto_structured_control_required',
+      'tokenless/auto currently requires function tools or json_object/json_schema structured output.',
+      'model',
+    )
+  }
+  const executionMode = request.executionMode ?? config.apiProxy.executionMode
+  if (executionMode !== 'browser' || request.providerBackend !== null || request.authContextId !== null) {
+    throw new ApiProxyError(
+      400,
+      'auto_execution_mode_unsupported',
+      'tokenless/auto currently supports only browser execution without provider-specific backend or auth options.',
+      'tokenless',
+    )
+  }
+  if (config.apiProxy.conversationMode !== 'new-conversation') {
+    throw new ApiProxyError(
+      400,
+      'auto_conversation_mode_unsupported',
+      'tokenless/auto requires new-conversation mode so provider-local conversation state is never replayed across providers.',
+      'model',
+    )
+  }
+}
+
+function autoStructuredControlRoutes(
+  request: NormalizedRequest,
+  profile: Awaited<ReturnType<ManagedProfileRegistry['resolveProfile']>>,
+  enabledProviders: readonly string[],
+) {
+  const candidates = enabledProviders.flatMap((provider, preferenceRank) => {
+    const instance = getProviderInstanceById(provider)
+    if (!instance || instance.descriptor.stage === 'disabled') return []
+    const observed = profile.lastObservedAuth[instance.id]
+    const access = observed?.access ?? (observed?.auth === 'authenticated' ? 'signed_in_unknown' : 'unknown')
+    const usable = access === 'guest' || access.startsWith('signed_in_')
+    return [{
+      provider: instance.id,
+      runtimeEligibility: usable ? 'eligible' as const : 'ineligible' as const,
+      reason: usable ? null : `provider_access_${access}`,
+      preferenceRank,
+    }]
+  })
+  const conversation = resolveTaskCapabilityRoutes({
+    requirements: [TASK_CAPABILITIES.CONVERSATION_CHAT],
+    candidates,
+  })
+  if (!conversation.ok) return []
+  return resolveApiProxyStructuredControlRoutes({
+    requirements: structuredControlRequirements(request),
+    candidates: conversation.routes.map((capabilityRoute, preferenceRank) => ({
+      provider: capabilityRoute.provider,
+      capabilityRoute,
+      preferenceRank,
+    })),
+    affinityProvider: request.affinityProvider,
+  })
+}
+
+function structuredControlRequirements(request: NormalizedRequest): ApiProxyStructuredControlRequirements {
+  const protocol = request.toolProtocol
+  if (!protocol) throw new Error('Structured-control requirements require a normalized tool protocol.')
+  const mayReturnCalls = protocol.tools.length > 0 && protocol.choice.mode !== 'none'
+  return Object.freeze({
+    tools: protocol.tools.length > 0,
+    multipleCalls: mayReturnCalls && protocol.parallelToolCalls && protocol.choice.mode !== 'named',
+    strictTools: protocol.tools.some((tool) => tool.strict),
+    toolHistory: request.messages.some((message) => message.role === 'tool' || (
+      message.role === 'assistant' && (message.toolCalls?.length ?? 0) > 0
+    )),
+    responseFormat: protocol.responseFormat.type,
+  })
+}
+
+function structuredControlStrategy(
+  request: NormalizedRequest,
+  route: ApiProxyStructuredControlRoute | null,
+) {
+  if (!request.toolProtocol) return null
+  return route?.strategy ?? (request.toolProtocol.tools.length > 0 ? 'prompt_tool_envelope' : 'prompt_json_envelope')
 }
 
 export function apiProxyDisabled() {
@@ -467,6 +618,8 @@ export function normalizeOpenAiRequest(body: unknown): NormalizedRequest {
   const options = normalizeTokenlessOptions(record.tokenless)
   return {
     provider: model.provider,
+    auto: model.auto,
+    affinityProvider: autoAffinityFromMessages(messages),
     messages,
     stream: record.stream === true,
     requestedModel: String(record.model),
@@ -510,6 +663,8 @@ function normalizeOpenAiResponsesRequest(
   return {
     request: {
       provider: model.provider,
+      auto: model.auto,
+      affinityProvider: previous?.provider ?? autoAffinityFromMessages(messages),
       messages,
       stream: body.stream === true,
       requestedModel: String(body.model),
@@ -788,6 +943,7 @@ function assertPreviousResponseRoute(
   model: string,
   executionMode: 'browser' | 'direct',
 ) {
+  if (provider === 'auto' && entry.model === model && entry.execution_mode === executionMode) return
   if (entry.provider === provider && entry.model === model && entry.execution_mode === executionMode) return
   throw new ApiProxyError(
     400,
@@ -836,6 +992,8 @@ export function normalizeAnthropicRequest(body: unknown): NormalizedRequest {
   const options = normalizeTokenlessOptions(record.tokenless)
   return {
     provider: model.provider,
+    auto: model.auto,
+    affinityProvider: null,
     messages,
     stream: record.stream === true,
     requestedModel: String(record.model),
@@ -940,7 +1098,10 @@ function providerFromModel(value: unknown) {
   if (!/^[a-z0-9-]{1,64}$/.test(provider)) {
     throw new ApiProxyError(404, 'model_not_found', `The model '${trimmed}' does not exist.`, 'model')
   }
-  return { provider, upstreamModel: modelParts.join('/') }
+  if (provider === 'auto' && modelParts.length > 0) {
+    throw new ApiProxyError(404, 'model_not_found', `The model '${trimmed}' does not exist.`, 'model')
+  }
+  return { provider, upstreamModel: modelParts.join('/'), auto: provider === 'auto' }
 }
 
 function normalizeTokenlessOptions(value: unknown): Pick<NormalizedRequest, 'executionMode' | 'providerBackend' | 'authContextId'> {
@@ -1086,11 +1247,37 @@ async function validatedCompletion(
     ...completion.base,
     text: result.content ?? '',
     toolCalls: result.calls.map((call) => ({
-      id: `call_${randomUUID().replaceAll('-', '')}`,
+      id: request.auto
+        ? autoPublicCallId(completion.base.provider)
+        : `call_${randomUUID().replaceAll('-', '')}`,
       name: call.name,
       arguments: JSON.stringify(call.arguments),
     })),
   }
+}
+
+function autoPublicCallId(provider: string) {
+  return `call_tla1_${provider}_${randomUUID().replaceAll('-', '')}`
+}
+
+function autoAffinityFromMessages(messages: readonly OpenAiProtocolMessage[]): ProviderId | null {
+  for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
+    const message = messages[messageIndex]
+    if (message?.role !== 'assistant' || !message.toolCalls) continue
+    for (let callIndex = message.toolCalls.length - 1; callIndex >= 0; callIndex -= 1) {
+      const provider = autoProviderFromPublicCallId(message.toolCalls[callIndex]?.id)
+      if (provider) return provider
+    }
+  }
+  return null
+}
+
+function autoProviderFromPublicCallId(value: unknown): ProviderId | null {
+  if (typeof value !== 'string') return null
+  const match = /^call_tla1_([a-z][a-z0-9-]{0,63})_([a-f0-9]{32})$/.exec(value)
+  if (!match) return null
+  const provider = match[1]
+  return provider && getProviderInstanceById(provider) ? provider : null
 }
 
 function providerOutputProtocolError(detail: string) {
@@ -1287,8 +1474,40 @@ function tokenlessMetadata(completion: ApiProxyCompletion) {
     conversation_mode: completion.conversationMode,
     execution_mode: completion.executionMode,
     provider_backend: completion.providerBackend,
+    structured_control_strategy: completion.structuredControlStrategy,
+    provider_attempts: completion.providerAttempts,
     citations: completion.citations,
   }
+}
+
+function publicProviderAttempts(value: unknown): readonly Record<string, unknown>[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return []
+    const attempt = entry as Record<string, unknown>
+    if (
+      !Number.isSafeInteger(attempt.attempt) ||
+      typeof attempt.provider !== 'string' ||
+      typeof attempt.status !== 'string'
+    ) return []
+    const blocker = attempt.blocker && typeof attempt.blocker === 'object' && !Array.isArray(attempt.blocker)
+      ? attempt.blocker as Record<string, unknown>
+      : null
+    const failure = blocker?.failure && typeof blocker.failure === 'object' && !Array.isArray(blocker.failure)
+      ? blocker.failure as Record<string, unknown>
+      : null
+    return [{
+      attempt: attempt.attempt,
+      provider: attempt.provider,
+      status: attempt.status,
+      started_at: typeof attempt.startedAt === 'string' ? attempt.startedAt : null,
+      completed_at: typeof attempt.completedAt === 'string' ? attempt.completedAt : null,
+      blocker_code: typeof blocker?.code === 'string'
+        ? blocker.code
+        : (typeof failure?.code === 'string' ? failure.code : null),
+      blocker_classification: typeof failure?.classification === 'string' ? failure.classification : null,
+    }]
+  })
 }
 
 function safeDirectError(error: unknown) {
@@ -1318,6 +1537,8 @@ function directRawCompletion(
       conversationMode,
       executionMode: 'direct',
       providerBackend: 'g4f',
+      structuredControlStrategy: structuredControlStrategy(request, null),
+      providerAttempts: [],
     },
   }
 }
@@ -1421,7 +1642,7 @@ export function apiProxyModelList() {
 }
 
 function providerModelIds() {
-  return listApiProxyProviders().map((provider) => `${MODEL_PREFIX}${provider}`)
+  return [`${MODEL_PREFIX}auto`, ...listApiProxyProviders().map((provider) => `${MODEL_PREFIX}${provider}`)]
 }
 
 function listApiProxyProviders() {
