@@ -424,6 +424,110 @@
         }
       }
     },
+    "/v1/responses": {
+      "post": {
+        "operationId": "createApiProxyResponseOnDefaultPath",
+        "summary": "Run an OpenAI-compatible Responses request on the default OpenAI path",
+        "description": "Alias of POST /v1/openai/responses for SDKs configured with the default /v1 base URL.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApiProxyResponsesRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed OpenAI Response or a typed terminal SSE event stream",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProxyResponsesResponse"
+                }
+              },
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or replay state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProxyOpenAiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing control bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProxyOpenAiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Rejected control bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProxyOpenAiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown model or missing previous response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProxyOpenAiError"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Expired previous response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProxyOpenAiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Provider or protocol failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProxyOpenAiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Proxy or provider unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProxyOpenAiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/web-ai/bindings": {
       "post": {
         "operationId": "bindWebAiInteractionV0",
@@ -1344,6 +1448,130 @@
           },
           "503": {
             "description": "The API proxy is disabled, the managed profile is not ready, or the provider is not enabled for it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProxyOpenAiError"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "The visible provider did not respond before the deadline",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProxyOpenAiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/openai/responses": {
+      "post": {
+        "operationId": "createApiProxyResponse",
+        "summary": "Run an OpenAI-compatible Responses request through a visible provider page",
+        "description": "Maps Responses text messages, function_call items, function_call_output items, flat function tools, tool_choice, parallel_tool_calls, and text.format onto the same validated canonical semantics as Chat Completions. The caller executes tools. Streaming emits current typed Responses events with complete terminal content and no fabricated usage. previous_response_id uses a local ledger retained for 24 hours and at most 1000 entries; missing or capacity-evicted ids return response_not_found, expired ids return response_expired, and provider/model/execution changes return response_route_mismatch. This prompt-emulated route produces no opaque reasoning items and rejects unverifiable opaque replay.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApiProxyResponsesRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed OpenAI Response or a typed terminal SSE event stream",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProxyResponsesResponse"
+                }
+              },
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request, unpaired call/result history, route mismatch, or unverifiable replay item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProxyOpenAiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing control bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProxyOpenAiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Rejected control bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProxyOpenAiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown model or missing previous response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProxyOpenAiError"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "The previous response exists but its 24-hour retention has expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProxyOpenAiError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request body exceeds the 2 MiB HTTP boundary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProxyOpenAiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Provider failure or structured-control protocol error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProxyOpenAiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Proxy disabled, profile not ready, or provider unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -5464,6 +5692,342 @@
           }
         }
       },
+      "ApiProxyResponsesFunctionTool": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "name",
+          "parameters"
+        ],
+        "properties": {
+          "type": {
+            "const": "function"
+          },
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,64}$"
+          },
+          "description": {
+            "type": "string"
+          },
+          "parameters": {
+            "type": "object"
+          },
+          "strict": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ApiProxyResponsesInputItem": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "role",
+              "content"
+            ],
+            "properties": {
+              "type": {
+                "const": "message"
+              },
+              "role": {
+                "enum": [
+                  "system",
+                  "developer",
+                  "user"
+                ]
+              },
+              "content": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "type",
+                        "text"
+                      ],
+                      "properties": {
+                        "type": {
+                          "const": "input_text"
+                        },
+                        "text": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,128}$"
+              },
+              "status": {
+                "const": "completed"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "role",
+              "content"
+            ],
+            "properties": {
+              "type": {
+                "const": "message"
+              },
+              "role": {
+                "const": "assistant"
+              },
+              "content": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "type",
+                        "text"
+                      ],
+                      "properties": {
+                        "type": {
+                          "enum": [
+                            "input_text",
+                            "output_text"
+                          ]
+                        },
+                        "text": {
+                          "type": "string"
+                        },
+                        "annotations": {
+                          "type": "array"
+                        },
+                        "logprobs": {
+                          "type": "array"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,128}$"
+              },
+              "status": {
+                "const": "completed"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "call_id",
+              "name",
+              "arguments"
+            ],
+            "properties": {
+              "type": {
+                "const": "function_call"
+              },
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,128}$"
+              },
+              "call_id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,128}$"
+              },
+              "name": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,64}$"
+              },
+              "arguments": {
+                "type": "string"
+              },
+              "status": {
+                "const": "completed"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "call_id",
+              "output"
+            ],
+            "properties": {
+              "type": {
+                "const": "function_call_output"
+              },
+              "call_id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,128}$"
+              },
+              "output": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      },
+      "ApiProxyResponsesTextFormat": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "enum": [
+                  "text",
+                  "json_object"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "name",
+              "schema"
+            ],
+            "properties": {
+              "type": {
+                "const": "json_schema"
+              },
+              "name": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,64}$"
+              },
+              "description": {
+                "type": "string"
+              },
+              "schema": {
+                "type": "object",
+                "description": "The same published recursively closed object-schema subset as Chat Completions response_format."
+              },
+              "strict": {
+                "type": "boolean"
+              }
+            }
+          }
+        ]
+      },
+      "ApiProxyResponsesRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "model",
+          "input"
+        ],
+        "properties": {
+          "model": {
+            "$ref": "#/components/schemas/ApiProxyModelName"
+          },
+          "input": {
+            "oneOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 256,
+                "items": {
+                  "$ref": "#/components/schemas/ApiProxyResponsesInputItem"
+                }
+              }
+            ]
+          },
+          "tools": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 128,
+            "items": {
+              "$ref": "#/components/schemas/ApiProxyResponsesFunctionTool"
+            }
+          },
+          "tool_choice": {
+            "oneOf": [
+              {
+                "enum": [
+                  "auto",
+                  "none",
+                  "required"
+                ]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "name"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "function"
+                  },
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,64}$"
+                  }
+                }
+              }
+            ]
+          },
+          "parallel_tool_calls": {
+            "type": "boolean",
+            "default": true
+          },
+          "text": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "format"
+            ],
+            "properties": {
+              "format": {
+                "$ref": "#/components/schemas/ApiProxyResponsesTextFormat"
+              }
+            }
+          },
+          "previous_response_id": {
+            "type": "string",
+            "pattern": "^resp_[a-f0-9]{32}$"
+          },
+          "stream": {
+            "type": "boolean"
+          },
+          "tokenless": {
+            "type": "object"
+          }
+        }
+      },
       "ApiProxyAnthropicRequest": {
         "type": "object",
         "required": [
@@ -5668,6 +6232,135 @@
           },
           "usage": {
             "$ref": "#/components/schemas/ApiProxyOpenAiUsage"
+          },
+          "tokenless": {
+            "$ref": "#/components/schemas/ApiProxyMetadata"
+          }
+        }
+      },
+      "ApiProxyResponsesResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "object",
+          "created_at",
+          "status",
+          "model",
+          "output",
+          "parallel_tool_calls",
+          "previous_response_id",
+          "text",
+          "tool_choice",
+          "tools",
+          "tokenless"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^resp_[a-f0-9]{32}$"
+          },
+          "object": {
+            "const": "response"
+          },
+          "created_at": {
+            "type": "integer"
+          },
+          "completed_at": {
+            "type": "integer"
+          },
+          "status": {
+            "const": "completed"
+          },
+          "model": {
+            "type": "string"
+          },
+          "output_text": {
+            "type": "string"
+          },
+          "output": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "type",
+                    "status",
+                    "role",
+                    "content"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "message"
+                    },
+                    "status": {
+                      "const": "completed"
+                    },
+                    "role": {
+                      "const": "assistant"
+                    },
+                    "content": {
+                      "type": "array"
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "type",
+                    "status",
+                    "call_id",
+                    "name",
+                    "arguments"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "const": "function_call"
+                    },
+                    "status": {
+                      "const": "completed"
+                    },
+                    "call_id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "arguments": {
+                      "type": "string"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "parallel_tool_calls": {
+            "type": "boolean"
+          },
+          "previous_response_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "text": {
+            "type": "object"
+          },
+          "tool_choice": {},
+          "tools": {
+            "type": "array"
+          },
+          "usage": {
+            "type": "null",
+            "description": "Tokenless does not fabricate provider token usage."
           },
           "tokenless": {
             "$ref": "#/components/schemas/ApiProxyMetadata"

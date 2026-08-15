@@ -37,7 +37,7 @@ tokenless api-proxy status --json
 | OpenAI 兼容，默认路径 | `http://127.0.0.1:7331/v1` |
 | Anthropic 兼容 | `http://127.0.0.1:7331/v1/anthropic` |
 
-裸 `/v1` base 的存在，是为了让硬编码 `/v1/chat/completions` 的客户端无需改动即可使用。它只是 alias：dialect 与行为完全一致。Anthropic 没有裸 alias，因为两种 dialect 会在同一路径上冲突。
+裸 `/v1` base 的存在，是为了让使用 `/v1/chat/completions` 或 `/v1/responses` 的客户端无需改动即可工作。它们只是 alias：dialect 与行为完全一致。Anthropic 没有裸 alias，因为两种 dialect 会在同一路径上冲突。
 
 ## 认证
 
@@ -62,6 +62,8 @@ Token 位于 `<TOKENLESS_HOME>/daemon.token`，默认 `~/.tokenless/daemon.token
 | --- | --- | --- |
 | POST | `/v1/openai/chat/completions` | OpenAI chat completion |
 | POST | `/v1/chat/completions` | 上一条的 alias |
+| POST | `/v1/openai/responses` | OpenAI Responses |
+| POST | `/v1/responses` | 上一条的 alias |
 | GET | `/v1/openai/models` | 列出可用 model 名称 |
 | GET | `/v1/models` | 上一条的 alias |
 | POST | `/v1/anthropic/messages` | Anthropic message |
@@ -194,6 +196,30 @@ Accepted schema 的根节点必须恰好是 `{"type":"object"}`。每个 object�
 所有未列出的 keyword 都会在创建 job 前被拒绝。尤其是 `$defs`、`$ref`、`oneOf`、`allOf`、`not`、conditional 与 `patternProperties` 均不属于此 V1 subset。
 
 Structured JSON number 必须为 finite，并使用 `JSON.stringify(Number(token))` 返回的唯一 spelling；整数必须位于 JavaScript safe integer range 内。当 canonical form 是 `1` 或 `1000` 时，`1.0`、`1e3` 等 noncanonical spelling 会以 `provider_output_protocol_error` 失败。Schema 中 `enum`、`const`、bound、length/item limit 与 `multipleOf` 的数值也采用相同的 finite/safe-integer admission rule，包括 `enum` 或 `const` data 内递归嵌套的 number。
+
+### OpenAI Responses
+
+`POST /v1/responses` 与 `/v1/openai/responses` 把当前官方 [function calling](https://developers.openai.com/api/docs/guides/function-calling) 和 [Responses create](https://developers.openai.com/api/reference/resources/responses/methods/create) shape 映射到与 Chat Completions 相同的 Tokenless validation 与 provider turn。
+
+- `input` 接受非空 string 或最多 256 个 text item：user/system/developer/assistant message、Tokenless output `message` item、`function_call` 与 string `function_call_output`。
+- Function tool 为 flat shape：`{type, name, description?, parameters, strict?}`。`tool_choice` 支持 `auto`、`none`、`required` 或 `{type:"function",name}`。
+- `text.format` 支持 `text`、`json_object` 或 flat `json_schema`，schema subset 与上文相同。
+- Tokenless 在 provider submission 前校验所有 declared name、strict argument、唯一 `call_id` 与完整 call/output 配对。它不会执行调用方 tool。
+
+Non-stream output 包含 assistant `message` 或按 model 顺序排列的 `function_call` item。Function item 的 item `id` 与 stable public `call_id` 不同；调用方用 `{type:"function_call_output",call_id,output}` 回复。
+
+Streaming 是 terminal 但 typed。它依次发出 `response.created`、`response.in_progress`、item/content event、可完整重建的 argument 或 text delta、done event 与 `response.completed`。它不发 Chat 的 `[DONE]`，不伪造 token pacing 或 usage；`usage` 为 `null`。
+
+可采用任一种官方 continuation 形式：
+
+1. Full-input replay：把先前 `response.output` 与 caller-owned result 追加到原 input，并重新发送同一份当前 `tools` catalog。
+2. Ledger continuation：把 result 作为 `input`，传入 `previous_response_id`，并重新发送同一份当前 `tools` catalog。
+
+Ledger 不持久化 tool definition。两种形式都会根据当前请求中的 `tools` catalog 校验 history。
+
+本地 ledger 保留 canonical public transcript item 24 小时，最多 1,000 个 response。下次写入会清除全部过期 row；查询某个确切的过期 id 时只删除该 row，并为触发请求返回 `response_expired`。它不保存 credential、browser session、hidden reasoning，也不伪造 opaque item。因容量淘汰、未知或已删除而再次请求的 id 返回 `response_not_found`；更换 provider、exact model 或 execution mode 会在提交前返回 `response_route_mismatch`。当前 prompt-emulated route 不产生 provider opaque/reasoning item，因此 unknown reasoning 或 opaque replay 返回 `unverifiable_replay_item`。
+
+Responses V1 明确不包括 Conversations、background、WebSocket、hosted tools、retrieve/delete、非文本 input 与 array-valued function output。
 
 ### Anthropic
 

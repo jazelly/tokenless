@@ -37,7 +37,7 @@ Do not hardcode it. Read `apiProxy.endpoints` from `tokenless api-proxy status -
 | OpenAI-compatible, default paths | `http://127.0.0.1:7331/v1` |
 | Anthropic-compatible | `http://127.0.0.1:7331/v1/anthropic` |
 
-The bare `/v1` base exists so a client that hardcodes `/v1/chat/completions` works without modification. It is an alias: same dialect, same behavior. Anthropic has no bare alias, because the two dialects would collide on one path.
+The bare `/v1` base exists so clients that use `/v1/chat/completions` or `/v1/responses` work without modification. These are aliases: same dialect, same behavior. Anthropic has no bare alias, because the two dialects would collide on one path.
 
 ## Authentication
 
@@ -62,6 +62,8 @@ Treat it as a local credential: it authorizes every daemon control route, not ju
 | --- | --- | --- |
 | POST | `/v1/openai/chat/completions` | OpenAI chat completion |
 | POST | `/v1/chat/completions` | Alias of the above |
+| POST | `/v1/openai/responses` | OpenAI Responses |
+| POST | `/v1/responses` | Alias of the above |
 | GET | `/v1/openai/models` | List accepted model names |
 | GET | `/v1/models` | Alias of the above |
 | POST | `/v1/anthropic/messages` | Anthropic message |
@@ -194,6 +196,30 @@ The accepted schema root is exactly `{"type":"object"}`. Every object, including
 Every unlisted keyword is rejected before a job is created. In particular, `$defs`, `$ref`, `oneOf`, `allOf`, `not`, conditionals, and `patternProperties` are not part of this V1 subset.
 
 Structured JSON numbers must be finite and use the unique spelling returned by `JSON.stringify(Number(token))`; integral values must be within JavaScript's safe integer range. Noncanonical spellings such as `1.0` or `1e3` fail with `provider_output_protocol_error` when their canonical forms are `1` or `1000`. Numeric schema values in `enum`, `const`, bounds, length/item limits, and `multipleOf` follow the same finite/safe-integer admission rule, including numbers nested inside `enum` or `const` data.
+
+### OpenAI Responses
+
+`POST /v1/responses` and `/v1/openai/responses` map the current official [function-calling](https://developers.openai.com/api/docs/guides/function-calling) and [Responses create](https://developers.openai.com/api/reference/resources/responses/methods/create) shapes onto the same Tokenless validation and provider turn as Chat Completions.
+
+- `input` accepts a non-empty string or up to 256 text items: user/system/developer/assistant messages, Tokenless output `message` items, `function_call`, and string `function_call_output`.
+- Function tools are flat: `{type, name, description?, parameters, strict?}`. `tool_choice` is `auto`, `none`, `required`, or `{type:"function",name}`.
+- `text.format` accepts `text`, `json_object`, or flat `json_schema` with the same published schema subset above.
+- Tokenless validates every declared name, strict argument, unique `call_id`, and complete call/output pairing before provider submission. It never executes caller tools.
+
+Non-streaming output contains an assistant `message` or model-ordered `function_call` items. A function item has a distinct item `id` and stable public `call_id`; reply with `{type:"function_call_output",call_id,output}`.
+
+Streaming is terminal but typed. It emits `response.created`, `response.in_progress`, item/content events, full reconstructable argument or text deltas, done events, and `response.completed`. It does not emit Chat's `[DONE]`, fake token pacing, or fabricated usage; `usage` is `null`.
+
+Continue in either official form:
+
+1. Full-input replay: append the prior `response.output` and caller-owned result to the original input, and resend the same current `tools` catalog.
+2. Ledger continuation: send the result as `input` with `previous_response_id`, and resend the same current `tools` catalog.
+
+The ledger does not persist tool definitions. Both forms validate history against the `tools` catalog in the current request.
+
+The local ledger retains canonical public transcript items for 24 hours and at most 1,000 responses. The next write purges all expired rows; looking up an exact expired id deletes only that row and returns `response_expired` for the triggering request. It stores no credentials, browser session, hidden reasoning, or fabricated opaque item. Capacity-evicted, unknown, or subsequently requested deleted ids return `response_not_found`; changing provider, exact model, or execution mode returns `response_route_mismatch` before submission. This prompt-emulated route produces no provider opaque/reasoning items, so unknown reasoning or opaque replay fails with `unverifiable_replay_item`.
+
+Responses V1 intentionally excludes Conversations, background mode, WebSockets, hosted tools, retrieve/delete, non-text inputs, and array-valued function outputs.
 
 ### Anthropic
 

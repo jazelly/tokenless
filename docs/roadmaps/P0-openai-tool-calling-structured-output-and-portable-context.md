@@ -471,6 +471,8 @@ Exit: API 与 Standalone Harness对 tool name、arguments、framing、nonce和in
 
 ### Phase 6: Responses API Mapping
 
+Lifecycle note（2026-08-15）：Universal API 已加入 `/v1/responses` 与 `/v1/openai/responses`，把 flat function tools、typed call/result items、`text.format`、non-stream 与 current typed terminal SSE 映射到既有 Chat canonical prompt-emulated path。24 小时/1,000-entry local ledger 支持 provider/model/execution-affine `previous_response_id`；当前 route 不产生 opaque reasoning state，因此不会伪造或跨 route replay。Official `openai@7.4.0` 已通过真实 DeepSeek browser route 完成 function call、caller-owned result、full-input replay、`previous_response_id` continuation、function/text stream reconstruction 与 structured final；证据见 [OpenAI Responses — DeepSeek](../evidence/openai-responses-deepseek-2026-08-15.md)。TC-007 在 fresh reviewer 与 coordinator verification 通过前保持 active。
+
 - 将 canonical calls/results映射到 Responses function call items与 outputs。
 - 支持 non-stream/stream、stable `call_id`、structured final与 full-input replay。
 - Full-input replay接受并验证Tokenless先前返回的required opaque/reasoning items，将它们绑定原provider/model/execution mode后原样回传；它们不进入portable canonical transcript。

@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -15,6 +16,8 @@ const ROUTES = [
   ['GET', '/v1/models'],
   ['POST', '/v1/openai/chat/completions'],
   ['POST', '/v1/chat/completions'],
+  ['POST', '/v1/openai/responses'],
+  ['POST', '/v1/responses'],
   ['POST', '/v1/anthropic/messages'],
 ]
 
@@ -33,7 +36,9 @@ test('every api proxy route stays disabled until the proxy is explicitly enabled
     for (const [method, route] of ROUTES) {
       const response = await call(daemon, method, route, method === 'GET' ? undefined : {
         model: 'tokenless/chatgpt',
-        messages: [{ role: 'user', content: 'hello' }],
+        ...(route.endsWith('/responses')
+          ? { input: 'hello' }
+          : { messages: [{ role: 'user', content: 'hello' }] }),
       })
       assert.equal(response.status, 503, route)
       assert.equal(response.body.error.type, 'overloaded_error', route)
@@ -110,6 +115,126 @@ test('api proxy accepts streaming function tools and complete tool history befor
     })
     assert.equal(continuation.status, 409)
     assert.equal(continuation.body.error.code, 'profile_not_configured')
+    const jobs = await call(daemon, 'GET', '/jobs')
+    assert.equal(jobs.body.length, 0)
+  })
+})
+
+test('Responses aliases accept flat tools, developer input, and complete call outputs before profile readiness', async () => {
+  await withDaemon(async (daemon) => {
+    await enableApiProxy(daemon.homeDir)
+    const tool = {
+      type: 'function',
+      name: 'read_file',
+      description: 'Read one UTF-8 file.',
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['path'],
+        properties: { path: { type: 'string' } },
+      },
+      strict: true,
+    }
+    for (const route of ['/v1/openai/responses', '/v1/responses']) {
+      const response = await call(daemon, 'POST', route, {
+        model: 'tokenless/chatgpt',
+        input: [
+          { role: 'developer', content: 'Use caller-owned tools when needed.' },
+          { role: 'user', content: 'Read package.json.' },
+          {
+            type: 'function_call',
+            id: 'fc_prior',
+            call_id: 'call_prior',
+            name: 'read_file',
+            arguments: '{"path":"package.json"}',
+            status: 'completed',
+          },
+          { type: 'function_call_output', call_id: 'call_prior', output: '{"name":"tokenless"}' },
+        ],
+        tools: [tool],
+        tool_choice: { type: 'function', name: 'read_file' },
+        parallel_tool_calls: false,
+        text: { format: { type: 'text' } },
+        stream: true,
+      })
+      assert.equal(response.status, 409, route)
+      assert.equal(response.body.error.code, 'profile_not_configured', route)
+    }
+    const malformed = await call(daemon, 'POST', '/v1/responses', {
+      model: 'tokenless/chatgpt',
+      input: [{ type: 'function_call_output', call_id: 'call_missing', output: 'done' }],
+      tools: [tool],
+    })
+    assert.equal(malformed.status, 400)
+    assert.equal(malformed.body.error.param, 'input')
+    const jobs = await call(daemon, 'GET', '/jobs')
+    assert.equal(jobs.body.length, 0)
+  })
+})
+
+test('Responses rejects missing, expired, mismatched, and opaque replay state before provider submission', async () => {
+  await withDaemon(async (daemon) => {
+    await enableApiProxy(daemon.homeDir)
+    const missing = await call(daemon, 'POST', '/v1/responses', {
+      model: 'tokenless/chatgpt',
+      previous_response_id: `resp_${'a'.repeat(32)}`,
+      input: 'continue',
+    })
+    assert.equal(missing.status, 404)
+    assert.equal(missing.body.error.code, 'response_not_found')
+
+    const expiredId = `resp_${'b'.repeat(32)}`
+    daemon.store.putApiResponse({
+      response_id: expiredId,
+      provider: 'chatgpt',
+      model: 'tokenless/chatgpt',
+      execution_mode: 'browser',
+      transcript: [{ role: 'user', content: 'prior public input' }],
+    })
+    const database = new DatabaseSync(daemon.store.databasePath)
+    database.prepare('UPDATE api_response_ledger SET expires_at_ms = 0 WHERE response_id = ?').run(expiredId)
+    database.close()
+    const expired = await call(daemon, 'POST', '/v1/responses', {
+      model: 'tokenless/chatgpt',
+      previous_response_id: expiredId,
+      input: 'continue',
+    })
+    assert.equal(expired.status, 410)
+    assert.equal(expired.body.error.code, 'response_expired')
+    const expiredDatabase = new DatabaseSync(daemon.store.databasePath)
+    const expiredRow = expiredDatabase.prepare(
+      'SELECT response_id FROM api_response_ledger WHERE response_id = ?',
+    ).get(expiredId)
+    expiredDatabase.close()
+    assert.equal(expiredRow, undefined)
+
+    const responseId = `resp_${'c'.repeat(32)}`
+    daemon.store.putApiResponse({
+      response_id: responseId,
+      provider: 'chatgpt',
+      model: 'tokenless/chatgpt',
+      execution_mode: 'browser',
+      transcript: [{ role: 'user', content: 'prior public input' }],
+    })
+    for (const body of [
+      { model: 'tokenless/deepseek', input: 'continue' },
+      { model: 'tokenless/chatgpt/other-model', input: 'continue' },
+      { model: 'tokenless/chatgpt', input: 'continue', tokenless: { execution_mode: 'direct' } },
+    ]) {
+      const mismatch = await call(daemon, 'POST', '/v1/responses', {
+        ...body,
+        previous_response_id: responseId,
+      })
+      assert.equal(mismatch.status, 400)
+      assert.equal(mismatch.body.error.code, 'response_route_mismatch')
+    }
+
+    const opaque = await call(daemon, 'POST', '/v1/responses', {
+      model: 'tokenless/chatgpt',
+      input: [{ type: 'reasoning', id: 'rs_unverified', encrypted_content: 'opaque' }],
+    })
+    assert.equal(opaque.status, 400)
+    assert.equal(opaque.body.error.code, 'unverifiable_replay_item')
     const jobs = await call(daemon, 'GET', '/jobs')
     assert.equal(jobs.body.length, 0)
   })
@@ -734,7 +859,7 @@ async function withDaemon(run) {
   const daemon = await serveHttp({ store, host: '127.0.0.1', port: 0 })
   daemon.activate()
   try {
-    await run({ origin: daemon.origin, token: store.controlToken(), homeDir })
+    await run({ origin: daemon.origin, token: store.controlToken(), homeDir, store })
   } finally {
     await daemon.close()
     fs.rmSync(homeDir, { recursive: true, force: true })

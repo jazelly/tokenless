@@ -40,6 +40,7 @@ import {
   apiProxyErrorBody,
   apiProxyModelList,
   openAiCompletionBody,
+  openAiResponseStreamFrames,
   openAiStreamFrames,
   type ApiProxyDialect,
 } from './api-proxy.js'
@@ -705,6 +706,7 @@ function requireControlAuth(store: JobStore, request: IncomingMessage) {
 
 type ApiProxyRoute =
   | { kind: 'completion'; dialect: ApiProxyDialect }
+  | { kind: 'response' }
   | { kind: 'models' }
 
 /**
@@ -717,6 +719,9 @@ function matchApiProxyRoute(method: string, pathname: string): ApiProxyRoute | n
   if (method === 'POST' && (pathname === '/v1/openai/chat/completions' || pathname === '/v1/chat/completions')) {
     return { kind: 'completion', dialect: 'openai' }
   }
+  if (method === 'POST' && (pathname === '/v1/openai/responses' || pathname === '/v1/responses')) {
+    return { kind: 'response' }
+  }
   if (method === 'POST' && pathname === '/v1/anthropic/messages') return { kind: 'completion', dialect: 'anthropic' }
   if (method === 'GET' && (pathname === '/v1/openai/models' || pathname === '/v1/models')) return { kind: 'models' }
   return null
@@ -728,7 +733,7 @@ async function handleApiProxyRequest(
   request: IncomingMessage,
   response: ServerResponse,
 ) {
-  const dialect = route.kind === 'models' ? 'openai' : route.dialect
+  const dialect = route.kind === 'completion' ? route.dialect : 'openai'
   const requestLifetime = apiProxyRequestLifetime(request, response)
   let requestedModel = 'unknown'
   try {
@@ -739,6 +744,15 @@ async function handleApiProxyRequest(
     }
     const body = await readApiProxyJson(request)
     requestedModel = typeof body.model === 'string' ? body.model : 'unknown'
+    if (route.kind === 'response') {
+      const result = await apiProxy.respond(body, requestLifetime.signal)
+      if (result.stream) {
+        writeApiProxyStream(response, openAiResponseStreamFrames(result.body))
+        return
+      }
+      writeJson(response, 200, result.body)
+      return
+    }
     const completion = await apiProxy.complete(dialect, body, requestLifetime.signal)
     if (body.stream === true) {
       writeApiProxyStream(response, dialect === 'openai'

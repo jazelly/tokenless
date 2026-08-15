@@ -35,6 +35,8 @@ export type { JobStatus } from './errors.js'
 
 const MAX_OUTPUT_SAVINGS_SOURCE_BYTES = 4 * 1024 * 1024
 const OUTPUT_SAVINGS_HANDOFF_DELAY_MS = 750
+export const API_RESPONSE_RETENTION_MS = 24 * 60 * 60 * 1000
+export const API_RESPONSE_MAX_ENTRIES = 1_000
 
 export type ExecutionBackend = 'playwright'
 
@@ -78,6 +80,16 @@ export type CreateJobInput = {
   agent_session_id?: string | null | undefined
   job_id?: string | undefined
   claim_token?: string | undefined
+}
+
+export type ApiResponseLedgerEntry = {
+  response_id: string
+  provider: string
+  model: string
+  execution_mode: 'browser' | 'direct'
+  transcript: unknown[]
+  created_at: string
+  expires_at_ms: number
 }
 
 export type AgentRecipient = {
@@ -343,6 +355,74 @@ export class JobStore {
 
   createJob(input: CreateJobInput) {
     return this.transaction(() => this.insertJob(input))
+  }
+
+  putApiResponse(input: Omit<ApiResponseLedgerEntry, 'created_at' | 'expires_at_ms'>) {
+    const responseId = apiResponseId(input.response_id)
+    const provider = mappingText(input.provider, 'provider', 128)
+    const model = mappingText(input.model, 'model', 256)
+    if (input.execution_mode !== 'browser' && input.execution_mode !== 'direct') {
+      throw invalidInput('execution_mode is invalid')
+    }
+    if (!Array.isArray(input.transcript)) throw invalidInput('response transcript must be an array')
+    const transcriptJson = stringifyJson(input.transcript)
+    if (Buffer.byteLength(transcriptJson, 'utf8') > MAX_OUTPUT_SAVINGS_SOURCE_BYTES) {
+      throw invalidInput('response transcript exceeds the 4 MiB limit')
+    }
+    const createdAt = nowRfc3339()
+    const nowMs = nowUnixMillis()
+    const expiresAtMs = nowMs + API_RESPONSE_RETENTION_MS
+    return this.transaction(() => {
+      this.run('DELETE FROM api_response_ledger WHERE expires_at_ms <= ?', nowMs)
+      this.run(
+        `INSERT INTO api_response_ledger (
+          response_id, provider, model, execution_mode, transcript_json, created_at, expires_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        responseId,
+        provider,
+        model,
+        input.execution_mode,
+        transcriptJson,
+        createdAt,
+        expiresAtMs,
+      )
+      this.run(
+        `DELETE FROM api_response_ledger
+         WHERE response_id IN (
+           SELECT response_id FROM api_response_ledger
+           ORDER BY rowid DESC
+           LIMIT -1 OFFSET ?
+         )`,
+        API_RESPONSE_MAX_ENTRIES,
+      )
+      return this.getApiResponse(responseId)!
+    })
+  }
+
+  getApiResponse(responseId: string): ApiResponseLedgerEntry | null {
+    const row = this.get(
+      `SELECT response_id, provider, model, execution_mode, transcript_json, created_at, expires_at_ms
+       FROM api_response_ledger WHERE response_id = ?`,
+      apiResponseId(responseId),
+    )
+    if (!row) return null
+    const executionMode = String(row.execution_mode)
+    if (executionMode !== 'browser' && executionMode !== 'direct') throw invalidInput('stored response execution mode is invalid')
+    const transcript = parseJson(row.transcript_json)
+    if (!Array.isArray(transcript)) throw invalidInput('stored response transcript is invalid')
+    return {
+      response_id: String(row.response_id),
+      provider: String(row.provider),
+      model: String(row.model),
+      execution_mode: executionMode,
+      transcript,
+      created_at: String(row.created_at),
+      expires_at_ms: Number(row.expires_at_ms),
+    }
+  }
+
+  deleteApiResponse(responseId: string) {
+    this.run('DELETE FROM api_response_ledger WHERE response_id = ?', apiResponseId(responseId))
   }
 
   private insertJob(input: CreateJobInput) {
@@ -2281,6 +2361,18 @@ export class JobStore {
         request_ref TEXT PRIMARY KEY NOT NULL CHECK (length(request_ref) = 40 AND substr(request_ref, 1, 8) = 'request:' AND substr(request_ref, 9) NOT GLOB '*[^0-9a-f]*'),
         created_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS api_response_ledger (
+        response_id TEXT PRIMARY KEY NOT NULL CHECK (
+          length(response_id) = 37 AND substr(response_id, 1, 5) = 'resp_' AND
+          substr(response_id, 6) NOT GLOB '*[^0-9a-f]*'
+        ),
+        provider TEXT NOT NULL CHECK (length(provider) BETWEEN 1 AND 128),
+        model TEXT NOT NULL CHECK (length(model) BETWEEN 1 AND 256),
+        execution_mode TEXT NOT NULL CHECK (execution_mode IN ('browser', 'direct')),
+        transcript_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at_ms INTEGER NOT NULL
+      );
     `)
   }
 
@@ -2326,6 +2418,8 @@ export class JobStore {
       CREATE UNIQUE INDEX IF NOT EXISTS web_ai_v0_turns_request_ref_idx
         ON web_ai_v0_turns(request_ref)
         WHERE request_ref IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS api_response_ledger_created_idx
+        ON api_response_ledger(created_at, response_id);
     `)
   }
 
@@ -2610,6 +2704,13 @@ function rowToJob(row: Record<string, unknown>): Job {
 function webAiRef(value: unknown, field: string) {
   if (typeof value !== 'string' || !/^(?:provider|binding|attachment|turn|conversation):[a-f0-9]{32}$/.test(value)) {
     throw invalidInput(`${field} is invalid`)
+  }
+  return value
+}
+
+function apiResponseId(value: unknown) {
+  if (typeof value !== 'string' || !/^resp_[a-f0-9]{32}$/.test(value)) {
+    throw invalidInput('response_id is invalid')
   }
   return value
 }

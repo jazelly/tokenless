@@ -5,7 +5,11 @@ import { createManagedPlaywrightJobRequest, MANAGED_PLAYWRIGHT_JOB_ACTION } from
 import { VISIBLE_ACTIONS, createVisibleActionRequest } from '../playwright/actions.js'
 import { ManagedProfileRegistry } from '../playwright/profiles/registry.js'
 import { getProviderInstanceById, providerRegistry } from '../providers/registry.js'
-import type { Job, JobStore } from './job-store.js'
+import {
+  type ApiResponseLedgerEntry,
+  type Job,
+  type JobStore,
+} from './job-store.js'
 import type { G4fServiceClient } from '../g4f/client.js'
 import { ProviderProtocolRouter } from '../providers/direct/protocol-router.js'
 import {
@@ -94,6 +98,20 @@ type RawApiProxyCompletion = {
   base: Omit<ApiProxyCompletion, 'text' | 'toolCalls'>
 }
 
+type PreparedOpenAiResponse = {
+  request: NormalizedRequest
+  transcript: Record<string, unknown>[]
+  previousResponseId: string | null
+  publicTools: Record<string, unknown>[]
+  publicToolChoice: unknown
+  publicText: Record<string, unknown>
+}
+
+export type ApiProxyResponseResult = {
+  body: Record<string, unknown>
+  stream: boolean
+}
+
 export class ApiProxyAdapter {
   private readonly profiles: ManagedProfileRegistry
   private readonly protocolRouter: ProviderProtocolRouter
@@ -116,6 +134,36 @@ export class ApiProxyAdapter {
     const config = await readTokenlessConfig(this.store.homeDir)
     if (!config.apiProxy.enabled) throw apiProxyDisabled()
     const request = dialect === 'openai' ? normalizeOpenAiRequest(body) : normalizeAnthropicRequest(body)
+    return await this.completeRequest(config, request, signal)
+  }
+
+  async respond(body: unknown, signal?: AbortSignal): Promise<ApiProxyResponseResult> {
+    const config = await readTokenlessConfig(this.store.homeDir)
+    if (!config.apiProxy.enabled) throw apiProxyDisabled()
+    const requestBody = plainRecord(body)
+    const options = normalizeTokenlessOptions(requestBody.tokenless)
+    const executionMode = options.executionMode ?? config.apiProxy.executionMode
+    const model = providerFromModel(requestBody.model)
+    const previous = previousResponse(requestBody.previous_response_id, this.store)
+    if (previous) assertPreviousResponseRoute(previous, model.provider, String(requestBody.model), executionMode)
+    const prepared = normalizeOpenAiResponsesRequest(requestBody, previous)
+    const completion = await this.completeRequest(config, prepared.request, signal)
+    const response = openAiResponseBody(completion, prepared)
+    this.store.putApiResponse({
+      response_id: String(response.id),
+      provider: completion.provider,
+      model: prepared.request.requestedModel,
+      execution_mode: completion.executionMode,
+      transcript: [...prepared.transcript, ...(response.output as unknown[])],
+    })
+    return { body: response, stream: prepared.request.stream }
+  }
+
+  private async completeRequest(
+    config: Awaited<ReturnType<typeof readTokenlessConfig>>,
+    request: NormalizedRequest,
+    signal?: AbortSignal,
+  ): Promise<ApiProxyCompletion> {
     // Request-level validation first: an unknown provider is the caller's
     // mistake and must be rejected the same way whether or not this
     // installation happens to have a usable profile yet.
@@ -428,6 +476,338 @@ export function normalizeOpenAiRequest(body: unknown): NormalizedRequest {
       : null,
     ...options,
   }
+}
+
+function normalizeOpenAiResponsesRequest(
+  body: Record<string, unknown>,
+  previous: ApiResponseLedgerEntry | null,
+): PreparedOpenAiResponse {
+  rejectUnsupportedResponsesFields(body)
+  const model = providerFromModel(body.model)
+  const currentInput = normalizeResponsesInput(body.input)
+  const priorInput = previous?.transcript.map((item, index) => normalizeResponsesInputItem(item, index)) ?? []
+  const transcript = [...priorInput, ...currentInput]
+  if (transcript.length > MAX_MESSAGES) {
+    throw badRequest(`input history must contain at most ${MAX_MESSAGES} items`, 'input')
+  }
+  const publicTools = normalizeResponsesTools(body.tools)
+  const tools = publicTools.length === 0
+    ? []
+    : normalizeToolCatalog(publicTools.map((tool) => ({
+        type: 'function',
+        function: {
+          name: tool.name,
+          ...(tool.description === undefined ? {} : { description: tool.description }),
+          parameters: tool.parameters,
+          ...(tool.strict === undefined ? {} : { strict: tool.strict }),
+        },
+      })))
+  const choice = normalizeResponsesToolChoice(body.tool_choice, tools)
+  const parallelToolCalls = normalizeParallelToolCalls(body.parallel_tool_calls)
+  const responseFormat = normalizeResponsesText(body.text)
+  const messages = normalizeResponsesHistory(responsesItemsToMessages(transcript), tools)
+  const options = normalizeTokenlessOptions(body.tokenless)
+  return {
+    request: {
+      provider: model.provider,
+      messages,
+      stream: body.stream === true,
+      requestedModel: String(body.model),
+      upstreamModel: model.upstreamModel,
+      toolProtocol: tools.length > 0 || responseFormat.normalized.type !== 'text'
+        ? {
+            nonce: randomUUID(),
+            tools,
+            choice,
+            parallelToolCalls,
+            responseFormat: responseFormat.normalized,
+          }
+        : null,
+      ...options,
+    },
+    transcript,
+    previousResponseId: previous?.response_id ?? null,
+    publicTools,
+    publicToolChoice: responsesPublicToolChoice(choice),
+    publicText: { format: responseFormat.publicFormat },
+  }
+}
+
+function normalizeResponsesHistory(messages: Record<string, unknown>[], tools: readonly OpenAiFunctionTool[]) {
+  try {
+    return normalizeOpenAiMessages(messages, tools)
+  } catch (error) {
+    throw badRequest(error instanceof Error ? error.message : 'input is invalid', 'input')
+  }
+}
+
+function rejectUnsupportedResponsesFields(body: Record<string, unknown>) {
+  const supported = new Set([
+    'model',
+    'input',
+    'tools',
+    'tool_choice',
+    'parallel_tool_calls',
+    'text',
+    'stream',
+    'previous_response_id',
+    'tokenless',
+  ])
+  const field = Object.keys(body).find((key) => !supported.has(key))
+  if (field) {
+    throw new ApiProxyError(400, 'unsupported_parameter', `api proxy Responses does not support ${field}`, field)
+  }
+  if (body.stream !== undefined && typeof body.stream !== 'boolean') {
+    throw badRequest('stream must be a boolean', 'stream')
+  }
+}
+
+function normalizeResponsesInput(value: unknown): Record<string, unknown>[] {
+  if (typeof value === 'string') {
+    if (!value.trim()) throw badRequest('input must not be empty', 'input')
+    return [{ role: 'user', content: value }]
+  }
+  if (!Array.isArray(value) || value.length === 0) {
+    throw badRequest('input must be a non-empty string or array', 'input')
+  }
+  if (value.length > MAX_MESSAGES) throw badRequest(`input must contain at most ${MAX_MESSAGES} items`, 'input')
+  return value.map((entry, index) => normalizeResponsesInputItem(entry, index))
+}
+
+function normalizeResponsesInputItem(value: unknown, index: number): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw badRequest(`input[${index}] must be an object`, 'input')
+  }
+  const item = value as Record<string, unknown>
+  if (item.type === 'reasoning') {
+    throw new ApiProxyError(
+      400,
+      'unverifiable_replay_item',
+      'Reasoning or opaque replay items are not accepted because this route did not produce provider-verifiable opaque state.',
+      'input',
+    )
+  }
+  if (item.type === 'function_call') {
+    requireResponsesKeys(item, ['type', 'call_id', 'name', 'arguments'], ['id', 'status'], `input[${index}]`)
+    if (typeof item.call_id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(item.call_id)) {
+      throw badRequest(`input[${index}].call_id is invalid`, 'input')
+    }
+    if (item.id !== undefined && (typeof item.id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(item.id))) {
+      throw badRequest(`input[${index}].id is invalid`, 'input')
+    }
+    if (item.id === item.call_id) throw badRequest(`input[${index}].id must differ from call_id`, 'input')
+    if (typeof item.name !== 'string' || typeof item.arguments !== 'string') {
+      throw badRequest(`input[${index}] function call name and arguments must be strings`, 'input')
+    }
+    if (item.status !== undefined && item.status !== 'completed') {
+      throw badRequest(`input[${index}].status must be completed`, 'input')
+    }
+    return {
+      type: 'function_call',
+      ...(item.id === undefined ? {} : { id: item.id }),
+      call_id: item.call_id,
+      name: item.name,
+      arguments: item.arguments,
+      ...(item.status === undefined ? {} : { status: 'completed' }),
+    }
+  }
+  if (item.type === 'function_call_output') {
+    requireResponsesKeys(item, ['type', 'call_id', 'output'], [], `input[${index}]`)
+    if (typeof item.call_id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(item.call_id)) {
+      throw badRequest(`input[${index}].call_id is invalid`, 'input')
+    }
+    if (typeof item.output !== 'string') throw badRequest(`input[${index}].output must be a string`, 'input')
+    return { type: 'function_call_output', call_id: item.call_id, output: item.output }
+  }
+  const role = item.role
+  if (role !== 'system' && role !== 'developer' && role !== 'user' && role !== 'assistant') {
+    throw badRequest(`input[${index}] has an unsupported item type or role`, 'input')
+  }
+  requireResponsesKeys(item, ['role', 'content'], ['type', 'id', 'status'], `input[${index}]`)
+  if (item.type !== undefined && item.type !== 'message') throw badRequest(`input[${index}].type must be message`, 'input')
+  if (item.id !== undefined && (typeof item.id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(item.id))) {
+    throw badRequest(`input[${index}].id is invalid`, 'input')
+  }
+  if (item.status !== undefined && item.status !== 'completed') throw badRequest(`input[${index}].status must be completed`, 'input')
+  return { role, content: responsesMessageContent(item.content, role, index) }
+}
+
+function responsesMessageContent(value: unknown, role: string, itemIndex: number) {
+  if (typeof value === 'string') return value
+  if (!Array.isArray(value) || value.length === 0) {
+    throw badRequest(`input[${itemIndex}].content must be a non-empty string or text array`, 'input')
+  }
+  return value.map((part, contentIndex) => {
+    if (!part || typeof part !== 'object' || Array.isArray(part)) {
+      throw badRequest(`input[${itemIndex}].content[${contentIndex}] must be a text part`, 'input')
+    }
+    const content = part as Record<string, unknown>
+    const allowedType = role === 'assistant'
+      ? content.type === 'input_text' || content.type === 'output_text'
+      : content.type === 'input_text'
+    if (!allowedType || typeof content.text !== 'string') {
+      throw badRequest(`input[${itemIndex}].content[${contentIndex}] must be a supported text part`, 'input')
+    }
+    requireResponsesKeys(
+      content,
+      ['type', 'text'],
+      content.type === 'output_text' ? ['annotations', 'logprobs'] : [],
+      `input[${itemIndex}].content[${contentIndex}]`,
+    )
+    if (content.annotations !== undefined && !Array.isArray(content.annotations)) {
+      throw badRequest(`input[${itemIndex}].content[${contentIndex}].annotations must be an array`, 'input')
+    }
+    if (content.logprobs !== undefined && !Array.isArray(content.logprobs)) {
+      throw badRequest(`input[${itemIndex}].content[${contentIndex}].logprobs must be an array`, 'input')
+    }
+    return content.text
+  }).join('\n')
+}
+
+function responsesItemsToMessages(items: readonly Record<string, unknown>[]) {
+  const messages: Record<string, unknown>[] = []
+  let assistant: { content: string | null; tool_calls: Record<string, unknown>[] } | null = null
+  const flushAssistant = () => {
+    if (!assistant) return
+    messages.push({
+      role: 'assistant',
+      content: assistant.content,
+      ...(assistant.tool_calls.length === 0 ? {} : { tool_calls: assistant.tool_calls }),
+    })
+    assistant = null
+  }
+  for (const item of items) {
+    if (item.type === 'function_call') {
+      assistant ??= { content: null, tool_calls: [] }
+      assistant.tool_calls.push({
+        id: item.call_id,
+        type: 'function',
+        function: { name: item.name, arguments: item.arguments },
+      })
+      continue
+    }
+    if (item.type === 'function_call_output') {
+      flushAssistant()
+      messages.push({ role: 'tool', tool_call_id: item.call_id, content: item.output })
+      continue
+    }
+    if (item.role === 'assistant') {
+      flushAssistant()
+      assistant = { content: String(item.content), tool_calls: [] }
+      continue
+    }
+    flushAssistant()
+    messages.push({ role: item.role === 'developer' ? 'system' : item.role, content: item.content })
+  }
+  flushAssistant()
+  return messages
+}
+
+function normalizeResponsesTools(value: unknown): Record<string, unknown>[] {
+  if (value === undefined) return []
+  if (!Array.isArray(value) || value.length === 0) throw badRequest('tools must be a non-empty array', 'tools')
+  return value.map((entry, index) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw badRequest(`tools[${index}] must be an object`, 'tools')
+    const tool = entry as Record<string, unknown>
+    requireResponsesKeys(tool, ['type', 'name', 'parameters'], ['description', 'strict'], `tools[${index}]`)
+    if (tool.type !== 'function') throw new ApiProxyError(400, 'unsupported_parameter', 'Responses supports only function tools.', 'tools')
+    return { ...tool }
+  })
+}
+
+function normalizeResponsesToolChoice(value: unknown, tools: readonly OpenAiFunctionTool[]): OpenAiToolChoice {
+  if (value === undefined || value === 'auto') return { mode: 'auto' }
+  if (value === 'none') return { mode: 'none' }
+  if (value === 'required') {
+    if (tools.length === 0) throw badRequest('tool_choice required needs a non-empty tools catalog', 'tool_choice')
+    return { mode: 'required' }
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw badRequest('tool_choice must be auto, none, required, or a named function choice', 'tool_choice')
+  }
+  const choice = value as Record<string, unknown>
+  requireResponsesKeys(choice, ['type', 'name'], [], 'tool_choice')
+  if (choice.type !== 'function' || typeof choice.name !== 'string') throw badRequest('named tool_choice is invalid', 'tool_choice')
+  if (!tools.some((tool) => tool.name === choice.name)) {
+    throw badRequest(`tool_choice references undeclared function '${choice.name}'`, 'tool_choice')
+  }
+  return { mode: 'named', name: choice.name }
+}
+
+function normalizeResponsesText(value: unknown) {
+  try {
+    return normalizeResponsesTextValue(value)
+  } catch (error) {
+    throw badRequest(error instanceof Error ? error.message : 'text.format is invalid', 'text')
+  }
+}
+
+function normalizeResponsesTextValue(value: unknown) {
+  const text = value === undefined ? { format: { type: 'text' } } : plainRecord(value)
+  requireResponsesKeys(text, ['format'], [], 'text')
+  const format = plainRecord(text.format)
+  if (format.type === 'text' || format.type === 'json_object') {
+    requireResponsesKeys(format, ['type'], [], 'text.format')
+    return { normalized: normalizeResponseFormat(format), publicFormat: { type: format.type } }
+  }
+  if (format.type !== 'json_schema') throw badRequest('text.format.type must be text, json_object, or json_schema', 'text.format')
+  requireResponsesKeys(format, ['type', 'name', 'schema'], ['description', 'strict'], 'text.format')
+  const normalized = normalizeResponseFormat({
+    type: 'json_schema',
+    json_schema: {
+      name: format.name,
+      ...(format.description === undefined ? {} : { description: format.description }),
+      schema: format.schema,
+      ...(format.strict === undefined ? {} : { strict: format.strict }),
+    },
+  })
+  return { normalized, publicFormat: { ...format } }
+}
+
+function responsesPublicToolChoice(choice: OpenAiToolChoice) {
+  return choice.mode === 'named' ? { type: 'function', name: choice.name } : choice.mode
+}
+
+function previousResponse(value: unknown, store: JobStore) {
+  if (value === undefined || value === null) return null
+  if (typeof value !== 'string' || !/^resp_[a-f0-9]{32}$/.test(value)) {
+    throw badRequest('previous_response_id is invalid', 'previous_response_id')
+  }
+  const entry = store.getApiResponse(value)
+  if (!entry) throw new ApiProxyError(404, 'response_not_found', `Previous response '${value}' was not found.`, 'previous_response_id')
+  if (entry.expires_at_ms <= Date.now()) {
+    store.deleteApiResponse(value)
+    throw new ApiProxyError(410, 'response_expired', `Previous response '${value}' has expired.`, 'previous_response_id')
+  }
+  return entry
+}
+
+function assertPreviousResponseRoute(
+  entry: ApiResponseLedgerEntry,
+  provider: string,
+  model: string,
+  executionMode: 'browser' | 'direct',
+) {
+  if (entry.provider === provider && entry.model === model && entry.execution_mode === executionMode) return
+  throw new ApiProxyError(
+    400,
+    'response_route_mismatch',
+    'previous_response_id must continue on the same provider, model, and execution mode.',
+    'previous_response_id',
+  )
+}
+
+function requireResponsesKeys(
+  value: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[],
+  label: string,
+) {
+  const allowed = new Set([...required, ...optional])
+  const unknown = Object.keys(value).find((key) => !allowed.has(key))
+  if (unknown) throw badRequest(`${label} contains unsupported field '${unknown}'`, label.split('.')[0]!)
+  const missing = required.find((key) => !Object.hasOwn(value, key))
+  if (missing) throw badRequest(`${label} is missing required field '${missing}'`, label.split('.')[0]!)
 }
 
 export function normalizeAnthropicRequest(body: unknown): NormalizedRequest {
@@ -765,6 +1145,125 @@ export function openAiCompletionBody(completion: ApiProxyCompletion, requestedMo
     usage: unmeteredUsage('openai'),
     tokenless: tokenlessMetadata(completion),
   }
+}
+
+function openAiResponseBody(completion: ApiProxyCompletion, prepared: PreparedOpenAiResponse): Record<string, unknown> {
+  const responseId = `resp_${randomUUID().replaceAll('-', '')}`
+  const createdAt = Math.floor(Date.now() / 1000)
+  const output: Record<string, unknown>[] = []
+  if (completion.text) output.push(responseMessageItem(completion.text))
+  if (completion.toolCalls) {
+    output.push(...completion.toolCalls.map((call) => ({
+      id: `fc_${randomUUID().replaceAll('-', '')}`,
+      type: 'function_call',
+      status: 'completed',
+      call_id: call.id,
+      name: call.name,
+      arguments: call.arguments,
+    })))
+  }
+  return {
+    id: responseId,
+    object: 'response',
+    created_at: createdAt,
+    status: 'completed',
+    error: null,
+    incomplete_details: null,
+    instructions: null,
+    metadata: {},
+    model: prepared.request.requestedModel,
+    output,
+    output_text: completion.text,
+    parallel_tool_calls: prepared.request.toolProtocol?.parallelToolCalls ?? true,
+    previous_response_id: prepared.previousResponseId,
+    temperature: null,
+    text: prepared.publicText,
+    tool_choice: prepared.publicToolChoice,
+    tools: prepared.publicTools,
+    top_p: null,
+    usage: null,
+    tokenless: tokenlessMetadata(completion),
+  }
+}
+
+function responseMessageItem(text: string) {
+  return {
+    id: `msg_${randomUUID().replaceAll('-', '')}`,
+    type: 'message',
+    status: 'completed',
+    role: 'assistant',
+    content: [{ type: 'output_text', text, annotations: [], logprobs: [] }],
+  }
+}
+
+export function openAiResponseStreamFrames(body: Record<string, unknown>) {
+  let sequenceNumber = 0
+  const event = (type: string, value: Record<string, unknown>) => sseEvent(type, {
+    type,
+    sequence_number: sequenceNumber++,
+    ...value,
+  })
+  const output = body.output as Record<string, unknown>[]
+  const inProgress = { ...body, status: 'in_progress', output: [], output_text: '', usage: null }
+  const frames = [
+    event('response.created', { response: inProgress }),
+    event('response.in_progress', { response: inProgress }),
+  ]
+  output.forEach((item, outputIndex) => {
+    if (item.type === 'function_call') {
+      const added = { ...item, status: 'in_progress', arguments: '' }
+      frames.push(event('response.output_item.added', { output_index: outputIndex, item: added }))
+      frames.push(event('response.function_call_arguments.delta', {
+        item_id: item.id,
+        output_index: outputIndex,
+        delta: item.arguments,
+      }))
+      frames.push(event('response.function_call_arguments.done', {
+        item_id: item.id,
+        output_index: outputIndex,
+        name: item.name,
+        arguments: item.arguments,
+      }))
+      frames.push(event('response.output_item.done', { output_index: outputIndex, item }))
+      return
+    }
+    const text = ((item.content as Record<string, unknown>[])[0]?.text ?? '') as string
+    const emptyPart = { type: 'output_text', text: '', annotations: [], logprobs: [] }
+    const donePart = { type: 'output_text', text, annotations: [], logprobs: [] }
+    frames.push(event('response.output_item.added', {
+      output_index: outputIndex,
+      item: { ...item, status: 'in_progress', content: [] },
+    }))
+    frames.push(event('response.content_part.added', {
+      item_id: item.id,
+      output_index: outputIndex,
+      content_index: 0,
+      part: emptyPart,
+    }))
+    frames.push(event('response.output_text.delta', {
+      item_id: item.id,
+      output_index: outputIndex,
+      content_index: 0,
+      delta: text,
+      logprobs: [],
+    }))
+    frames.push(event('response.output_text.done', {
+      item_id: item.id,
+      output_index: outputIndex,
+      content_index: 0,
+      text,
+      logprobs: [],
+    }))
+    frames.push(event('response.content_part.done', {
+      item_id: item.id,
+      output_index: outputIndex,
+      content_index: 0,
+      part: donePart,
+    }))
+    frames.push(event('response.output_item.done', { output_index: outputIndex, item }))
+  })
+  frames.push(event('response.completed', { response: body }))
+  return frames
 }
 
 export function anthropicMessageBody(completion: ApiProxyCompletion, requestedModel: string) {

@@ -5,12 +5,13 @@
   import { stateLabel, type MessageKey } from '../localization.js'
   import type { JsonRecord, Language } from '../types.js'
 
-  let { snapshot, selectedProfile, language, t, readinessBusy, onrefreshreadiness }: {
+  let { snapshot, selectedProfile, language, t, readinessBusy, readinessJobs, onrefreshreadiness }: {
     snapshot: JsonRecord
     selectedProfile: string
     language: Language
     t: (key: MessageKey) => string
     readinessBusy: boolean
+    readinessJobs: Record<string, JsonRecord>
     onrefreshreadiness: (profileSlug: string) => Promise<void>
   } = $props()
 
@@ -24,6 +25,21 @@
 
   function profileState(provider: JsonRecord) {
     return provider.profiles?.find((entry: JsonRecord) => entry.profileId === profile?.slug)
+  }
+
+  function readinessLabel(provider: JsonRecord, state: JsonRecord | undefined) {
+    const readiness = readinessJobs[provider.id]
+    if (readiness?.status === 'queued' || readiness?.status === 'claimed' || readiness?.status === 'running') return t('checkingProviderReadiness')
+    const observedAccess = state?.observation?.access ? stateLabel(language, state.observation.access) : null
+    if (readiness?.status === 'failed' || readiness?.status === 'canceled' || readiness?.status === 'timed_out') {
+      return observedAccess ? `${observedAccess} · ${t('failed')}` : t('failed')
+    }
+    return observedAccess ?? (readiness?.status ? stateLabel(language, readiness.status) : t('neverChecked'))
+  }
+
+  function readinessStatus(provider: JsonRecord) {
+    const readiness = readinessJobs[provider.id]
+    return readiness?.status ?? ''
   }
 
 </script>
@@ -74,6 +90,7 @@
       <header class="panel-title">
         <div><h2>{t('providerReadiness')}</h2><p>{profile?.slug}</p></div>
         <div class="panel-title-actions">
+          {#if readinessBusy}<span class="mono-label" aria-live="polite" data-testid="overview-readiness-status">{t('checkingProviderReadiness')}</span>{/if}
           <span class="badge neutral" data-testid="overview-readiness-summary">{formatNumber(authenticatedProviders.length, language)}/{formatNumber(enabledProviders.length, language)} {t('signedIn')}</span>
           <button
             class:spinning={readinessBusy}
@@ -91,10 +108,12 @@
       <div class="row-list">
         {#each snapshot.providers as provider (provider.id)}
           {@const state = profileState(provider)}
+          {@const readiness = readinessJobs[provider.id]}
+          {@const label = readinessLabel(provider, state)}
           <a class="data-row" href="#providers">
             <span class="provider-glyph">{provider.label.slice(0, 1)}</span>
-            <span class="data-row-main"><strong>{provider.label}</strong><small>{state?.observation?.access ? stateLabel(language, state.observation.access) : t('neverChecked')}</small></span>
-            <span class:ok={state?.observation?.auth === 'authenticated'} class="status-dot" aria-label={state?.observation?.access ? stateLabel(language, state.observation.access) : t('neverChecked')}></span>
+            <span class="data-row-main"><strong>{provider.label}</strong><small>{label}</small></span>
+            <span class:ok={!readiness && state?.observation?.auth === 'authenticated'} class:error={readiness?.status === 'failed' || readiness?.status === 'canceled' || readiness?.status === 'timed_out'} class={`status-dot ${readiness ? `job-state ${readinessStatus(provider)}` : ''}`} aria-label={label}></span>
             <ArrowUpRight size={15} />
           </a>
         {/each}

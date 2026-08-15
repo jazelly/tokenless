@@ -25,6 +25,8 @@
   let offline = $state(false)
   let busy = $state(false)
   let readinessBusy = $state(false)
+  let readinessJobs = $state<Record<string, JsonRecord>>({})
+  let readinessRunId = 0
   let fatal = $state('')
   let toast = $state('')
   let selectedProfile = $state(new URL(location.href).searchParams.get('profile') ?? '')
@@ -124,6 +126,11 @@
   }
 
   function selectProfile(slug: string) {
+    if (slug !== selectedProfile) {
+      readinessRunId += 1
+      readinessBusy = false
+      readinessJobs = {}
+    }
     selectedProfile = slug
     const url = new URL(location.href)
     if (slug) url.searchParams.set('profile', slug)
@@ -156,34 +163,63 @@
   async function refreshProviderReadiness(profileSlug: string) {
     if (readinessBusy) return
     readinessBusy = true
+    const runId = ++readinessRunId
+    let submittedJobIds = new Set<string>()
+    const profile = snapshot?.profiles.find((entry: JsonRecord) => entry.slug === profileSlug)
+    const enabledProviderIds = snapshot?.providers
+      .filter((provider: JsonRecord) => provider.profiles?.find((entry: JsonRecord) => entry.profileId === profile?.slug)?.enabled)
+      .map((provider: JsonRecord) => provider.id) ?? []
+    readinessJobs = Object.fromEntries(enabledProviderIds.map((providerId: string) => [providerId, { status: 'running' }]))
     try {
       const result = await client.mutate(`/profiles/${encodeURIComponent(profileSlug)}/providers/actions/readiness`, {}) ?? {}
-      const jobIds = Array.isArray(result.jobs)
-        ? result.jobs.flatMap((job: JsonRecord) => typeof job.jobId === 'string' ? [job.jobId] : [])
-        : []
+      if (runId !== readinessRunId) return
+      const requestedJobs = Array.isArray(result.jobs) ? result.jobs : []
+      const jobIds = requestedJobs.flatMap((job: JsonRecord) => typeof job.jobId === 'string' ? [job.jobId] : [])
       if (jobIds.length === 0) {
+        readinessJobs = {}
         showToast(t('noEnabledProviders'))
         return
       }
-      const jobs = await waitForReadinessJobs(jobIds)
+      submittedJobIds = new Set(jobIds)
+      readinessJobs = Object.fromEntries(requestedJobs.flatMap((job: JsonRecord) => (
+        typeof job.provider === 'string' && typeof job.jobId === 'string' && typeof job.status === 'string'
+          ? [[job.provider, { jobId: job.jobId, status: job.status }]]
+          : []
+      )))
+      const jobs = await waitForReadinessJobs(jobIds, runId)
+      if (!jobs) return
       showToast(t(jobs.some((job) => job.status !== 'succeeded')
         ? 'providerReadinessPartiallyRefreshed'
         : 'providerReadinessRefreshed'))
     } catch (error) {
+      if (runId !== readinessRunId) return
+      if (submittedJobIds.size === 0) readinessJobs = {}
       showToast(error instanceof Error ? error.message : t('requestFailed'))
     } finally {
-      readinessBusy = false
-      await refresh()
+      if (runId === readinessRunId) {
+        readinessBusy = false
+        await refresh()
+      }
     }
   }
 
-  async function waitForReadinessJobs(jobIds: string[]) {
+  async function waitForReadinessJobs(jobIds: string[], runId: number) {
     const expected = new Set(jobIds)
     const deadline = Date.now() + 120_000
     while (Date.now() < deadline) {
       await new Promise((resolve) => window.setTimeout(resolve, 750))
+      if (runId !== readinessRunId) return null
       await refresh()
+      if (runId !== readinessRunId) return null
       const jobs = snapshot?.jobs?.filter((job: JsonRecord) => expected.has(job.jobId)) ?? []
+      readinessJobs = {
+        ...readinessJobs,
+        ...Object.fromEntries(jobs.flatMap((job: JsonRecord) => (
+          typeof job.provider === 'string' && typeof job.status === 'string'
+            ? [[job.provider, { jobId: job.jobId, status: job.status }]]
+            : []
+        ))),
+      }
       if (jobs.length === expected.size && jobs.every((job: JsonRecord) => !['queued', 'claimed', 'running'].includes(job.status))) {
         return jobs as JsonRecord[]
       }
@@ -266,7 +302,7 @@
 
     <main id="main" tabindex="-1" class:profile-main={section === 'profiles'}>
       {#if section === 'overview'}
-        <OverviewView {snapshot} {selectedProfile} {language} {t} {readinessBusy} onrefreshreadiness={refreshProviderReadiness} />
+        <OverviewView {snapshot} {selectedProfile} {language} {t} {readinessBusy} {readinessJobs} onrefreshreadiness={refreshProviderReadiness} />
       {:else if section === 'profiles'}
         <ProfilesView {snapshot} {selectedProfile} {language} {t} {busy} onselect={selectProfile} onmutate={mutate} />
       {:else if section === 'providers'}

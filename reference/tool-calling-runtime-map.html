@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tool Calling Runtime Map / 工具调用运行时速查</title>
+  <link rel="stylesheet" href="../assets/teaching.css">
+</head>
+<body>
+<main>
+  <h1>Tool Calling Runtime Map</h1>
+  <p class="lead">工具调用运行时速查：谁知道什么，谁决定什么，谁执行什么。</p>
+
+  <table>
+    <thead><tr><th>Object / 对象</th><th>Owner / 所有者</th><th>Model-visible / 模型可见</th></tr></thead>
+    <tbody>
+      <tr><td><code>ToolDefinition</code>: schema + execute + policy + UI</td><td>Harness</td><td>No / 否</td></tr>
+      <tr><td><code>ToolSchema</code>: name + description + input schema</td><td>Harness projects it</td><td>Yes / 是</td></tr>
+      <tr><td><code>ToolCall</code>: id + name + arguments</td><td>Model proposes it</td><td>Yes / 是</td></tr>
+      <tr><td><code>ToolResult</code>: call id + content/error</td><td>Harness produces it</td><td>Yes / 是</td></tr>
+      <tr><td>Presentation card / 展示卡片</td><td>Harness UI</td><td>No / 否</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Canonical loop / 标准闭环</h2>
+  <pre><code>visibleSchemas = project(registry, policy, context)
+response = model(history, visibleSchemas)
+
+if response is Final:
+  return response
+
+for call in response.calls:
+  args = validate(call.arguments)
+  result = authorize_and_execute(call.name, args)
+  history += [call, result]
+
+repeat</code></pre>
+
+  <h2>Placement test / 边界判断</h2>
+  <table>
+    <thead><tr><th>Situation / 情况</th><th>Tokenless responsibility / Tokenless 责任</th></tr></thead>
+    <tbody>
+      <tr><td>An outer Harness already owns tools and the loop.<br>外层 Harness 已拥有工具和循环。</td><td>Transport schemas and calls faithfully, native or emulated.<br>忠实传输 schema 和 call，可原生也可模拟。</td></tr>
+      <tr><td>Tokenless itself promises a completed agent task.<br>Tokenless 自己承诺完成 agent 任务。</td><td>Own registry, execution, results, and continuation.<br>自己拥有 registry、执行、结果和续轮。</td></tr>
+    </tbody>
+  </table>
+
+  <p class="muted">Native structured calling and a text envelope can implement the same abstract loop. They differ in transport guarantees, validation burden, and reliability—not in the basic decision pattern.</p>
+</main>
+</body>
+</html>

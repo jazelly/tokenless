@@ -96,6 +96,12 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       assert.equal(await readinessRefresh.getAttribute('title'), 'Refresh provider readiness')
       assert.equal(await readinessRefresh.evaluate((element) => element.tagName), 'BUTTON')
       assert.match(await page.getByTestId('overview-readiness-summary').textContent(), /^0\/\d+ signed in$/)
+      await readinessRefresh.click()
+      await page.getByTestId('overview-readiness-status').waitFor()
+      assert.equal(await readinessRefresh.getAttribute('aria-busy'), 'true')
+      assert.match(await page.getByTestId('overview-readiness-status').textContent(), /Checking provider sign-in…/)
+      await page.getByTestId('overview-readiness-status').waitFor({ state: 'detached' })
+      assert.equal(await readinessRefresh.getAttribute('aria-busy'), 'false')
       await activateNavigation(page, 'profiles')
       await page.getByTestId('profiles-view').waitFor()
 

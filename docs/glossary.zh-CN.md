@@ -1,0 +1,57 @@
+# Tokenless 术语表
+
+本文定义 Tokenless 与 AI provider Web surface 交互时使用的标准术语。它描述的是 execution boundary，不代表 provider support 声明。
+
+## Execution mode
+
+| 术语 | 定义 | 不要作为同义词使用 |
+|---|---|---|
+| **Visible Browser Automation** | Tokenless 控制一个用户可见的真实 browser，并通过 provider 网站 UI 完成交互。 | Direct protocol、HTTP impersonation |
+| **Headless Browser Execution** | 一个没有可见窗口的真实 browser process，仍具备 JavaScript engine、DOM、storage 与 network stack。 | HTTP impersonation、fake browser |
+| **HTTP Impersonation** | 非 browser 的 HTTP client 在不启动 browser process 的情况下，复现 TLS/HTTP2 fingerprint、header 等 browser network/request 特征，并直接调用 provider Web endpoint。 | Headless browser、browser automation |
+| **Browser-Assisted HTTP Impersonation** | HTTP impersonation 仍是 provider 主 data plane；隔离的 headless browser 只提供必须由 browser 完成的前置结果，例如 JavaScript challenge、CAPTCHA proof、PoW token 或短期 request token。 | Visible browser automation、完整 browser execution |
+| **Direct Provider Protocol** | Tokenless 不操作 provider 的可见 UI，而是通过纯 HTTP impersonation 或 browser-assisted HTTP impersonation 与 provider Web protocol 通信。 | Provider 官方 API、visible browser automation |
+
+## Authentication 与 routing
+
+| 术语 | 定义 | 不要作为同义词使用 |
+|---|---|---|
+| **Guest Mode** | Tokenless 不向 provider 提供已登录 provider session 的请求模式。 | 未认证的 daemon request |
+| **Auth Context** | 由用户显式选择、限定到单个 provider、声明 lifetime，并供一个 direct backend 使用的一组 session input。 | Browser profile、account |
+| **Session Bootstrap** | Direct request 前，Tokenless 仅从显式选择的来源取得所选 provider 必需的 session input。 | Login automation、隐式 cookie scanning |
+| **Native Backend** | 在 Tokenless codebase 内维护的 direct provider implementation。 | Visible browser automation |
+| **G4F Backend** | 由 Tokenless 私有、固定版本的 GPT4Free service 执行的 direct provider implementation。 | Public G4F API、visible browser automation |
+
+## 关系
+
+```text
+Visible Browser Automation
+  -> 真实可见 browser -> provider UI
+
+Direct Provider Protocol
+  -> HTTP Impersonation -> provider Web endpoint
+  -> Browser-Assisted HTTP Impersonation
+       -> 隔离的 headless browser -> challenge artifact
+       -> impersonating HTTP client -> provider Web endpoint
+```
+
+- **HTTP Impersonation** 绝不表示 Chrome 或其他 browser process 正在运行。
+- **Headless Browser Execution** 始终表示真实 browser process 正在运行，只是没有显示窗口。
+- **Browser-Assisted HTTP Impersonation** 只在 protocol 必须执行 browser code 时使用 headless browser；主请求仍由 impersonating HTTP client 发送。
+- Daemon authentication 与 provider **Guest Mode** 相互独立：caller 可以通过 Tokenless 认证，而 provider request 仍保持 guest。
+
+## 对话示例
+
+> **Developer：**“GLM direct path 使用 browser 吗？”
+>
+> **Domain expert：**“它使用 **Browser-Assisted HTTP Impersonation**：隔离的 **Headless Browser Execution** 先生成 challenge artifact，再由 **HTTP Impersonation** 发送 chat request。”
+>
+> **Developer：**“所以它不是 **Visible Browser Automation**？”
+>
+> **Domain expert：**“对，这条路径不会暴露或控制 provider UI。”
+
+## 应避免的歧义表达
+
+- **Browser impersonation** 有歧义。没有 browser process 时称为 **HTTP Impersonation**；headless browser 提供前置结果时称为 **Browser-Assisted HTTP Impersonation**。
+- **Browser mode** 有歧义。应明确使用 **Visible Browser Automation**、**Headless Browser Execution** 或 **Direct Provider Protocol**。
+- 讨论实现时，单说 **direct mode** 信息不足；应同时指出 **Native Backend** 或 **G4F Backend**。

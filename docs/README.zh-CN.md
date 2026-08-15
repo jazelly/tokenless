@@ -14,6 +14,7 @@
 ## 概念与架构
 
 - [架构](architecture.md) — daemon、managed browser、provider adapter、routing 与 control-plane 设计。
+- [术语表](glossary.zh-CN.md) — execution、authentication 与 direct provider 的标准术语。
 - [Provider Capability Census](provider-capability-census.md) — provider 产品调研与 evidence gaps；不代表 support 声明。
 - [Roadmaps](roadmaps/README.md) — active、backlog 与 archived delivery plans。
 
