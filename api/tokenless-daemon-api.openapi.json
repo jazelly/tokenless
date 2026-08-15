@@ -304,7 +304,7 @@
       "post": {
         "operationId": "createApiProxyChatCompletionOnDefaultPath",
         "summary": "Run an OpenAI-compatible chat completion on the default OpenAI path",
-        "description": "Accepts the OpenAI chat-completions request shape and returns the visible provider response. Modern function tools and tool-result history are validated and compiled into a request-scoped provider protocol; Tokenless returns one validated standard tool call or final text and never executes caller tools. Streaming returns one terminal text or tool-call delta, a terminal finish-reason choice, and [DONE]; stream_options is accepted but ignored, and no streaming usage is fabricated. tool_choice supports omitted/auto, none, required, and one exact named function while parallel_tool_calls remains false. strict: true recursively requires additionalProperties: false and every property in required for each object schema; returned arguments always pass the declared schema. Choice and schema violations terminate with provider_output_protocol_error and do not receive correction. Deprecated functions/function_call, parallel calls, and response_format are rejected. This path is an alias of the /v1/openai prefixed route so an unmodified OpenAI client works with only a baseURL override.",
+        "description": "Accepts the OpenAI chat-completions request shape and returns the visible provider response. Modern function tools and complete tool-result history are validated and compiled into a request-scoped provider protocol; Tokenless returns validated standard tool calls in model order or final text and never executes caller tools. Streaming returns one terminal text/tool-call delta, a terminal finish-reason choice, and [DONE]; stream_options is accepted but ignored, and no streaming usage is fabricated. parallel_tool_calls defaults to true; false limits the current outcome to one call. tool_choice supports omitted/auto, none, required, and one exact named function, which always produces exactly one call. strict: true recursively requires additionalProperties: false and every property in required for each object schema; returned arguments always pass the declared schema. Framing, choice, and schema violations terminate with provider_output_protocol_error and do not receive correction. Deprecated functions/function_call and response_format are rejected. This path is an alias of the /v1/openai prefixed route so an unmodified OpenAI client works with only a baseURL override.",
         "requestBody": {
           "required": true,
           "content": {
@@ -1245,7 +1245,7 @@
       "post": {
         "operationId": "createApiProxyChatCompletion",
         "summary": "Run an OpenAI-compatible chat completion through a visible provider page",
-        "description": "Accepts the OpenAI chat-completions request shape and returns the visible provider response. Modern function tools and tool-result history are validated and compiled into a request-scoped provider protocol; Tokenless returns one validated standard tool call or final text and never executes caller tools. Streaming returns one terminal text or tool-call delta, a terminal finish-reason choice, and [DONE]; stream_options is accepted but ignored, and no streaming usage is fabricated. tool_choice supports omitted/auto, none, required, and one exact named function while parallel_tool_calls remains false. strict: true recursively requires additionalProperties: false and every property in required for each object schema; returned arguments always pass the declared schema. Choice and schema violations terminate with provider_output_protocol_error and do not receive correction. Deprecated functions/function_call, parallel calls, and response_format are rejected.",
+        "description": "Accepts the OpenAI chat-completions request shape and returns the visible provider response. Modern function tools and complete tool-result history are validated and compiled into a request-scoped provider protocol; Tokenless returns validated standard tool calls in model order or final text and never executes caller tools. Streaming returns one terminal text/tool-call delta, a terminal finish-reason choice, and [DONE]; stream_options is accepted but ignored, and no streaming usage is fabricated. parallel_tool_calls defaults to true; false limits the current outcome to one call. tool_choice supports omitted/auto, none, required, and one exact named function, which always produces exactly one call. strict: true recursively requires additionalProperties: false and every property in required for each object schema; returned arguments always pass the declared schema. Framing, choice, and schema violations terminate with provider_output_protocol_error and do not receive correction. Deprecated functions/function_call and response_format are rejected.",
         "requestBody": {
           "required": true,
           "content": {
@@ -5233,7 +5233,7 @@
           "tool_calls": {
             "type": "array",
             "minItems": 1,
-            "maxItems": 1,
+            "maxItems": 128,
             "items": {
               "$ref": "#/components/schemas/ApiProxyOpenAiToolCall"
             }
@@ -5389,7 +5389,9 @@
             ]
           },
           "parallel_tool_calls": {
-            "const": false
+            "type": "boolean",
+            "default": true,
+            "description": "When false, the current assistant outcome contains at most one tool call. Completed prior multiple-call history remains replayable."
           }
         }
       },
@@ -5579,7 +5581,7 @@
                     "tool_calls": {
                       "type": "array",
                       "minItems": 1,
-                      "maxItems": 1,
+                      "maxItems": 128,
                       "items": {
                         "$ref": "#/components/schemas/ApiProxyOpenAiToolCall"
                       }

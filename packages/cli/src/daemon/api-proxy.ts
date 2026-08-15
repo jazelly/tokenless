@@ -67,7 +67,7 @@ type NormalizedRequest = {
   executionMode: 'browser' | 'direct' | null
   providerBackend: ProviderBackend | null
   authContextId: string | null
-  toolProtocol: { nonce: string; tools: OpenAiFunctionTool[]; choice: OpenAiToolChoice } | null
+  toolProtocol: { nonce: string; tools: OpenAiFunctionTool[]; choice: OpenAiToolChoice; parallelToolCalls: boolean } | null
 }
 
 export type ApiProxyCompletion = {
@@ -78,12 +78,12 @@ export type ApiProxyCompletion = {
   conversationMode: ApiProxyConversationMode
   executionMode: 'browser' | 'direct'
   providerBackend: 'browser' | ProviderBackend
-  toolCall?: { id: string; name: string; arguments: string }
+  toolCalls?: { id: string; name: string; arguments: string }[]
 }
 
 type RawApiProxyCompletion = {
   text: string
-  base: Omit<ApiProxyCompletion, 'text' | 'toolCall'>
+  base: Omit<ApiProxyCompletion, 'text' | 'toolCalls'>
 }
 
 export class ApiProxyAdapter {
@@ -317,8 +317,9 @@ function requestPrompt(request: NormalizedRequest) {
     ? compileOpenAiToolPrompt(
         request.messages,
         request.toolProtocol.tools,
-        request.toolProtocol.nonce,
-        request.toolProtocol.choice,
+      request.toolProtocol.nonce,
+      request.toolProtocol.choice,
+      request.toolProtocol.parallelToolCalls,
       )
     : flattenTranscript(request.messages)
   assertPromptSize(prompt)
@@ -403,7 +404,7 @@ export function normalizeOpenAiRequest(body: unknown): NormalizedRequest {
   rejectUnsupportedOpenAiFields(record)
   const tools = normalizeToolCatalog(record.tools)
   const choice = normalizeToolChoice(record.tool_choice, tools)
-  normalizeParallelToolCalls(record.parallel_tool_calls)
+  const parallelToolCalls = normalizeParallelToolCalls(record.parallel_tool_calls)
   const messages = normalizeToolHistory(rawMessages, tools)
   const options = normalizeTokenlessOptions(record.tokenless)
   return {
@@ -412,7 +413,7 @@ export function normalizeOpenAiRequest(body: unknown): NormalizedRequest {
     stream: record.stream === true,
     requestedModel: String(record.model),
     upstreamModel: model.upstreamModel,
-    toolProtocol: tools.length > 0 ? { nonce: randomUUID(), tools, choice } : null,
+    toolProtocol: tools.length > 0 ? { nonce: randomUUID(), tools, choice, parallelToolCalls } : null,
     ...options,
   }
 }
@@ -524,13 +525,9 @@ function normalizeToolChoice(value: unknown, tools: readonly OpenAiFunctionTool[
 }
 
 function normalizeParallelToolCalls(value: unknown) {
-  if (value === undefined || value === false) return
-  throw new ApiProxyError(
-    400,
-    'unsupported_parameter',
-    'parallel_tool_calls currently supports only false; multiple calls are reserved for a later API version',
-    'parallel_tool_calls',
-  )
+  if (value === undefined || value === true) return true
+  if (value === false) return false
+  throw badRequest('parallel_tool_calls must be a boolean', 'parallel_tool_calls')
 }
 
 function providerFromModel(value: unknown) {
@@ -650,6 +647,7 @@ async function validatedCompletion(
       request.toolProtocol.nonce,
       request.toolProtocol.tools,
       request.toolProtocol.choice,
+      request.toolProtocol.parallelToolCalls,
     )
   } catch (error) {
     const validationError = error instanceof Error ? error.message : 'invalid output'
@@ -671,23 +669,24 @@ async function validatedCompletion(
         request.toolProtocol.nonce,
         request.toolProtocol.tools,
         request.toolProtocol.choice,
+        request.toolProtocol.parallelToolCalls,
       )
     } catch (correctedError) {
       throw providerOutputProtocolError(correctedError instanceof Error ? correctedError.message : 'invalid corrected output')
     }
     if (result.kind !== 'final') {
-      throw providerOutputProtocolError('bounded final correction returned a tool call')
+      throw providerOutputProtocolError('bounded final correction returned tool calls')
     }
   }
   if (result.kind === 'final') return { ...completion.base, text: result.content }
   return {
     ...completion.base,
-    text: '',
-    toolCall: {
+    text: result.content ?? '',
+    toolCalls: result.calls.map((call) => ({
       id: `call_${randomUUID().replaceAll('-', '')}`,
-      name: result.name,
-      arguments: JSON.stringify(result.arguments),
-    },
+      name: call.name,
+      arguments: JSON.stringify(call.arguments),
+    })),
   }
 }
 
@@ -715,17 +714,17 @@ export function unmeteredUsage(dialect: ApiProxyDialect) {
 }
 
 export function openAiCompletionBody(completion: ApiProxyCompletion, requestedModel: string) {
-  const choice = completion.toolCall
+  const choice = completion.toolCalls
     ? {
         index: 0,
         message: {
           role: 'assistant',
-          content: null,
-          tool_calls: [{
-            id: completion.toolCall.id,
+          content: completion.text || null,
+          tool_calls: completion.toolCalls.map((call) => ({
+            id: call.id,
             type: 'function',
-            function: { name: completion.toolCall.name, arguments: completion.toolCall.arguments },
-          }],
+            function: { name: call.name, arguments: call.arguments },
+          })),
         },
         finish_reason: 'tool_calls',
       }
@@ -811,7 +810,7 @@ export function openAiStreamFrames(completion: ApiProxyCompletion, requestedMode
   const id = `chatcmpl-${completion.jobId}`
   const created = Math.floor(Date.now() / 1000)
   const base = { id, object: 'chat.completion.chunk', created, model: requestedModel }
-  if (completion.toolCall) {
+  if (completion.toolCalls) {
     return [
       sseData({
         ...base,
@@ -819,12 +818,13 @@ export function openAiStreamFrames(completion: ApiProxyCompletion, requestedMode
           index: 0,
           delta: {
             role: 'assistant',
-            tool_calls: [{
-              index: 0,
-              id: completion.toolCall.id,
+            ...(completion.text ? { content: completion.text } : {}),
+            tool_calls: completion.toolCalls.map((call, index) => ({
+              index,
+              id: call.id,
               type: 'function',
-              function: { name: completion.toolCall.name, arguments: completion.toolCall.arguments },
-            }],
+              function: { name: call.name, arguments: call.arguments },
+            })),
           },
           finish_reason: null,
         }],

@@ -103,7 +103,7 @@ A well-formed name for a provider that does not exist or is not built in returns
 
 Roles: `system`, `user`, `assistant`, `developer` (`developer` is normalized to `system`).
 
-Modern OpenAI function tools are accepted for non-streaming and streaming requests. The current V1 supports one declared call per turn and keeps `parallel_tool_calls` omitted or `false`:
+Modern OpenAI function tools are accepted for non-streaming and streaming requests. `parallel_tool_calls` defaults to `true`; set it to `false` when the current assistant outcome must contain at most one call:
 
 ```json
 {
@@ -128,25 +128,29 @@ Modern OpenAI function tools are accepted for non-streaming and streaming reques
 }
 ```
 
-`tool_choice` supports four single-call modes:
+`tool_choice` and `parallel_tool_calls` combine as follows:
 
-- Omitted or `"auto"`: return one declared call when needed, otherwise final text.
+- Omitted or `"auto"`: return final text or one or more declared calls; `parallel_tool_calls: false` limits calls to one.
 - `"none"`: return final text only.
-- `"required"`: return exactly one declared call.
-- `{"type":"function","function":{"name":"read_file"}}`: return exactly that declared call.
+- `"required"`: return at least one declared call; `parallel_tool_calls: false` limits calls to one.
+- `{"type":"function","function":{"name":"read_file"}}`: return exactly one call of that declared function, regardless of the parallel setting.
 
 For `strict: true`, the parameters root must be an object. Every object schema, including nullable nested objects, must set `additionalProperties: false` and list every property key in `required`; represent optional fields with a nullable type. Tokenless rejects malformed strict schemas before provider submission and validates returned arguments against the declared schema.
 
-The caller executes returned tools. On the next request, resend the same catalog and the complete ordered pair:
+The caller executes returned tools. On the next request, resend the same catalog, the assistant call array in its original order, and one contiguous result for every call. Results may arrive in a different order when their ids make the pairing unambiguous:
 
 ```json
 [
-  {"role":"assistant","content":null,"tool_calls":[{"id":"call_abc","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"package.json\"}"}}]},
-  {"role":"tool","tool_call_id":"call_abc","content":"{\"name\":\"tokenless\"}"}
+  {"role":"assistant","content":"I will inspect both.","tool_calls":[
+    {"id":"call_read","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"package.json\"}"}},
+    {"id":"call_search","type":"function","function":{"name":"search_files","arguments":"{\"path\":\"packages\"}"}}
+  ]},
+  {"role":"tool","tool_call_id":"call_search","content":"packages/cli"},
+  {"role":"tool","tool_call_id":"call_read","content":"{\"name\":\"tokenless\"}"}
 ]
 ```
 
-Tokenless validates unique call ids, declared names, strict argument JSON, argument schemas, and call/result pairing before provider submission. It never executes caller tools or stores their catalog.
+Tokenless validates unique call ids, declared names, strict argument JSON, argument schemas, and exactly one result per call before provider submission. It never executes caller tools or stores their catalog.
 
 ### Anthropic
 
@@ -179,16 +183,16 @@ Any other part type — `image_url`, `image`, `input_audio`, `document`, `tool_r
 | --- | --- |
 | `model`, `messages` | Required |
 | `system` (Anthropic) | Honored as a system message |
-| `stream` | Honored for text and one function tool call |
+| `stream` | Honored for text and function tool calls |
 | `stream_options` | Accepted and ignored; no streaming usage is fabricated |
-| `tools` | Modern OpenAI function tools honored for one call |
+| `tools` | Modern OpenAI function tools honored for one or more calls |
 | `tools[].function.strict` | Boolean; `true` requires recursive closed objects with every property required |
 | `tool_choice` | Omitted/`auto`, `none`, `required`, or one exact declared function |
-| `parallel_tool_calls` | Omitted or `false`; `true` and other forms rejected with 400 |
+| `parallel_tool_calls` | Boolean; omitted/`true` permits multiple current-turn calls, `false` permits at most one |
 | `functions`, `function_call`, `response_format` | **Rejected with 400** |
 | `temperature`, `top_p`, `max_tokens`, `seed`, `stop`, everything else | **Silently ignored** |
 
-Deprecated function fields, structured final output, and multiple calls remain fail-closed. They are later milestones, not silently ignored compatibility.
+Deprecated function fields and structured final output remain fail-closed. They are later milestones, not silently ignored compatibility.
 
 The ignored group is the sharper trap: **sampling parameters have no effect.** `temperature: 0` does not make the provider deterministic, and `max_tokens` does not bound the reply. If your code depends on either, the proxy is the wrong transport for that call path. `max_tokens` is ignored rather than rejected only because the Anthropic API requires it.
 
@@ -200,6 +204,7 @@ The ignored group is the sharper trap: **sampling parameters have no effect.** `
 | `messages` entries | 256 |
 | Flattened prompt text | 1 MiB |
 | Function tools | 128 |
+| Calls in one assistant outcome | 128 |
 | One function parameter schema | 64 KiB |
 
 ## Response bodies
@@ -229,7 +234,7 @@ Standard vendor shapes plus one `tokenless` object.
 }
 ```
 
-A validated call uses the standard OpenAI shape. Tokenless allocates the public id only after validating provider output:
+A validated call group uses the standard OpenAI shape in model order. Tokenless allocates unique public ids only after validating the complete provider output; accompanying assistant content is preserved:
 
 ```json
 {
@@ -237,8 +242,11 @@ A validated call uses the standard OpenAI shape. Tokenless allocates the public 
     "index": 0,
     "message": {
       "role": "assistant",
-      "content": null,
-      "tool_calls": [{"id":"call_abc","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"package.json\"}"}}]
+      "content": "I will inspect both.",
+      "tool_calls": [
+        {"id":"call_read","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"package.json\"}"}},
+        {"id":"call_search","type":"function","function":{"name":"search_files","arguments":"{\"path\":\"packages\"}"}}
+      ]
     },
     "finish_reason": "tool_calls"
   }]
@@ -296,10 +304,10 @@ data: {"id":"chatcmpl-...","object":"chat.completion.chunk",...,"choices":[{"ind
 data: [DONE]
 ```
 
-A validated tool call uses the same terminal delivery model. Its first frame contains `delta.tool_calls[0]` with stable `index: 0`, `id`, `name`, and the complete arguments string. A second frame carries `finish_reason: "tool_calls"`, followed by `[DONE]`:
+A validated tool-call group uses the same terminal delivery model. Its first frame contains every call with stable indexes `0..n-1`, unique ids, names, and complete arguments strings; any accompanying content is in the same delta. A second frame carries `finish_reason: "tool_calls"`, followed by `[DONE]`:
 
 ```
-data: {"id":"chatcmpl-...","object":"chat.completion.chunk",...,"choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_...","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"package.json\"}"}}]},"finish_reason":null}]}
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk",...,"choices":[{"index":0,"delta":{"role":"assistant","content":"I will inspect both.","tool_calls":[{"index":0,"id":"call_...","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"package.json\"}"}},{"index":1,"id":"call_...","type":"function","function":{"name":"search_files","arguments":"{\"path\":\"packages\"}"}}]},"finish_reason":null}]}
 
 data: {"id":"chatcmpl-...","object":"chat.completion.chunk",...,"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
 
@@ -368,9 +376,9 @@ The status is the signal to branch on. Read `code` for the specific cause and tr
 
 | Status | Code | Cause | Retry? |
 | --- | --- | --- | --- |
-| 400 | `invalid_request_error` | Malformed body, tool catalog, tool choice, arguments, or unpaired history | No — fix the request |
+| 400 | `invalid_request_error` | Malformed body, tool catalog, tool choice, parallel setting, arguments, or unpaired history | No — fix the request |
 | 400 | `invalid_json` | Body is empty or not JSON | No |
-| 400 | `unsupported_parameter` | Legacy functions, structured output, or parallel calls | No |
+| 400 | `unsupported_parameter` | Legacy functions or structured output | No |
 | 401 | `control_auth_missing` | No bearer token | No |
 | 403 | `control_auth_rejected` | Wrong bearer token | No |
 | 404 | `model_not_found` | `model` names a provider that does not exist or is not built in | No |
@@ -397,13 +405,13 @@ Design around these, not against them.
 | Latency | Seconds to minutes. Real browser navigation, page settle, typing, submit, and render. |
 | Timeout | 10 minutes, then 504. The underlying job may still be running — check `job_id`. |
 | Concurrency | Effectively serial per profile. One browser, one provider tab. |
-| Tool use | One modern function call, non-streaming or terminal SSE; caller executes it. |
+| Tool use | One or more modern function calls, non-streaming or terminal SSE; caller executes them. |
 | Structured output | Unsupported, rejected. |
 | Sampling control | Silently ignored. |
 | Token accounting | None. |
 | Multimodal input | Text only. |
 
-Route human-paced Q&A and single external-tool turns through this. Keep structured final output, multiple calls, low latency, and parallelism on another route.
+Route human-paced Q&A and external-tool turns through this. Keep structured final output and low-latency incremental streaming on another route.
 
 ### Account risk
 
@@ -475,9 +483,9 @@ Note both SDKs need their default timeout raised and their retry count zeroed. D
 - [ ] Read base URL from `tokenless api-proxy status --json`, not a constant.
 - [ ] Read the token from `~/.tokenless/daemon.token`; never log it.
 - [ ] Name models `tokenless/<provider>`; validate against `GET /v1/openai/models`.
-- [ ] For tools, send modern `tools`, choose the required `tool_choice`, set `parallel_tool_calls: false`, execute calls outside Tokenless, and resend complete paired history.
+- [ ] For tools, send modern `tools`, choose the required `tool_choice` and parallel setting, execute every call outside Tokenless, and resend complete paired history.
 - [ ] For `strict: true`, use an object root, close every object with `additionalProperties: false`, require every property, and use nullable types for optional values.
-- [ ] Keep `functions`, `function_call`, `response_format`, and multiple calls on another route.
+- [ ] Keep `functions`, `function_call`, and `response_format` on another route.
 - [ ] Treat `stream_options` as ignored and do not expect a usage frame.
 - [ ] Do not depend on `temperature`, `max_tokens`, or any sampling field.
 - [ ] Do not read `usage` for cost.
@@ -497,6 +505,8 @@ The packaged daemon completed a non-streaming single-tool loop through the real 
 - Job `8a3d2c42-e05c-478f-8518-22acb5a39467` returned a final `finish_reason: stop` answer grounded in that package metadata.
 
 An [unmodified DSH streaming run](evidence/dsh-streaming-tool-loop-2026-08-15.md) then completed two sequential single tool turns and a grounded final answer through the packaged daemon and real DeepSeek browser route. DSH reconstructed stable ids, names, index 0, complete arguments, terminal `tool_calls`, and `[DONE]`; DSH—not Tokenless—executed both tools.
+
+An [unmodified DSH multiple-call run](evidence/openai-multiple-tool-calls-deepseek-2026-08-15.md) later reconstructed stable indexes 0 and 1 in one assistant outcome, executed both real reads, replayed both results, and received a grounded final. A separate real non-streaming request preserved short assistant content beside two model-ordered calls.
 
 ## Known gaps
 

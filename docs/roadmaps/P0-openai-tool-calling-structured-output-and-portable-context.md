@@ -305,7 +305,9 @@ DSH 的两个现成 surface承担不同证据：
 
 Lifecycle note（2026-08-15）：固定 revision 的 unmodified DSH 已通过 packaged daemon 与真实 DeepSeek browser route 完成两个连续 single-call streaming tool turn 和 grounded final answer；[脱敏证据](../evidence/dsh-streaming-tool-loop-2026-08-15.md)记录 session identity、JSONL digest、stable call ids、terminal finish reasons 与 job state。首次运行在 provider submission 前暴露非契约性的 1,024 字符 tool-description 上限；删除该重复限制并继续依赖现有 1 MiB compiled-prompt bound 后，真实运行通过。
 
-Lifecycle note（2026-08-15）：packaged daemon 与真实 DeepSeek browser route 已分别证明 single-call `tool_choice` 的 `none`、`required` 与 exact named function，以及递归 closed `strict: true` object schema 的 schema-valid arguments；[脱敏证据](../evidence/openai-tool-choice-strict-deepseek-2026-08-15.md)记录 public finish reason、call count/name、validation outcome 与 job id。Choice/schema violation 在 public parser boundary fail closed，且 valid-but-choice-violating output 不进入已有 bounded final correction。Multiple calls 与 `parallel_tool_calls: true` 仍未实现或公开。
+Lifecycle note（2026-08-15）：packaged daemon 与真实 DeepSeek browser route 已分别证明 single-call `tool_choice` 的 `none`、`required` 与 exact named function，以及递归 closed `strict: true` object schema 的 schema-valid arguments；[脱敏证据](../evidence/openai-tool-choice-strict-deepseek-2026-08-15.md)记录 public finish reason、call count/name、validation outcome 与 job id。Choice/schema violation 在 public parser boundary fail closed，且 valid-but-choice-violating output 不进入已有 bounded final correction。该 milestone 完成时，multiple calls 与 `parallel_tool_calls: true` 尚未实现或公开。
+
+Lifecycle note（2026-08-15）：固定 revision 的 unmodified DSH 已通过 packaged daemon 与真实 DeepSeek browser route，在一个 assistant turn 内从终态 SSE 的稳定 `index: 0/1` 重建两个调用、执行两个真实 local `read`、回传一对一结果并获得 grounded final；另一次真实非流式 API case 保留了与两个调用同时返回的 assistant content。[脱敏证据](../evidence/openai-multiple-tool-calls-deepseek-2026-08-15.md)记录 DSH revision/build/session JSONL digest、event counts、public call ids、job ids 与 protocol counters。该 slice 未加入 tool execution、scheduler、retry framework 或旧 envelope compatibility branch。
 
 ### Evidence lane A：Tokenless repository grounding
 

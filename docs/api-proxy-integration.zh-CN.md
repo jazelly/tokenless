@@ -103,7 +103,7 @@ tokenless/<provider>
 
 支持的 role：`system`、`user`、`assistant`、`developer`（`developer` 会归一化为 `system`）。
 
-非流式和流式请求都支持现代 OpenAI function tools。当前 V1 每轮只支持一个已声明调用，`parallel_tool_calls` 只能省略或设为 `false`：
+非流式和流式请求都支持现代 OpenAI function tools。`parallel_tool_calls` 默认为 `true`；若当前 assistant outcome 最多只能包含一个调用，则设为 `false`：
 
 ```json
 {
@@ -128,25 +128,29 @@ tokenless/<provider>
 }
 ```
 
-`tool_choice` 支持四种单调用模式：
+`tool_choice` 与 `parallel_tool_calls` 的组合语义如下：
 
-- 省略或 `"auto"`：需要时返回一个已声明调用，否则返回最终文本。
+- 省略或 `"auto"`：返回最终文本或一个及以上已声明调用；`parallel_tool_calls: false` 会把调用数限制为一个。
 - `"none"`：只能返回最终文本。
-- `"required"`：必须返回恰好一个已声明调用。
-- `{"type":"function","function":{"name":"read_file"}}`：必须返回指定的已声明调用。
+- `"required"`：必须返回至少一个已声明调用；`parallel_tool_calls: false` 会把调用数限制为一个。
+- `{"type":"function","function":{"name":"read_file"}}`：无论 parallel 设置为何，都必须且只能返回该已声明 function 的一个调用。
 
 使用 `strict: true` 时，parameters 根节点必须是 object。每个 object schema（包括可空的嵌套 object）都必须设置 `additionalProperties: false`，并在 `required` 中列出所有 property key；可选字段用 nullable type 表示。Tokenless 会在提交 provider 前拒绝不合规的 strict schema，并按声明 schema 校验返回 arguments。
 
-调用方负责执行返回的 tool。下一次请求要重发同一 catalog 和完整、有序的调用/结果配对：
+调用方负责执行返回的 tool。下一次请求应重发同一 catalog、保持原顺序的 assistant call array，以及每个调用各一个连续的结果。当 id 能无歧义配对时，result 可以采用不同顺序：
 
 ```json
 [
-  {"role":"assistant","content":null,"tool_calls":[{"id":"call_abc","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"package.json\"}"}}]},
-  {"role":"tool","tool_call_id":"call_abc","content":"{\"name\":\"tokenless\"}"}
+  {"role":"assistant","content":"I will inspect both.","tool_calls":[
+    {"id":"call_read","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"package.json\"}"}},
+    {"id":"call_search","type":"function","function":{"name":"search_files","arguments":"{\"path\":\"packages\"}"}}
+  ]},
+  {"role":"tool","tool_call_id":"call_search","content":"packages/cli"},
+  {"role":"tool","tool_call_id":"call_read","content":"{\"name\":\"tokenless\"}"}
 ]
 ```
 
-Tokenless 会在提交 provider 前校验 call id 唯一性、已声明名称、严格 arguments JSON、参数 schema 和调用/结果配对。它不会执行调用方 tool，也不会保存 catalog。
+Tokenless 会在提交 provider 前校验 call id 唯一性、已声明名称、严格 arguments JSON、参数 schema，以及每个调用恰有一个 result。它不会执行调用方 tool，也不会保存 catalog。
 
 ### Anthropic
 
@@ -179,16 +183,16 @@ Tokenless 会在提交 provider 前校验 call id 唯一性、已声明名称、
 | --- | --- |
 | `model`、`messages` | 必填 |
 | `system`（Anthropic） | 作为 system message 生效 |
-| `stream` | 文本与单个 function tool call 均生效 |
+| `stream` | 文本与 function tool calls 均生效 |
 | `stream_options` | 接受但忽略；不会伪造 streaming usage |
-| `tools` | 支持一个现代 OpenAI function call |
+| `tools` | 支持一个或多个现代 OpenAI function calls |
 | `tools[].function.strict` | Boolean；`true` 要求递归 closed object 且每个 property 都是 required |
 | `tool_choice` | 省略/`auto`、`none`、`required` 或一个精确的已声明 function |
-| `parallel_tool_calls` | 可省略或设为 `false`；`true` 与其他形式返回 400 |
+| `parallel_tool_calls` | Boolean；省略/`true` 允许当前 turn 返回多个调用，`false` 最多允许一个 |
 | `functions`、`function_call`、`response_format` | **返回 400 拒绝** |
 | `temperature`、`top_p`、`max_tokens`、`seed`、`stop` 及其他全部字段 | **静默忽略** |
 
-旧版 function 字段、结构化最终输出与多调用仍会 fail closed。它们属于后续 milestone，不会被静默兼容。
+旧版 function 字段与结构化最终输出仍会 fail closed。它们属于后续 milestone，不会被静默兼容。
 
 被忽略的那组才是更隐蔽的坑：**采样参数完全无效。** `temperature: 0` 不会让 provider 变得确定，`max_tokens` 也不会约束回复长度。如果你的代码依赖其中任何一个，那条调用路径就不该走这个 proxy。`max_tokens` 之所以只被忽略而非拒绝，仅仅因为 Anthropic API 强制要求它。
 
@@ -200,6 +204,7 @@ Tokenless 会在提交 provider 前校验 call id 唯一性、已声明名称、
 | `messages` 条数 | 256 |
 | 打平后的 prompt 文本 | 1 MiB |
 | Function tools | 128 |
+| 单个 assistant outcome 的调用数 | 128 |
 | 单个 function parameter schema | 64 KiB |
 
 ## 响应体
@@ -229,7 +234,7 @@ Tokenless 会在提交 provider 前校验 call id 唯一性、已声明名称、
 }
 ```
 
-通过校验的调用使用标准 OpenAI 形状。Tokenless 仅在 provider 输出通过校验后分配公开 id：
+通过校验的调用组按 model order 使用标准 OpenAI 形状。Tokenless 只在完整 provider output 通过校验后分配唯一 public id；随调用返回的 assistant content 会被保留：
 
 ```json
 {
@@ -237,8 +242,11 @@ Tokenless 会在提交 provider 前校验 call id 唯一性、已声明名称、
     "index": 0,
     "message": {
       "role": "assistant",
-      "content": null,
-      "tool_calls": [{"id":"call_abc","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"package.json\"}"}}]
+      "content": "I will inspect both.",
+      "tool_calls": [
+        {"id":"call_read","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"package.json\"}"}},
+        {"id":"call_search","type":"function","function":{"name":"search_files","arguments":"{\"path\":\"packages\"}"}}
+      ]
     },
     "finish_reason": "tool_calls"
   }]
@@ -296,10 +304,10 @@ data: {"id":"chatcmpl-...","object":"chat.completion.chunk",...,"choices":[{"ind
 data: [DONE]
 ```
 
-通过校验的 tool call 使用同样的终态下发方式。第一帧的 `delta.tool_calls[0]` 包含稳定的 `index: 0`、`id`、`name` 与完整 arguments 字符串；第二帧携带 `finish_reason: "tool_calls"`，最后是 `[DONE]`：
+通过校验的 tool-call group 使用同样的终态下发方式。第一帧包含全部调用，每个调用都有稳定的 `0..n-1` index、唯一 id、name 与完整 arguments string；伴随 content 位于同一 delta。第二帧携带 `finish_reason: "tool_calls"`，随后是 `[DONE]`：
 
 ```
-data: {"id":"chatcmpl-...","object":"chat.completion.chunk",...,"choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_...","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"package.json\"}"}}]},"finish_reason":null}]}
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk",...,"choices":[{"index":0,"delta":{"role":"assistant","content":"I will inspect both.","tool_calls":[{"index":0,"id":"call_...","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"package.json\"}"}},{"index":1,"id":"call_...","type":"function","function":{"name":"search_files","arguments":"{\"path\":\"packages\"}"}}]},"finish_reason":null}]}
 
 data: {"id":"chatcmpl-...","object":"chat.completion.chunk",...,"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
 
@@ -368,9 +376,9 @@ Anthropic：
 
 | 状态码 | Code | 根因 | 可否重试 |
 | --- | --- | --- | --- |
-| 400 | `invalid_request_error` | 请求体、tool catalog、tool choice、arguments 或历史配对错误 | 否 —— 修正请求 |
+| 400 | `invalid_request_error` | 请求体、tool catalog、tool choice、parallel 设置、arguments 或历史配对错误 | 否 —— 修正请求 |
 | 400 | `invalid_json` | 请求体为空或不是 JSON | 否 |
-| 400 | `unsupported_parameter` | 旧版 functions、结构化输出或 parallel calls | 否 |
+| 400 | `unsupported_parameter` | 旧版 functions 或结构化输出 | 否 |
 | 401 | `control_auth_missing` | 缺少 bearer token | 否 |
 | 403 | `control_auth_rejected` | bearer token 错误 | 否 |
 | 404 | `model_not_found` | `model` 指向不存在或未内置的 provider | 否 |
@@ -397,13 +405,13 @@ Anthropic：
 | 延迟 | 秒到分钟级。真实浏览器导航、页面稳定、输入、提交、渲染。 |
 | 超时 | 10 分钟，随后返回 504。底层 job 可能仍在运行——请用 `job_id` 查询。 |
 | 并发 | 单 profile 基本串行。一个浏览器、一个 provider 标签页。 |
-| Tool use | 支持一个现代 function call，可使用非流式或终态 SSE；由调用方执行。 |
+| Tool use | 支持一个或多个现代 function calls，可使用非流式或终态 SSE；由调用方执行。 |
 | 结构化输出 | 不支持，直接拒绝。 |
 | 采样控制 | 静默忽略。 |
 | Token 计量 | 无。 |
 | 多模态输入 | 仅文本。 |
 
-可把人类节奏的一问一答和单个外部 tool turn 放到这条通道上。结构化最终输出、多调用、低延迟与并行仍应走其他 route。
+可把人类节奏的一问一答和外部 tool turn 放到这条通道上。结构化最终输出与低延迟增量 streaming 仍应走其他 route。
 
 ### 账号风险
 
@@ -475,9 +483,9 @@ console.log(message.content)
 - [ ] 从 `tokenless api-proxy status --json` 读取 base URL，不要用常量。
 - [ ] 从 `~/.tokenless/daemon.token` 读取 token；绝不写入日志。
 - [ ] model 命名为 `tokenless/<provider>`；用 `GET /v1/openai/models` 校验。
-- [ ] Tool 请求使用现代 `tools`，选择所需 `tool_choice`，设置 `parallel_tool_calls: false`，在 Tokenless 外执行调用，并重发完整配对历史。
+- [ ] Tool 请求使用现代 `tools`，选择所需 `tool_choice` 与 parallel 设置，在 Tokenless 外执行每个调用，并重发完整配对历史。
 - [ ] 使用 `strict: true` 时，根节点使用 object，每个 object 都设置 `additionalProperties: false`，要求所有 property，并用 nullable type 表示可选值。
-- [ ] `functions`、`function_call`、`response_format` 与多调用继续走其他 route。
+- [ ] `functions`、`function_call` 与 `response_format` 继续走其他 route。
 - [ ] 把 `stream_options` 视为已忽略，且不要期待 usage 帧。
 - [ ] 不要依赖 `temperature`、`max_tokens` 或任何采样字段。
 - [ ] 不要用 `usage` 计算成本。
@@ -497,6 +505,8 @@ Packaged daemon 已通过真实 DeepSeek browser route 完成一次非流式单 
 - Job `8a3d2c42-e05c-478f-8518-22acb5a39467` 返回基于该 package metadata 的最终回答，`finish_reason: stop`。
 
 随后一次[未修改 DSH 的真实 streaming run](evidence/dsh-streaming-tool-loop-2026-08-15.md)通过 packaged daemon 与真实 DeepSeek browser route，完成了两个连续的单 tool turn 和 grounded final answer。DSH 重建了稳定 id、name、index 0、完整 arguments、终态 `tool_calls` 与 `[DONE]`；两个 tool 都由 DSH 而非 Tokenless 执行。
+
+随后一次[未修改 DSH 的 multiple-call run](evidence/openai-multiple-tool-calls-deepseek-2026-08-15.md)在一个 assistant outcome 中重建了稳定的 index 0 与 1，执行两个真实读取、重放两项结果并获得 grounded final。另一个真实非流式请求保留了与两个 model-ordered calls 同时返回的简短 assistant content。
 
 ## 已知不足
 

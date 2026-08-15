@@ -115,6 +115,38 @@ test('api proxy accepts streaming function tools and complete tool history befor
   })
 })
 
+test('api proxy accepts complete multiple-call history regardless of the current parallel setting', async () => {
+  await withDaemon(async (daemon) => {
+    await enableApiProxy(daemon.homeDir)
+    const tools = [functionTool('read_file'), functionTool('search_files')]
+    const messages = [
+      { role: 'user', content: 'Read package.json and search the source.' },
+      {
+        role: 'assistant',
+        content: 'I will inspect both independently.',
+        tool_calls: [
+          { id: 'call_read', type: 'function', function: { name: 'read_file', arguments: '{"path":"package.json"}' } },
+          { id: 'call_search', type: 'function', function: { name: 'search_files', arguments: '{"path":"packages"}' } },
+        ],
+      },
+      { role: 'tool', tool_call_id: 'call_search', content: 'packages/cli' },
+      { role: 'tool', tool_call_id: 'call_read', content: '{"name":"tokenless"}' },
+    ]
+    for (const parallelToolCalls of [undefined, true, false]) {
+      const response = await call(daemon, 'POST', '/v1/openai/chat/completions', {
+        model: 'tokenless/chatgpt',
+        messages,
+        tools,
+        ...(parallelToolCalls === undefined ? {} : { parallel_tool_calls: parallelToolCalls }),
+      })
+      assert.equal(response.status, 409, String(parallelToolCalls))
+      assert.equal(response.body.error.code, 'profile_not_configured', String(parallelToolCalls))
+    }
+    const jobs = await call(daemon, 'GET', '/jobs')
+    assert.equal(jobs.body.length, 0)
+  })
+})
+
 test('api proxy accepts every single-call tool choice and recursive strict schemas before profile readiness', async () => {
   await withDaemon(async (daemon) => {
     await enableApiProxy(daemon.homeDir)
@@ -265,6 +297,45 @@ test('api proxy rejects malformed tool catalogs and history before creating a jo
         },
         param: 'messages',
       },
+      {
+        name: 'duplicate id in one assistant call group',
+        body: {
+          messages: [
+            {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                { id: 'call_1', type: 'function', function: { name: 'read_file', arguments: '{"path":"a"}' } },
+                { id: 'call_1', type: 'function', function: { name: 'read_file', arguments: '{"path":"b"}' } },
+              ],
+            },
+            { role: 'tool', tool_call_id: 'call_1', content: 'done' },
+          ],
+          tools: [validTool],
+          parallel_tool_calls: true,
+        },
+        param: 'messages',
+      },
+      {
+        name: 'multiple calls are not all resolved before a user message',
+        body: {
+          messages: [
+            {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                { id: 'call_1', type: 'function', function: { name: 'read_file', arguments: '{"path":"a"}' } },
+                { id: 'call_2', type: 'function', function: { name: 'read_file', arguments: '{"path":"b"}' } },
+              ],
+            },
+            { role: 'tool', tool_call_id: 'call_2', content: 'done' },
+            { role: 'user', content: 'continue' },
+          ],
+          tools: [validTool],
+          parallel_tool_calls: true,
+        },
+        param: 'messages',
+      },
       ...[
         { name: 'unknown string tool choice', toolChoice: 'sometimes' },
         { name: 'named tool choice references undeclared function', toolChoice: { type: 'function', function: { name: 'write_file' } } },
@@ -298,14 +369,13 @@ test('api proxy rejects malformed tool catalogs and history before creating a jo
   })
 })
 
-test('api proxy keeps legacy structured output and parallel calls explicitly unsupported', async () => {
+test('api proxy keeps legacy structured output unsupported and rejects malformed parallel control', async () => {
   await withDaemon(async (daemon) => {
     await enableApiProxy(daemon.homeDir)
     const cases = [
       ['functions', []],
       ['function_call', 'auto'],
       ['response_format', { type: 'json_object' }],
-      ['parallel_tool_calls', true],
       ['parallel_tool_calls', 'false'],
     ]
     for (const [field, value] of cases) {
@@ -315,7 +385,11 @@ test('api proxy keeps legacy structured output and parallel calls explicitly uns
         [field]: value,
       })
       assert.equal(response.status, 400, field)
-      assert.equal(response.body.error.code, 'unsupported_parameter', field)
+      assert.equal(
+        response.body.error.code,
+        field === 'parallel_tool_calls' ? 'invalid_request_error' : 'unsupported_parameter',
+        field,
+      )
       assert.equal(response.body.error.param, field, field)
     }
   })
