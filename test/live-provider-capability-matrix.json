@@ -749,7 +749,8 @@
       "required": [
         "session-readiness",
         "prompt-draft",
-        "file-selection"
+        "file-selection",
+        "workspace-response-baseline"
       ],
       "unavailable": {
         "arena-search": "provider_specific_capability",
@@ -766,7 +767,6 @@
         "deepseek-vision-input": "no_real_image_input_closure",
         "conversation-workflow": "no_real_visible_citation_closure_2026_08_10",
         "workspace-response-citations": "no_real_visible_citation_closure_2026_08_10",
-        "workspace-response-baseline": "no_real_visible_citation_closure_2026_08_10",
         "qwen-mode-workspace": "provider_specific_capability",
         "doubao-controls": "provider_specific_capability",
         "native-project": "native_project_not_observed",
