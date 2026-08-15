@@ -1,4 +1,9 @@
 import {
+  MarkerExtractionError,
+  extractExactlyOneMarkedValue,
+  parseStrictJson,
+} from 'tokenless-web-ai-interaction-protocol/structured-control'
+import {
   WEB_AGENT_PROTOCOL,
   HarnessSkillError,
   type HarnessActionBatch,
@@ -9,7 +14,6 @@ import {
   type JsonValue,
 } from '../contracts.js'
 import type { HarnessSkillState } from './state.js'
-import { parseStrictJson } from './strict-json.js'
 import { assertValidJsonSchema, validateJsonSchemaValue } from './json-schema.js'
 
 const OPEN_MARKER = '<TOKENLESS_HARNESS_RESPONSE>'
@@ -41,17 +45,27 @@ export function parseModelResponse({
     throw new HarnessSkillError('invalid_nonce', 'nonce must contain 8-256 characters.')
   }
   const trimmed = responseText.trim()
-  if (!trimmed.startsWith(OPEN_MARKER) || !trimmed.endsWith(CLOSE_MARKER)) {
+  let json: string
+  try {
+    const marked = extractExactlyOneMarkedValue(trimmed, OPEN_MARKER, CLOSE_MARKER)
+    if (marked.before !== '' || marked.after !== '') {
+      throw new HarnessSkillError(
+        'harness_response_framing_invalid',
+        `Harness response must contain exactly one envelope between ${OPEN_MARKER} and ${CLOSE_MARKER}.`,
+      )
+    }
+    json = marked.content.trim()
+  } catch (error) {
+    if (error instanceof HarnessSkillError) throw error
+    if (error instanceof MarkerExtractionError && error.reason === 'count') {
+      throw new HarnessSkillError('harness_response_framing_invalid', 'Harness response contains duplicate or missing control markers.')
+    }
     throw new HarnessSkillError(
       'harness_response_framing_invalid',
       `Harness response must contain exactly one envelope between ${OPEN_MARKER} and ${CLOSE_MARKER}.`,
     )
   }
-  if (countOccurrences(trimmed, OPEN_MARKER) !== 1 || countOccurrences(trimmed, CLOSE_MARKER) !== 1) {
-    throw new HarnessSkillError('harness_response_framing_invalid', 'Harness response contains duplicate control markers.')
-  }
-  const json = trimmed.slice(OPEN_MARKER.length, -CLOSE_MARKER.length).trim()
-  const parsed = record(parseStrictJson(json), 'Harness response envelope')
+  const parsed = record(parseHarnessStrictJson(json), 'Harness response envelope')
   requireExactKeys(
     parsed,
     parsed.kind === 'final'
@@ -119,7 +133,7 @@ function finalResponse(value: Record<string, unknown>, state: HarnessSkillState)
   if (state.finalOutput.kind === 'json_schema') {
     let structuredOutput: unknown
     try {
-      structuredOutput = parseStrictJson(value.output)
+      structuredOutput = parseHarnessStrictJson(value.output)
     } catch (error) {
       throw new HarnessSkillError(
         'harness_final_output_invalid',
@@ -246,10 +260,6 @@ function requireUnique(values: readonly string[], label: string) {
   }
 }
 
-function countOccurrences(value: string, pattern: string) {
-  return value.split(pattern).length - 1
-}
-
 function assertJsonValue(value: unknown, label: string): void {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') return
   if (typeof value === 'number') {
@@ -265,4 +275,15 @@ function assertJsonValue(value: unknown, label: string): void {
     return
   }
   throw new HarnessSkillError('harness_response_schema_invalid', `${label} must be JSON-serializable.`)
+}
+
+function parseHarnessStrictJson(source: string) {
+  try {
+    return parseStrictJson(source)
+  } catch (error) {
+    throw new HarnessSkillError(
+      'harness_response_json_invalid',
+      error instanceof Error ? error.message : 'Harness response contains invalid JSON.',
+    )
+  }
 }

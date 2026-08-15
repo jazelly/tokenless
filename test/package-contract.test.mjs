@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { loadLiveProviderCapabilityMatrix } from './helpers/live-provider-capability-matrix.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -321,7 +321,11 @@ test('workspace packages keep standalone product names', () => {
   assert.deepEqual(harness.exports, { '.': './dist/src/index.js' })
   assert.equal(protocol.name, 'tokenless-web-ai-interaction-protocol')
   assert.equal(protocol.private, true)
-  assert.deepEqual(protocol.exports, { '.': './dist/src/index.js', './local-http': './dist/src/local-http.js' })
+  assert.deepEqual(protocol.exports, {
+    '.': './dist/src/index.js',
+    './local-http': './dist/src/local-http.js',
+    './structured-control': './dist/src/structured-control.js',
+  })
   assert.ok(protocol.files.includes('schemas/v0'))
   assert.ok(protocol.files.includes('spec'))
   assert.equal(fs.existsSync(path.join(root, 'packages/extension')), false)
@@ -766,7 +770,41 @@ test('pure JS CLI packs, installs, and exposes executable runtime artifacts', ()
     assert.equal(fs.existsSync(path.join(installDir, 'node_modules', '@tokenless', 'playwright')), false)
     assert.equal(fs.existsSync(path.join(installDir, 'node_modules', 'tokenless-native-darwin-arm64')), false)
     assert.equal(fs.existsSync(installedDaemonEntry), true)
-    assert.equal(fs.existsSync(path.join(installedCli, 'dist', 'web-agent-harness', 'src', 'index.js')), true)
+    const installedHarness = path.join(installedCli, 'dist', 'web-agent-harness', 'src', 'index.js')
+    assert.equal(fs.existsSync(installedHarness), true)
+    const installedHarnessRoot = path.join(installedCli, 'dist', 'web-agent-harness')
+    const installedHarnessJavaScript = fs.readdirSync(installedHarnessRoot, { recursive: true })
+      .filter((entry) => typeof entry === 'string' && entry.endsWith('.js'))
+      .map((entry) => entry.replaceAll(path.sep, '/'))
+    assert.deepEqual(installedHarnessJavaScript, ['src/index.js'])
+    assert.equal(
+      fs.readFileSync(installedHarness, 'utf8').includes('tokenless-web-ai-interaction-protocol'),
+      false,
+    )
+    const harnessImport = spawnSync(process.execPath, [
+      '--input-type=module',
+      '--eval',
+      `const module = await import(${JSON.stringify(pathToFileURL(installedHarness).href)}); process.stdout.write(typeof module.startHarnessLocalHttpBootstrap)`,
+    ], { cwd: installDir, encoding: 'utf8' })
+    assert.equal(harnessImport.status, 0, harnessImport.stderr || harnessImport.stdout)
+    assert.equal(harnessImport.stdout, 'function')
+    const installedOpenAiToolProtocol = path.join(installedCli, 'dist', 'src', 'daemon', 'openai-tool-protocol.js')
+    assert.equal(fs.existsSync(installedOpenAiToolProtocol), true)
+    assert.equal(
+      fs.readFileSync(installedOpenAiToolProtocol, 'utf8').includes('tokenless-web-ai-interaction-protocol'),
+      false,
+    )
+    assert.equal(
+      fs.readFileSync(path.join(installedCli, 'dist', 'src', 'daemon', 'openai-tool-protocol.d.ts'), 'utf8').includes("from 'ajv'"),
+      false,
+    )
+    const protocolImport = spawnSync(process.execPath, [
+      '--input-type=module',
+      '--eval',
+      `const module = await import(${JSON.stringify(pathToFileURL(installedOpenAiToolProtocol).href)}); process.stdout.write(module.OPENAI_TOOL_PROTOCOL)`,
+    ], { cwd: installDir, encoding: 'utf8' })
+    assert.equal(protocolImport.status, 0, protocolImport.stderr || protocolImport.stdout)
+    assert.equal(protocolImport.stdout, 'tokenless.openai-tools/v1')
 
     const codexHome = path.join(installDir, 'codex-home')
     const tokenlessHome = path.join(installDir, 'tokenless-home')

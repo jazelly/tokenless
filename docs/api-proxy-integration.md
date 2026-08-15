@@ -455,6 +455,7 @@ Design around these, not against them.
 | Concurrency | Effectively serial per profile. One browser, one provider tab. |
 | Tool use | One or more modern function calls, non-streaming or terminal SSE; caller executes them. |
 | Structured output | OpenAI `json_object` and the documented closed-object `json_schema` subset; valid final JSON or explicit error. |
+| Shared validation boundary | The Universal API and Standalone Web Agent Harness use the same strict JSON parser, JSON Schema validator setup, and exactly-one marker extraction. Their envelopes and execution ownership remain separate. |
 | Sampling control | Silently ignored. |
 | Token accounting | None. |
 | Multimodal input | Text only. |

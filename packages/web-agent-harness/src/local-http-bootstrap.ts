@@ -2,6 +2,10 @@ import { createHash, randomBytes } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 
 import type { StartTurnRequest, TurnState } from 'tokenless-web-ai-interaction-protocol'
+import {
+  MarkerExtractionError,
+  extractExactlyOneMarkedValue,
+} from 'tokenless-web-ai-interaction-protocol/structured-control'
 
 import {
   HarnessSkillError,
@@ -206,19 +210,20 @@ function normalizeProviderResponse(value: string) {
   if (Buffer.byteLength(value, 'utf8') > MAX_PROVIDER_RESPONSE_BYTES) {
     throw new HarnessSkillError('harness_response_too_large', `Harness response must be at most ${MAX_PROVIDER_RESPONSE_BYTES} bytes.`)
   }
-  if (value.startsWith(OPEN_MARKER) && value.endsWith(CLOSE_MARKER)) return value
-
-  if (countOccurrences(value, OPEN_MARKER) !== 1 || countOccurrences(value, CLOSE_MARKER) !== 1) {
-    throw new HarnessSkillError('harness_response_framing_invalid', 'Provider response must contain exactly one Harness response envelope.')
+  let marked: ReturnType<typeof extractExactlyOneMarkedValue>
+  try {
+    marked = extractExactlyOneMarkedValue(value, OPEN_MARKER, CLOSE_MARKER)
+  } catch (error) {
+    throw new HarnessSkillError(
+      'harness_response_framing_invalid',
+      error instanceof MarkerExtractionError && error.reason === 'order'
+        ? 'Provider response Harness markers are not ordered.'
+        : 'Provider response must contain exactly one Harness response envelope.',
+    )
   }
-  const open = value.indexOf(OPEN_MARKER)
-  const close = value.indexOf(CLOSE_MARKER)
-  if (open < 0 || close < open + OPEN_MARKER.length) {
-    throw new HarnessSkillError('harness_response_framing_invalid', 'Provider response Harness markers are not ordered.')
-  }
-  assertBoundedProviderChrome(value.slice(0, open))
-  assertBoundedProviderChrome(value.slice(close + CLOSE_MARKER.length))
-  return value.slice(open, close + CLOSE_MARKER.length)
+  assertBoundedProviderChrome(marked.before)
+  assertBoundedProviderChrome(marked.after)
+  return marked.marked
 }
 
 function assertBoundedProviderChrome(value: string) {
@@ -228,10 +233,6 @@ function assertBoundedProviderChrome(value: string) {
   ) {
     throw new HarnessSkillError('harness_response_framing_invalid', 'Provider response chrome is not a bounded single line.')
   }
-}
-
-function countOccurrences(value: string, pattern: string) {
-  return value.split(pattern).length - 1
 }
 
 function publicFinalizedBootstrap(bootstrap: HarnessBootstrapTurn) {

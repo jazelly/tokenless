@@ -1,15 +1,6 @@
-import type { ErrorObject } from 'ajv'
-import * as Ajv2020Module from 'ajv/dist/2020.js'
-import type { Ajv2020 as Ajv2020Instance } from 'ajv/dist/2020.js'
-import * as AddFormatsModule from 'ajv-formats'
-import type { FormatsPlugin } from 'ajv-formats'
+import { createAjv2020 } from 'tokenless-web-ai-interaction-protocol/structured-control'
 
 import { HarnessSkillError, type JsonValue } from '../contracts.js'
-
-const Ajv2020 = (Ajv2020Module.default ?? Ajv2020Module) as unknown as new (
-  options?: ConstructorParameters<typeof Ajv2020Instance>[0]
-) => Ajv2020Instance
-const addFormats = (AddFormatsModule.default ?? AddFormatsModule) as unknown as FormatsPlugin
 
 export function assertValidJsonSchema(schema: JsonValue, label: string) {
   createValidator(schema, label)
@@ -18,7 +9,7 @@ export function assertValidJsonSchema(schema: JsonValue, label: string) {
 export function validateJsonSchemaValue(schema: JsonValue, value: unknown, label: string) {
   const validate = createValidator(schema, label)
   if (validate(value)) return
-  const issues = (validate.errors ?? []).slice(0, 8).map((error: ErrorObject) => ({
+  const issues = (validate.errors ?? []).slice(0, 8).map((error) => ({
     path: error.instancePath || '/',
     keyword: error.keyword,
     message: error.message ?? 'is invalid',
@@ -31,8 +22,7 @@ export function validateJsonSchemaValue(schema: JsonValue, value: unknown, label
 }
 
 function createValidator(schema: JsonValue, label: string) {
-  const ajv = new Ajv2020({ allErrors: true, strict: true, strictRequired: false })
-  addFormats(ajv)
+  const ajv = createAjv2020()
   try {
     return ajv.compile(schema as object | boolean)
   } catch (error) {

@@ -458,6 +458,10 @@ Exit: 任何 successful structured response都能由标准 JSON parser解析并�
 
 ### Phase 5: Standalone Harness Contract Convergence
 
+Lifecycle note（2026-08-15）：strict JSON parser、AJV 2020 compile/validate setup 与 exactly-one marker extraction 已收敛到 `tokenless-web-ai-interaction-protocol`，并由 Universal API 与 Standalone Harness 直接使用。Harness 仍独立拥有 `action_batch`、Skill/need 与 tool execution；API 仍独立拥有 OpenAI choice、bounded correction 和 structured-output subset。Public CLI 只对 `openai-tool-protocol` 做 narrow Vite bundling，offline packed install 不依赖 private workspace package。
+
+同一 packaged ChatGPT strategy 的 Universal API 与 Standalone Harness real-provider run、首次 API failure 和独立 DeepSeek diagnostic 记录在[脱敏证据](../evidence/shared-structured-control-chatgpt-2026-08-15.md)。
+
 - 让 Web Agent Harness 与 API adapter共享最低层 canonical blocks、strict JSON/framing/schema primitives。
 - 保留不同 high-level envelopes：Standalone Harness继续使用 action batch/Skill/need语义，Universal API继续使用 OpenAI tool/final语义。
 - 从 Standalone Harness ToolDefinition只投影 model-visible schema；API caller tools保持 ephemeral，永远不进入 internal registry。

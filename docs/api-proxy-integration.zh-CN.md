@@ -455,6 +455,7 @@ Anthropic：
 | 并发 | 单 profile 基本串行。一个浏览器、一个 provider 标签页。 |
 | Tool use | 支持一个或多个现代 function calls，可使用非流式或终态 SSE；由调用方执行。 |
 | 结构化输出 | 支持 OpenAI `json_object` 与本文记录的 closed-object `json_schema` subset；返回 valid final JSON 或明确错误。 |
+| 共享校验边界 | Universal API 与 Standalone Web Agent Harness 使用同一 strict JSON parser、JSON Schema validator setup 和 exactly-one marker extraction；两者的 envelope 与执行权仍保持分离。 |
 | 采样控制 | 静默忽略。 |
 | Token 计量 | 无。 |
 | 多模态输入 | 仅文本。 |

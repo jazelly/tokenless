@@ -1,13 +1,20 @@
-import type { ErrorObject, ValidateFunction } from 'ajv'
-import * as Ajv2020Module from 'ajv/dist/2020.js'
-import type { Ajv2020 as Ajv2020Instance } from 'ajv/dist/2020.js'
-import * as AddFormatsModule from 'ajv-formats'
-import type { FormatsPlugin } from 'ajv-formats'
+import {
+  MarkerExtractionError,
+  createAjv2020,
+  extractExactlyOneMarkedValue,
+  parseStrictJson,
+} from 'tokenless-web-ai-interaction-protocol/structured-control'
 
-const Ajv2020 = (Ajv2020Module.default ?? Ajv2020Module) as unknown as new (
-  options?: ConstructorParameters<typeof Ajv2020Instance>[0]
-) => Ajv2020Instance
-const addFormats = (AddFormatsModule.default ?? AddFormatsModule) as unknown as FormatsPlugin
+type SchemaIssue = {
+  instancePath: string
+  keyword: string
+  message?: string
+}
+
+type SchemaValidator = {
+  (value: unknown): boolean
+  errors?: readonly SchemaIssue[] | null
+}
 
 export const OPENAI_TOOL_PROTOCOL = 'tokenless.openai-tools/v1'
 
@@ -25,7 +32,7 @@ export type OpenAiFunctionTool = {
   description?: string
   parameters: Record<string, unknown>
   strict: boolean
-  validate: ValidateFunction
+  validate: SchemaValidator
 }
 
 export type OpenAiToolChoice =
@@ -44,7 +51,7 @@ export type OpenAiResponseFormat =
         description?: string
         schema: Record<string, unknown>
         strict: boolean
-        validate: ValidateFunction
+        validate: SchemaValidator
       }
     }
 
@@ -444,8 +451,7 @@ function normalizeHistoryCall(
 }
 
 function compileSchema(schema: Record<string, unknown>, label: string) {
-  const ajv = new Ajv2020({ allErrors: true, strict: true, strictRequired: false })
-  addFormats(ajv)
+  const ajv = createAjv2020()
   try {
     return ajv.compile(schema)
   } catch (error) {
@@ -548,11 +554,11 @@ function publicResponseFormat(responseFormat: OpenAiResponseFormat) {
 
 function assertResponseContent(content: string, responseFormat: OpenAiResponseFormat) {
   if (responseFormat.type === 'text') return
-  const parsed = parseStrictJson(content, true)
+  const parsed = parseStrictJson(content, { exactNumbers: true })
   const value = record(parsed, 'provider structured final content')
   if (responseFormat.type === 'json_object') return
   if (responseFormat.jsonSchema.validate(value)) return
-  const issue = (responseFormat.jsonSchema.validate.errors ?? [])[0] as ErrorObject | undefined
+  const issue = (responseFormat.jsonSchema.validate.errors ?? [])[0]
   fail(
     `provider structured final content does not satisfy response_format schema${
       issue ? ` at ${issue.instancePath || '/'}: ${issue.message ?? issue.keyword}` : ''
@@ -604,7 +610,7 @@ function assertStrictObjectSchemas(value: unknown, label: string) {
 
 function assertSchemaValue(tool: OpenAiFunctionTool, value: unknown, label: string) {
   if (tool.validate(value)) return
-  const issue = (tool.validate.errors ?? [])[0] as ErrorObject | undefined
+  const issue = (tool.validate.errors ?? [])[0]
   fail(`${label} does not satisfy its JSON Schema${issue ? ` at ${issue.instancePath || '/'}: ${issue.message ?? issue.keyword}` : ''}`)
 }
 
@@ -620,117 +626,6 @@ function contentText(content: unknown, label: string): string {
     }).join('\n')
   }
   fail(`${label} must be a string or an array of text parts`)
-}
-
-function parseStrictJson(source: string, exactNumbers = false) {
-  let properties = 0
-
-  function parseValue(index: number, depth: number): number {
-    if (depth > MAX_JSON_DEPTH) fail('JSON exceeds the maximum nesting depth')
-    index = skipWhitespace(index)
-    const token = source[index]
-    if (token === '"') return parseString(index).end
-    if (token === '{') return parseObject(index, depth + 1)
-    if (token === '[') return parseArray(index, depth + 1)
-    if (token === 't' && source.startsWith('true', index)) return index + 4
-    if (token === 'f' && source.startsWith('false', index)) return index + 5
-    if (token === 'n' && source.startsWith('null', index)) return index + 4
-    return parseNumber(index)
-  }
-
-  function parseObject(index: number, depth: number): number {
-    const keys = new Set<string>()
-    index = skipWhitespace(index + 1)
-    if (source[index] === '}') return index + 1
-    while (index < source.length) {
-      if (source[index] !== '"') fail('JSON object keys must be strings')
-      const parsed = parseString(index)
-      if (keys.has(parsed.value)) fail(`JSON object contains duplicate key '${parsed.value}'`)
-      keys.add(parsed.value)
-      properties += 1
-      if (properties > MAX_JSON_PROPERTIES) fail('JSON exceeds the maximum property count')
-      index = skipWhitespace(parsed.end)
-      if (source[index] !== ':') fail('JSON object key must be followed by a colon')
-      index = skipWhitespace(parseValue(index + 1, depth))
-      if (source[index] === '}') return index + 1
-      if (source[index] !== ',') fail('JSON object entries must be separated by commas')
-      index = skipWhitespace(index + 1)
-    }
-    fail('JSON object is not closed')
-  }
-
-  function parseArray(index: number, depth: number): number {
-    index = skipWhitespace(index + 1)
-    if (source[index] === ']') return index + 1
-    while (index < source.length) {
-      index = skipWhitespace(parseValue(index, depth))
-      if (source[index] === ']') return index + 1
-      if (source[index] !== ',') fail('JSON array entries must be separated by commas')
-      index = skipWhitespace(index + 1)
-    }
-    fail('JSON array is not closed')
-  }
-
-  function parseString(index: number) {
-    const start = index
-    index += 1
-    while (index < source.length) {
-      const code = source.charCodeAt(index)
-      if (code === 0x22) {
-        const raw = source.slice(start, index + 1)
-        try {
-          return { end: index + 1, value: JSON.parse(raw) as string }
-        } catch {
-          fail('JSON string escape is invalid')
-        }
-      }
-      if (code === 0x5c) {
-        index += 1
-        if (index >= source.length) fail('JSON string escape is incomplete')
-        if (source[index] === 'u') {
-          const hex = source.slice(index + 1, index + 5)
-          if (!/^[0-9A-Fa-f]{4}$/.test(hex)) fail('JSON unicode escape is invalid')
-          index += 4
-        } else if (!'"\\/bfnrt'.includes(source[index]!)) {
-          fail('JSON string escape is invalid')
-        }
-      } else if (code < 0x20) {
-        fail('JSON strings cannot contain unescaped control characters')
-      }
-      index += 1
-    }
-    fail('JSON string is not closed')
-  }
-
-  function parseNumber(index: number) {
-    const match = /-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(source.slice(index))
-    if (!match || match.index !== 0) fail('JSON contains an invalid value')
-    if (exactNumbers) {
-      const token = match[0]
-      const value = Number(token)
-      if (
-        !Number.isFinite(value) ||
-        (Number.isInteger(value) && !Number.isSafeInteger(value)) ||
-        JSON.stringify(value) !== token
-      ) {
-        fail('structured JSON numbers must be canonical finite values, and integers must be safe integers')
-      }
-    }
-    return index + match[0].length
-  }
-
-  function skipWhitespace(index: number) {
-    while (index < source.length && /[\t\n\r ]/.test(source[index]!)) index += 1
-    return index
-  }
-
-  const end = skipWhitespace(parseValue(0, 0))
-  if (end !== source.length) fail('JSON contains trailing content')
-  try {
-    return JSON.parse(source) as unknown
-  } catch {
-    fail('provider response contains invalid JSON')
-  }
 }
 
 function requireExactKeys(
@@ -767,17 +662,17 @@ function unwrapRawResponseFence(trimmed: string) {
 }
 
 function normalizeMarkedResponse(value: string, markers: ReturnType<typeof protocolMarkers>) {
-  if (countOccurrences(value, markers.responseOpen) !== 1 || countOccurrences(value, markers.responseClose) !== 1) {
-    fail('provider response must contain exactly one tool protocol marker pair')
+  let marked: ReturnType<typeof extractExactlyOneMarkedValue>
+  try {
+    marked = extractExactlyOneMarkedValue(value, markers.responseOpen, markers.responseClose)
+  } catch (error) {
+    fail(error instanceof MarkerExtractionError && error.reason === 'order'
+      ? 'provider response tool protocol markers are not ordered'
+      : 'provider response must contain exactly one tool protocol marker pair')
   }
-  const open = value.indexOf(markers.responseOpen)
-  const close = value.indexOf(markers.responseClose)
-  if (open < 0 || close < open + markers.responseOpen.length) {
-    fail('provider response tool protocol markers are not ordered')
-  }
-  assertBoundedProviderChrome(value.slice(0, open))
-  assertBoundedProviderChrome(value.slice(close + markers.responseClose.length))
-  return value.slice(open, close + markers.responseClose.length)
+  assertBoundedProviderChrome(marked.before)
+  assertBoundedProviderChrome(marked.after)
+  return marked.marked
 }
 
 function assertBoundedProviderChrome(value: string) {

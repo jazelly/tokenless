@@ -2,10 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { ErrorObject } from 'ajv'
-import * as Ajv2020Module from 'ajv/dist/2020.js'
 import type { Ajv2020 as Ajv2020Instance } from 'ajv/dist/2020.js'
-import * as AddFormatsModule from 'ajv-formats'
-import type { FormatsPlugin } from 'ajv-formats'
 
 import {
   ProtocolValidationError,
@@ -14,11 +11,7 @@ import {
   type TurnState,
 } from './contracts.js'
 import { PROTOCOL_SCHEMA_IDS } from './version.js'
-
-const Ajv2020 = (Ajv2020Module.default ?? Ajv2020Module) as unknown as new (
-  options?: ConstructorParameters<typeof Ajv2020Instance>[0]
-) => Ajv2020Instance
-const addFormats = (AddFormatsModule.default ?? AddFormatsModule) as unknown as FormatsPlugin
+import { createAjv2020 } from './structured-control.js'
 
 type MessageType = ProtocolValidationError['messageType']
 type JsonRecord = Record<string, unknown>
@@ -57,7 +50,7 @@ function parse(value: unknown, messageType: MessageType, schemaId: string): unkn
 }
 
 function createValidators() {
-  const ajv = new Ajv2020({ allErrors: true, strict: true, strictRequired: false })
+  const ajv = createAjv2020()
   ajv.addKeyword({
     keyword: 'x-tokenless-internal-maxUtf8Bytes',
     type: 'string',
@@ -66,7 +59,6 @@ function createValidators() {
       return Buffer.byteLength(value, 'utf8') <= limit
     },
   })
-  addFormats(ajv)
   for (const schema of readSchemas()) ajv.addSchema(schema)
   const validators = new Map<string, ReturnType<Ajv2020Instance['getSchema']>>()
   for (const schemaId of Object.values(PROTOCOL_SCHEMA_IDS)) {

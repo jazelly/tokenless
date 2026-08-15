@@ -13,12 +13,16 @@ fs.rmSync(distRoot, { recursive: true, force: true })
 run('tsc', ['-p', path.join(packageRoot, '..', 'web-ai-interaction-protocol', 'tsconfig.json')])
 run('tsc', ['-p', path.join(packageRoot, '..', 'web-agent-harness', 'tsconfig.json')])
 run('tsc', ['-p', 'tsconfig.json'])
+run('vite', ['build', '--config', 'vite.openai-tool-protocol.config.mjs', '--logLevel', 'error'])
 run('vite', ['build', '--config', 'vite.ui.config.ts', '--logLevel', 'error'])
 
 fs.cpSync(
   path.join(packageRoot, '..', 'web-agent-harness', 'dist'),
   path.join(distRoot, 'web-agent-harness'),
-  { recursive: true },
+  {
+    recursive: true,
+    filter: (source) => !source.endsWith('.js') && !source.endsWith('.js.map'),
+  },
 )
 fs.cpSync(
   path.join(packageRoot, '..', 'web-ai-interaction-protocol', 'schemas', 'v0'),

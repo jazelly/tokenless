@@ -7,7 +7,8 @@
   "license": "MIT",
   "exports": {
     ".": "./dist/src/index.js",
-    "./local-http": "./dist/src/local-http.js"
+    "./local-http": "./dist/src/local-http.js",
+    "./structured-control": "./dist/src/structured-control.js"
   },
   "files": [
     "dist/src",
