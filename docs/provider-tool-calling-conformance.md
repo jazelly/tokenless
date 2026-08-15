@@ -64,6 +64,8 @@ Sources: [vLLM Tool Calling](https://docs.vllm.ai/en/stable/features/tool_callin
 
 ## Tokenless capability boundary
 
+The current real-provider rate sample is recorded separately in [Structured-Control Observed Rate](evidence/openai-structured-control-rate-2026-08-15.md). Its observed rates apply only to the fixed requests, account, persistent profile, and time window recorded there; they do not upgrade a prompt-emulated route to native tool calling or establish an SLA.
+
 | Claim | Current state |
 | --- | --- |
 | Universal API executes caller tools | Never. The caller owns execution and sends the result on the next request. |

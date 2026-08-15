@@ -507,6 +507,14 @@ Exit: 两个真实 provider在一个 external Harness逻辑会话中完成可审
 
 ## Real-Boundary Verification Matrix
 
+### Structured-control observed-rate revalidation
+
+对每个当前声明 structured-control evidence 的 browser provider，以固定、串行、无 caller/provider retry 的 10-request 小样本重新验证：5 次 exact named `strict: true` function call 与 5 次 nested `json_schema` final。成功只计 public HTTP `200` 且 returned call/final 通过本地 schema validation；upstream succeeded 但 Tokenless public boundary 返回 error 仍计失败。报告必须分列 pre-submit availability、upstream、protocol、schema 与 bounded-correction outcome，并标记 provider、strategy、configuration fingerprint和时间窗口。唯一 early-stop rule是两个类别的首个 pilot都达到同一 bounded pre-submit timeout且没有public provider outcome；此时停止该provider剩余样本，只报告 observed availability，不计算或声称 schema-conformance rate。
+
+该比率只描述该时点、该账号、该 browser profile与固定请求的小样本 observed conformance，不是 SLA、长期可靠率、provider benchmark或跨模型总体结论。未声明支持的 provider可以做独立 diagnostic，但不得并入 advertised-provider成功率。
+
+Lifecycle note（2026-08-15）：packaged daemon 与真实 provider network上的固定串行样本观察到 ChatGPT named strict call `5/5`、nested `json_schema` final `4/5`，合计 public-valid `9/10`；唯一失败为 HTTP `502 upstream_error`。DeepSeek两个 pilot均在约301秒后以 caller transport timeout结束，对应 jobs仍在 provider submission前 queued并被显式取消，因此只报告 availability `0/2`，不推断 conditional schema accuracy。Gemini四个 diagnostic upstream jobs均 submitted/succeeded，但临时 observer没有形成可靠 public result ledger，故不生成 Gemini rate且保持 unadvertised。完整脱敏记录见[Structured-Control Observed Rate](../evidence/openai-structured-control-rate-2026-08-15.md)。
+
 | Case | Required boundary and evidence |
 | --- | --- |
 | Plain final text | OpenAI client → packaged daemon → real provider → valid Chat Completion |

@@ -64,6 +64,8 @@ vLLM 是开源 serving implementation，而不是 proprietary provider 的证据
 
 ## Tokenless capability 边界
 
+当前真实 provider rate sample 单独记录在 [Structured-Control Observed Rate](evidence/openai-structured-control-rate-2026-08-15.md)。其中比率只适用于所记录的固定请求、账号、persistent profile与时间窗口；它不会把 prompt-emulated route升级为 native tool calling，也不构成 SLA。
+
 | Claim | 当前状态 |
 | --- | --- |
 | Universal API 执行 caller tools | 永不执行。Caller 自己执行，并在下一次 request 发送 result。 |
