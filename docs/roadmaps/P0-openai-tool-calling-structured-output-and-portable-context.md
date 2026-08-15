@@ -348,6 +348,8 @@ DSH 长链能力使用 [SWE-rebench v2](https://arxiv.org/abs/2602.23866) 的当
 
 Lifecycle note（2026-08-15）：官方 Harbor `0.21.0` 已将 `swe-rebench/swe-rebench-leaderboard@latest` 冻结为 revision `2` / `sha256:ebe7444e313a0d8db94fa541139826eaebe2b0abcd4900c6f73e750494910dca`，并按 answer-blind字典序规则选取三个不同 repository的 immutable tasks串行运行。三题均完成真实 search/read call-result chain，但分别因 premature final、malformed structured response与 provider rate-limit/stream-idle timeout在 edit/bash/test前终止；official rewards均为 `0.0`。第二、三题的 agent exception阻止同 trial verifier后，只在相同 clean immutable task上以无模型 `nop`补跑官方 evaluator，不作为agent retry。[脱敏证据](../evidence/dsh-swe-rebench-cohort-2026-08-15.md)记录 dataset/task/image digests、session hashes、24/24 call-result配对、Tokenless jobs、failure layering与逐字节配置恢复。该结果是 interoperability cohort的负向观测，不是 SWE-rebench score，也没有为获得成功结果换题或重跑agent。
 
+Lifecycle note（2026-08-15）：一次独立的 Phase 3 closure attempt 保持相同 task selection、unmodified DSH、Harbor single attempt/no retry，并只追加“final 前必须真实 edit + test”的正常 agent instruction。DeepSeek 与 `tokenless/auto` 在 provider submission 前因 DeepSeek availability持续 queued，相关请求被显式取消；最终 exact ChatGPT trial完成 `skill`/`glob` 两组 matching call-result 后，下一已提交 turn 返回 invalid JSON string escape，Tokenless以 `provider_output_protocol_error` fail closed。该 trial没有 edit/test或 verifier，因此没有关闭 Phase 3；roadmap保持 active，且没有为追求绿色结果放宽 parser、跨 provider重放已提交 turn或换题。完整脱敏记录追加在同一[cohort evidence](../evidence/dsh-swe-rebench-cohort-2026-08-15.md)。
+
 ### 需要保存的非敏感 evidence
 
 每个 DSH run至少关联以下证据，不新增通用 telemetry、queue或result database：

@@ -57,6 +57,16 @@ Each session also generated one ordinary DSH title request; job counts therefore
 
 The first Harbor integration diagnostic reached DSH but used Tokenless's original `executionMode: direct`, and the direct G4F route returned upstream HTTP 401 before a valid model turn. The run was excluded from the cohort, normal Tokenless configuration temporarily selected browser execution, and the daemon was restarted through its normal shutdown path. No parser or DSH source change was made.
 
+## Phase 3 closure attempt
+
+A separate follow-up tried to close the roadmap's stronger edit/test requirement without changing task selection or product source. It reused `swe-rebench/ASPP__pelita-863`, Harbor `n_attempts=1` / `max_retries=0`, the same unmodified DSH revision, and a temporary instruction requiring an implementation edit plus a validation command before any final response. The temporary bridge, instruction, and final ChatGPT overlay had SHA-256 `8a2161b1db99f1014bbc012df7c7558c6a2184b668d7fc8686e89ad7db95b3af`, `dd5c60f9980d897af50f98f843395cd3b5c80614c76fd922399fdf3bfdf7e916`, and `e1590e4408eda919883d8a42280544b3a5bb08c178227beebda2570e28d79a42`.
+
+The first ChatGPT setup diagnostic completed one submitted `skill` call/result, then a later request failed before submission with `prompt_input_failed`; it made no workspace change. Exact DeepSeek and `tokenless/auto` diagnostics then remained pre-submission queued while DeepSeek was unavailable and were explicitly canceled before they could submit; their DSH sessions contain no assistant or tool turn.
+
+The final exact ChatGPT trial `ASPP__pelita-863__yKDdqi7` reached the real provider. DSH session `session-7c2918dd-ebc1-4fd2-82a0-b2d6bf839922` has SHA-256 `a10ed8a6b604d6575961f32cd1906773fd9db09c8e35db9ed204c439f8b72d20` and records two calls with two matching results (`skill` and `glob`). The later public turn failed closed with `provider_output_protocol_error` because the prompt-emulated response contained an invalid JSON string escape. DSH exited without an edit, test, or verifier result; the task workspace and both source repositories remained clean.
+
+This follow-up is not a replacement successful attempt and does not close Phase 3. It establishes the current blocker at the real provider-output boundary: DeepSeek was unavailable before submission, while ChatGPT reached tool execution but later produced malformed structured control after submission, where cross-provider replay is forbidden. The Tokenless configuration began and ended at SHA-256 `10c43fe6b4ccc0a9e0df71d2620354a29d3cad6238e0d886c95473966d6a9e44`; no browser profile was closed or replaced.
+
 ## Boundary statement
 
 This cohort demonstrates reliable search/read tool serialization, matching call/result history, multiple calls in one assistant turn, and clear fail-closed terminal behavior on three current real task repositories. It did not demonstrate edit/bash/test completion: all three official rewards were `0.0`, and the exact failure layer is recorded for each task. No provider fixture, intercepted response, synthetic tool output, hidden solution, or gold patch was used; no full prompt, model response, tool output, credential, DOM, or screenshot is retained in this report.
