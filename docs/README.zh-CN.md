@@ -9,6 +9,7 @@
 - [Capability Matrix](capability-matrix.zh-CN.md) — canonical outcomes、当前 provider mappings、support states 与扩展规则。
 - [FeatureBench 评测](featurebench-evaluation.zh-CN.md) — 固定 coding-agent benchmark、runtime 边界、命令、报告与验收规则。
 - [API Proxy 接入指南](api-proxy-integration.zh-CN.md) — 从既有项目调用 OpenAI/Anthropic 兼容的本地 proxy。
+- [Provider Tool-Calling Conformance 参考](provider-tool-calling-conformance.zh-CN.md) — 当前官方 provider contract、canonical mapping 与 Tokenless evidence 边界。
 - [隐私政策](../PRIVACY.zh-CN.md) — browser profile、credential、file 与本地数据边界。
 
 ## 概念与架构

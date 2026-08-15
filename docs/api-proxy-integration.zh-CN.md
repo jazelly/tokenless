@@ -8,6 +8,8 @@ Tokenless daemon 暴露了 OpenAI 与 Anthropic 兼容的 HTTP 路由。一个�
 
 **这是任务级桥接，不是 API 的即插即用替代品。** 在围绕它做设计之前，请先读 [硬性限制](#硬性限制)。此方案是用吞吐、延迟和增量 streaming 换成本。
 
+Proxy 所映射的 provider-side contract 见 [Provider Tool-Calling Conformance 参考](provider-tool-calling-conformance.zh-CN.md)。该文档把官方 provider 文档与 Tokenless exact live evidence 分开，并明确不宣称浏览器页面拥有 native tool endpoint。
+
 ## 前置条件
 
 以下三件事必须成立，任何请求才会成功。它们都无法由 proxy 自己建立。

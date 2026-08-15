@@ -39,13 +39,15 @@ Tokenless 不应凭记忆发明“OpenAI-compatible”。实现前先固定当�
 
 | Reference | 必须研究和记录的 provider-side behavior | Tokenless 应吸收的设计约束 |
 | --- | --- | --- |
-| [OpenAI function calling](https://developers.openai.com/api/docs/guides/function-calling) 与 [Responses streaming events](https://platform.openai.com/docs/api-reference/responses-streaming) | function/custom tools、`strict` schema subset、`tool_choice`、parallel calls、`function_call`/`function_call_output`、`call_id`、argument delta/done events | 分离 response item id 与 public call id；保留完整 output items；strict schema 在生成与返回边界都成立 |
+| [OpenAI function calling and streaming events](https://developers.openai.com/api/docs/guides/function-calling) | function/custom tools、`strict` schema subset、`tool_choice`、parallel calls、`function_call`/`function_call_output`、`call_id`、argument delta/done events | 分离 response item id 与 public call id；保留完整 output items；strict schema 在生成与返回边界都成立 |
 | [Anthropic tool use](https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls) | assistant `tool_use` blocks、`stop_reason: tool_use`、紧邻的 user `tool_result` blocks、`tool_use_id`、parallel blocks、`is_error` 与 content ordering | canonical history 不能假设所有 provider 都有 `role: tool`；adapter 必须保留 block 顺序和错误语义 |
 | [Gemini function calling](https://ai.google.dev/gemini-api/docs/function-calling) 与 [thinking/signatures](https://ai.google.dev/gemini-api/docs/thinking) | function declarations、`functionCall`/`functionResponse`、`auto`/`any`/`none`/`validated`、parallel/compositional calls、thinking-model signatures | provider-required opaque continuation metadata可在同 provider adapter 内重放，但不得伪装成 portable canonical history |
 | [DeepSeek tool calls](https://api-docs.deepseek.com/guides/tool_calls/) | OpenAI-shaped assistant `tool_calls`、`role: tool`、`tool_call_id`、Beta strict schema subset | 作为 DSH 原生 adapter 的直接对照；Tokenless 输出必须让 DSH 无 special case 消化 |
 | [vLLM tool calling](https://docs.vllm.ai/en/latest/features/tool_calling/) | model-specific chat template/parser 负责 `auto` extraction；forced/named calls 可进入 structured-output constrained decoding | 将 prompt compiler、model-dialect parser、schema constraint/validation、stream assembler 与 public serializer 分层，不把一个 marker parser当成完整 endpoint |
 
 在实现或宣称每个 provider route 前维护一张小型 conformance table，字段只包含 contract revision、request shape、stream events、history replay、schema subset、tool-choice semantics 与已验证差异。首个 DSH run只需完成其使用的 OpenAI/DeepSeek-shaped contract和selected Tokenless route，不等待其他provider研究。官方文档是设计依据；任何 Tokenless `native_*` capability claim 还必须有该 exact endpoint/model 的 live probe。没有显式配置相应 credential 时保持 `unsupported/unverified`，不为完成研究而读取或复制 browser session secret。
+
+可复用的双语版本见 [Provider Tool-Calling Conformance](../provider-tool-calling-conformance.md) / [中文参考](../provider-tool-calling-conformance.zh-CN.md)；该文档是本表的细化 source of truth，且明确区分 docs evidence、SDK source-reference evidence 与 Tokenless live probe。
 
 由这些 reference 得出的实现边界是：
 
@@ -528,6 +530,7 @@ Local daemon、OpenAPI、filesystem与message validation可通过各自真实 lo
 - `json_object` 与 supported `json_schema`只返回 valid output或明确 error。
 - 每个 provider route声明 native、prompt-emulated或unsupported strategy，并有 mode-specific真实证据。
 - OpenAI、Anthropic、Gemini、DeepSeek 的当前官方 tool contracts 都有 canonical conformance mapping；每个 advertised native route 另有 exact endpoint/model live evidence。
+- Lifecycle note（2026-08-15）：官方 OpenAI、Anthropic、Gemini、DeepSeek contract 与公开 vLLM server-side parser/template reference 已整理为双语 [Provider Tool-Calling Conformance](../provider-tool-calling-conformance.md) 参考。该 milestone 只固化外部 contract 与 claim boundary；当前 Tokenless browser routes 仍按 exact evidence 标记为 `prompt_json_envelope`，没有因 docs-only research 宣称 native route。
 - Universal API永不执行 caller-owned tools；Standalone Harness仍完整拥有自己的 tools和loop。
 - Canonical history无损保留 assistant tool calls与tool results，public call ids跨provider稳定。
 - Explicit auto mode只选择满足完整 requirement set的provider，不 silent downgrade，不 post-submission replay。

@@ -8,6 +8,8 @@ The Tokenless daemon exposes OpenAI- and Anthropic-compatible HTTP routes. A req
 
 **This is a task-level bridge, not a drop-in API replacement.** Read [Hard limits](#hard-limits) before designing around it. The proxy trades throughput, latency, and incremental streaming for cost.
 
+For the provider-side contract that the proxy maps onto, see [Provider Tool-Calling Conformance](provider-tool-calling-conformance.md). It separates official provider documentation from Tokenless's exact live evidence and does not claim native browser tool endpoints.
+
 ## Prerequisites
 
 Three things must be true before any request succeeds. None of them can be established by the proxy itself.
