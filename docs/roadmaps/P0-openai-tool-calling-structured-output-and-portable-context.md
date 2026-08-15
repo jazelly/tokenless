@@ -346,6 +346,8 @@ DSH 长链能力使用 [SWE-rebench v2](https://arxiv.org/abs/2602.23866) 的当
 
 这三题的 pass rate不得称为 SWE-rebench score，也不得与官方 leaderboard混排。Tokenless 自有 agent runtime 的唯一正式 full benchmark仍由 [FeatureBench roadmap](P0-featurebench-agent-runtime-evaluation.md) 拥有；这里的 cohort只回答“真实 DSH 能否通过 Tokenless 的通用 API 在长链 SWE 工作中可靠调用本地工具”。
 
+Lifecycle note（2026-08-15）：官方 Harbor `0.21.0` 已将 `swe-rebench/swe-rebench-leaderboard@latest` 冻结为 revision `2` / `sha256:ebe7444e313a0d8db94fa541139826eaebe2b0abcd4900c6f73e750494910dca`，并按 answer-blind字典序规则选取三个不同 repository的 immutable tasks串行运行。三题均完成真实 search/read call-result chain，但分别因 premature final、malformed structured response与 provider rate-limit/stream-idle timeout在 edit/bash/test前终止；official rewards均为 `0.0`。第二、三题的 agent exception阻止同 trial verifier后，只在相同 clean immutable task上以无模型 `nop`补跑官方 evaluator，不作为agent retry。[脱敏证据](../evidence/dsh-swe-rebench-cohort-2026-08-15.md)记录 dataset/task/image digests、session hashes、24/24 call-result配对、Tokenless jobs、failure layering与逐字节配置恢复。该结果是 interoperability cohort的负向观测，不是 SWE-rebench score，也没有为获得成功结果换题或重跑agent。
+
 ### 需要保存的非敏感 evidence
 
 每个 DSH run至少关联以下证据，不新增通用 telemetry、queue或result database：
