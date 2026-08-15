@@ -71,6 +71,14 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     assert.match(initialHtml.headers.get('content-security-policy') ?? '', /frame-ancestors 'none'/)
     assert.equal(initialHtml.headers.get('x-content-type-options'), 'nosniff')
 
+    for (const missingPath of ['/ui/not-found', '/ui/not-found.js']) {
+      const missingUiAsset = await fetch(`${daemon.origin}${missingPath}`, { signal: AbortSignal.timeout(2000) })
+      assert.equal(missingUiAsset.status, 404)
+      assert.equal(missingUiAsset.headers.get('referrer-policy'), 'no-referrer')
+      assert.match(missingUiAsset.headers.get('content-security-policy') ?? '', /frame-ancestors 'none'/)
+      assert.equal(missingUiAsset.headers.get('x-content-type-options'), 'nosniff')
+    }
+
     const session = await fetch(`${daemon.origin}/ui-api/v1/session`, { headers: { cookie } })
     assert.equal(session.status, 200)
     const sessionBody = await session.json()

@@ -5,6 +5,13 @@ import { fileURLToPath } from 'node:url'
 import { hasConfiguredTokenlessLanguage, readTokenlessConfig } from '../job-store.js'
 import { t } from '../localization.js'
 import { TokenlessApplicationServices } from '../application/services.js'
+import type {
+  UiConfigUpdate,
+  UiConfirmedDeletion,
+  UiProfileCreate,
+  UiProfileUpdate,
+  UiProviderSelection,
+} from '../application/ui-contract.js'
 import { DaemonError, daemonErrorCodeRetryable, daemonErrorStatus } from './errors.js'
 import { UiSessionManager } from './ui-session.js'
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -69,8 +76,17 @@ export class TokenlessUiServer {
     }
     const modulePath = method === 'GET' ? uiModulePath(url.pathname) : null
     if (modulePath) {
-      this.writeAsset(response, 200, await fs.readFile(path.join(UI_ROOT, modulePath)), 'text/javascript; charset=utf-8')
+      try {
+        this.writeAsset(response, 200, await fs.readFile(path.join(UI_ROOT, modulePath)), 'text/javascript; charset=utf-8')
+      } catch (error) {
+        if (!isMissingFile(error)) throw error
+        this.writeAsset(response, 404, 'Not found.', 'text/plain; charset=utf-8')
+      }
       return
+    }
+    if (url.pathname.startsWith('/ui/')) {
+      this.writeAsset(response, 404, 'Not found.', 'text/plain; charset=utf-8')
+      return true
     }
 
     if (!url.pathname.startsWith('/ui-api/v1/')) return false
@@ -110,7 +126,7 @@ export class TokenlessUiServer {
       return true
     }
     if (method === 'PATCH' && url.pathname === '/ui-api/v1/config') {
-      this.writeJson(response, 200, await this.services.updateConfig(await readJson(request)))
+      this.writeJson(response, 200, await this.services.updateConfig(await readJson<UiConfigUpdate>(request)))
       return true
     }
     if (method === 'POST' && url.pathname === '/ui-api/v1/output-savings/enable') {
@@ -124,22 +140,22 @@ export class TokenlessUiServer {
       return true
     }
     if (method === 'POST' && url.pathname === '/ui-api/v1/output-savings/runtime/uninstall') {
-      this.writeJson(response, 200, await this.services.uninstallOutputSavings(await readJson(request)))
+      this.writeJson(response, 200, await this.services.uninstallOutputSavings(await readJson<UiConfirmedDeletion>(request)))
       return true
     }
     if (method === 'POST' && url.pathname === '/ui-api/v1/output-savings/history/clear') {
-      this.writeJson(response, 200, await this.services.clearOutputSavings(await readJson(request)))
+      this.writeJson(response, 200, await this.services.clearOutputSavings(await readJson<UiConfirmedDeletion>(request)))
       return true
     }
     if (method === 'POST' && url.pathname === '/ui-api/v1/profiles') {
-      this.writeJson(response, 201, await this.services.createProfile(await readJson(request)))
+      this.writeJson(response, 201, await this.services.createProfile(await readJson<UiProfileCreate>(request)))
       return true
     }
     const profileMatch = /^\/ui-api\/v1\/profiles\/([^/]+)(?:\/(open))?$/.exec(url.pathname)
     if (profileMatch && method === 'PATCH' && !profileMatch[2]) {
       this.writeJson(response, 200, await this.services.updateProfile(
         decodeURIComponent(profileMatch[1] ?? ''),
-        await readJson(request),
+        await readJson<UiProfileUpdate>(request),
       ))
       return true
     }
@@ -172,7 +188,7 @@ export class TokenlessUiServer {
       this.writeJson(response, 202, await this.services.providerSelection(
         decodeURIComponent(selectionMatch[1] ?? ''),
         decodeURIComponent(selectionMatch[2] ?? ''),
-        await readJson(request),
+        await readJson<UiProviderSelection>(request),
       ))
       return true
     }
@@ -259,7 +275,11 @@ function uiModulePath(pathname: string) {
   return match ? `${match[1]}.js` : null
 }
 
-async function readJson(request: IncomingMessage) {
+function isMissingFile(error: unknown) {
+  return Boolean(error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')
+}
+
+async function readJson<T>(request: IncomingMessage): Promise<T> {
   const chunks: Buffer[] = []
   let total = 0
   for await (const chunk of request) {
@@ -269,7 +289,7 @@ async function readJson(request: IncomingMessage) {
     chunks.push(buffer)
   }
   const raw = Buffer.concat(chunks).toString('utf8')
-  if (!raw) return {}
+  if (!raw) return {} as T
   let value: unknown
   try {
     value = JSON.parse(raw)
@@ -279,11 +299,11 @@ async function readJson(request: IncomingMessage) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw uiError('ui_json_invalid', 'Request body must be a JSON object.', 400)
   }
-  return value as Record<string, unknown>
+  return value as T
 }
 
 async function requireEmptyJson(request: IncomingMessage) {
-  const value = await readJson(request)
+  const value = await readJson<object>(request)
   if (Object.keys(value).length > 0) {
     throw uiError('invalid_fields', 'Request contains unsupported fields.', 400)
   }

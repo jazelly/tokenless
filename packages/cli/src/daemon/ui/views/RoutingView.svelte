@@ -11,7 +11,7 @@
     type RouterProviderCandidate,
     type RouterResult,
   } from '../router-engine.js'
-  import type { JsonRecord } from '../types.js'
+  import type { DashboardActions, UiProvider, UiSnapshot } from '../types.js'
   import type { MessageKey } from '../localization.js'
 
   let {
@@ -19,13 +19,13 @@
     selectedProfile,
     t,
     busy,
-    onmutate,
+    actions,
   }: {
-    snapshot: JsonRecord
+    snapshot: UiSnapshot
     selectedProfile: string
     t: (key: MessageKey) => string
     busy: boolean
-    onmutate: (path: string, body?: unknown, method?: string) => Promise<unknown>
+    actions: DashboardActions
   } = $props()
 
   let pendingEnabled = $state<boolean | null>(null)
@@ -42,10 +42,10 @@
   let availabilityInvocationId = 0
   let routeInvocationId = 0
   let observedSemanticContext = ''
-  const configuredRouter = $derived(snapshot.config.router ?? {})
-  const configuredEnabled = $derived(configuredRouter.enabled === true)
+  const configuredRouter = $derived(snapshot.config.router)
+  const configuredEnabled = $derived(configuredRouter.enabled)
   const enabled = $derived(pendingEnabled ?? configuredEnabled)
-  const engine: RouterEngineId = $derived(configuredRouter.engine === 'chrome-prompt-api' ? configuredRouter.engine : 'chrome-prompt-api')
+  const engine: RouterEngineId = $derived(configuredRouter.engine)
   const configuredProviderRules = $derived(normalizedProviderRules())
   const browserBinding = $derived(selectedBrowserBinding())
   const browserBindingKey = $derived(bindingKey(browserBinding))
@@ -54,9 +54,9 @@
   const displayedAvailability = $derived(!enabled ? 'disabled' : observedAvailabilityContext === availabilityContext ? availability : 'checking')
   const displayedAvailabilityError = $derived(enabled && observedAvailabilityContext === availabilityContext ? availabilityError : '')
   const displayedDownloadProgress = $derived(enabled && observedAvailabilityContext === availabilityContext ? downloadProgress : null)
-  const providers = $derived(snapshot.providers.filter((provider: JsonRecord) => provider.stage !== 'disabled'))
+  const providers = $derived(snapshot.providers.filter((provider) => provider.stage !== 'disabled'))
   const candidates = $derived(buildProviderCandidates())
-  const enabledProviderCount = $derived(providers.filter((provider: JsonRecord) => providerState(provider)?.enabled === true).length)
+  const enabledProviderCount = $derived(providers.filter((provider) => providerState(provider)?.enabled === true).length)
   const semanticContext = $derived(semanticContextSignature())
 
   $effect(() => {
@@ -135,14 +135,14 @@
   }
 
   function selectedBrowserBinding(): RouterBrowserBinding {
-    const profile = snapshot.profiles?.find((candidate: JsonRecord) => (
+    const profile = snapshot.profiles.find((candidate) => (
       candidate.slug === selectedProfile || candidate.id === selectedProfile
     ))
     const binding = profile?.browserBinding
     return {
-      browserId: typeof binding?.browserId === 'string' ? binding.browserId : String(snapshot.config.browser ?? ''),
-      family: typeof binding?.family === 'string' ? binding.family : 'system',
-      version: typeof binding?.version === 'string' ? binding.version : null,
+      browserId: binding?.browserId ?? snapshot.config.browser,
+      family: binding?.family ?? 'system',
+      version: binding?.version ?? null,
     }
   }
 
@@ -178,9 +178,9 @@
     pendingEnabled = checked
     formError = ''
     try {
-      await onmutate('/config', {
+      await actions.updateConfig({
         router: { enabled: checked, engine, providers: normalizedProviderRules() },
-      }, 'PATCH')
+      })
     } catch (error) {
       formError = error instanceof Error ? error.message : t('requestFailed')
     } finally {
@@ -189,31 +189,29 @@
   }
 
   function selectedProfileState() {
-    return snapshot.profiles?.find((profile: JsonRecord) => profile.slug === selectedProfile || profile.id === selectedProfile)
+    return snapshot.profiles.find((profile) => profile.slug === selectedProfile || profile.id === selectedProfile)
   }
 
-  function providerState(provider: JsonRecord) {
+  function providerState(provider: UiProvider) {
     const profile = selectedProfileState()
-    return provider.profiles?.find((state: JsonRecord) => state.profileId === profile?.slug)
+    return provider.profiles.find((state) => state.profileId === profile?.slug)
   }
 
-  function selectedModel(provider: JsonRecord) {
+  function selectedModel(provider: UiProvider) {
     const choices = providerState(provider)?.controls?.model
-    const selected = Array.isArray(choices) ? choices.find((choice: JsonRecord) => choice.selected === true) : null
-    return typeof selected?.label === 'string' ? selected.label : null
+    return choices?.find((choice) => choice.selected)?.label ?? null
   }
 
   function normalizedProviderRules(): Array<{ id: string; suitableTasks: string }> {
-    const rules = Array.isArray(configuredRouter.providers) ? configuredRouter.providers : []
-    return rules.flatMap((rule: JsonRecord) => {
-      const id = typeof rule.id === 'string' ? rule.id : ''
-      const suitableTasks = typeof rule.suitableTasks === 'string' ? rule.suitableTasks.trim() : ''
+    return configuredRouter.providers.flatMap((rule) => {
+      const id = rule.id
+      const suitableTasks = rule.suitableTasks.trim()
       return id && suitableTasks ? [{ id, suitableTasks }] : []
     })
   }
 
   function buildProviderCandidates(): RouterProviderCandidate[] {
-    return providers.flatMap((provider: JsonRecord) => {
+    return providers.flatMap((provider) => {
       const suitableTasks = configuredProviderRules.find((rule) => rule.id === provider.id)?.suitableTasks
       if (providerState(provider)?.enabled !== true || !suitableTasks) return []
       return [{ providerId: provider.id, label: provider.label, suitableTasks, model: selectedModel(provider) }]

@@ -3,6 +3,7 @@
   import { Blocks, LayoutDashboard, ListChecks, PanelsTopLeft, Settings, UsersRound } from '@lucide/svelte'
   import { DashboardClient } from './dashboard-client.js'
   import { translate } from './localization.js'
+  import { createReadinessState } from './readiness-state.svelte.js'
   import CapabilitiesView from './views/CapabilitiesView.svelte'
   import JobsView from './views/JobsView.svelte'
   import OverviewView from './views/OverviewView.svelte'
@@ -10,7 +11,15 @@
   import ProvidersView from './views/ProvidersView.svelte'
   import SetupView from './views/SetupView.svelte'
   import SystemView from './views/SystemView.svelte'
-  import type { JsonRecord, Language, Section } from './types.js'
+  import type {
+    DashboardActions,
+    DashboardOperation,
+    Language,
+    Section,
+    UiConfigUpdate,
+    UiProfileCreate,
+    UiSnapshot,
+  } from './types.js'
 
   const sections = new Set<Section>(['overview', 'profiles', 'providers', 'capabilities', 'jobs', 'system'])
   const initialLanguage: Language = document.documentElement.lang === 'zh-CN' ? 'zh-CN' : 'en'
@@ -21,12 +30,9 @@
   }
 
   let language = $state<Language>(initialLanguage)
-  let snapshot = $state<JsonRecord | null>(null)
+  let snapshot = $state<UiSnapshot | null>(null)
   let offline = $state(false)
   let busy = $state(false)
-  let readinessBusy = $state(false)
-  let readinessJobs = $state<Record<string, JsonRecord>>({})
-  let readinessRunId = 0
   let fatal = $state('')
   let toast = $state('')
   let selectedProfile = $state(new URL(location.href).searchParams.get('profile') ?? '')
@@ -34,6 +40,36 @@
   let toastTimer = 0
   let pollTimer = 0
   const client = new DashboardClient(() => language)
+  const readiness = createReadinessState({
+    client,
+    snapshot: () => snapshot,
+    refreshSnapshot: refresh,
+    notify: showToast,
+    t,
+  })
+  const actions: DashboardActions = {
+    updateConfig: (input, announce = true) => perform(() => client.updateConfig(input), announce),
+    createProfile: (input, announce = true) => perform(() => client.createProfile(input), announce),
+    updateProfile: (slug, input, announce = true) => perform(() => client.updateProfile(slug, input), announce),
+    removeProfile: (slug, announce = true) => perform(() => client.removeProfile(slug), announce),
+    openProfile: (slug, announce = true) => perform(() => client.openProfile(slug), announce),
+    runProviderAction: (profileSlug, providerId, action, announce = true) => perform(
+      () => client.runProviderAction(profileSlug, providerId, action),
+      announce,
+    ),
+    selectProviderControl: (profileSlug, providerId, input, announce = true) => perform(
+      () => client.selectProviderControl(profileSlug, providerId, input),
+      announce,
+    ),
+    getJob: (jobId) => client.getJob(jobId),
+    cancelJob: (jobId, announce = true) => perform(() => client.cancelJob(jobId), announce),
+    resumeJob: (jobId, announce = true) => perform(() => client.resumeJob(jobId), announce),
+    quiesceRuntime: (announce = true) => perform(() => client.quiesceRuntime(), announce),
+    enableOutputSavings: (announce = true) => perform(() => client.enableOutputSavings(), announce),
+    disableOutputSavings: (announce = true) => perform(() => client.disableOutputSavings(), announce),
+    clearOutputSavings: (announce = true) => perform(() => client.clearOutputSavings(), announce),
+    uninstallOutputSavings: (announce = true) => perform(() => client.uninstallOutputSavings(), announce),
+  }
 
   const navigation = $derived([
     { id: 'overview' as const, label: t('overview'), icon: LayoutDashboard },
@@ -90,7 +126,7 @@
   function schedulePoll() {
     window.clearTimeout(pollTimer)
     pollTimer = window.setTimeout(async () => {
-      if (!document.hidden && !busy) await refresh()
+      if (!document.hidden && !busy && !readiness.state.busy) await refresh()
       schedulePoll()
     }, 3000)
   }
@@ -115,11 +151,11 @@
   function synchronizeSnapshot() {
     if (!snapshot) return
     if (snapshot.config?.language === 'en' || snapshot.config?.language === 'zh-CN') language = snapshot.config.language
-    const requestedProfile = snapshot.profiles.find((profile: JsonRecord) => profile.slug === selectedProfile || profile.id === selectedProfile)
+    const requestedProfile = snapshot.profiles.find((profile) => profile.slug === selectedProfile || profile.id === selectedProfile)
     if (requestedProfile && requestedProfile.slug !== selectedProfile) {
       selectProfile(requestedProfile.slug)
     } else if (!requestedProfile) {
-      selectProfile(snapshot.profiles.find((profile: JsonRecord) => profile.isDefault)?.slug
+      selectProfile(snapshot.profiles.find((profile) => profile.isDefault)?.slug
         ?? snapshot.profiles[0]?.slug
         ?? '')
     }
@@ -127,9 +163,7 @@
 
   function selectProfile(slug: string) {
     if (slug !== selectedProfile) {
-      readinessRunId += 1
-      readinessBusy = false
-      readinessJobs = {}
+      readiness.reset(slug)
     }
     selectedProfile = slug
     const url = new URL(location.href)
@@ -145,10 +179,10 @@
     queueMicrotask(() => document.querySelector<HTMLElement>('#main')?.focus())
   }
 
-  async function mutate(path: string, body?: unknown, method = 'POST', announce = true) {
+  async function perform<Result>(operation: DashboardOperation<Result>, announce = true): Promise<Result> {
     busy = true
     try {
-      const result = await client.mutate(path, body, method)
+      const result = await operation()
       await refresh()
       if (announce) showToast(t('updateSaved'))
       return result
@@ -160,76 +194,9 @@
     }
   }
 
-  async function refreshProviderReadiness(profileSlug: string) {
-    if (readinessBusy) return
-    readinessBusy = true
-    const runId = ++readinessRunId
-    let submittedJobIds = new Set<string>()
-    const profile = snapshot?.profiles.find((entry: JsonRecord) => entry.slug === profileSlug)
-    const enabledProviderIds = snapshot?.providers
-      .filter((provider: JsonRecord) => provider.profiles?.find((entry: JsonRecord) => entry.profileId === profile?.slug)?.enabled)
-      .map((provider: JsonRecord) => provider.id) ?? []
-    readinessJobs = Object.fromEntries(enabledProviderIds.map((providerId: string) => [providerId, { status: 'running' }]))
-    try {
-      const result = await client.mutate(`/profiles/${encodeURIComponent(profileSlug)}/providers/actions/readiness`, {}) ?? {}
-      if (runId !== readinessRunId) return
-      const requestedJobs = Array.isArray(result.jobs) ? result.jobs : []
-      const jobIds = requestedJobs.flatMap((job: JsonRecord) => typeof job.jobId === 'string' ? [job.jobId] : [])
-      if (jobIds.length === 0) {
-        readinessJobs = {}
-        showToast(t('noEnabledProviders'))
-        return
-      }
-      submittedJobIds = new Set(jobIds)
-      readinessJobs = Object.fromEntries(requestedJobs.flatMap((job: JsonRecord) => (
-        typeof job.provider === 'string' && typeof job.jobId === 'string' && typeof job.status === 'string'
-          ? [[job.provider, { jobId: job.jobId, status: job.status }]]
-          : []
-      )))
-      const jobs = await waitForReadinessJobs(jobIds, runId)
-      if (!jobs) return
-      showToast(t(jobs.some((job) => job.status !== 'succeeded')
-        ? 'providerReadinessPartiallyRefreshed'
-        : 'providerReadinessRefreshed'))
-    } catch (error) {
-      if (runId !== readinessRunId) return
-      if (submittedJobIds.size === 0) readinessJobs = {}
-      showToast(error instanceof Error ? error.message : t('requestFailed'))
-    } finally {
-      if (runId === readinessRunId) {
-        readinessBusy = false
-        await refresh()
-      }
-    }
-  }
-
-  async function waitForReadinessJobs(jobIds: string[], runId: number) {
-    const expected = new Set(jobIds)
-    const deadline = Date.now() + 120_000
-    while (Date.now() < deadline) {
-      await new Promise((resolve) => window.setTimeout(resolve, 750))
-      if (runId !== readinessRunId) return null
-      await refresh()
-      if (runId !== readinessRunId) return null
-      const jobs = snapshot?.jobs?.filter((job: JsonRecord) => expected.has(job.jobId)) ?? []
-      readinessJobs = {
-        ...readinessJobs,
-        ...Object.fromEntries(jobs.flatMap((job: JsonRecord) => (
-          typeof job.provider === 'string' && typeof job.status === 'string'
-            ? [[job.provider, { jobId: job.jobId, status: job.status }]]
-            : []
-        ))),
-      }
-      if (jobs.length === expected.size && jobs.every((job: JsonRecord) => !['queued', 'claimed', 'running'].includes(job.status))) {
-        return jobs as JsonRecord[]
-      }
-    }
-    throw new Error(t('providerReadinessRefreshTimedOut'))
-  }
-
-  async function setup(config: JsonRecord, profile: JsonRecord) {
-    await mutate('/config', config, 'PATCH', false)
-    await mutate('/profiles', profile, 'POST', false)
+  async function setup(config: UiConfigUpdate, profile: UiProfileCreate) {
+    await actions.updateConfig(config, false)
+    await actions.createProfile(profile, false)
     showToast(t('profileCreated'))
     navigate('profiles')
   }
@@ -302,22 +269,30 @@
 
     <main id="main" tabindex="-1" class:profile-main={section === 'profiles'}>
       {#if section === 'overview'}
-        <OverviewView {snapshot} {selectedProfile} {language} {t} {readinessBusy} {readinessJobs} onrefreshreadiness={refreshProviderReadiness} />
+        <OverviewView
+          {snapshot}
+          {selectedProfile}
+          {language}
+          {t}
+          readinessBusy={readiness.state.busy}
+          readinessJobs={readiness.state.jobs}
+          onrefreshreadiness={readiness.refresh}
+        />
       {:else if section === 'profiles'}
-        <ProfilesView {snapshot} {selectedProfile} {language} {t} {busy} onselect={selectProfile} onmutate={mutate} />
+        <ProfilesView {snapshot} {selectedProfile} {language} {t} {busy} {actions} onselect={selectProfile} />
       {:else if section === 'providers'}
-        <ProvidersView {snapshot} {selectedProfile} {language} {t} {busy} onselect={selectProfile} onmutate={mutate} />
+        <ProvidersView {snapshot} {selectedProfile} {language} {t} {busy} {actions} onselect={selectProfile} />
       {:else if section === 'capabilities'}
         <CapabilitiesView {snapshot} {selectedProfile} {language} {t} onselect={selectProfile} />
       {:else if section === 'jobs'}
-        <JobsView {snapshot} {language} {t} {busy} onget={(path) => client.get(path)} onmutate={mutate} />
+        <JobsView {snapshot} {language} {t} {busy} {actions} />
       {:else}
         <SystemView
           {snapshot}
           {language}
           {t}
           {busy}
-          onmutate={mutate}
+          {actions}
           ontoast={showToast}
         />
       {/if}

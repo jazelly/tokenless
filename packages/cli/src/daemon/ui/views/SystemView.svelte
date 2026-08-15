@@ -4,21 +4,21 @@
   import PageHeader from '../components/PageHeader.svelte'
   import { formatNumber, formatTime } from '../formatting.js'
   import { stateLabel, type MessageKey } from '../localization.js'
-  import type { JsonRecord, Language } from '../types.js'
+  import type { DashboardActions, Language, UiConfigUpdate, UiDiagnostic, UiSnapshot } from '../types.js'
 
   let {
     snapshot,
     language,
     t,
     busy,
-    onmutate,
+    actions,
     ontoast,
   }: {
-    snapshot: JsonRecord
+    snapshot: UiSnapshot
     language: Language
     t: (key: MessageKey) => string
     busy: boolean
-    onmutate: (path: string, body?: unknown, method?: string) => Promise<unknown>
+    actions: DashboardActions
     ontoast: (message: string) => void
   } = $props()
 
@@ -37,14 +37,14 @@
   async function save(event: SubmitEvent) {
     event.preventDefault()
     formError = ''
-    const body: JsonRecord = {
+    const body: UiConfigUpdate = {
       language: selectedLanguage,
       browser: selectedBrowser,
       ...(browserExecutablePath.trim() ? { browserExecutablePath: browserExecutablePath.trim() } : {}),
       browserVisibility: 'headed',
     }
     try {
-      await onmutate('/config', body, 'PATCH')
+      await actions.updateConfig(body)
     } catch (error) {
       await showFormError(error instanceof Error ? error.message : t('requestFailed'))
     }
@@ -61,7 +61,7 @@
 
   async function quiesceRuntime() {
     try {
-      await onmutate('/runtime/quiesce')
+      await actions.quiesceRuntime()
     } catch {
       // The shared mutation boundary already reports the error.
     }
@@ -69,7 +69,7 @@
 
   async function enableOutputSavings() {
     try {
-      await onmutate('/output-savings/enable', {})
+      await actions.enableOutputSavings()
     } catch {
       // The shared mutation boundary already reports the error.
     }
@@ -77,7 +77,7 @@
 
   async function disableOutputSavings() {
     try {
-      await onmutate('/output-savings/disable', {})
+      await actions.disableOutputSavings()
     } catch {
       // The shared mutation boundary already reports the error.
     }
@@ -86,7 +86,7 @@
   async function clearOutputSavings() {
     if (!window.confirm(t('confirmClearSavings'))) return
     try {
-      await onmutate('/output-savings/history/clear', { confirmDelete: true })
+      await actions.clearOutputSavings()
     } catch {
       // The shared mutation boundary already reports the error.
     }
@@ -95,7 +95,7 @@
   async function uninstallOutputSavings() {
     if (!window.confirm(t('confirmUninstallTokenizer'))) return
     try {
-      await onmutate('/output-savings/runtime/uninstall', { confirmDelete: true })
+      await actions.uninstallOutputSavings()
     } catch {
       // The shared mutation boundary already reports the error.
     }
@@ -105,7 +105,7 @@
     return `${new Intl.NumberFormat(language, { maximumFractionDigits: 1 }).format(bytes / 1024 / 1024)} MB`
   }
 
-  function diagnosticMessage(item: JsonRecord) {
+  function diagnosticMessage(item: UiDiagnostic) {
     if (item.id === 'configuration') return snapshot.config.updatedAt ? t('configPersisted') : t('setupIncomplete')
     if (item.id === 'browser-runtime') return item.state === 'ok' ? t('browserReady') : t('browserUnavailable')
     if (item.id === 'profiles') {
@@ -124,7 +124,7 @@
         ? t('tokenizerPreparesOnFirstResponse')
         : t('tokenizerUnavailable')
     }
-    return item.message
+    return item.message ?? ''
   }
 </script>
 

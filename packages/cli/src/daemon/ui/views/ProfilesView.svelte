@@ -4,7 +4,14 @@
   import Modal from '../components/Modal.svelte'
   import ProfileForm from '../components/ProfileForm.svelte'
   import { stateLabel, type MessageKey } from '../localization.js'
-  import type { JsonRecord, Language } from '../types.js'
+  import type {
+    DashboardActions,
+    Language,
+    UiProfileCreate,
+    UiProfileUpdate,
+    UiProvider,
+    UiSnapshot,
+  } from '../types.js'
 
   let {
     snapshot,
@@ -13,15 +20,15 @@
     t,
     busy,
     onselect,
-    onmutate,
+    actions,
   }: {
-    snapshot: JsonRecord
+    snapshot: UiSnapshot
     selectedProfile: string
     language: Language
     t: (key: MessageKey) => string
     busy: boolean
     onselect: (slug: string) => void
-    onmutate: (path: string, body?: unknown, method?: string) => Promise<unknown>
+    actions: DashboardActions
   } = $props()
 
   let editorOpen = $state(false)
@@ -32,7 +39,7 @@
   let menuButton = $state<HTMLButtonElement>()
   let menuElement = $state<HTMLDivElement>()
   let actionContainer = $state<HTMLDivElement>()
-  let profile = $derived(snapshot.profiles.find((entry: JsonRecord) => entry.slug === selectedProfile) ?? snapshot.profiles[0])
+  let profile = $derived(snapshot.profiles.find((entry) => entry.slug === selectedProfile) ?? snapshot.profiles[0]!)
 
   function openEditor(create = false) {
     creating = create
@@ -40,20 +47,19 @@
     menuOpen = false
   }
 
-  async function saveProfile(value: JsonRecord) {
-    const result = await onmutate(
-      creating ? '/profiles' : `/profiles/${encodeURIComponent(profile.slug)}`,
-      value,
-      creating ? 'POST' : 'PATCH',
-    ) as JsonRecord
+  async function saveProfile(value: UiProfileCreate | UiProfileUpdate) {
+    if (!('slug' in value) && !profile) return
+    const result = 'slug' in value
+      ? await actions.createProfile(value)
+      : await actions.updateProfile(profile!.slug, value)
     editorOpen = false
-    if (creating && result?.slug) onselect(String(result.slug))
+    if ('slug' in value) onselect(result.slug)
   }
 
   async function removeProfile() {
     if (!profile || deleteConfirmation !== profile.slug) return
     try {
-      await onmutate(`/profiles/${encodeURIComponent(profile.slug)}`, undefined, 'DELETE')
+      await actions.removeProfile(profile.slug)
       deleteOpen = false
       deleteConfirmation = ''
     } catch {
@@ -64,7 +70,7 @@
   async function openProfile(slug = profile?.slug) {
     if (!slug) return
     try {
-      await onmutate(`/profiles/${encodeURIComponent(slug)}/open`)
+      await actions.openProfile(slug)
     } catch {
       // The shared mutation boundary already reports the error.
     }
@@ -78,7 +84,7 @@
   async function setDefault() {
     menuOpen = false
     try {
-      await onmutate(`/profiles/${encodeURIComponent(profile.slug)}`, { setDefault: true }, 'PATCH')
+      await actions.updateProfile(profile.slug, { setDefault: true })
     } catch {
       // The shared mutation boundary already reports the error.
     }
@@ -123,8 +129,8 @@
     if (menuOpen && event.target instanceof Node && !actionContainer?.contains(event.target)) menuOpen = false
   }
 
-  function stateFor(provider: JsonRecord) {
-    return provider.profiles?.find((entry: JsonRecord) => entry.profileId === profile?.slug)
+  function stateFor(provider: UiProvider) {
+    return provider.profiles.find((entry) => entry.profileId === profile?.slug)
   }
 </script>
 

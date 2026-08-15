@@ -1,5 +1,26 @@
 import { translate, translateError } from './localization.js'
-import type { JsonRecord, Language, SnapshotResult } from './types.js'
+import type {
+  UiConfirmedDeletion,
+  UiConfig,
+  UiConfigUpdate,
+  UiErrorEnvelope,
+  UiJobDetail,
+  UiLanguage,
+  UiOutputSavingsState,
+  UiProfile,
+  UiProfileCreate,
+  UiProfileRemoval,
+  UiProfileUpdate,
+  UiProviderAction,
+  UiProviderReadinessRefresh,
+  UiProviderSelection,
+  UiRuntimeOpenResult,
+  UiRuntimeStatus,
+  UiSession,
+  UiSnapshot,
+  UiJobSummary,
+} from '../../application/ui-contract.js'
+import type { SnapshotResult } from './types.js'
 
 export class DashboardRequestError extends Error {
   readonly code: string
@@ -21,31 +42,125 @@ export class DashboardClient {
   private csrf = ''
   private snapshotEtag = ''
 
-  constructor(private readonly currentLanguage: () => Language) {}
+  constructor(private readonly currentLanguage: () => UiLanguage) {}
 
-  async authenticate() {
-    const session = await this.request('/session', { method: 'GET' })
+  async authenticate(): Promise<UiSession> {
+    const session = await this.request<UiSession>('/session', { method: 'GET' })
     if (!session) throw new DashboardRequestError(translate(this.currentLanguage(), 'requestFailed'))
-    this.csrf = String(session.csrf)
+    this.csrf = session.csrf
+    return session
   }
 
   async snapshot(): Promise<SnapshotResult> {
-    const result = await this.request('/snapshot', { method: 'GET' })
+    const result = await this.request<UiSnapshot>('/snapshot', { method: 'GET' }, true)
     return result === null ? { changed: false } : { changed: true, snapshot: result }
   }
 
-  get(path: string) {
-    return this.request(path, { method: 'GET' })
+  async updateConfig(input: UiConfigUpdate): Promise<UiConfig> {
+    return await this.requireResult(this.request<UiConfig>('/config', {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    }))
   }
 
-  mutate(path: string, body: unknown, method = 'POST') {
-    return this.request(path, {
-      method,
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    })
+  async enableOutputSavings(): Promise<UiOutputSavingsState> {
+    return await this.requireResult(this.request<UiOutputSavingsState>('/output-savings/enable', {
+      method: 'POST',
+      body: '{}',
+    }))
   }
 
-  private async request(path: string, options: RequestInit): Promise<JsonRecord | null> {
+  async disableOutputSavings(): Promise<UiOutputSavingsState> {
+    return await this.requireResult(this.request<UiOutputSavingsState>('/output-savings/disable', {
+      method: 'POST',
+      body: '{}',
+    }))
+  }
+
+  async clearOutputSavings(): Promise<UiOutputSavingsState> {
+    return await this.requireResult(this.request<UiOutputSavingsState>('/output-savings/history/clear', {
+      method: 'POST',
+      body: JSON.stringify({ confirmDelete: true } satisfies UiConfirmedDeletion),
+    }))
+  }
+
+  async uninstallOutputSavings(): Promise<UiOutputSavingsState> {
+    return await this.requireResult(this.request<UiOutputSavingsState>('/output-savings/runtime/uninstall', {
+      method: 'POST',
+      body: JSON.stringify({ confirmDelete: true } satisfies UiConfirmedDeletion),
+    }))
+  }
+
+  async createProfile(input: UiProfileCreate): Promise<UiProfile> {
+    return await this.requireResult(this.request<UiProfile>('/profiles', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }))
+  }
+
+  async updateProfile(slug: string, input: UiProfileUpdate): Promise<UiProfile> {
+    return await this.requireResult(this.request<UiProfile>(`/profiles/${encodeURIComponent(slug)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    }))
+  }
+
+  async removeProfile(slug: string): Promise<UiProfileRemoval> {
+    return await this.requireResult(this.request<UiProfileRemoval>(`/profiles/${encodeURIComponent(slug)}`, {
+      method: 'DELETE',
+    }))
+  }
+
+  async openProfile(slug: string): Promise<UiRuntimeOpenResult> {
+    return await this.requireResult(this.request<UiRuntimeOpenResult>(`/profiles/${encodeURIComponent(slug)}/open`, {
+      method: 'POST',
+    }))
+  }
+
+  async runProviderAction(profileSlug: string, providerId: string, action: UiProviderAction): Promise<UiJobSummary> {
+    return await this.requireResult(this.request<UiJobSummary>(
+      `/profiles/${encodeURIComponent(profileSlug)}/providers/${encodeURIComponent(providerId)}/actions/${action}`,
+      { method: 'POST' },
+    ))
+  }
+
+  async selectProviderControl(profileSlug: string, providerId: string, input: UiProviderSelection): Promise<UiJobSummary> {
+    return await this.requireResult(this.request<UiJobSummary>(
+      `/profiles/${encodeURIComponent(profileSlug)}/providers/${encodeURIComponent(providerId)}/selection`,
+      { method: 'POST', body: JSON.stringify(input) },
+    ))
+  }
+
+  async refreshProviderReadiness(profileSlug: string): Promise<UiProviderReadinessRefresh> {
+    return await this.requireResult(this.request<UiProviderReadinessRefresh>(
+      `/profiles/${encodeURIComponent(profileSlug)}/providers/actions/readiness`,
+      { method: 'POST', body: '{}' },
+    ))
+  }
+
+  async getJob(jobId: string): Promise<UiJobDetail> {
+    return await this.requireResult(this.request<UiJobDetail>(`/jobs/${encodeURIComponent(jobId)}`, { method: 'GET' }))
+  }
+
+  async cancelJob(jobId: string): Promise<UiJobDetail> {
+    return await this.requireResult(this.request<UiJobDetail>(`/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' }))
+  }
+
+  async resumeJob(jobId: string): Promise<UiJobDetail> {
+    return await this.requireResult(this.request<UiJobDetail>(`/jobs/${encodeURIComponent(jobId)}/resume`, { method: 'POST' }))
+  }
+
+  async quiesceRuntime(): Promise<UiRuntimeStatus> {
+    return await this.requireResult(this.request<UiRuntimeStatus>('/runtime/quiesce', { method: 'POST' }))
+  }
+
+  private async requireResult<T>(result: Promise<T | null>): Promise<T> {
+    const value = await result
+    if (value === null) throw new DashboardRequestError(translate(this.currentLanguage(), 'requestFailed'))
+    return value
+  }
+
+  private async request<T>(path: string, options: RequestInit, allowNotModified = false): Promise<T | null> {
     const response = await fetch(`/ui-api/v1${path}`, {
       ...options,
       headers: {
@@ -58,13 +173,14 @@ export class DashboardClient {
     if (response.status === 401) {
       throw new DashboardRequestError(translate(this.currentLanguage(), 'reopen'), { sessionExpired: true, status: 401 })
     }
-    if (response.status === 304) return null
-    const body = await response.json().catch(() => ({})) as JsonRecord
+    if (response.status === 304 && allowNotModified) return null
+    const body: unknown = await response.json().catch(() => null)
     if (!response.ok) {
-      const code = typeof body?.error?.code === 'string' ? body.error.code : ''
+      const error = uiErrorEnvelope(body)?.error
+      const code = error?.code ?? ''
       const language = this.currentLanguage()
-      const summary = translateError(language, code, body?.error?.message)
-      const diagnostic = typeof body?.error?.message === 'string' ? body.error.message : ''
+      const summary = translateError(language, code, error?.message)
+      const diagnostic = error?.message ?? ''
       const message = diagnostic && diagnostic !== summary
         ? `${summary}\n${translate(language, 'diagnostics')}: ${diagnostic}`
         : summary
@@ -74,6 +190,17 @@ export class DashboardClient {
       )
     }
     if (path === '/snapshot') this.snapshotEtag = response.headers.get('etag') ?? ''
-    return body
+    return body as T
   }
+}
+
+function uiErrorEnvelope(value: unknown): UiErrorEnvelope | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const error = (value as { error?: unknown }).error
+  if (!error || typeof error !== 'object' || Array.isArray(error)) return null
+  const code = (error as { code?: unknown }).code
+  const message = (error as { message?: unknown }).message
+  return typeof code === 'string' && typeof message === 'string'
+    ? { error: { code, message } }
+    : null
 }

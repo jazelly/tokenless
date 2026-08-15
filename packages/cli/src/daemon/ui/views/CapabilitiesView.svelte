@@ -4,28 +4,28 @@
   import PageHeader from '../components/PageHeader.svelte'
   import { formatNumber } from '../formatting.js'
   import { capabilityFamilyLabel, capabilityText, stateLabel, type MessageKey } from '../localization.js'
-  import type { JsonRecord, Language } from '../types.js'
+  import type { Language, UiCapability, UiSnapshot } from '../types.js'
 
   let { snapshot, selectedProfile, language, t, onselect }: {
-    snapshot: JsonRecord
+    snapshot: UiSnapshot
     selectedProfile: string
     language: Language
     t: (key: MessageKey) => string
     onselect: (slug: string) => void
   } = $props()
 
-  let selected = $state<JsonRecord | null>(null)
-  let profile = $derived(snapshot.profiles.find((entry: JsonRecord) => entry.slug === selectedProfile) ?? snapshot.profiles[0])
-  let groups = $derived(Object.entries(snapshot.capabilities.reduce((result: Record<string, JsonRecord[]>, capability: JsonRecord) => {
+  let selected = $state<UiCapability | null>(null)
+  let profile = $derived(snapshot.profiles.find((entry) => entry.slug === selectedProfile) ?? snapshot.profiles[0])
+  let groups = $derived(Object.entries(snapshot.capabilities.reduce((result: { [family: string]: UiCapability[] }, capability) => {
     ;(result[capability.family] ??= []).push(capability)
     return result
-  }, {})) as [string, JsonRecord[]][])
+  }, {})))
 
-  function providerSummary(capability: JsonRecord) {
-    if (!capability.providers?.length) return t('noRoute')
-    return capability.providers.map((route: JsonRecord) => {
-      const provider = snapshot.providers.find((entry: JsonRecord) => entry.id === route.provider)
-      const state = provider?.profiles?.find((entry: JsonRecord) => entry.profileId === profile?.slug)
+  function providerSummary(capability: UiCapability) {
+    if (!capability.providers.length) return t('noRoute')
+    return capability.providers.map((route) => {
+      const provider = snapshot.providers.find((entry) => entry.id === route.provider)
+      const state = provider?.profiles.find((entry) => entry.profileId === profile?.slug)
       return `${route.provider} · ${stateLabel(language, state?.runtimeEligibility ?? 'ineligible')}`
     }).join(', ')
   }

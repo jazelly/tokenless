@@ -41,6 +41,25 @@ import type { BrowserRuntimeController } from '../daemon/browser-runtime-control
 import { OUTPUT_SAVINGS_ESTIMATOR } from '../output-savings/catalog.js'
 import type { OutputSavingsProcessor } from '../output-savings/processor.js'
 import { OutputSavingsRuntimeManager } from '../output-savings/runtime-manager.js'
+import type {
+  UiConfig,
+  UiConfigUpdate,
+  UiConfirmedDeletion,
+  UiDiagnostic,
+  UiJobDetail,
+  UiJobSummary,
+  UiOutputSavingsState,
+  UiProfile,
+  UiProfileCreate,
+  UiProfileRemoval,
+  UiProfileUpdate,
+  UiProviderAction,
+  UiProviderReadinessRefresh,
+  UiProviderSelection,
+  UiRuntimeOpenResult,
+  UiRuntimeStatus,
+  UiSnapshot,
+} from './ui-contract.js'
 
 export type UiApplicationServicesOptions = {
   store: JobStore
@@ -72,7 +91,7 @@ export class TokenlessApplicationServices {
     this.startedAt = options.startedAt
   }
 
-  async snapshot() {
+  async snapshot(): Promise<UiSnapshot> {
     await this.reconcileProviderObservations()
     const [config, profileData, jobs] = await Promise.all([
       this.migratedConfig(),
@@ -101,7 +120,7 @@ export class TokenlessApplicationServices {
     const outputSavings = await this.outputSavingsState(config)
     const nativeBrowser = await this.inspectConfiguredBrowser(config)
     const body = {
-      schema: 'tokenless.ui-snapshot.v1',
+      schema: 'tokenless.ui-snapshot.v1' as const,
       generatedAt: new Date().toISOString(),
       daemon: {
         version: tokenlessPackageVersion(),
@@ -163,7 +182,7 @@ export class TokenlessApplicationServices {
     }
   }
 
-  async job(jobId: string) {
+  async job(jobId: string): Promise<UiJobDetail> {
     return publicJobDetail(
       this.store.getJob(jobId),
       await this.profiles.listProfiles(),
@@ -171,7 +190,7 @@ export class TokenlessApplicationServices {
     )
   }
 
-  async enableOutputSavings() {
+  async enableOutputSavings(): Promise<UiOutputSavingsState> {
     await this.outputSavingsRuntimeManager.ensureInstalled()
     const config = await writeTokenlessConfig({
       homeDir: this.store.homeDir,
@@ -180,7 +199,7 @@ export class TokenlessApplicationServices {
     return await this.outputSavingsState(config)
   }
 
-  async disableOutputSavings() {
+  async disableOutputSavings(): Promise<UiOutputSavingsState> {
     const config = await writeTokenlessConfig({
       homeDir: this.store.homeDir,
       outputSavings: { enabled: false },
@@ -189,7 +208,7 @@ export class TokenlessApplicationServices {
     return await this.outputSavingsState(config)
   }
 
-  async uninstallOutputSavings(input: Record<string, unknown>) {
+  async uninstallOutputSavings(input: UiConfirmedDeletion): Promise<UiOutputSavingsState> {
     requireKnownFields(input, ['confirmDelete'])
     if (input.confirmDelete !== true) {
       throw applicationError(
@@ -206,7 +225,7 @@ export class TokenlessApplicationServices {
     return await this.outputSavingsState(config)
   }
 
-  async clearOutputSavings(input: Record<string, unknown>) {
+  async clearOutputSavings(input: UiConfirmedDeletion): Promise<UiOutputSavingsState> {
     requireKnownFields(input, ['confirmDelete'])
     if (input.confirmDelete !== true) {
       throw applicationError(
@@ -230,7 +249,7 @@ export class TokenlessApplicationServices {
     this.store.discardOutputSavingsWork()
   }
 
-  async updateConfig(input: Record<string, unknown>) {
+  async updateConfig(input: UiConfigUpdate): Promise<UiConfig> {
     requireKnownFields(input, ['browser', 'browserExecutablePath', 'browserVisibility', 'language', 'router'])
     const current = await this.migratedConfig()
     const browserVisibility = input.browserVisibility === undefined
@@ -287,7 +306,7 @@ export class TokenlessApplicationServices {
     return publicConfig(saved)
   }
 
-  async createProfile(input: Record<string, unknown>) {
+  async createProfile(input: UiProfileCreate): Promise<UiProfile> {
     requireKnownFields(input, ['slug', 'roleLabel', 'enabledProviders', 'browserVisibility', 'setDefault'])
     const slug = requiredSlug(input.slug)
     const browserVisibility = input.browserVisibility === undefined
@@ -318,7 +337,7 @@ export class TokenlessApplicationServices {
     }
   }
 
-  async updateProfile(slug: string, input: Record<string, unknown>) {
+  async updateProfile(slug: string, input: UiProfileUpdate): Promise<UiProfile> {
     requireKnownFields(input, ['roleLabel', 'enabledProviders', 'browserVisibility', 'setDefault'])
     let profile = await this.profiles.resolveProfile(slug)
     const current = profileConfig(await this.migratedConfig(), profile.slug)
@@ -341,7 +360,7 @@ export class TokenlessApplicationServices {
     return publicProfile(profile, (await this.profiles.read()).defaultProfile, profileConfig(config, profile.slug), config.browser, browser.runtime?.actualVersion ?? null)
   }
 
-  async removeProfile(slug: string) {
+  async removeProfile(slug: string): Promise<UiProfileRemoval> {
     const status = this.runtimeController?.status()
     if (status?.activeJobCount) {
       throw applicationError('profile_mutation_unsafe', 'A profile cannot be removed while browser jobs are active.')
@@ -352,7 +371,7 @@ export class TokenlessApplicationServices {
     return { slug: profile.slug, removed: true }
   }
 
-  async providerAction(slug: string, providerValue: string, action: 'open' | 'readiness' | 'controls') {
+  async providerAction(slug: string, providerValue: string, action: UiProviderAction): Promise<UiJobSummary> {
     const profile = await this.profiles.resolveProfile(slug)
     const provider = listProviderInstances().find((candidate) => candidate.id === providerValue)
     if (!provider || provider.descriptor.stage === 'disabled') {
@@ -367,7 +386,7 @@ export class TokenlessApplicationServices {
     return job
   }
 
-  async refreshProviderReadiness(slug: string) {
+  async refreshProviderReadiness(slug: string): Promise<UiProviderReadinessRefresh> {
     const profile = await this.profiles.resolveProfile(slug)
     const configured = profileConfig(await this.migratedConfig(), profile.slug)
     const enabled = new Set(configured.enabledProviders)
@@ -422,8 +441,8 @@ export class TokenlessApplicationServices {
   async providerSelection(
     slug: string,
     providerValue: string,
-    input: Record<string, unknown>,
-  ) {
+    input: UiProviderSelection,
+  ): Promise<UiJobSummary> {
     requireKnownFields(input, ['kind', 'label'])
     const kind = input.kind
     if (kind !== 'model' && kind !== 'effort') {
@@ -460,23 +479,23 @@ export class TokenlessApplicationServices {
     return publicJobSummary(job, [profile])
   }
 
-  async openProfile(slug: string) {
+  async openProfile(slug: string): Promise<UiRuntimeOpenResult> {
     const profile = await this.profiles.resolveProfile(slug)
     if (!this.runtimeController) throw applicationError('browser_runtime_unavailable', 'Browser runtime is unavailable.')
     return await this.runtimeController.openProfile(profile.id, 'headed')
   }
 
-  async quiesceRuntime() {
+  async quiesceRuntime(): Promise<UiRuntimeStatus> {
     return await this.runtimeController?.quiesce() ?? {
       status: 'stopped', activeProfileCount: 0, activeJobCount: 0, pid: process.pid,
     }
   }
 
-  async cancelJob(jobId: string) {
+  async cancelJob(jobId: string): Promise<UiJobDetail> {
     return publicJobDetail(await this.store.cancelJob(jobId, { source: 'ui' }), await this.profiles.listProfiles())
   }
 
-  async resumeJob(jobId: string) {
+  async resumeJob(jobId: string): Promise<UiJobDetail> {
     const job = this.store.resumeJob(jobId, { browser_visibility: 'headed' })
     await this.runtimeController?.wake()
     return publicJobDetail(job, await this.profiles.listProfiles())
@@ -509,7 +528,7 @@ export class TokenlessApplicationServices {
     runtime: ReturnType<BrowserRuntimeController['status']>,
     outputSavings: Awaited<ReturnType<TokenlessApplicationServices['outputSavingsState']>>,
     browser: Awaited<ReturnType<BrowserRuntimeManager['inspect']>>,
-  ) {
+  ): Promise<UiDiagnostic[]> {
     return [
       {
         id: 'configuration',
@@ -642,7 +661,7 @@ function publicProfile(
     isDefault: profile.slug === defaultSlug,
     createdAt: profile.createdAt,
     updatedAt: profile.updatedAt,
-    browserMode: browserBinding.family === 'system' ? 'native' : 'managed',
+    browserMode: browserBinding.family === 'system' ? 'native' as const : 'managed' as const,
     browserBinding,
     roleLabel: configured.roleLabel,
     enabledProviders: configured.enabledProviders,
@@ -654,7 +673,7 @@ function publicProfile(
       access: status.access,
       checkedAt: status.checkedAt,
       account: status.auth === 'authenticated' ? status.account ?? null : null,
-    } : null).filter(Boolean),
+    } : null).filter((observation): observation is NonNullable<typeof observation> => observation !== null),
   }
 }
 
@@ -676,8 +695,8 @@ function providerProfileState(
       account: observation.auth === 'authenticated' ? observation.account ?? null : null,
     } : null,
     runtimeEligibility: configured.enabledProviders.includes(provider) && usableAccess(observation?.access)
-      ? 'eligible'
-      : 'ineligible',
+      ? 'eligible' as const
+      : 'ineligible' as const,
     capabilities: routes.filter((route) => route.provider === provider).map((route) => ({
       id: route.capability,
       support: route.support,

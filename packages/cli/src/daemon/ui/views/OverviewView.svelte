@@ -3,31 +3,37 @@
   import PageHeader from '../components/PageHeader.svelte'
   import { formatNumber } from '../formatting.js'
   import { stateLabel, type MessageKey } from '../localization.js'
-  import type { JsonRecord, Language } from '../types.js'
+  import type {
+    Language,
+    ReadinessJobs,
+    UiProvider,
+    UiProviderProfileState,
+    UiSnapshot,
+  } from '../types.js'
 
   let { snapshot, selectedProfile, language, t, readinessBusy, readinessJobs, onrefreshreadiness }: {
-    snapshot: JsonRecord
+    snapshot: UiSnapshot
     selectedProfile: string
     language: Language
     t: (key: MessageKey) => string
     readinessBusy: boolean
-    readinessJobs: Record<string, JsonRecord>
+    readinessJobs: ReadinessJobs
     onrefreshreadiness: (profileSlug: string) => Promise<void>
   } = $props()
 
-  let profile = $derived(snapshot.profiles.find((entry: JsonRecord) => entry.slug === selectedProfile) ?? snapshot.profiles[0])
-  let waiting = $derived(snapshot.jobs.filter((job: JsonRecord) => job.status === 'waiting_for_user'))
-  let running = $derived(snapshot.jobs.filter((job: JsonRecord) => ['queued', 'claimed', 'running'].includes(job.status)))
-  let enabledProviders = $derived(snapshot.providers.filter((provider: JsonRecord) => profileState(provider)?.enabled))
-  let authenticatedProviders = $derived(enabledProviders.filter((provider: JsonRecord) => profileState(provider)?.observation?.auth === 'authenticated'))
+  let profile = $derived(snapshot.profiles.find((entry) => entry.slug === selectedProfile) ?? snapshot.profiles[0])
+  let waiting = $derived(snapshot.jobs.filter((job) => job.status === 'waiting_for_user'))
+  let running = $derived(snapshot.jobs.filter((job) => ['queued', 'claimed', 'running'].includes(job.status)))
+  let enabledProviders = $derived(snapshot.providers.filter((provider) => profileState(provider)?.enabled))
+  let authenticatedProviders = $derived(enabledProviders.filter((provider) => profileState(provider)?.observation?.auth === 'authenticated'))
   let savingsEnabled = $derived(snapshot.outputSavings.enabled === true)
   let savingsReady = $derived(savingsEnabled && snapshot.outputSavings.collection === 'enabled')
 
-  function profileState(provider: JsonRecord) {
-    return provider.profiles?.find((entry: JsonRecord) => entry.profileId === profile?.slug)
+  function profileState(provider: UiProvider) {
+    return provider.profiles.find((entry) => entry.profileId === profile?.slug)
   }
 
-  function readinessLabel(provider: JsonRecord, state: JsonRecord | undefined) {
+  function readinessLabel(provider: UiProvider, state: UiProviderProfileState | undefined) {
     const readiness = readinessJobs[provider.id]
     if (readiness?.status === 'queued' || readiness?.status === 'claimed' || readiness?.status === 'running') return t('checkingProviderReadiness')
     const observedAccess = state?.observation?.access ? stateLabel(language, state.observation.access) : null
@@ -37,7 +43,7 @@
     return observedAccess ?? (readiness?.status ? stateLabel(language, readiness.status) : t('neverChecked'))
   }
 
-  function readinessStatus(provider: JsonRecord) {
+  function readinessStatus(provider: UiProvider) {
     const readiness = readinessJobs[provider.id]
     return readiness?.status ?? ''
   }

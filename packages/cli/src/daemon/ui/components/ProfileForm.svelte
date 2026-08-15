@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick, untrack } from 'svelte'
   import type { MessageKey } from '../localization.js'
-  import type { JsonRecord } from '../types.js'
+  import type { UiProfile, UiProfileCreate, UiProfileUpdate, UiSnapshot } from '../types.js'
 
   let {
     snapshot,
@@ -11,19 +11,19 @@
     oncancel,
     onsubmit,
   }: {
-    snapshot: JsonRecord
-    profile?: JsonRecord
+    snapshot: UiSnapshot
+    profile?: UiProfile | undefined
     t: (key: MessageKey) => string
     busy: boolean
     oncancel: () => void
-    onsubmit: (value: JsonRecord) => Promise<void>
+    onsubmit: (value: UiProfileCreate | UiProfileUpdate) => Promise<void>
   } = $props()
 
   let slug = $state(untrack(() => profile?.slug ?? ''))
   let roleLabel = $state(untrack(() => profile?.roleLabel ?? ''))
-  let enabledProviders = $state<string[]>(untrack(() => Array.isArray(profile?.enabledProviders)
+  let enabledProviders = $state<string[]>(untrack(() => profile?.enabledProviders
     ? [...profile.enabledProviders]
-    : snapshot.providers.filter((provider: JsonRecord) => provider.stage !== 'disabled').map((provider: JsonRecord) => provider.id)))
+    : snapshot.providers.filter((provider) => provider.stage !== 'disabled').map((provider) => provider.id)))
   let error = $state('')
   let errorElement = $state<HTMLDivElement>()
 
@@ -35,11 +35,7 @@
 
   function browserBindingLabel() {
     const binding = profile?.browserBinding
-    if (binding && typeof binding === 'object' && !Array.isArray(binding)) {
-      const browserId = (binding as JsonRecord).browserId
-      const runtimeId = (binding as JsonRecord).runtimeId
-      if (typeof browserId === 'string' && typeof runtimeId === 'string') return `${browserId} · ${runtimeId}`
-    }
+    if (binding) return `${binding.browserId} · ${binding.runtimeId}`
     return `${snapshot.config.browser} · native:${snapshot.config.browser}`
   }
 
@@ -47,12 +43,10 @@
     event.preventDefault()
     error = ''
     try {
-      await onsubmit({
-        ...(!profile ? { slug } : {}),
-        roleLabel,
-        browserVisibility: 'headed',
-        enabledProviders,
-      })
+      const input = profile
+        ? { roleLabel, browserVisibility: 'headed' as const, enabledProviders }
+        : { slug, roleLabel, browserVisibility: 'headed' as const, enabledProviders }
+      await onsubmit(input)
     } catch (caught) {
       error = caught instanceof Error ? caught.message : t('requestFailed')
       await tick()

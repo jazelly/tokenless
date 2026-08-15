@@ -1,5 +1,3 @@
-import type { JsonRecord } from './types.js'
-
 export type RouterEngineId = 'chrome-prompt-api'
 
 export const CHROME_PROMPT_API_MIN_MAJOR = 148
@@ -35,7 +33,7 @@ export type RouterResult = {
 }
 
 type LanguageModelSession = {
-  prompt: (input: string, options: { responseConstraint: JsonRecord }) => Promise<string>
+  prompt: (input: string, options: { responseConstraint: Record<string, unknown> }) => Promise<string>
   destroy?: () => void
 }
 

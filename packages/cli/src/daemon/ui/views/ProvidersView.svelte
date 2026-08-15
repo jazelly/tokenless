@@ -3,35 +3,33 @@
   import PageHeader from '../components/PageHeader.svelte'
   import { stateLabel, type MessageKey } from '../localization.js'
   import RoutingView from './RoutingView.svelte'
-  import type { JsonRecord, Language } from '../types.js'
+  import type { DashboardActions, Language, UiProvider, UiSnapshot } from '../types.js'
 
-  let { snapshot, selectedProfile, language, t, busy, onselect, onmutate }: {
-    snapshot: JsonRecord
+  let { snapshot, selectedProfile, language, t, busy, onselect, actions }: {
+    snapshot: UiSnapshot
     selectedProfile: string
     language: Language
     t: (key: MessageKey) => string
     busy: boolean
     onselect: (slug: string) => void
-    onmutate: (path: string, body?: unknown, method?: string, announce?: boolean) => Promise<unknown>
+    actions: DashboardActions
   } = $props()
 
   let selectedProviderId = $state('')
   let routingRole = $state('')
   let roleError = $state('')
-  let profile = $derived(snapshot.profiles.find((entry: JsonRecord) => entry.slug === selectedProfile) ?? snapshot.profiles[0])
-  let detailProvider = $derived(snapshot.providers.find((provider: JsonRecord) => provider.id === selectedProviderId))
+  let profile = $derived(snapshot.profiles.find((entry) => entry.slug === selectedProfile) ?? snapshot.profiles[0]!)
+  let detailProvider = $derived(snapshot.providers.find((provider) => provider.id === selectedProviderId))
 
-  function stateFor(provider: JsonRecord) {
-    return provider.profiles?.find((entry: JsonRecord) => entry.profileId === profile?.slug)
+  function stateFor(provider: UiProvider) {
+    return provider.profiles.find((entry) => entry.profileId === profile.slug)
   }
 
   function routingRoleFor(providerId: string) {
-    const rules = Array.isArray(snapshot.config.router?.providers) ? snapshot.config.router.providers : []
-    const rule = rules.find((candidate: JsonRecord) => candidate.id === providerId)
-    return typeof rule?.suitableTasks === 'string' ? rule.suitableTasks : ''
+    return snapshot.config.router.providers.find((candidate) => candidate.id === providerId)?.suitableTasks ?? ''
   }
 
-  function openDetails(provider: JsonRecord) {
+  function openDetails(provider: UiProvider) {
     selectedProviderId = provider.id
     routingRole = routingRoleFor(provider.id)
     roleError = ''
@@ -43,57 +41,57 @@
     roleError = ''
   }
 
-  async function toggle(provider: JsonRecord, input: HTMLInputElement) {
+  async function toggle(provider: UiProvider, input: HTMLInputElement) {
     const enabled = input.checked
     const next = new Set<string>(profile.enabledProviders)
     if (enabled) next.add(provider.id)
     else next.delete(provider.id)
     try {
-      await onmutate(`/profiles/${encodeURIComponent(profile.slug)}`, { enabledProviders: [...next] }, 'PATCH')
+      await actions.updateProfile(profile.slug, { enabledProviders: [...next] })
     } catch {
       input.checked = !enabled
     }
   }
 
-  async function choose(provider: JsonRecord, kind: 'model' | 'effort', label: string) {
+  async function choose(provider: UiProvider, kind: 'model' | 'effort', label: string) {
     if (!label) return
     try {
-      await onmutate(`/profiles/${encodeURIComponent(profile.slug)}/providers/${encodeURIComponent(provider.id)}/selection`, { kind, label }, 'POST', false)
+      await actions.selectProviderControl(profile.slug, provider.id, { kind, label }, false)
     } catch {
       // The shared mutation boundary already reports the error.
     }
   }
 
-  async function action(provider: JsonRecord, value: 'open' | 'readiness' | 'controls') {
+  async function action(provider: UiProvider, value: 'open' | 'readiness' | 'controls') {
     try {
-      await onmutate(`/profiles/${encodeURIComponent(profile.slug)}/providers/${encodeURIComponent(provider.id)}/actions/${value}`, undefined, 'POST', false)
+      await actions.runProviderAction(profile.slug, provider.id, value, false)
     } catch {
       // The shared mutation boundary already reports the error.
     }
   }
 
-  async function saveRoutingRole(event: SubmitEvent, provider: JsonRecord) {
+  async function saveRoutingRole(event: SubmitEvent, provider: UiProvider) {
     event.preventDefault()
     if (stateFor(provider)?.enabled !== true) return
     roleError = ''
-    const router = snapshot.config.router ?? {}
-    const currentRules = Array.isArray(router.providers) ? router.providers : []
+    const router = snapshot.config.router
+    const currentRules = router.providers
     const nextRole = routingRole.trim()
     let replaced = false
-    const providers = currentRules.flatMap((rule: JsonRecord) => {
+    const providers = currentRules.flatMap((rule) => {
       if (rule.id !== provider.id) return [{ id: rule.id, suitableTasks: rule.suitableTasks }]
       replaced = true
       return nextRole ? [{ id: provider.id, suitableTasks: nextRole }] : []
     })
     if (!replaced && nextRole) providers.push({ id: provider.id, suitableTasks: nextRole })
     try {
-      await onmutate('/config', {
+      await actions.updateConfig({
         router: {
-          enabled: router.enabled === true,
-          engine: router.engine === 'chrome-prompt-api' ? router.engine : 'chrome-prompt-api',
+          enabled: router.enabled,
+          engine: router.engine,
           providers,
         },
-      }, 'PATCH')
+      })
       routingRole = nextRole
     } catch (error) {
       roleError = error instanceof Error ? error.message : t('requestFailed')
@@ -191,6 +189,6 @@
       {/each}
     </div>
 
-    <RoutingView {snapshot} {selectedProfile} {t} {busy} {onmutate} />
+    <RoutingView {snapshot} {selectedProfile} {t} {busy} {actions} />
   </section>
 {/if}

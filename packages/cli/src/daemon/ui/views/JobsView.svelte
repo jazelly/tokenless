@@ -5,26 +5,25 @@
   import PageHeader from '../components/PageHeader.svelte'
   import { formatNumber, formatTime } from '../formatting.js'
   import { stateLabel, translateError, type MessageKey } from '../localization.js'
-  import type { JsonRecord, Language } from '../types.js'
+  import type { DashboardActions, Language, UiJobDetail, UiSnapshot } from '../types.js'
 
-  let { snapshot, language, t, busy, onget, onmutate }: {
-    snapshot: JsonRecord
+  let { snapshot, language, t, busy, actions }: {
+    snapshot: UiSnapshot
     language: Language
     t: (key: MessageKey) => string
     busy: boolean
-    onget: (path: string) => Promise<JsonRecord | null>
-    onmutate: (path: string, body?: unknown, method?: string) => Promise<unknown>
+    actions: DashboardActions
   } = $props()
 
   let status = $state('')
   let provider = $state('')
   let profile = $state('')
   let search = $state('')
-  let detail = $state<JsonRecord | null>(null)
+  let detail = $state<UiJobDetail | null>(null)
   let error = $state('')
   let errorElement = $state<HTMLDivElement>()
   let filtersReady = $state(false)
-  let filtered = $derived(snapshot.jobs.filter((job: JsonRecord) => {
+  let filtered = $derived(snapshot.jobs.filter((job) => {
     const query = search.trim().toLowerCase()
     return (!status || job.status === status)
       && (!provider || job.provider === provider)
@@ -55,7 +54,7 @@
   async function showDetail(jobId: string) {
     error = ''
     try {
-      detail = await onget(`/jobs/${encodeURIComponent(jobId)}`)
+      detail = await actions.getJob(jobId)
     } catch (caught) {
       error = caught instanceof Error ? caught.message : t('requestFailed')
       await tick()
@@ -67,7 +66,7 @@
     if (!detail) return
     error = ''
     try {
-      await onmutate(`/jobs/${encodeURIComponent(detail.jobId)}/${action}`)
+      await (action === 'cancel' ? actions.cancelJob(detail.jobId) : actions.resumeJob(detail.jobId))
       detail = null
     } catch (caught) {
       error = caught instanceof Error ? caught.message : t('requestFailed')
@@ -76,11 +75,18 @@
     }
   }
 
-  function jobErrorSummary(value: JsonRecord | null | undefined) {
+  function jobErrorSummary(value: unknown) {
     if (!value) return t('none')
-    const code = typeof value.code === 'string' ? value.code : ''
-    const fallback = typeof value.message === 'string' ? value.message : t('requestFailed')
+    const error = publicError(value)
+    const code = typeof error?.code === 'string' ? error.code : ''
+    const fallback = typeof error?.message === 'string' ? error.message : t('requestFailed')
     return translateError(language, code, fallback)
+  }
+
+  function publicError(value: unknown): { code?: unknown; message?: unknown } | null {
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? value as { code?: unknown; message?: unknown }
+      : null
   }
 </script>
 

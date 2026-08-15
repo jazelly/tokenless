@@ -2,7 +2,7 @@
   import { Check, ChevronRight, Globe2, Monitor, UserRound } from '@lucide/svelte'
   import { tick, untrack } from 'svelte'
   import type { MessageKey } from '../localization.js'
-  import type { JsonRecord, Language } from '../types.js'
+  import type { Language, UiConfigUpdate, UiProfileCreate, UiSnapshot } from '../types.js'
 
   let {
     snapshot,
@@ -11,11 +11,11 @@
     busy,
     onsetup,
   }: {
-    snapshot: JsonRecord
+    snapshot: UiSnapshot
     language: Language
     t: (key: MessageKey) => string
     busy: boolean
-    onsetup: (config: JsonRecord, profile: JsonRecord) => Promise<void>
+    onsetup: (config: UiConfigUpdate, profile: UiProfileCreate) => Promise<void>
   } = $props()
 
   let selectedLanguage = $state<Language>(untrack(() => language))
@@ -23,11 +23,11 @@
   let errorElement = $state<HTMLDivElement>()
   let slug = $state('default')
   let roleLabel = $state('')
-  let selectedBrowser = $state<'chrome' | 'brave'>(untrack(() => snapshot.config?.browser === 'brave' ? 'brave' : 'chrome'))
+  let selectedBrowser = $state<'chrome' | 'brave'>(untrack(() => snapshot.config.browser === 'brave' ? 'brave' : 'chrome'))
   let browserExecutablePath = $state('')
   let enabledProviders = $state<string[]>(untrack(() => snapshot.providers
-    .filter((provider: JsonRecord) => provider.stage !== 'disabled' && provider.id !== 'gemini')
-    .map((provider: JsonRecord) => provider.id)))
+    .filter((provider) => provider.stage !== 'disabled' && provider.id !== 'gemini')
+    .map((provider) => provider.id)))
 
   function toggleProvider(provider: string, checked: boolean) {
     enabledProviders = checked
