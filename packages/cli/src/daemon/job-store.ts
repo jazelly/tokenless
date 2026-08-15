@@ -2418,8 +2418,6 @@ export class JobStore {
       CREATE UNIQUE INDEX IF NOT EXISTS web_ai_v0_turns_request_ref_idx
         ON web_ai_v0_turns(request_ref)
         WHERE request_ref IS NOT NULL;
-      CREATE INDEX IF NOT EXISTS api_response_ledger_created_idx
-        ON api_response_ledger(created_at, response_id);
     `)
   }
 
