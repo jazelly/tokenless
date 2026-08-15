@@ -309,6 +309,10 @@ Lifecycle note（2026-08-15）：packaged daemon 与真实 DeepSeek browser rout
 
 Lifecycle note（2026-08-15）：固定 revision 的 unmodified DSH 已通过 packaged daemon 与真实 DeepSeek browser route，在一个 assistant turn 内从终态 SSE 的稳定 `index: 0/1` 重建两个调用、执行两个真实 local `read`、回传一对一结果并获得 grounded final；另一次真实非流式 API case 保留了与两个调用同时返回的 assistant content。[脱敏证据](../evidence/openai-multiple-tool-calls-deepseek-2026-08-15.md)记录 DSH revision/build/session JSONL digest、event counts、public call ids、job ids 与 protocol counters。该 slice 未加入 tool execution、scheduler、retry framework 或旧 envelope compatibility branch。
 
+Lifecycle note（2026-08-15）：packaged daemon 与真实 DeepSeek browser route 已证明 non-stream `json_object`、终态 SSE nested `json_schema`，以及 tool call → caller 实际读取 local `package.json` → 携带同一 `response_format` 的 schema-valid structured final continuation；[脱敏证据](../evidence/openai-structured-output-deepseek-2026-08-15.md)只记录 job id、SSE/validation outcome 与选定解析值。四次 acceptance request 恰好产生四个成功 provider job；该 acceptance run 没有 invalid inner JSON 或 correction，因此没有加入新的 correction path。M5 subset 明确拒绝 `$defs`/`$ref`，避免为递归 closed-object admission 引入 resolver。
+
+Lifecycle note（2026-08-15）：fresh review 发现 JS number rounding 可让原始 unsafe integer text 与 AJV 看见的舍入值不一致，因此 structured inner JSON 现只接受 canonical finite number spelling，且 integral schema/output value 必须是 safe integer；ordinary tool JSON behavior 未扩张。独立真实 DeepSeek diagnostic 按要求输出 numeric literal `9007199254740993`，provider job `2aa7a48c-dd56-4746-aac1-d28ecd4ff850` 成功，但 public boundary 明确返回 `provider_output_protocol_error`；该 request 只创建一个 job，没有 correction。
+
 ### Evidence lane A：Tokenless repository grounding
 
 先在 Tokenless repository 的 disposable worktree 或明确 read-only run中提出一个只有读取本地 source 才能正确回答的问题，例如定位 API proxy 当前如何拒绝 `tools`、列出 request normalization 到 provider dispatch 的实际 call path，并引用真实 file/symbol。成功必须同时满足：

@@ -304,7 +304,7 @@
       "post": {
         "operationId": "createApiProxyChatCompletionOnDefaultPath",
         "summary": "Run an OpenAI-compatible chat completion on the default OpenAI path",
-        "description": "Accepts the OpenAI chat-completions request shape and returns the visible provider response. Modern function tools and complete tool-result history are validated and compiled into a request-scoped provider protocol; Tokenless returns validated standard tool calls in model order or final text and never executes caller tools. Streaming returns one terminal text/tool-call delta, a terminal finish-reason choice, and [DONE]; stream_options is accepted but ignored, and no streaming usage is fabricated. parallel_tool_calls defaults to true; false limits the current outcome to one call. tool_choice supports omitted/auto, none, required, and one exact named function, which always produces exactly one call. strict: true recursively requires additionalProperties: false and every property in required for each object schema; returned arguments always pass the declared schema. Framing, choice, and schema violations terminate with provider_output_protocol_error and do not receive correction. Deprecated functions/function_call and response_format are rejected. This path is an alias of the /v1/openai prefixed route so an unmodified OpenAI client works with only a baseURL override.",
+        "description": "Accepts the OpenAI chat-completions request shape and returns the visible provider response. Modern function tools, complete tool-result history, json_object, and the documented json_schema subset are validated through one request-scoped protocol; Tokenless returns model-ordered tool calls or a final result that satisfies response_format and never executes caller tools. Streaming returns one terminal full-content or tool-call delta, a terminal finish reason, and [DONE] without usage. parallel_tool_calls defaults to true; false limits the current outcome to one call. tool_choice supports omitted/auto, none, required, and one exact named function. strict tool schemas and structured-final object schemas require recursively closed objects with every property required. Structured-final numbers must be canonical finite JSON numbers, with integral schema and output values limited to the JavaScript safe integer range. Protocol or schema violations terminate with provider_output_protocol_error. Deprecated functions/function_call are rejected. This path is an alias of the /v1/openai prefixed route so an unmodified OpenAI client works with only a baseURL override.",
         "requestBody": {
           "required": true,
           "content": {
@@ -1245,7 +1245,7 @@
       "post": {
         "operationId": "createApiProxyChatCompletion",
         "summary": "Run an OpenAI-compatible chat completion through a visible provider page",
-        "description": "Accepts the OpenAI chat-completions request shape and returns the visible provider response. Modern function tools and complete tool-result history are validated and compiled into a request-scoped provider protocol; Tokenless returns validated standard tool calls in model order or final text and never executes caller tools. Streaming returns one terminal text/tool-call delta, a terminal finish-reason choice, and [DONE]; stream_options is accepted but ignored, and no streaming usage is fabricated. parallel_tool_calls defaults to true; false limits the current outcome to one call. tool_choice supports omitted/auto, none, required, and one exact named function, which always produces exactly one call. strict: true recursively requires additionalProperties: false and every property in required for each object schema; returned arguments always pass the declared schema. Framing, choice, and schema violations terminate with provider_output_protocol_error and do not receive correction. Deprecated functions/function_call and response_format are rejected.",
+        "description": "Accepts the OpenAI chat-completions request shape and returns the visible provider response. Modern function tools, complete tool-result history, json_object, and the documented json_schema subset are validated through one request-scoped protocol; Tokenless returns model-ordered tool calls or a final result that satisfies response_format and never executes caller tools. Streaming returns one terminal full-content or tool-call delta, a terminal finish reason, and [DONE] without usage. parallel_tool_calls defaults to true; false limits the current outcome to one call. tool_choice supports omitted/auto, none, required, and one exact named function. strict tool schemas and structured-final object schemas require recursively closed objects with every property required. Structured-final numbers must be canonical finite JSON numbers, with integral schema and output values limited to the JavaScript safe integer range. Protocol or schema violations terminate with provider_output_protocol_error. Deprecated functions/function_call are rejected.",
         "requestBody": {
           "required": true,
           "content": {
@@ -5317,6 +5317,72 @@
           }
         }
       },
+      "ApiProxyOpenAiResponseFormat": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "text"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "json_object"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "json_schema"
+            ],
+            "properties": {
+              "type": {
+                "const": "json_schema"
+              },
+              "json_schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "schema"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,64}$"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "schema": {
+                    "type": "object",
+                    "description": "A maximum 64 KiB JSON Schema with an exact object root. Supported keywords: type, properties, required, additionalProperties (false for every object), items, enum, const, nested anyOf, title, description, minLength, maxLength, pattern, format, minimum, maximum, exclusiveMinimum, exclusiveMaximum, multipleOf, minItems, and maxItems. Nullable type arrays are accepted. Root anyOf, $defs, $ref, and every unlisted keyword are rejected. Numeric enum, const, bound, length/item-limit, and multipleOf values must be finite, and integral values must be JavaScript safe integers."
+                  },
+                  "strict": {
+                    "type": "boolean",
+                    "description": "Accepted for OpenAI wire compatibility. Closed-object admission and final validation apply whether this is true or false."
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
       "ApiProxyOpenAiRequest": {
         "type": "object",
         "required": [
@@ -5392,6 +5458,9 @@
             "type": "boolean",
             "default": true,
             "description": "When false, the current assistant outcome contains at most one tool call. Completed prior multiple-call history remains replayable."
+          },
+          "response_format": {
+            "$ref": "#/components/schemas/ApiProxyOpenAiResponseFormat"
           }
         }
       },

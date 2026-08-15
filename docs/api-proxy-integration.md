@@ -6,7 +6,7 @@ How to call the Tokenless local API proxy from an existing project. Written for 
 
 The Tokenless daemon exposes OpenAI- and Anthropic-compatible HTTP routes. A request becomes a durable job, a Playwright worker types the prompt into a real provider page in a signed-in browser profile, and the visible reply is returned in the wire shape your client already expects.
 
-**This is a task-level bridge, not a drop-in API replacement.** Read [Hard limits](#hard-limits) before designing around it. The proxy trades throughput, latency, streaming, and tool use for cost.
+**This is a task-level bridge, not a drop-in API replacement.** Read [Hard limits](#hard-limits) before designing around it. The proxy trades throughput, latency, and incremental streaming for cost.
 
 ## Prerequisites
 
@@ -152,6 +152,49 @@ The caller executes returned tools. On the next request, resend the same catalog
 
 Tokenless validates unique call ids, declared names, strict argument JSON, argument schemas, and exactly one result per call before provider submission. It never executes caller tools or stores their catalog.
 
+#### Structured final output
+
+`response_format` controls only a final assistant result. Intermediate outcomes may still contain `tool_calls`; resend those calls, the actual caller-owned tool results, the same tool catalog, and the same response format to request the structured final.
+
+```json
+{
+  "type": "json_schema",
+  "json_schema": {
+    "name": "repository_result",
+    "description": "A repository summary.",
+    "strict": true,
+    "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary", "files"],
+      "properties": {
+        "summary": {"type": "string", "minLength": 1},
+        "files": {"type": "array", "items": {"type": "string"}, "maxItems": 10}
+      }
+    }
+  }
+}
+```
+
+- Omitted or `{"type":"text"}` preserves ordinary final text.
+- `{"type":"json_object"}` returns exactly one strict JSON object as `message.content`.
+- `json_schema` returns the original valid JSON text only after it passes the accepted schema. `name` uses the function-name rule (1–64 letters, numbers, `_`, or `-`); `description` is a string and `strict` is a boolean when present.
+
+The accepted schema root is exactly `{"type":"object"}`. Every object, including nested nullable objects, must use `additionalProperties: false` and list every property in `required`; this rule applies whether `json_schema.strict` is true or false.
+
+| Supported schema keywords | Scope |
+| --- | --- |
+| `type`, `properties`, `required`, `additionalProperties` | String types and nullable type arrays are accepted; every object is closed |
+| `items`, `minItems`, `maxItems` | Arrays |
+| `enum`, `const`, nested `anyOf` | `anyOf` is not accepted at the root |
+| `title`, `description` | Annotations |
+| `minLength`, `maxLength`, `pattern`, `format` | Strings; `format` must be known to the bundled AJV formats validator |
+| `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf` | Numbers |
+
+Every unlisted keyword is rejected before a job is created. In particular, `$defs`, `$ref`, `oneOf`, `allOf`, `not`, conditionals, and `patternProperties` are not part of this V1 subset.
+
+Structured JSON numbers must be finite and use the unique spelling returned by `JSON.stringify(Number(token))`; integral values must be within JavaScript's safe integer range. Noncanonical spellings such as `1.0` or `1e3` fail with `provider_output_protocol_error` when their canonical forms are `1` or `1000`. Numeric schema values in `enum`, `const`, bounds, length/item limits, and `multipleOf` follow the same finite/safe-integer admission rule, including numbers nested inside `enum` or `const` data.
+
 ### Anthropic
 
 ```json
@@ -189,10 +232,11 @@ Any other part type — `image_url`, `image`, `input_audio`, `document`, `tool_r
 | `tools[].function.strict` | Boolean; `true` requires recursive closed objects with every property required |
 | `tool_choice` | Omitted/`auto`, `none`, `required`, or one exact declared function |
 | `parallel_tool_calls` | Boolean; omitted/`true` permits multiple current-turn calls, `false` permits at most one |
-| `functions`, `function_call`, `response_format` | **Rejected with 400** |
+| `response_format` | Omitted/text, `json_object`, or the documented `json_schema` subset |
+| `functions`, `function_call` | **Rejected with 400** |
 | `temperature`, `top_p`, `max_tokens`, `seed`, `stop`, everything else | **Silently ignored** |
 
-Deprecated function fields and structured final output remain fail-closed. They are later milestones, not silently ignored compatibility.
+Deprecated function fields remain fail-closed. Structured final output is available only through the exact formats and schema subset above; unsupported shapes are never silently ignored.
 
 The ignored group is the sharper trap: **sampling parameters have no effect.** `temperature: 0` does not make the provider deterministic, and `max_tokens` does not bound the reply. If your code depends on either, the proxy is the wrong transport for that call path. `max_tokens` is ignored rather than rejected only because the Anthropic API requires it.
 
@@ -206,6 +250,8 @@ The ignored group is the sharper trap: **sampling parameters have no effect.** `
 | Function tools | 128 |
 | Calls in one assistant outcome | 128 |
 | One function parameter schema | 64 KiB |
+| One structured final schema | 64 KiB |
+| Structured JSON nesting / properties | 48 levels / 10,000 properties |
 
 ## Response bodies
 
@@ -316,6 +362,8 @@ data: [DONE]
 
 `stream_options` is accepted for client compatibility but ignored. Tokenless emits no usage frame because it cannot measure provider tokens.
 
+A structured final uses the same full-content delta, `finish_reason: "stop"`, and `[DONE]`. Its `content` is the complete validated JSON text; no usage frame is added.
+
 Anthropic frames, in order: `message_start`, `content_block_start`, `content_block_delta` (carries the full text), `content_block_stop`, `message_delta`, `message_stop`.
 
 Do not build a progress indicator off these. If your UI needs perceived streaming, drive it from a spinner, not from the transport.
@@ -356,7 +404,7 @@ If your client rewrites history at all, prefer `new-conversation` — you get th
 
 Every failure returns the dialect's own error envelope.
 
-For a tool request only, one narrow failure may receive a bounded correction on the same provider and execution strategy: safe marker/chrome framing must already identify this request's protocol, nonce, and an allowed `kind: final` in exact order, while strict JSON parsing fails on final-content escaping. Framing, correlation, duplicate-key, tool-choice, tool-call, argument/schema, and valid-envelope shape failures return `provider_output_protocol_error` immediately. The correction must return the same final outcome and is validated once; transport failures, timeouts, ambiguous submissions, exposed calls, and caller tool execution are never retried.
+For a framed tool or structured-final request, one narrow failure may receive a bounded correction on the same provider and execution strategy: safe marker/chrome framing must already identify this request's protocol, nonce, and an allowed `kind: final` in exact order, while strict JSON parsing fails on outer final-content escaping. The corrected inner structured content must still parse and satisfy the accepted schema. Framing, correlation, duplicate-key, tool-choice, tool-call, argument/schema, inner JSON, and valid-envelope shape failures return `provider_output_protocol_error` immediately. Transport failures, timeouts, ambiguous submissions, exposed calls, and caller tool execution are never retried.
 
 OpenAI, where `param` names the offending field when there is one:
 
@@ -376,9 +424,9 @@ The status is the signal to branch on. Read `code` for the specific cause and tr
 
 | Status | Code | Cause | Retry? |
 | --- | --- | --- | --- |
-| 400 | `invalid_request_error` | Malformed body, tool catalog, tool choice, parallel setting, arguments, or unpaired history | No — fix the request |
+| 400 | `invalid_request_error` | Malformed body, tool catalog, tool choice, response format/schema, arguments, or unpaired history | No — fix the request |
 | 400 | `invalid_json` | Body is empty or not JSON | No |
-| 400 | `unsupported_parameter` | Legacy functions or structured output | No |
+| 400 | `unsupported_parameter` | Legacy `functions` / `function_call`, or Anthropic tools/structured output | No |
 | 401 | `control_auth_missing` | No bearer token | No |
 | 403 | `control_auth_rejected` | Wrong bearer token | No |
 | 404 | `model_not_found` | `model` names a provider that does not exist or is not built in | No |
@@ -386,7 +434,7 @@ The status is the signal to branch on. Read `code` for the specific cause and tr
 | 499 | `client_closed_request` | The client disconnected first | No — nobody is listening |
 | 500 | — | Local daemon fault, message deliberately generic | Yes, once |
 | 502 | `upstream_error` | The provider page produced no visible reply: sign-in blocker, CAPTCHA, or a failed job | Yes, after the user clears the blocker |
-| 502 | `provider_output_protocol_error` | Tool protocol validation failed; only a correlated `kind: final` string-escaping failure receives one bounded correction | No further retry |
+| 502 | `provider_output_protocol_error` | Tool or structured-final validation failed; only a correlated outer `kind: final` string-escaping failure receives one bounded correction | No further retry |
 | 503 | `api_proxy_disabled` | The proxy is off | No — enable it |
 | 503 | `profile_not_ready` | The managed profile needs `tokenless setup` | No — finish setup |
 | 503 | `model_not_available` | The provider is not enabled for the resolved profile | No — enable it |
@@ -406,12 +454,12 @@ Design around these, not against them.
 | Timeout | 10 minutes, then 504. The underlying job may still be running — check `job_id`. |
 | Concurrency | Effectively serial per profile. One browser, one provider tab. |
 | Tool use | One or more modern function calls, non-streaming or terminal SSE; caller executes them. |
-| Structured output | Unsupported, rejected. |
+| Structured output | OpenAI `json_object` and the documented closed-object `json_schema` subset; valid final JSON or explicit error. |
 | Sampling control | Silently ignored. |
 | Token accounting | None. |
 | Multimodal input | Text only. |
 
-Route human-paced Q&A and external-tool turns through this. Keep structured final output and low-latency incremental streaming on another route.
+Route human-paced Q&A, external-tool turns, and bounded structured finals through this. Keep low-latency incremental streaming on another route.
 
 ### Account risk
 

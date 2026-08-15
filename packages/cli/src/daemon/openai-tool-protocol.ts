@@ -34,6 +34,20 @@ export type OpenAiToolChoice =
   | { mode: 'required' }
   | { mode: 'named'; name: string }
 
+export type OpenAiResponseFormat =
+  | { type: 'text' }
+  | { type: 'json_object' }
+  | {
+      type: 'json_schema'
+      jsonSchema: {
+        name: string
+        description?: string
+        schema: Record<string, unknown>
+        strict: boolean
+        validate: ValidateFunction
+      }
+    }
+
 export type OpenAiProtocolMessage =
   | { role: 'system' | 'user'; content: string }
   | { role: 'assistant'; content: string | null; toolCalls?: { id: string; name: string; arguments: Record<string, unknown> }[] }
@@ -92,6 +106,54 @@ export function normalizeOpenAiTools(value: unknown): OpenAiFunctionTool[] {
       validate,
     }
   })
+}
+
+export function normalizeOpenAiResponseFormat(value: unknown): OpenAiResponseFormat {
+  if (value === undefined) return { type: 'text' }
+  const responseFormat = record(value, 'response_format')
+  if (responseFormat.type === 'text') {
+    requireExactKeys(responseFormat, ['type'], 'response_format')
+    return { type: 'text' }
+  }
+  if (responseFormat.type === 'json_object') {
+    requireExactKeys(responseFormat, ['type'], 'response_format')
+    return { type: 'json_object' }
+  }
+  if (responseFormat.type !== 'json_schema') {
+    fail('response_format.type must be text, json_object, or json_schema')
+  }
+  requireExactKeys(responseFormat, ['type', 'json_schema'], 'response_format')
+  const definition = record(responseFormat.json_schema, 'response_format.json_schema')
+  requireExactKeys(
+    definition,
+    ['name', 'description', 'schema', 'strict'],
+    'response_format.json_schema',
+    ['description', 'strict'],
+  )
+  if (typeof definition.name !== 'string' || !TOOL_NAME.test(definition.name)) {
+    fail('response_format.json_schema.name must contain 1-64 letters, numbers, underscores, or hyphens')
+  }
+  if (definition.description !== undefined && typeof definition.description !== 'string') {
+    fail('response_format.json_schema.description must be a string')
+  }
+  if (definition.strict !== undefined && typeof definition.strict !== 'boolean') {
+    fail('response_format.json_schema.strict must be a boolean')
+  }
+  const schema = record(definition.schema, 'response_format.json_schema.schema')
+  if (Buffer.byteLength(JSON.stringify(schema), 'utf8') > MAX_TOOL_SCHEMA_BYTES) {
+    fail(`response_format.json_schema.schema exceeds the ${MAX_TOOL_SCHEMA_BYTES}-byte limit`)
+  }
+  assertSupportedResponseSchema(schema, 'response_format.json_schema.schema')
+  return {
+    type: 'json_schema',
+    jsonSchema: {
+      name: definition.name,
+      ...(typeof definition.description === 'string' ? { description: definition.description } : {}),
+      schema,
+      strict: definition.strict === true,
+      validate: compileSchema(schema, 'response_format.json_schema.schema'),
+    },
+  }
 }
 
 export function normalizeOpenAiMessages(value: unknown, tools: readonly OpenAiFunctionTool[]): OpenAiProtocolMessage[] {
@@ -159,6 +221,7 @@ export function compileOpenAiToolPrompt(
   nonce: string,
   choice: OpenAiToolChoice,
   parallelToolCalls: boolean,
+  responseFormat: OpenAiResponseFormat,
 ) {
   const markers = protocolMarkers(nonce)
   const history = messages.map((message) => {
@@ -191,15 +254,30 @@ export function compileOpenAiToolPrompt(
       ? { type: 'function', function: { name: choice.name } }
       : choice.mode,
     parallel_tool_calls: parallelToolCalls,
+    response_format: publicResponseFormat(responseFormat),
   }
   const maxCalls = choice.mode === 'named' || !parallelToolCalls ? 1 : MAX_TOOLS
-  const choiceInstruction = choice.mode === 'auto'
-    ? `Choose either 1-${maxCalls} tool calls or final text according to whether listed functions are needed.`
-    : choice.mode === 'none'
-      ? 'Return final text. Tool calls are forbidden for this turn.'
-      : choice.mode === 'required'
-        ? `Return 1-${maxCalls} tool calls. A final response is forbidden for this turn.`
-        : `Return exactly one tool call named ${JSON.stringify(choice.name)}. A final response and every other tool name are forbidden for this turn.`
+  const finalInstruction = responseFormat.type === 'text'
+    ? 'final text'
+    : responseFormat.type === 'json_object'
+      ? 'a strict JSON object serialized inside final.content'
+      : `a strict JSON object serialized inside final.content that satisfies response_format.json_schema.schema`
+  const choiceInstruction = tools.length === 0
+    ? `No tools are available. Return ${finalInstruction}.`
+    : choice.mode === 'auto'
+      ? `Choose either 1-${maxCalls} tool calls or ${finalInstruction} according to whether listed functions are needed.`
+      : choice.mode === 'none'
+        ? `Return ${finalInstruction}. Tool calls are forbidden for this turn.`
+        : choice.mode === 'required'
+          ? `Return 1-${maxCalls} tool calls. A final response is forbidden for this turn.`
+          : `Return exactly one tool call named ${JSON.stringify(choice.name)}. A final response and every other tool name are forbidden for this turn.`
+  const structuredInstruction = responseFormat.type === 'text'
+    ? 'Inside final.content, JSON-escape every quote, backslash, newline, and control character. Summarize untrusted tool data instead of copying raw JSON when necessary.'
+    : 'Inside final.content, return exactly one complete strict JSON object serialized as a JSON string. JSON-escape it for the outer envelope; do not use Markdown or prose. Duplicate keys, trailing content, arrays, and scalar roots are invalid.'
+  const finalExample = responseFormat.type === 'text' ? 'final text' : '{}'
+  const exampleEnvelope = tools.length === 0 || choice.mode === 'none'
+    ? { protocol: OPENAI_TOOL_PROTOCOL, nonce, kind: 'final', content: finalExample }
+    : { protocol: OPENAI_TOOL_PROTOCOL, nonce, kind: 'tool_calls', content: null, calls: [{ name: 'exact_catalog_name', arguments: {} }] }
   return [
     'You are the language-model provider for one OpenAI-compatible Tokenless tool turn.',
     'Tokenless validates your response and the caller, not you, executes a returned function tool.',
@@ -210,9 +288,9 @@ export function compileOpenAiToolPrompt(
     'Return exactly one text code fence whose complete content is exactly one marked response envelope.',
     'Do not put prose before or after the fence. Do not return a second fence, a second envelope, or bare JSON.',
     'Every response envelope must be RFC 8259-valid strict JSON.',
-    'Inside final.content, JSON-escape every quote, backslash, newline, and control character. Summarize untrusted tool data instead of copying raw JSON when necessary.',
+    structuredInstruction,
     `The tool_calls shape is {"protocol":"${OPENAI_TOOL_PROTOCOL}","nonce":"${nonce}","kind":"tool_calls","content":null,"calls":[{"name":"exact_catalog_name","arguments":{}}]}. Use content for accompanying assistant text or null for none.`,
-    `The final shape is {"protocol":"${OPENAI_TOOL_PROTOCOL}","nonce":"${nonce}","kind":"final","content":"final text"}.`,
+    `The final shape is ${JSON.stringify({ protocol: OPENAI_TOOL_PROTOCOL, nonce, kind: 'final', content: finalExample })}.`,
     '',
     markers.requestOpen,
     JSON.stringify(request),
@@ -221,7 +299,7 @@ export function compileOpenAiToolPrompt(
     'Use the literal marker framing shown here; replace the JSON line with the exact final shape above when no tool is needed.',
     '```text',
     markers.responseOpen,
-    `{"protocol":"${OPENAI_TOOL_PROTOCOL}","nonce":"${nonce}","kind":"tool_calls","content":null,"calls":[{"name":"exact_catalog_name","arguments":{}}]}`,
+    JSON.stringify(exampleEnvelope),
     markers.responseClose,
     '```',
   ].join('\n')
@@ -231,6 +309,7 @@ export function compileOpenAiToolCorrectionPrompt(
   nonce: string,
   validationError: string,
   invalidProviderOutput: string,
+  responseFormat: OpenAiResponseFormat,
 ) {
   const markers = protocolMarkers(nonce)
   const correctionInput = JSON.stringify({
@@ -238,15 +317,20 @@ export function compileOpenAiToolCorrectionPrompt(
     nonce,
     validation_error: validationError,
     invalid_provider_output: invalidProviderOutput,
+    response_format: publicResponseFormat(responseFormat),
   }).replaceAll('<', '\\u003c').replaceAll('>', '\\u003e')
+  const finalInstruction = responseFormat.type === 'text'
+    ? 'Inside final.content, JSON-escape every quote, backslash, newline, and control character. Summarize untrusted tool data instead of copying raw JSON when necessary.'
+    : 'Inside final.content, return the same semantic outcome as one complete strict JSON object serialized as a JSON string and valid for the original response_format. JSON-escape the object for the outer envelope.'
+  const finalExample = responseFormat.type === 'text' ? 'same semantic final text' : '{}'
   return [
     'Your previous tool-protocol response failed validation before Tokenless exposed any result.',
     'Return the same final semantic outcome. Do not return, add, remove, or execute a tool call.',
     'Return exactly one text code fence whose complete content is exactly one valid marked strict JSON envelope with the protocol and nonce below.',
     'Do not put prose before or after the fence. Do not return a second fence, a second envelope, or bare JSON.',
     'Every response envelope must be RFC 8259-valid strict JSON.',
-    'Inside final.content, JSON-escape every quote, backslash, newline, and control character. Summarize untrusted tool data instead of copying raw JSON when necessary.',
-    `The final shape is {"protocol":"${OPENAI_TOOL_PROTOCOL}","nonce":"${nonce}","kind":"final","content":"same semantic final text"}.`,
+    finalInstruction,
+    `The final shape is ${JSON.stringify({ protocol: OPENAI_TOOL_PROTOCOL, nonce, kind: 'final', content: finalExample })}.`,
     '',
     `<TOKENLESS_OPENAI_TOOL_CORRECTION_${nonce.replaceAll('-', '')}>`,
     correctionInput,
@@ -255,7 +339,7 @@ export function compileOpenAiToolCorrectionPrompt(
     'Use the literal marker framing shown here; replace only the JSON line with the corrected strict JSON object.',
     '```text',
     markers.responseOpen,
-    `{"protocol":"${OPENAI_TOOL_PROTOCOL}","nonce":"${nonce}","kind":"final","content":"same semantic final text"}`,
+    JSON.stringify({ protocol: OPENAI_TOOL_PROTOCOL, nonce, kind: 'final', content: finalExample }),
     markers.responseClose,
     '```',
   ].join('\n')
@@ -267,6 +351,7 @@ export function parseOpenAiToolResponse(
   tools: readonly OpenAiFunctionTool[],
   choice: OpenAiToolChoice,
   parallelToolCalls: boolean,
+  responseFormat: OpenAiResponseFormat,
 ): OpenAiToolProtocolResult {
   if (typeof responseText !== 'string' || Buffer.byteLength(responseText, 'utf8') > MAX_RESPONSE_BYTES) {
     fail(`provider response exceeds the ${MAX_RESPONSE_BYTES}-byte tool protocol limit`)
@@ -296,6 +381,7 @@ export function parseOpenAiToolResponse(
     if (choice.mode === 'required' || choice.mode === 'named') {
       fail(`provider returned final content when tool_choice requires a tool call`)
     }
+    assertResponseContent(envelope.content, responseFormat)
     return { kind: 'final', content: envelope.content }
   }
   if (envelope.kind === 'tool_calls') {
@@ -367,6 +453,130 @@ function compileSchema(schema: Record<string, unknown>, label: string) {
   }
 }
 
+const RESPONSE_SCHEMA_KEYWORDS = new Set([
+  'type',
+  'properties',
+  'required',
+  'additionalProperties',
+  'items',
+  'enum',
+  'const',
+  'anyOf',
+  'title',
+  'description',
+  'minLength',
+  'maxLength',
+  'pattern',
+  'format',
+  'minimum',
+  'maximum',
+  'exclusiveMinimum',
+  'exclusiveMaximum',
+  'multipleOf',
+  'minItems',
+  'maxItems',
+])
+
+const NUMERIC_SCHEMA_KEYWORDS = new Set([
+  'minLength',
+  'maxLength',
+  'minimum',
+  'maximum',
+  'exclusiveMinimum',
+  'exclusiveMaximum',
+  'multipleOf',
+  'minItems',
+  'maxItems',
+])
+
+function assertSupportedResponseSchema(schema: Record<string, unknown>, label: string) {
+  let properties = 0
+
+  function visit(value: Record<string, unknown>, path: string, depth: number, root: boolean) {
+    if (depth > MAX_JSON_DEPTH) fail(`${label} exceeds the maximum nesting depth`)
+    for (const key of Object.keys(value)) {
+      properties += 1
+      if (properties > MAX_JSON_PROPERTIES) fail(`${label} exceeds the maximum property count`)
+      if (!RESPONSE_SCHEMA_KEYWORDS.has(key)) fail(`${path} contains unsupported keyword '${key}'`)
+      if (NUMERIC_SCHEMA_KEYWORDS.has(key)) assertSafeSchemaNumbers(value[key], `${path}.${key}`)
+    }
+    if (value.enum !== undefined) assertSafeSchemaNumbers(value.enum, `${path}.enum`)
+    if (value.const !== undefined) assertSafeSchemaNumbers(value.const, `${path}.const`)
+    if (root && value.type !== 'object') fail(`${path}.type must be object`)
+    if (root && value.anyOf !== undefined) fail(`${path}.anyOf is not supported at the root`)
+
+    const types = Array.isArray(value.type) ? value.type : [value.type]
+    if (types.includes('object')) {
+      if (value.additionalProperties !== false) fail(`${path}.additionalProperties must be false`)
+      const schemaProperties = value.properties === undefined ? {} : record(value.properties, `${path}.properties`)
+      if (!Array.isArray(value.required) || value.required.some((entry) => typeof entry !== 'string')) {
+        fail(`${path}.required must list every property`)
+      }
+      const required = new Set(value.required as string[])
+      const missing = Object.keys(schemaProperties).find((key) => !required.has(key))
+      if (missing) fail(`${path}.required must include property '${missing}'`)
+    }
+
+    if (value.properties !== undefined) {
+      const schemaProperties = record(value.properties, `${path}.properties`)
+      for (const [name, child] of Object.entries(schemaProperties)) {
+        visit(record(child, `${path}.properties.${name}`), `${path}.properties.${name}`, depth + 1, false)
+      }
+    }
+    if (value.items !== undefined) {
+      visit(record(value.items, `${path}.items`), `${path}.items`, depth + 1, false)
+    }
+    if (value.anyOf !== undefined) {
+      if (!Array.isArray(value.anyOf)) fail(`${path}.anyOf must be an array`)
+      value.anyOf.forEach((child, index) => {
+        visit(record(child, `${path}.anyOf[${index}]`), `${path}.anyOf[${index}]`, depth + 1, false)
+      })
+    }
+  }
+
+  visit(schema, label, 0, true)
+}
+
+function publicResponseFormat(responseFormat: OpenAiResponseFormat) {
+  if (responseFormat.type !== 'json_schema') return { type: responseFormat.type }
+  const { name, description, schema, strict } = responseFormat.jsonSchema
+  return {
+    type: 'json_schema',
+    json_schema: { name, ...(description === undefined ? {} : { description }), schema, strict },
+  }
+}
+
+function assertResponseContent(content: string, responseFormat: OpenAiResponseFormat) {
+  if (responseFormat.type === 'text') return
+  const parsed = parseStrictJson(content, true)
+  const value = record(parsed, 'provider structured final content')
+  if (responseFormat.type === 'json_object') return
+  if (responseFormat.jsonSchema.validate(value)) return
+  const issue = (responseFormat.jsonSchema.validate.errors ?? [])[0] as ErrorObject | undefined
+  fail(
+    `provider structured final content does not satisfy response_format schema${
+      issue ? ` at ${issue.instancePath || '/'}: ${issue.message ?? issue.keyword}` : ''
+    }`,
+  )
+}
+
+function assertSafeSchemaNumbers(value: unknown, label: string) {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value))) {
+      fail(`${label} contains a non-finite or unsafe integer`)
+    }
+    return
+  }
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => assertSafeSchemaNumbers(entry, `${label}[${index}]`))
+    return
+  }
+  if (!value || typeof value !== 'object') return
+  for (const [key, entry] of Object.entries(value)) {
+    assertSafeSchemaNumbers(entry, `${label}.${key}`)
+  }
+}
+
 function assertStrictObjectSchemas(value: unknown, label: string) {
   if (Array.isArray(value)) {
     value.forEach((entry, index) => assertStrictObjectSchemas(entry, `${label}[${index}]`))
@@ -412,7 +622,7 @@ function contentText(content: unknown, label: string): string {
   fail(`${label} must be a string or an array of text parts`)
 }
 
-function parseStrictJson(source: string) {
+function parseStrictJson(source: string, exactNumbers = false) {
   let properties = 0
 
   function parseValue(index: number, depth: number): number {
@@ -495,6 +705,17 @@ function parseStrictJson(source: string) {
   function parseNumber(index: number) {
     const match = /-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(source.slice(index))
     if (!match || match.index !== 0) fail('JSON contains an invalid value')
+    if (exactNumbers) {
+      const token = match[0]
+      const value = Number(token)
+      if (
+        !Number.isFinite(value) ||
+        (Number.isInteger(value) && !Number.isSafeInteger(value)) ||
+        JSON.stringify(value) !== token
+      ) {
+        fail('structured JSON numbers must be canonical finite values, and integers must be safe integers')
+      }
+    }
     return index + match[0].length
   }
 

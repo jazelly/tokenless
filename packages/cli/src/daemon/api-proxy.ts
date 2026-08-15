@@ -12,11 +12,13 @@ import {
   compileOpenAiToolCorrectionPrompt,
   compileOpenAiToolPrompt,
   normalizeOpenAiMessages,
+  normalizeOpenAiResponseFormat,
   normalizeOpenAiTools,
   OpenAiToolResponseProtocolError,
   parseOpenAiToolResponse,
   type OpenAiFunctionTool,
   type OpenAiProtocolMessage,
+  type OpenAiResponseFormat,
   type OpenAiToolChoice,
 } from './openai-tool-protocol.js'
 
@@ -67,7 +69,13 @@ type NormalizedRequest = {
   executionMode: 'browser' | 'direct' | null
   providerBackend: ProviderBackend | null
   authContextId: string | null
-  toolProtocol: { nonce: string; tools: OpenAiFunctionTool[]; choice: OpenAiToolChoice; parallelToolCalls: boolean } | null
+  toolProtocol: {
+    nonce: string
+    tools: OpenAiFunctionTool[]
+    choice: OpenAiToolChoice
+    parallelToolCalls: boolean
+    responseFormat: OpenAiResponseFormat
+  } | null
 }
 
 export type ApiProxyCompletion = {
@@ -317,9 +325,10 @@ function requestPrompt(request: NormalizedRequest) {
     ? compileOpenAiToolPrompt(
         request.messages,
         request.toolProtocol.tools,
-      request.toolProtocol.nonce,
-      request.toolProtocol.choice,
-      request.toolProtocol.parallelToolCalls,
+        request.toolProtocol.nonce,
+        request.toolProtocol.choice,
+        request.toolProtocol.parallelToolCalls,
+        request.toolProtocol.responseFormat,
       )
     : flattenTranscript(request.messages)
   assertPromptSize(prompt)
@@ -403,6 +412,7 @@ export function normalizeOpenAiRequest(body: unknown): NormalizedRequest {
   }
   rejectUnsupportedOpenAiFields(record)
   const tools = normalizeToolCatalog(record.tools)
+  const responseFormat = normalizeResponseFormat(record.response_format)
   const choice = normalizeToolChoice(record.tool_choice, tools)
   const parallelToolCalls = normalizeParallelToolCalls(record.parallel_tool_calls)
   const messages = normalizeToolHistory(rawMessages, tools)
@@ -413,7 +423,9 @@ export function normalizeOpenAiRequest(body: unknown): NormalizedRequest {
     stream: record.stream === true,
     requestedModel: String(record.model),
     upstreamModel: model.upstreamModel,
-    toolProtocol: tools.length > 0 ? { nonce: randomUUID(), tools, choice, parallelToolCalls } : null,
+    toolProtocol: tools.length > 0 || responseFormat.type !== 'text'
+      ? { nonce: randomUUID(), tools, choice, parallelToolCalls, responseFormat }
+      : null,
     ...options,
   }
 }
@@ -453,9 +465,9 @@ export function normalizeAnthropicRequest(body: unknown): NormalizedRequest {
   }
 }
 
-/** Deprecated function fields and structured final output remain fail-closed. */
+/** Deprecated function fields remain fail-closed. */
 function rejectUnsupportedOpenAiFields(record: Record<string, unknown>) {
-  for (const field of ['functions', 'function_call', 'response_format']) {
+  for (const field of ['functions', 'function_call']) {
     if (record[field] !== undefined) {
       throw new ApiProxyError(
         400,
@@ -464,6 +476,14 @@ function rejectUnsupportedOpenAiFields(record: Record<string, unknown>) {
         field,
       )
     }
+  }
+}
+
+function normalizeResponseFormat(value: unknown) {
+  try {
+    return normalizeOpenAiResponseFormat(value)
+  } catch (error) {
+    throw badRequest(error instanceof Error ? error.message : 'response_format is invalid', 'response_format')
   }
 }
 
@@ -648,6 +668,7 @@ async function validatedCompletion(
       request.toolProtocol.tools,
       request.toolProtocol.choice,
       request.toolProtocol.parallelToolCalls,
+      request.toolProtocol.responseFormat,
     )
   } catch (error) {
     const validationError = error instanceof Error ? error.message : 'invalid output'
@@ -658,6 +679,7 @@ async function validatedCompletion(
       request.toolProtocol.nonce,
       validationError,
       completion.text,
+      request.toolProtocol.responseFormat,
     )
     if (Buffer.byteLength(prompt, 'utf8') > MAX_PROMPT_BYTES) {
       throw providerOutputProtocolError('bounded correction prompt exceeds the 1 MiB visible-prompt limit')
@@ -670,6 +692,7 @@ async function validatedCompletion(
         request.toolProtocol.tools,
         request.toolProtocol.choice,
         request.toolProtocol.parallelToolCalls,
+        request.toolProtocol.responseFormat,
       )
     } catch (correctedError) {
       throw providerOutputProtocolError(correctedError instanceof Error ? correctedError.message : 'invalid corrected output')
@@ -694,7 +717,7 @@ function providerOutputProtocolError(detail: string) {
   return new ApiProxyError(
     502,
     'provider_output_protocol_error',
-    `Provider response did not satisfy the Tokenless tool protocol: ${detail}.`,
+    `Provider response did not satisfy the Tokenless structured-control protocol: ${detail}.`,
   )
 }
 

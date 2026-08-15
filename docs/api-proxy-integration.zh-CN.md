@@ -6,7 +6,7 @@
 
 Tokenless daemon 暴露了 OpenAI 与 Anthropic 兼容的 HTTP 路由。一个请求会变成 durable job，由 Playwright worker 在已登录的浏览器 profile 中把 prompt 输入真实 provider 页面，再把可见回复按你客户端已经预期的 wire shape 返回。
 
-**这是任务级桥接，不是 API 的即插即用替代品。** 在围绕它做设计之前，请先读 [硬性限制](#硬性限制)。此方案是用吞吐、延迟、streaming 和 tool use 换成本。
+**这是任务级桥接，不是 API 的即插即用替代品。** 在围绕它做设计之前，请先读 [硬性限制](#硬性限制)。此方案是用吞吐、延迟和增量 streaming 换成本。
 
 ## 前置条件
 
@@ -152,6 +152,49 @@ tokenless/<provider>
 
 Tokenless 会在提交 provider 前校验 call id 唯一性、已声明名称、严格 arguments JSON、参数 schema，以及每个调用恰有一个 result。它不会执行调用方 tool，也不会保存 catalog。
 
+#### 结构化最终输出
+
+`response_format` 只约束 assistant 的最终结果。中间 outcome 仍可包含 `tool_calls`；请把这些调用、调用方实际执行所得的 tool result、同一 tool catalog 与同一 response format 一起重发，以请求结构化 final。
+
+```json
+{
+  "type": "json_schema",
+  "json_schema": {
+    "name": "repository_result",
+    "description": "A repository summary.",
+    "strict": true,
+    "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary", "files"],
+      "properties": {
+        "summary": {"type": "string", "minLength": 1},
+        "files": {"type": "array", "items": {"type": "string"}, "maxItems": 10}
+      }
+    }
+  }
+}
+```
+
+- 省略或 `{"type":"text"}` 时保持普通 final text。
+- `{"type":"json_object"}` 会在 `message.content` 中返回且仅返回一个 strict JSON object。
+- `json_schema` 只有在原始 JSON 文本通过 accepted schema 后才原样返回。`name` 遵循 function name 规则（1–64 个字母、数字、`_` 或 `-`）；`description` 必须是 string，`strict` 若存在则必须是 boolean。
+
+Accepted schema 的根节点必须恰好是 `{"type":"object"}`。每个 object（包括 nullable nested object）都必须设置 `additionalProperties: false`，并在 `required` 中列出所有 property；无论 `json_schema.strict` 是 true 还是 false，这条规则都生效。
+
+| 支持的 schema keyword | 范围 |
+| --- | --- |
+| `type`、`properties`、`required`、`additionalProperties` | 支持 string type 与 nullable type array；每个 object 都必须 closed |
+| `items`、`minItems`、`maxItems` | Array |
+| `enum`、`const`、nested `anyOf` | 根节点不接受 `anyOf` |
+| `title`、`description` | Annotation |
+| `minLength`、`maxLength`、`pattern`、`format` | String；`format` 必须为内置 AJV formats validator 已知格式 |
+| `minimum`、`maximum`、`exclusiveMinimum`、`exclusiveMaximum`、`multipleOf` | Number |
+
+所有未列出的 keyword 都会在创建 job 前被拒绝。尤其是 `$defs`、`$ref`、`oneOf`、`allOf`、`not`、conditional 与 `patternProperties` 均不属于此 V1 subset。
+
+Structured JSON number 必须为 finite，并使用 `JSON.stringify(Number(token))` 返回的唯一 spelling；整数必须位于 JavaScript safe integer range 内。当 canonical form 是 `1` 或 `1000` 时，`1.0`、`1e3` 等 noncanonical spelling 会以 `provider_output_protocol_error` 失败。Schema 中 `enum`、`const`、bound、length/item limit 与 `multipleOf` 的数值也采用相同的 finite/safe-integer admission rule，包括 `enum` 或 `const` data 内递归嵌套的 number。
+
 ### Anthropic
 
 ```json
@@ -189,10 +232,11 @@ Tokenless 会在提交 provider 前校验 call id 唯一性、已声明名称、
 | `tools[].function.strict` | Boolean；`true` 要求递归 closed object 且每个 property 都是 required |
 | `tool_choice` | 省略/`auto`、`none`、`required` 或一个精确的已声明 function |
 | `parallel_tool_calls` | Boolean；省略/`true` 允许当前 turn 返回多个调用，`false` 最多允许一个 |
-| `functions`、`function_call`、`response_format` | **返回 400 拒绝** |
+| `response_format` | 省略/text、`json_object` 或本文记录的 `json_schema` subset |
+| `functions`、`function_call` | **返回 400 拒绝** |
 | `temperature`、`top_p`、`max_tokens`、`seed`、`stop` 及其他全部字段 | **静默忽略** |
 
-旧版 function 字段与结构化最终输出仍会 fail closed。它们属于后续 milestone，不会被静默兼容。
+旧版 function 字段仍会 fail closed。结构化最终输出只支持上文列出的精确 format 与 schema subset；不支持的 shape 绝不会被静默忽略。
 
 被忽略的那组才是更隐蔽的坑：**采样参数完全无效。** `temperature: 0` 不会让 provider 变得确定，`max_tokens` 也不会约束回复长度。如果你的代码依赖其中任何一个，那条调用路径就不该走这个 proxy。`max_tokens` 之所以只被忽略而非拒绝，仅仅因为 Anthropic API 强制要求它。
 
@@ -206,6 +250,8 @@ Tokenless 会在提交 provider 前校验 call id 唯一性、已声明名称、
 | Function tools | 128 |
 | 单个 assistant outcome 的调用数 | 128 |
 | 单个 function parameter schema | 64 KiB |
+| 单个 structured final schema | 64 KiB |
+| Structured JSON 嵌套 / property 数 | 48 层 / 10,000 个 property |
 
 ## 响应体
 
@@ -316,6 +362,8 @@ data: [DONE]
 
 为兼容客户端，`stream_options` 会被接受但忽略。Tokenless 无法计量 provider token，因此不会发出 usage 帧。
 
+Structured final 使用同样的 full-content delta、`finish_reason: "stop"` 与 `[DONE]`。其中 `content` 是完整且已校验的 JSON 文本；不会附加 usage frame。
+
 Anthropic 帧，按顺序：`message_start`、`content_block_start`、`content_block_delta`（携带完整文本）、`content_block_stop`、`message_delta`、`message_stop`。
 
 不要基于这些帧做进度指示。如果 UI 需要"正在输出"的观感，请用 spinner 驱动，而不是靠传输层。
@@ -356,7 +404,7 @@ Tokenless 会对**除最后一条 user message 之外**的全部消息做指纹�
 
 所有失败都会按对应方言的错误信封返回。
 
-仅对 tool 请求，一种狭窄 failure 可在同一 provider 与 execution strategy 上获得 bounded correction：安全 marker/chrome framing 必须已按精确顺序识别本请求的 protocol、nonce 与当前允许的 `kind: final`，而 strict JSON parsing 失败于 final-content escaping。Framing、correlation、duplicate-key、tool-choice、tool-call、arguments/schema 与 valid-envelope shape failure 会立即返回 `provider_output_protocol_error`。Correction 必须返回同一 final outcome，并且只校验一次；transport failure、timeout、ambiguous submission、已暴露 call 与调用方 tool execution 都不会重试。
+对于 framed tool 或 structured-final 请求，一种狭窄 failure 可在同一 provider 与 execution strategy 上获得 bounded correction：安全 marker/chrome framing 必须已按精确顺序识别本请求的 protocol、nonce 与当前允许的 `kind: final`，而 strict JSON parsing 失败于 outer final-content escaping。Correction 后的 inner structured content 仍必须成功解析并满足 accepted schema。Framing、correlation、duplicate-key、tool-choice、tool-call、arguments/schema、inner JSON 与 valid-envelope shape failure 会立即返回 `provider_output_protocol_error`。Transport failure、timeout、ambiguous submission、已暴露 call 与调用方 tool execution 都不会重试。
 
 OpenAI，其中 `param` 会在可定位时指出出错字段：
 
@@ -376,9 +424,9 @@ Anthropic：
 
 | 状态码 | Code | 根因 | 可否重试 |
 | --- | --- | --- | --- |
-| 400 | `invalid_request_error` | 请求体、tool catalog、tool choice、parallel 设置、arguments 或历史配对错误 | 否 —— 修正请求 |
+| 400 | `invalid_request_error` | 请求体、tool catalog、tool choice、response format/schema、arguments 或历史配对错误 | 否 —— 修正请求 |
 | 400 | `invalid_json` | 请求体为空或不是 JSON | 否 |
-| 400 | `unsupported_parameter` | 旧版 functions 或结构化输出 | 否 |
+| 400 | `unsupported_parameter` | 旧版 `functions` / `function_call`，或 Anthropic tools/structured output | 否 |
 | 401 | `control_auth_missing` | 缺少 bearer token | 否 |
 | 403 | `control_auth_rejected` | bearer token 错误 | 否 |
 | 404 | `model_not_found` | `model` 指向不存在或未内置的 provider | 否 |
@@ -386,7 +434,7 @@ Anthropic：
 | 499 | `client_closed_request` | 客户端先断开了连接 | 否 —— 已无接收方 |
 | 500 | — | 本地 daemon 故障，message 刻意保持通用 | 可重试一次 |
 | 502 | `upstream_error` | provider 页面没有产生可见回复：登录 blocker、CAPTCHA 或 job 失败 | 用户清除 blocker 后可重试 |
-| 502 | `provider_output_protocol_error` | Tool protocol 校验失败；只有 correlated `kind: final` string-escaping failure 会获得一次 bounded correction | 不再重试 |
+| 502 | `provider_output_protocol_error` | Tool 或 structured-final 校验失败；只有 correlated outer `kind: final` string-escaping failure 会获得一次 bounded correction | 不再重试 |
 | 503 | `api_proxy_disabled` | proxy 未开启 | 否 —— 请先开启 |
 | 503 | `profile_not_ready` | managed profile 需要先执行 `tokenless setup` | 否 —— 请先完成 setup |
 | 503 | `model_not_available` | 该 provider 未在解析出的 profile 上启用 | 否 —— 请先启用 |
@@ -406,12 +454,12 @@ Anthropic：
 | 超时 | 10 分钟，随后返回 504。底层 job 可能仍在运行——请用 `job_id` 查询。 |
 | 并发 | 单 profile 基本串行。一个浏览器、一个 provider 标签页。 |
 | Tool use | 支持一个或多个现代 function calls，可使用非流式或终态 SSE；由调用方执行。 |
-| 结构化输出 | 不支持，直接拒绝。 |
+| 结构化输出 | 支持 OpenAI `json_object` 与本文记录的 closed-object `json_schema` subset；返回 valid final JSON 或明确错误。 |
 | 采样控制 | 静默忽略。 |
 | Token 计量 | 无。 |
 | 多模态输入 | 仅文本。 |
 
-可把人类节奏的一问一答和外部 tool turn 放到这条通道上。结构化最终输出与低延迟增量 streaming 仍应走其他 route。
+可把人类节奏的一问一答、外部 tool turn 与 bounded structured final 放到这条通道上。低延迟增量 streaming 仍应走其他 route。
 
 ### 账号风险
 

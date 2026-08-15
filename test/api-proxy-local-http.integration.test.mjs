@@ -189,6 +189,74 @@ test('api proxy accepts every single-call tool choice and recursive strict schem
   })
 })
 
+test('api proxy accepts text and structured final formats with or without complete tool history before profile readiness', async () => {
+  await withDaemon(async (daemon) => {
+    await enableApiProxy(daemon.homeDir)
+    const responseFormats = [
+      { type: 'text' },
+      { type: 'json_object' },
+      {
+        type: 'json_schema',
+        json_schema: {
+          name: 'repository_result',
+          description: 'A closed nested repository result.',
+          strict: false,
+          schema: {
+            type: 'object',
+            title: 'Repository result',
+            description: 'Accepted response fields.',
+            additionalProperties: false,
+            required: ['summary', 'metrics', 'tags', 'status'],
+            properties: {
+              summary: { type: 'string', minLength: 1, maxLength: 200, pattern: '^.+$', format: 'email' },
+              metrics: {
+                type: 'object',
+                additionalProperties: false,
+                required: ['score'],
+                properties: {
+                  score: { type: 'number', minimum: 0, maximum: 10, exclusiveMinimum: -1, exclusiveMaximum: 11, multipleOf: 0.5 },
+                },
+              },
+              tags: { type: 'array', minItems: 1, maxItems: 3, items: { type: 'string', enum: ['source', 'test'] } },
+              status: { anyOf: [{ type: 'string', const: 'ok' }, { type: 'null' }] },
+            },
+          },
+        },
+      },
+    ]
+    const tool = functionTool('read_file')
+    const completedHistory = [
+      { role: 'user', content: 'Read package.json and summarize it.' },
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [{
+          id: 'call_read',
+          type: 'function',
+          function: { name: 'read_file', arguments: '{"path":"package.json"}' },
+        }],
+      },
+      { role: 'tool', tool_call_id: 'call_read', content: '{"name":"tokenless"}' },
+    ]
+    for (const responseFormat of responseFormats) {
+      for (const request of [
+        { messages: [{ role: 'user', content: 'Return the requested final shape.' }] },
+        { messages: completedHistory, tools: [tool], tool_choice: 'auto' },
+      ]) {
+        const response = await call(daemon, 'POST', '/v1/openai/chat/completions', {
+          model: 'tokenless/chatgpt',
+          ...request,
+          response_format: responseFormat,
+        })
+        assert.equal(response.status, 409, JSON.stringify(responseFormat))
+        assert.equal(response.body.error.code, 'profile_not_configured', JSON.stringify(responseFormat))
+      }
+    }
+    const jobs = await call(daemon, 'GET', '/jobs')
+    assert.equal(jobs.body.length, 0)
+  })
+})
+
 test('api proxy rejects malformed tool catalogs and history before creating a job', async () => {
   await withDaemon(async (daemon) => {
     await enableApiProxy(daemon.homeDir)
@@ -369,13 +437,12 @@ test('api proxy rejects malformed tool catalogs and history before creating a jo
   })
 })
 
-test('api proxy keeps legacy structured output unsupported and rejects malformed parallel control', async () => {
+test('api proxy rejects deprecated function fields and malformed parallel control', async () => {
   await withDaemon(async (daemon) => {
     await enableApiProxy(daemon.homeDir)
     const cases = [
       ['functions', []],
       ['function_call', 'auto'],
-      ['response_format', { type: 'json_object' }],
       ['parallel_tool_calls', 'false'],
     ]
     for (const [field, value] of cases) {
@@ -392,6 +459,110 @@ test('api proxy keeps legacy structured output unsupported and rejects malformed
       )
       assert.equal(response.body.error.param, field, field)
     }
+  })
+})
+
+test('api proxy rejects malformed and unsupported structured output schemas before creating a job', async () => {
+  await withDaemon(async (daemon) => {
+    await enableApiProxy(daemon.homeDir)
+    const closedSchema = {
+      type: 'object',
+      additionalProperties: false,
+      required: ['value'],
+      properties: { value: { type: 'string' } },
+    }
+    const cases = [
+      { name: 'non-object response format', responseFormat: null },
+      { name: 'unknown response type', responseFormat: { type: 'yaml' } },
+      { name: 'text extra field', responseFormat: { type: 'text', strict: true } },
+      { name: 'json object extra field', responseFormat: { type: 'json_object', schema: {} } },
+      { name: 'missing json schema definition', responseFormat: { type: 'json_schema' } },
+      {
+        name: 'invalid schema name',
+        responseFormat: { type: 'json_schema', json_schema: { name: 'contains spaces', schema: closedSchema } },
+      },
+      {
+        name: 'non-string description',
+        responseFormat: { type: 'json_schema', json_schema: { name: 'result', description: 1, schema: closedSchema } },
+      },
+      {
+        name: 'non-boolean strict',
+        responseFormat: { type: 'json_schema', json_schema: { name: 'result', strict: 'true', schema: closedSchema } },
+      },
+      {
+        name: 'root is not exactly object',
+        responseFormat: { type: 'json_schema', json_schema: { name: 'result', schema: { type: ['object', 'null'] } } },
+      },
+      {
+        name: 'unclosed root object',
+        responseFormat: { type: 'json_schema', json_schema: { name: 'result', schema: { ...closedSchema, additionalProperties: true } } },
+      },
+      {
+        name: 'unclosed nested object',
+        responseFormat: {
+          type: 'json_schema',
+          json_schema: {
+            name: 'result',
+            schema: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['nested'],
+              properties: { nested: { type: 'object', properties: {}, required: [] } },
+            },
+          },
+        },
+      },
+      {
+        name: 'root anyOf',
+        responseFormat: { type: 'json_schema', json_schema: { name: 'result', schema: { ...closedSchema, anyOf: [closedSchema] } } },
+      },
+      {
+        name: 'unsupported oneOf',
+        responseFormat: { type: 'json_schema', json_schema: { name: 'result', schema: { ...closedSchema, oneOf: [closedSchema] } } },
+      },
+      {
+        name: 'unsupported local ref',
+        responseFormat: { type: 'json_schema', json_schema: { name: 'result', schema: { ...closedSchema, $ref: '#/$defs/result' } } },
+      },
+      {
+        name: 'unsafe integer schema bound',
+        responseFormat: {
+          type: 'json_schema',
+          json_schema: {
+            name: 'result',
+            schema: {
+              ...closedSchema,
+              properties: { value: { type: 'number', maximum: 9007199254740992 } },
+            },
+          },
+        },
+      },
+      {
+        name: 'unsafe integer nested inside schema const',
+        responseFormat: {
+          type: 'json_schema',
+          json_schema: {
+            name: 'result',
+            schema: {
+              ...closedSchema,
+              properties: { value: { const: { nested: [9007199254740992] } } },
+            },
+          },
+        },
+      },
+    ]
+    for (const entry of cases) {
+      const response = await call(daemon, 'POST', '/v1/openai/chat/completions', {
+        model: 'tokenless/chatgpt',
+        messages: [{ role: 'user', content: 'hello' }],
+        response_format: entry.responseFormat,
+      })
+      assert.equal(response.status, 400, entry.name)
+      assert.equal(response.body.error.code, 'invalid_request_error', entry.name)
+      assert.equal(response.body.error.param, 'response_format', entry.name)
+    }
+    const jobs = await call(daemon, 'GET', '/jobs')
+    assert.equal(jobs.body.length, 0)
   })
 })
 
