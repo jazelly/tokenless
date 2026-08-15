@@ -329,6 +329,8 @@ Lifecycle note（2026-08-15）：fresh review 发现 JS number rounding 可让�
 
 这条 lane证明 model通过 DSH tools获得本地事实，而不是只会输出合法 JSON。
 
+Lifecycle note（2026-08-15）：固定 revision `47f943859bef60e4160492346772ded9b24f765a` 的 unmodified built DSH 已通过 packaged Tokenless 与真实 DeepSeek browser route，在 clean Tokenless checkout 中先 `grep`、再 targeted `read` `packages/cli/src/daemon/api-proxy.ts`，随后把两项 matching tool results带入下一模型轮次。最终回答准确识别 `structuredControlRequirements`、`autoPublicCallId` 与 bounded correction 的 `fallbackRoutes: []` settled-provider约束；run前后两个 repository均无 diff。[脱敏证据](../evidence/dsh-tokenless-repository-grounding-2026-08-15.md)记录 session digest、call/result ids、三项 Tokenless job关联和此前未达标的自然尝试。该 lane使用现有 `llm-deepseek` adapter；通用 `llm-pi-ai` custom-provider route与 SWE cohort仍未由此证明。
+
 ### Evidence lane B：当前 SWE-rebench task cohort
 
 DSH 长链能力使用 [SWE-rebench v2](https://arxiv.org/abs/2602.23866) 的当前公开可执行数据面；目前可从 [Harbor `swe-rebench/swe-rebench-leaderboard`](https://hub.harborframework.com/datasets/swe-rebench/swe-rebench-leaderboard/latest) 获得持续更新、带预构建 image 的真实 GitHub issue/PR task。`latest` 是发现入口，不是可重复版本：开始 acceptance run 时必须解析并冻结 immutable dataset/artifact revision、container digest、monthly split 与 instance ids，整轮不得漂移。
