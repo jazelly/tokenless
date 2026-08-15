@@ -13,7 +13,7 @@ Both runs used the real ChatGPT website and provider network. Neither used provi
 
 ## Shared boundary
 
-The protocol package owns only strict JSON parsing, AJV 2020 compile/validate setup, and exactly-one marker extraction. The Universal API retains its OpenAI tool choice, correction, and structured-output subset; the Harness retains its `action_batch`, Skill/need, and local execution semantics.
+At this historical M6 run, the protocol package owned strict JSON parsing, AJV 2020 compile/validate setup, and the Harness's exactly-one marker extraction. The current Universal API shares only the strict parser and AJV setup; it uses strict whole-response JSON instead of marker extraction. The Universal API retains its OpenAI tool choice, correction, and structured-output subset; the Harness retains its `action_batch`, Skill/need, and local execution semantics.
 
 The public CLI bundles only `openai-tool-protocol.js`. An offline tarball install imported that module successfully without installing or resolving the private protocol workspace package.
 

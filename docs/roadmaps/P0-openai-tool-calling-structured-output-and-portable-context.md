@@ -203,8 +203,8 @@ Responses full-input replay不依赖ledger：caller显式回传的function calls
 | --- | --- | --- | --- |
 | `native_tool_call` | provider-native tool schema | typed provider call blocks/events | Provider framing + Tokenless validation |
 | `native_json_schema` | provider-native schema mode | typed/guaranteed JSON content | Provider framing + Tokenless validation |
-| `prompt_tool_envelope` | compiled catalog + protocol prompt | marked strict JSON envelope | Tokenless compiler/parser/validator |
-| `prompt_json_envelope` | compiled response schema + protocol prompt | marked strict JSON final envelope | Tokenless compiler/parser/validator |
+| `prompt_tool_envelope` | compiled catalog + constrained decision prompt | strict whole-response JSON object | Tokenless compiler/parser/validator |
+| `prompt_json_envelope` | compiled response schema + constrained decision prompt | strict whole-response JSON final object | Tokenless compiler/parser/validator |
 | `unsupported` | request rejected before submission | machine-readable capability error | Tokenless router |
 
 Capability metadata还必须说明：
@@ -221,27 +221,27 @@ Router 必须按本次 request 推导完整 requirement set，再选择 strategy
 
 ## Prompt-Emulated Structured Control
 
-纯语言网页模型的 compiler 必须把以下内容作为一个高优先级 protocol frame 交付：
+纯语言网页模型的 compiler 必须把以下内容作为一个受限 JSON decision request 交付：
 
-1. protocol version、turn nonce 与唯一 markers；
+1. protocol version 与 turn nonce；
 2. 本次 caller 提供的 exact tool catalog；
 3. `tool_choice`、multiple-call 与 final-output constraints；
-4. canonical history，其中 user/tool content 明确标记为 untrusted data；
+4. canonical history，作为 quoted conversation data；
 5. 两个互斥输出分支：`tool_calls` 或 `final`；
-6. exact JSON shapes 与禁止额外 executable envelope 的规则。
+6. exact JSON fields，以及禁止 prose、marker wrapper 或额外 fence 的 whole-response rule。
 
 Parser 必须：
 
 - 限制 response bytes、JSON depth、property count 与 call count；
-- 要求 exactly one marker pair 和 exactly one envelope；
+- 要求 exactly one whole-response JSON object；只允许 bare JSON，或一对完整的 `json`/`text` code fence；
 - 验证 protocol、turn 与 nonce；
 - 拒绝 duplicate keys、unknown required-shape fields 与 trailing executable content；
 - 按本次 catalog 验证 tool name；
 - 验证 arguments 是 JSON object，并在 strict contract 下执行 schema validation；
 - 由 Tokenless 分配 public call ids，不信任模型选择 public identity；
-- 将 final envelope 解包为 caller 要求的 plain text 或 exact JSON content，不泄漏内部 framing。
+- 将 final response object 解包为 caller 要求的 plain text 或 exact JSON content，不泄漏内部 framing。
 
-Web Agent Harness 现有 strict parser、JSON Schema validator 与 framing 规则是实现起点。API-specific envelope 不携带 `skillLoads`、`needs`、mission persistence 或 tool execution dependencies。
+Web Agent Harness 现有 strict parser、JSON Schema validator 与 framing 规则是实现起点。API-specific response object 不携带 `skillLoads`、`needs`、mission persistence 或 tool execution dependencies。
 
 ## Validation、Failure 与 Bounded Correction
 
@@ -280,7 +280,9 @@ invalid provider output
 
 Correction 只能发生在 tool call/structured final 尚未暴露给 caller 之前。已经返回给外部 Harness 的 call、已经执行的 tool result、可能已提交的 provider mutation 与 ambiguous provider outcome不得内部重放。每个 admitted correction mechanism 必须在 roadmap lifecycle note 中记录触发它的真实重复失败。
 
-Lifecycle note（2026-08-15）：同一 DeepSeek prompt-emulated strategy 在两个真实 continuation run 中，都返回了 markers、nonce 与 `kind: final` 正确、但把 tool result 的 raw JSON 双引号未转义地复制进 `final.content` 的无效 strict JSON；第二次发生在明确加强 JSON escaping prompt 后。两次都在任何 response 暴露前以 `provider_output_protocol_error` 终止，直接阻塞 TC-002，因此只为安全 framing 已通过、protocol/nonce/`kind: final` prefix 顺序精确匹配、且 strict JSON 因 final string escaping 失败的同类输出，准入一次 same-provider/same-strategy bounded correction。Correction 只请求同一 final outcome，携带本轮 protocol/nonce、validation error 与受大小限制的 invalid output，校验一次后成功或终止；framing、correlation、duplicate-key、tool-call、arguments/schema、valid-envelope shape、transport error、ambiguous submission、已暴露 call 与 tool execution 均不重试。
+Historical lifecycle note（pre-raw-JSON repair, 2026-08-15）：同一 DeepSeek prompt-emulated strategy 在两个真实 continuation run 中，都返回了当时的 markers、nonce 与 `kind: final` 正确、但把 tool result 的 raw JSON 双引号未转义地复制进 `final.content` 的无效 strict JSON；第二次发生在明确加强 JSON escaping prompt 后。两次都在任何 response 暴露前以 `provider_output_protocol_error` 终止，直接阻塞 TC-002，因此只为 protocol/nonce/`kind: final` prefix 顺序精确匹配、且 strict JSON 因 final string escaping 失败的同类输出，准入一次 same-provider/same-strategy bounded correction。Correction 只请求同一 final outcome，携带本轮 protocol/nonce、validation error 与受大小限制的 invalid output，校验一次后成功或终止；prose、marker wrapper、multiple fence、correlation、duplicate-key、tool-call、arguments/schema、valid-response shape、transport error、ambiguous submission、已暴露 call 与 tool execution 均不重试。
+
+Lifecycle note（2026-08-15）：API prompt 改为普通 constrained JSON decision task，删除 identity/role-spoofing、outer execution-authority 与 XML-like marker framing；parser 只接受 bare strict JSON 或一对完整的 `json`/`text` fence。三次 packaged-daemon Gemini named strict-tool submission 均未观察到 prompt-injection/authority refusal，但均在 JSON-like output 前加入 prose，故以 `provider_output_protocol_error` fail closed；Gemini prompt-emulated tool selection 保持 unadvertised。真实 DeepSeek named strict `read_local_file` call 则通过 public boundary，返回一个 schema-valid declared call；caller 的实际本地读取 continuation 生成 malformed strict JSON 并明确失败。完整脱敏记录见[Prompt framing evidence](../evidence/openai-tool-prompt-framing-2026-08-15.md)。
 
 ## 本机 DSH Interoperability 与真实 SWE Task 证据
 
@@ -449,7 +451,7 @@ Exit: 三个冻结的真实 SWE task 都有完整 DSH/Tokenless/tool/repository/
 ### Phase 4: JSON Object and JSON Schema Guarantees
 
 - 支持 `response_format: json_object` 与 accepted `json_schema`/`strict` shape。
-- Prompt-emulated provider使用 final envelope；native provider结果仍经过同一 validator。
+- Prompt-emulated provider使用 final response object；native provider结果仍经过同一 validator。
 - Tools 与 structured final可共存：中间 turn返回 calls，最终 turn content满足 response schema。
 - 无效 JSON 只产生明确 protocol error；按真实重复失败证据决定是否 admitted one-shot correction。
 - 验证 JSON string、number precision、duplicate keys、Unicode、nesting/size limits与 schema subset behavior。
@@ -458,7 +460,7 @@ Exit: 任何 successful structured response都能由标准 JSON parser解析并�
 
 ### Phase 5: Standalone Harness Contract Convergence
 
-Lifecycle note（2026-08-15）：strict JSON parser、AJV 2020 compile/validate setup 与 exactly-one marker extraction 已收敛到 `tokenless-web-ai-interaction-protocol`，并由 Universal API 与 Standalone Harness 直接使用。Harness 仍独立拥有 `action_batch`、Skill/need 与 tool execution；API 仍独立拥有 OpenAI choice、bounded correction 和 structured-output subset。Public CLI 只对 `openai-tool-protocol` 做 narrow Vite bundling，offline packed install 不依赖 private workspace package。
+Lifecycle note（2026-08-15）：Universal API 与 Standalone Harness 共享 `tokenless-web-ai-interaction-protocol` 的 strict JSON parser 与 AJV 2020 compile/validate setup。该日期较早的 Harness grammar 也使用 exactly-one marker extraction；当前 Universal API 改为 strict whole-response JSON，故不共享该 extraction。Harness 仍独立拥有 `action_batch`、Skill/need 与 tool execution；API 仍独立拥有 OpenAI choice、bounded correction 和 structured-output subset。Public CLI 只对 `openai-tool-protocol` 做 narrow Vite bundling，offline packed install 不依赖 private workspace package。
 
 同一 packaged ChatGPT strategy 的 Universal API 与 Standalone Harness real-provider run、首次 API failure 和独立 DeepSeek diagnostic 记录在[脱敏证据](../evidence/shared-structured-control-chatgpt-2026-08-15.md)。
 

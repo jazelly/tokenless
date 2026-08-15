@@ -137,6 +137,8 @@ Modern OpenAI function tools are accepted for non-streaming and streaming reques
 - `"required"`: return at least one declared call; `parallel_tool_calls: false` limits calls to one.
 - `{"type":"function","function":{"name":"read_file"}}`: return exactly one call of that declared function, regardless of the parallel setting.
 
+Prompt-emulated tool support is strategy-specific. Gemini prompt-emulated tool selection is not currently advertised: three real packaged-daemon submissions observed no prompt-injection refusal, but each prepended prose before an otherwise JSON-like answer and therefore failed the strict whole-response boundary. See the [redacted framing evidence](evidence/openai-tool-prompt-framing-2026-08-15.md).
+
 For `strict: true`, the parameters root must be an object. Every object schema, including nullable nested objects, must set `additionalProperties: false` and list every property key in `required`; represent optional fields with a nullable type. Tokenless rejects malformed strict schemas before provider submission and validates returned arguments against the declared schema.
 
 The caller executes returned tools. On the next request, resend the same catalog, the assistant call array in its original order, and one contiguous result for every call. Results may arrive in a different order when their ids make the pairing unambiguous:
@@ -412,7 +414,7 @@ What is 2+2?
 
 Stateless and predictable. Identical requests never depend on prior local state. The cost is that a long chat resends its whole history every turn, and the provider sees no continuity between turns.
 
-Tool requests always use this request-scoped full-history behavior, regardless of the configured conversation mode. The catalog, nonce, and untrusted canonical history are compiled into a strict one-turn protocol envelope.
+Tool requests always use this request-scoped full-history behavior, regardless of the configured conversation mode. The catalog, nonce, and quoted canonical history are compiled into one strict JSON decision request.
 
 **Client implication:** send full history on every call, exactly as you would to a real API. Nothing else to do.
 
@@ -430,7 +432,7 @@ If your client rewrites history at all, prefer `new-conversation` — you get th
 
 Every failure returns the dialect's own error envelope.
 
-For a framed tool or structured-final request, one narrow failure may receive a bounded correction on the same provider and execution strategy: safe marker/chrome framing must already identify this request's protocol, nonce, and an allowed `kind: final` in exact order, while strict JSON parsing fails on outer final-content escaping. The corrected inner structured content must still parse and satisfy the accepted schema. Framing, correlation, duplicate-key, tool-choice, tool-call, argument/schema, inner JSON, and valid-envelope shape failures return `provider_output_protocol_error` immediately. Transport failures, timeouts, ambiguous submissions, exposed calls, and caller tool execution are never retried.
+For a tool or structured-final request, one narrow failure may receive a bounded correction on the same provider and execution strategy: bare raw JSON, or the unwrapped content of one permitted complete fence, must already start with this request's exact protocol, nonce, and `kind: final` string fields, while strict parsing fails only on outer final-content escaping. The corrected inner structured content must still parse and satisfy the accepted schema. Prose, multiple fences, correlation, duplicate-key, tool-choice, tool-call, argument/schema, inner JSON, and valid-response shape failures return `provider_output_protocol_error` immediately. Transport failures, timeouts, ambiguous submissions, exposed calls, and caller tool execution are never retried.
 
 OpenAI, where `param` names the offending field when there is one:
 
@@ -481,7 +483,7 @@ Design around these, not against them.
 | Concurrency | Effectively serial per profile. One browser, one provider tab. |
 | Tool use | One or more modern function calls, non-streaming or terminal SSE; caller executes them. |
 | Structured output | OpenAI `json_object` and the documented closed-object `json_schema` subset; valid final JSON or explicit error. |
-| Shared validation boundary | The Universal API and Standalone Web Agent Harness use the same strict JSON parser, JSON Schema validator setup, and exactly-one marker extraction. Their envelopes and execution ownership remain separate. |
+| Shared validation boundary | The Universal API and Standalone Web Agent Harness use the same strict JSON parser and JSON Schema validator setup. Their response grammars and execution ownership remain separate. |
 | Sampling control | Silently ignored. |
 | Token accounting | None. |
 | Multimodal input | Text only. |

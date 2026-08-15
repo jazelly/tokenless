@@ -137,6 +137,8 @@ tokenless/<provider>
 - `"required"`：必须返回至少一个已声明调用；`parallel_tool_calls: false` 会把调用数限制为一个。
 - `{"type":"function","function":{"name":"read_file"}}`：无论 parallel 设置为何，都必须且只能返回该已声明 function 的一个调用。
 
+Prompt-emulated tool support 取决于具体 strategy。Gemini 的 prompt-emulated tool selection 当前不作支持声明：三次真实 packaged-daemon submission 均未观察到 prompt-injection refusal，但每次都在 otherwise JSON-like answer 前添加 prose，因此在 strict whole-response boundary 失败。见[脱敏 framing evidence](evidence/openai-tool-prompt-framing-2026-08-15.md)。
+
 使用 `strict: true` 时，parameters 根节点必须是 object。每个 object schema（包括可空的嵌套 object）都必须设置 `additionalProperties: false`，并在 `required` 中列出所有 property key；可选字段用 nullable type 表示。Tokenless 会在提交 provider 前拒绝不合规的 strict schema，并按声明 schema 校验返回 arguments。
 
 调用方负责执行返回的 tool。下一次请求应重发同一 catalog、保持原顺序的 assistant call array，以及每个调用各一个连续的结果。当 id 能无歧义配对时，result 可以采用不同顺序：
@@ -412,7 +414,7 @@ What is 2+2?
 
 无状态、可预测。相同请求不依赖任何本地既有状态。代价是长对话每轮都要重发全部历史，且 provider 看不到轮次之间的连续性。
 
-无论配置了哪种 conversation mode，tool 请求都会使用这种 request-scoped 完整历史行为。Catalog、nonce 与不可信 canonical history 会被编译为严格的单轮 protocol envelope。
+无论配置了哪种 conversation mode，tool 请求都会使用这种 request-scoped 完整历史行为。Catalog、nonce 与 quoted canonical history 会被编译为一条严格的 JSON decision request。
 
 **客户端要做的：** 每次调用都发送完整历史，和面对真实 API 时完全一样。除此之外无需处理。
 
@@ -430,7 +432,7 @@ Tokenless 会对**除最后一条 user message 之外**的全部消息做指纹�
 
 所有失败都会按对应方言的错误信封返回。
 
-对于 framed tool 或 structured-final 请求，一种狭窄 failure 可在同一 provider 与 execution strategy 上获得 bounded correction：安全 marker/chrome framing 必须已按精确顺序识别本请求的 protocol、nonce 与当前允许的 `kind: final`，而 strict JSON parsing 失败于 outer final-content escaping。Correction 后的 inner structured content 仍必须成功解析并满足 accepted schema。Framing、correlation、duplicate-key、tool-choice、tool-call、arguments/schema、inner JSON 与 valid-envelope shape failure 会立即返回 `provider_output_protocol_error`。Transport failure、timeout、ambiguous submission、已暴露 call 与调用方 tool execution 都不会重试。
+对于 tool 或 structured-final 请求，一种狭窄 failure 可在同一 provider 与 execution strategy 上获得 bounded correction：bare raw JSON，或一个允许的完整 fence 经 unwrapped 后的 content，必须已按精确顺序以本请求的 protocol、nonce 与 `kind: final` string fields 开头，而 strict parsing 只失败于 outer final-content escaping。Correction 后的 inner structured content 仍必须成功解析并满足 accepted schema。Prose、multiple fences、correlation、duplicate-key、tool-choice、tool-call、arguments/schema、inner JSON 与 valid-response shape failure 会立即返回 `provider_output_protocol_error`。Transport failure、timeout、ambiguous submission、已暴露 call 与调用方 tool execution 都不会重试。
 
 OpenAI，其中 `param` 会在可定位时指出出错字段：
 
@@ -481,7 +483,7 @@ Anthropic：
 | 并发 | 单 profile 基本串行。一个浏览器、一个 provider 标签页。 |
 | Tool use | 支持一个或多个现代 function calls，可使用非流式或终态 SSE；由调用方执行。 |
 | 结构化输出 | 支持 OpenAI `json_object` 与本文记录的 closed-object `json_schema` subset；返回 valid final JSON 或明确错误。 |
-| 共享校验边界 | Universal API 与 Standalone Web Agent Harness 使用同一 strict JSON parser、JSON Schema validator setup 和 exactly-one marker extraction；两者的 envelope 与执行权仍保持分离。 |
+| 共享校验边界 | Universal API 与 Standalone Web Agent Harness 使用同一 strict JSON parser 和 JSON Schema validator setup；两者的 response grammar 与执行权仍保持分离。 |
 | 采样控制 | 静默忽略。 |
 | Token 计量 | 无。 |
 | 多模态输入 | 仅文本。 |
