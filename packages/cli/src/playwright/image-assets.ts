@@ -11,7 +11,7 @@ export const IMAGE_ASSET_MEDIA_TYPES = Object.freeze(['image/png', 'image/jpeg',
 export const MAX_IMAGE_ASSET_BYTES = 32 * 1024 * 1024
 
 export type ImageAssetMediaType = typeof IMAGE_ASSET_MEDIA_TYPES[number]
-export type ImageAssetProvider = 'arena' | 'meta' | 'chatgpt'
+export type ImageAssetProvider = 'arena' | 'meta' | 'chatgpt' | 'grok'
 
 export type VisibleImageSource = Readonly<{
   url: string
@@ -299,6 +299,15 @@ export async function persistChatGptImageAsset(
   return persistBrowserImageAsset(page, source, identity, index)
 }
 
+export async function persistGrokImageAsset(
+  page: Page,
+  source: VisibleImageSource,
+  identity: Omit<ImageAssetIdentity, 'provider'> & { provider: 'grok' },
+  index: number,
+) {
+  return persistBrowserImageAsset(page, source, identity, index)
+}
+
 /**
  * Read a persisted image by the relative reference returned in a response.
  * The returned bytes are verified again before crossing the daemon boundary.
@@ -370,9 +379,12 @@ function deriveImageConversationId(value: string, provider: ImageAssetProvider) 
     const segments = parsed.pathname.split('/').filter(Boolean)
     const recognized = provider === 'meta'
       ? segments[0] === 'prompt'
-      : segments[0] === 'c' || segments[0] === 'conversation' || segments[0] === 'agent'
-    if (recognized && segments[1]) {
-      return segments[1]
+      : provider === 'grok'
+        ? segments[0] === 'imagine' && segments[1] === 'post'
+        : segments[0] === 'c' || segments[0] === 'conversation' || segments[0] === 'agent'
+    const identityIndex = provider === 'grok' ? 2 : 1
+    if (recognized && segments[identityIndex]) {
+      return segments[identityIndex]
     }
   } catch {
     // The visible page URL is only an identity hint; use the explicit new marker when absent.

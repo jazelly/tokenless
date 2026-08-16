@@ -221,10 +221,19 @@ test('TS daemon rejects raw image jobs that bypass the shared image/download con
       ],
       candidates: [{ provider: 'chatgpt', runtimeEligibility: 'eligible' }],
     })
+    const grokImageDownload = playwright.resolveTaskCapabilityRoute({
+      requirements: [
+        playwright.TASK_CAPABILITIES.CONVERSATION_CHAT,
+        playwright.TASK_CAPABILITIES.IMAGE_GENERATION,
+        playwright.TASK_CAPABILITIES.ARTIFACT_DOWNLOAD,
+      ],
+      candidates: [{ provider: 'grok', runtimeEligibility: 'eligible' }],
+    })
     assert.equal(artifactOnly.ok, true)
     assert.equal(imageDownload.ok, true)
     assert.equal(metaImageDownload.ok, true)
     assert.equal(chatgptImageDownload.ok, true)
+    assert.equal(grokImageDownload.ok, true)
     const valid = playwright.createManagedPlaywrightJobRequest({
       provider: 'arena',
       taskId: 'arena-image-contract-task',
@@ -264,6 +273,20 @@ test('TS daemon rejects raw image jobs that bypass the shared image/download con
     })
     assert.equal(chatgptValid.actions.some((action) => action.action === playwright.VISIBLE_ACTIONS.ARENA_SURFACE_SELECT), false)
     const { context: _chatgptContext, ...chatgptWireBase } = chatgptValid
+    const grokValid = playwright.createManagedPlaywrightJobRequest({
+      provider: 'grok',
+      taskId: 'grok-image-contract-task',
+      capabilityRoute: grokImageDownload.route,
+      browserVisibility: 'headless',
+      actions: [
+        { requestId: 'grok-imagine', action: playwright.VISIBLE_ACTIONS.GROK_IMAGINE_SELECT, payload: { modality: 'image' } },
+        { requestId: 'grok-prompt', action: playwright.VISIBLE_ACTIONS.PROMPT_INPUT, payload: { text: 'contract test' } },
+        { requestId: 'grok-submit', action: playwright.VISIBLE_ACTIONS.PROMPT_SUBMIT, payload: {} },
+        { requestId: 'grok-read', action: playwright.VISIBLE_ACTIONS.RESPONSE_READ, payload: {} },
+      ],
+    })
+    assert.equal(grokValid.actions.some((action) => action.action === playwright.VISIBLE_ACTIONS.GROK_IMAGINE_SELECT), true)
+    const { context: _grokContext, ...grokWireBase } = grokValid
     const cases = [
       {
         provider: 'arena',
@@ -300,6 +323,25 @@ test('TS daemon rejects raw image jobs that bypass the shared image/download con
           actions: chatgptValid.actions.filter((action) => action.action === playwright.VISIBLE_ACTIONS.RESPONSE_READ),
         },
         message: /Image capabilities require prompt\.input, prompt\.submit, and response\.read in order/u,
+      },
+      {
+        provider: 'grok',
+        request_json: {
+          ...grokWireBase,
+          actions: grokValid.actions.filter((action) => action.action !== playwright.VISIBLE_ACTIONS.GROK_IMAGINE_SELECT),
+        },
+        message: /Grok Imagine image capabilities require grok\.imagine\.select with modality image/u,
+      },
+      {
+        provider: 'grok',
+        request_json: {
+          ...grokWireBase,
+          actions: [
+            ...grokValid.actions.filter((action) => action.action !== playwright.VISIBLE_ACTIONS.GROK_IMAGINE_SELECT),
+            grokValid.actions.find((action) => action.action === playwright.VISIBLE_ACTIONS.GROK_IMAGINE_SELECT),
+          ],
+        },
+        message: /before prompt\.input/u,
       },
     ]
     for (const [index, entry] of cases.entries()) {

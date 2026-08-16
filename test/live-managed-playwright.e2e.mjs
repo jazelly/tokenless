@@ -44,6 +44,7 @@ const handlers = {
   'arena-image': arenaImage,
   'meta-image': metaImage,
   'chatgpt-image': chatgptImage,
+  'grok-image': grokImage,
   'arena-code': arenaCode,
   'arena-agent': arenaAgent,
   'arena-video': arenaVideo,
@@ -837,6 +838,39 @@ async function chatgptImage({ provider, journey }) {
     await assertPersistedImageAssets(journey.session, run.page, artifacts)
     assert.equal(await visibleChatGptArtifactCount(run.page, artifacts), artifacts.length)
     assert.equal(await run.page.locator('button[data-testid="stop-button"], button[aria-label*="Stop generating" i]').filter({ visible: true }).count(), 0)
+  } finally {
+    await run.close()
+  }
+}
+
+async function grokImage({ provider, journey }) {
+  assert.equal(provider, 'grok')
+  const run = await journey.run([
+    '--capability', 'image.generation',
+    '--capability', 'artifact.download',
+    '--prompt', 'Generate one flat blue paper airplane icon centered on a plain white background, with no text.',
+  ], 360_000)
+  try {
+    const response = responseResult(run.payload, 'response.read')
+    const artifacts = assertGrokImageArtifacts(response)
+    assert.equal(artifacts.length, 2)
+    await assertPersistedImageAssets(journey.session, run.page, artifacts)
+    await assertGrokVisibleImagePosts(run.page, artifacts)
+    assert.equal(await run.page.locator('button[aria-label="Media generation in progress"]').filter({ visible: true }).count(), 0)
+    assert.equal(new URL(run.page.url()).pathname, `/imagine/post/${artifacts.at(-1).conversationId}`)
+    const database = new DatabaseSync(path.join(journey.session.homeDir, 'tokenless.sqlite3'), { readOnly: true })
+    try {
+      const taskMapping = database.prepare(
+        'SELECT COUNT(*) AS count FROM provider_task_conversations WHERE provider = ? AND task_id = ?',
+      ).get('grok', journey.taskId)
+      assert.equal(taskMapping.count, 0, 'Grok Imagine post URLs must not become task chat mappings')
+      const projectMapping = database.prepare(
+        'SELECT COUNT(*) AS count FROM provider_conversations WHERE provider = ? AND task_id = ?',
+      ).get('grok', journey.taskId)
+      assert.equal(projectMapping.count, 0, 'Grok Imagine post URLs must not become Project chat mappings')
+    } finally {
+      database.close()
+    }
   } finally {
     await run.close()
   }
@@ -1903,6 +1937,34 @@ function assertChatGptImageArtifacts(response) {
   return response.artifacts
 }
 
+function assertGrokImageArtifacts(response) {
+  assert.equal(response?.visibleProof, 'visible-grok-imagine-terminal-image-artifacts-read')
+  assert.ok(Array.isArray(response.artifacts) && response.artifacts.length === 2)
+  assert.ok(response.artifacts.every((artifact) => (
+    artifact?.kind === 'image' &&
+    !Object.prototype.hasOwnProperty.call(artifact, 'url') &&
+    typeof artifact.mediaType === 'string' &&
+    artifact.mediaType === 'image/jpeg' &&
+    typeof artifact.assetRef === 'string' &&
+    artifact.assetRef.startsWith('assets/') &&
+    artifact.downloadAvailable === true &&
+    Number.isSafeInteger(artifact.byteSize) &&
+    artifact.byteSize > 0 &&
+    /^[a-f0-9]{64}$/u.test(artifact.sha256) &&
+    typeof artifact.createdAt === 'string' &&
+    artifact.provider === 'grok' &&
+    typeof artifact.jobId === 'string' &&
+    (artifact.taskId === null || typeof artifact.taskId === 'string') &&
+    /^[A-Za-z0-9_-]+$/u.test(artifact.conversationId) &&
+    Number.isSafeInteger(artifact.width) &&
+    artifact.width === 768 &&
+    Number.isSafeInteger(artifact.height) &&
+    artifact.height === 1152
+  )))
+  assert.equal(new Set(response.artifacts.map((artifact) => artifact.conversationId)).size, 2)
+  return response.artifacts
+}
+
 async function assertArenaPersistedAssets(session, page, artifacts) {
   const daemonToken = (await fs.readFile(path.join(session.homeDir, 'daemon.token'), 'utf8')).trim()
   for (const artifact of artifacts) {
@@ -2031,6 +2093,60 @@ async function visibleChatGptArtifactCount(page, artifacts) {
     count += 1
   }
   return count
+}
+
+async function assertGrokVisibleImagePosts(page, artifacts) {
+  const expected = new Map(artifacts.map((artifact) => [artifact.conversationId, artifact]))
+  for (const [postId, artifact] of expected) {
+    await page.goto(`https://grok.com/imagine/post/${encodeURIComponent(postId)}?scope=asset`, {
+      waitUntil: 'commit',
+      timeout: 60_000,
+    })
+    await page.locator(`main img[src*="/generated/${postId}/"]`).filter({ visible: true }).first().waitFor({
+      state: 'visible',
+      timeout: 60_000,
+    })
+    await page.waitForFunction((expectedPostId) => [...document.querySelectorAll('main img')].some((element) => (
+      element instanceof HTMLImageElement &&
+      (element.currentSrc || element.src).includes(`/generated/${expectedPostId}/`) &&
+      element.naturalWidth > 0 &&
+      element.naturalHeight > 0
+    )), postId, { timeout: 60_000 })
+    const source = await page.locator('main img').filter({ visible: true }).evaluateAll((elements, expectedPostId) => {
+      for (const element of elements) {
+        if (!(element instanceof HTMLImageElement)) continue
+        const candidate = element.currentSrc || element.src
+        if (!candidate.startsWith('https://')) continue
+        try {
+          const parsed = new URL(candidate)
+          if (parsed.hostname === 'assets.grok.com' && parsed.pathname.includes(`/generated/${expectedPostId}/`)) {
+            return {
+              url: candidate,
+              width: element.naturalWidth,
+              height: element.naturalHeight,
+            }
+          }
+        } catch {
+          // Ignore malformed visible images and fail closed below.
+        }
+      }
+      return null
+    }, postId)
+    assert.ok(source, `Grok current post ${postId} must expose its matching main image`)
+    assert.equal(source.width, artifact.width)
+    assert.equal(source.height, artifact.height)
+    const response = await page.request.get(source.url, {
+      timeout: 60_000,
+      failOnStatusCode: false,
+      headers: { referer: page.url() },
+    })
+    assert.equal(response.ok(), true)
+    assert.equal(response.headers()['content-type']?.split(';', 1)[0], artifact.mediaType)
+    const bytes = Buffer.from(await response.body())
+    assert.equal(createHash('sha256').update(bytes).digest('hex'), artifact.sha256)
+    const decoded = await decodeImageBytesInBrowser(page, bytes, artifact.mediaType)
+    assert.deepEqual([decoded.width, decoded.height], [artifact.width, artifact.height])
+  }
 }
 
 async function assertArenaEditSourceDistinct(page, sourceName) {

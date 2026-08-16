@@ -215,6 +215,8 @@ const PRIORITY_VISIBLE_PROVIDER_ACTIONS = new Set([
   'model.select',
   'arena.surface.inspect',
   'arena.surface.select',
+  'grok.imagine.inspect',
+  'grok.imagine.select',
   'effort.inspect',
   'effort.select',
   'qwen.mode.inspect',
@@ -1335,6 +1337,9 @@ async function visibleProviderActionFromArgs(args: CliArgs) {
   if (action.startsWith('arena.') && normalizeProvider(args.provider) !== 'arena') {
     throw usageError('arena_control_unsupported', 'arena actions are available only for the Arena provider.')
   }
+  if (action.startsWith('grok.imagine.') && normalizeProvider(args.provider) !== 'grok') {
+    throw usageError('grok_imagine_unsupported', 'grok.imagine actions are available only for the Grok provider.')
+  }
   if (action.startsWith('deepseek.') && normalizeProvider(args.provider) !== 'deepseek') {
     throw usageError('deepseek_control_unsupported', 'deepseek actions are available only for the DeepSeek provider.')
   }
@@ -1354,6 +1359,7 @@ async function visibleProviderActionFromArgs(args: CliArgs) {
     action === 'auth.status' ||
     action === 'model.inspect' ||
     action === 'arena.surface.inspect' ||
+    action === 'grok.imagine.inspect' ||
     action === 'effort.inspect' ||
     action === 'qwen.mode.inspect' ||
     action === 'deepseek.mode.inspect' ||
@@ -1410,6 +1416,11 @@ async function visibleProviderActionFromArgs(args: CliArgs) {
         modality: normalizeArenaModality(args.arenaModality),
       },
     }
+  }
+
+  if (action === 'grok.imagine.select') {
+    assertProviderActionPayloadOptions(args, new Set())
+    return { action, payload: { modality: 'image' } }
   }
 
   if (action === 'effort.select') {
@@ -1754,13 +1765,14 @@ async function executeDaemonJob({
         replay: 'from_start',
         alternatives: fallbackAlternatives,
       },
-      actions: managedVisibleActions({
+    actions: managedVisibleActions({
         action,
         provider,
         requestId,
         prompt,
         attachments,
         providerControls,
+        requirements: taskCapabilities,
         visibleAction,
         workspace: primaryTarget.resumesConversation ? undefined : workspace,
       }),
@@ -2090,6 +2102,7 @@ function managedVisibleActions({
   prompt,
   attachments,
   providerControls,
+  requirements,
   visibleAction,
   workspace,
 }: {
@@ -2099,6 +2112,7 @@ function managedVisibleActions({
   prompt?: string | undefined
   attachments?: readonly Record<string, unknown>[] | undefined
   providerControls: Record<string, any>
+  requirements: readonly TaskCapabilityId[]
   visibleAction?: { action: string; payload: Record<string, unknown> } | undefined
   workspace?: Record<string, unknown> | undefined
 }) {
@@ -2188,6 +2202,19 @@ function managedVisibleActions({
         mode: providerControls.arenaMode,
         modality: providerControls.arenaModality,
       },
+    })
+  }
+  if (
+    provider === 'grok' &&
+    requirements.some((capability) => (
+      capability === TASK_CAPABILITIES.IMAGE_GENERATION ||
+      capability === TASK_CAPABILITIES.ARTIFACT_DOWNLOAD
+    ))
+  ) {
+    actions.push({
+      requestId: `${requestId}:grok-imagine`,
+      action: VISIBLE_ACTIONS.GROK_IMAGINE_SELECT,
+      payload: { modality: 'image' },
     })
   }
   if (providerControls.qwenMode !== undefined) {

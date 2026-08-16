@@ -488,23 +488,50 @@ function assertImageCapabilityContract(
     capability === TASK_CAPABILITIES.IMAGE_EDIT ||
     capability === TASK_CAPABILITIES.ARTIFACT_DOWNLOAD
   ))
-  if (!requiresArenaImageSurface) return
-  const hasDirectImageSurface = actions.some((action) => (
-    action.action === VISIBLE_ACTIONS.ARENA_SURFACE_SELECT &&
-    action.payload.mode === 'direct' &&
+  if (requiresArenaImageSurface) {
+    const hasDirectImageSurface = actions.some((action) => (
+      action.action === VISIBLE_ACTIONS.ARENA_SURFACE_SELECT &&
+      action.payload.mode === 'direct' &&
+      action.payload.modality === 'image'
+    ))
+    if (!hasDirectImageSurface) {
+      throw tokenlessError(
+        'invalid_playwright_job_capability_requirements',
+        'Arena image capabilities require arena.surface.select with mode direct and modality image.',
+        {
+          details: {
+            provider,
+            requirements,
+            requiredAction: {
+              action: VISIBLE_ACTIONS.ARENA_SURFACE_SELECT,
+              payload: { mode: 'direct', modality: 'image' },
+            },
+          },
+        },
+      )
+    }
+  }
+  const requiresGrokImagineImage = provider === 'grok' && requirements.some((capability) => (
+    capability === TASK_CAPABILITIES.IMAGE_GENERATION ||
+    capability === TASK_CAPABILITIES.ARTIFACT_DOWNLOAD
+  ))
+  if (!requiresGrokImagineImage) return
+  const grokImagineIndex = actions.findIndex((action) => (
+    action.action === VISIBLE_ACTIONS.GROK_IMAGINE_SELECT &&
     action.payload.modality === 'image'
   ))
-  if (!hasDirectImageSurface) {
+  const promptInputIndex = actions.findIndex((action) => action.action === VISIBLE_ACTIONS.PROMPT_INPUT)
+  if (grokImagineIndex < 0 || promptInputIndex < 0 || grokImagineIndex > promptInputIndex) {
     throw tokenlessError(
       'invalid_playwright_job_capability_requirements',
-      'Arena image capabilities require arena.surface.select with mode direct and modality image.',
+      'Grok Imagine image capabilities require grok.imagine.select with modality image before prompt.input.',
       {
         details: {
           provider,
           requirements,
           requiredAction: {
-            action: VISIBLE_ACTIONS.ARENA_SURFACE_SELECT,
-            payload: { mode: 'direct', modality: 'image' },
+            action: VISIBLE_ACTIONS.GROK_IMAGINE_SELECT,
+            payload: { modality: 'image' },
           },
         },
       },

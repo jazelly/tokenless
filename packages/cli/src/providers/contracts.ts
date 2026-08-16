@@ -17,6 +17,8 @@ export const VISIBLE_ACTIONS = Object.freeze({
   MODEL_SELECT: 'model.select',
   ARENA_SURFACE_INSPECT: 'arena.surface.inspect',
   ARENA_SURFACE_SELECT: 'arena.surface.select',
+  GROK_IMAGINE_INSPECT: 'grok.imagine.inspect',
+  GROK_IMAGINE_SELECT: 'grok.imagine.select',
   EFFORT_INSPECT: 'effort.inspect',
   EFFORT_SELECT: 'effort.select',
   QWEN_MODE_INSPECT: 'qwen.mode.inspect',
@@ -88,6 +90,9 @@ export type ArenaSurfaceModality = 'text' | 'search' | 'image' | 'code'
 export type ArenaSurfaceSelectionPayload = {
   mode: ArenaSurfaceMode
   modality: ArenaSurfaceModality
+}
+export type GrokImagineSelectionPayload = {
+  modality: 'image'
 }
 export type QwenModeSelectionPayload = {
   mode: string
@@ -168,6 +173,14 @@ export type ArenaSurfaceInspectActionRequest = VisibleActionRequestEnvelope<
 export type ArenaSurfaceSelectActionRequest = VisibleActionRequestEnvelope<
   typeof VISIBLE_ACTIONS.ARENA_SURFACE_SELECT,
   ArenaSurfaceSelectionPayload
+>
+export type GrokImagineInspectActionRequest = VisibleActionRequestEnvelope<
+  typeof VISIBLE_ACTIONS.GROK_IMAGINE_INSPECT,
+  EmptyVisibleActionPayload
+>
+export type GrokImagineSelectActionRequest = VisibleActionRequestEnvelope<
+  typeof VISIBLE_ACTIONS.GROK_IMAGINE_SELECT,
+  GrokImagineSelectionPayload
 >
 export type EffortInspectActionRequest = VisibleActionRequestEnvelope<
   typeof VISIBLE_ACTIONS.EFFORT_INSPECT,
@@ -293,6 +306,8 @@ export type VisibleActionRequest =
   | ModelSelectActionRequest
   | ArenaSurfaceInspectActionRequest
   | ArenaSurfaceSelectActionRequest
+  | GrokImagineInspectActionRequest
+  | GrokImagineSelectActionRequest
   | EffortInspectActionRequest
   | EffortSelectActionRequest
   | QwenModeInspectActionRequest

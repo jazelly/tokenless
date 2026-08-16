@@ -450,6 +450,8 @@ const PROVIDER_TASK_CAPABILITY_ROUTES = Object.freeze([
   route('gemini', TASK_CAPABILITIES.FILE_UPLOAD, 'experimental', 'visible-file-attachment', ['file-selection']),
   route('grok', TASK_CAPABILITIES.CONVERSATION_CHAT, 'supported', 'visible-conversation', ['conversation-workflow']),
   route('grok', TASK_CAPABILITIES.FILE_UPLOAD, 'supported', 'visible-file-attachment', ['conversation-workflow']),
+  route('grok', TASK_CAPABILITIES.IMAGE_GENERATION, 'experimental', 'grok-imagine-image-generation', ['grok-image']),
+  route('grok', TASK_CAPABILITIES.ARTIFACT_DOWNLOAD, 'experimental', 'grok-imagine-image', ['grok-image']),
   route('deepseek', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['workspace-response-baseline']),
   route('deepseek', TASK_CAPABILITIES.FILE_UPLOAD, 'experimental', 'visible-file-attachment', ['file-selection']),
   route('perplexity', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['workspace-response-citations']),

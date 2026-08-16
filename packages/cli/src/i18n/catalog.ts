@@ -61,6 +61,7 @@ export const ERROR_SUMMARIES_ZH = {
   arena_comparison_modality_unavailable: 'Arena model.compare 当前仅支持 --arena-modality text。',
   arena_comparison_mode_unavailable: 'Arena model.compare 需要 --arena-mode battle 或 --arena-mode side-by-side。',
   arena_control_unsupported: 'Arena surface control 仅支持 Arena provider。',
+  grok_imagine_unsupported: 'Grok Imagine control 仅支持 Grok provider。',
   arena_code_continuation_unavailable: '在 Arena Code continuation 单独完成真实验证前，网站生成不能与 conversation.continue 组合。',
   arena_code_file_content_count_invalid: 'Arena Code 当前文件必须只显示一个代码内容面板。',
   arena_code_model_control_unavailable: 'Arena 网站生成不能与 --model 或 --model-fallback 组合。',

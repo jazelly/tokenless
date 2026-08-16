@@ -40,9 +40,10 @@ V1 不增加队列、重试、恢复、去重、迁移、跨机器同步、asset
 
 1. Arena downloaded asset（完成于 2026-08-16）：定义最小 asset result、目录与落盘流程，并完成 IMG-001 至 IMG-006、IMG-008。
 2. Meta AI downloaded asset（完成于 2026-08-16）：复用 browser-session writer，读取最新 assistant image tile 并提供 authenticated daemon readback；focused real-provider E2E 已完成 IMG-007。
-3. ChatGPT downloaded asset（完成于 2026-08-16）：复用 shared browser-session writer，读取最新 assistant turn、按 canonical image URL 去重并提供 authenticated daemon readback；focused real-provider E2E 已完成 IMG-007。之后评估 Grok、Gemini；每个 provider 独立完成 IMG-007 后才开放 route。
-4. Specialist surfaces：Dola、Doubao、Perplexity、Qwen 按真实可用账号和 terminal artifact evidence 逐个闭环。
-5. GPT4Free parity：把已验证的 `images/generations` bytes 规范化到同一 asset result；不把 raw endpoint 存在当成 provider 支持证据。
+3. ChatGPT downloaded asset（完成于 2026-08-16）：复用 shared browser-session writer，读取最新 assistant turn、按 canonical image URL 去重并提供 authenticated daemon readback；focused real-provider E2E 已完成 IMG-007。
+4. Grok downloaded assets（完成于 2026-08-16）：进入独立 Imagine Image surface、精确选择 ×2 output，以提交前 post set 做差集并等待两个新 post identity，忽略 data-URI preview，逐个打开 post 并下载与 asset ID 精确匹配的 HTTPS 图片；focused real-provider E2E 已完成 IMG-007。
+5. Specialist surfaces：Gemini、Dola、Doubao、Perplexity、Qwen 按真实可用账号和 terminal artifact evidence 逐个闭环。
+6. GPT4Free parity：把已验证的 `images/generations` bytes 规范化到同一 asset result；不把 raw endpoint 存在当成 provider 支持证据。
 
 ## Verified Evidence
 
@@ -54,6 +55,8 @@ V1 不增加队列、重试、恢复、去重、迁移、跨机器同步、asset
 - 真实生成 PNG：1600×1600、181,001 bytes、SHA-256 `142b4cd915c943cd58d2965b1520bcda842deb5e5903d0b62209c76b539fbe1f`；验证 latest assistant DOM bytes、0600 文件、browser decoder 尺寸与 authenticated daemon GET。
 - ChatGPT real-provider report：`test-results/live-provider-e2e/20260816T022709Z_9982f311-mutation.json`。
 - 真实生成 PNG：1254×1254、759,677 bytes、SHA-256 `536f63f2b7585114303c0f26ad30f76db0e058d0d34589168bfa4a5dd5e9cc96`；验证 latest assistant URL 去重、DOM bytes、0600 文件、browser decoder 尺寸与 authenticated daemon GET。
+- Grok real-provider report：`test-results/live-provider-e2e/20260816T034454Z_27b6e8f2-mutation.json`。
+- 真实生成 JPEG：768×1152、79,032 bytes、SHA-256 `e7e02f71df1b76592da6c98a3d0db94a88a71f46a13c840b97490245a360dd74`；第二张 JPEG：768×1152、63,638 bytes、SHA-256 `252ffa4a56a7d3bc042e252f4061804b7ff7eb8719e088b8ead22699ef9cea64`。两张图片均验证 baseline set-difference、current post identity、provider bytes、0600 文件、browser decoder 尺寸、无 task/Project chat mapping 与 authenticated daemon GET。
 
 ## Constraints
 

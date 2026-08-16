@@ -1,6 +1,6 @@
 import type { Page } from 'playwright-core'
 import type { ProviderDomDefinition } from './provider-definition.js'
-import type { VisibleActionRequest } from './contracts.js'
+import type { ProviderActionPreparation, VisibleActionRequest } from './contracts.js'
 import type { CaptureVisibleOutput } from '../output-savings/index.js'
 import type { TaskCapabilityId } from './task-capabilities.js'
 
@@ -12,6 +12,7 @@ export type ProviderExecutionContext = {
   attachmentRoot?: string
   assetRoot?: string
   requirements?: readonly TaskCapabilityId[]
+  responsePreparation?: ProviderActionPreparation
   signal?: AbortSignal
   now?: () => Date
   captureVisibleOutput?: CaptureVisibleOutput

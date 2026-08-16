@@ -891,6 +891,9 @@ export class ManagedPlaywrightRunnerService {
           jobId: job.job_id,
           taskId: request.taskId,
           requirements: request.capabilityRoute?.requirements ?? request.context.requirements,
+          ...(lifecycle.completion === 'reads_response' && state.preparation !== null
+            ? { responsePreparation: state.preparation }
+            : {}),
           signal,
           now: this.now,
           ...(outputSavingsEnabled
@@ -959,7 +962,9 @@ export class ManagedPlaywrightRunnerService {
             signal,
           })
         }
-        if (lifecycle.completion === 'reads_response' && request.taskId) {
+        const isGrokImagineResult = request.provider === 'grok' &&
+          request.context.requirements.includes('image.generation')
+        if (lifecycle.completion === 'reads_response' && request.taskId && !isGrokImagineResult) {
           const workspace = latestNativeWorkspaceResult(state.responses)
           const conversationUrl = validatedConversationUrl(
             page.url(),

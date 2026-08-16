@@ -5,6 +5,7 @@ import { DomChoiceCapability } from './capabilities/dom-choice.js'
 import { ConversationWorkspaceCapability } from './capabilities/workspace.js'
 import { DiagnosticsCapability } from './capabilities/diagnostics.js'
 import { UnsupportedImageGenerationCapability } from './capabilities/image-generation.js'
+import { createGrokImagineCapability } from './capabilities/grok-imagine.js'
 import { DefaultChoiceAvailability } from './choice-availability.js'
 import { ProviderNavigationPolicy } from './navigation-policy.js'
 import { VISIBLE_ACTIONS } from './contracts.js'
@@ -173,6 +174,10 @@ export type ProviderOptionalCapabilities = Readonly<{
     typeof PROVIDER_CAPABILITIES.IMAGE_GENERATION,
     ImageGenerationCapability
   >
+  grokImagine: ActionCapabilityWithId<
+    typeof PROVIDER_CAPABILITIES.GROK_IMAGINE,
+    typeof VISIBLE_ACTIONS.GROK_IMAGINE_INSPECT | typeof VISIBLE_ACTIONS.GROK_IMAGINE_SELECT
+  >
 }>
 
 export type ProviderOptionalCapabilityOverrides = Partial<ProviderOptionalCapabilities>
@@ -185,6 +190,7 @@ const OPTIONAL_CAPABILITY_ORDER: readonly (keyof ProviderOptionalCapabilities)[]
   'effortChoice',
   'diagnostics',
   'imageGeneration',
+  'grokImagine',
 ])
 
 export function createProviderOptionalCapabilities(
@@ -209,6 +215,7 @@ export function createProviderOptionalCapabilities(
     }),
     diagnostics: new DiagnosticsCapability(provider),
     imageGeneration: new UnsupportedImageGenerationCapability(provider),
+    grokImagine: createGrokImagineCapability(provider),
     ...overrides,
   }
   return OPTIONAL_CAPABILITY_ORDER.map((key) => capabilities[key])
@@ -217,6 +224,7 @@ export function createProviderOptionalCapabilities(
 export function providerCapabilities(options: {
   nativeWorkspace?: boolean
   imageGeneration?: boolean
+  grokImagine?: boolean
   arenaSurface?: boolean
   qwenMode?: boolean
   deepSeekControls?: boolean
@@ -391,6 +399,11 @@ export function providerCapabilities(options: {
       PROVIDER_CAPABILITIES.ARENA_SURFACE,
       'arena',
       options.arenaSurface === true,
+    ),
+    [PROVIDER_CAPABILITIES.GROK_IMAGINE]: providerSpecificControlStrategy(
+      PROVIDER_CAPABILITIES.GROK_IMAGINE,
+      'grok-imagine',
+      options.grokImagine === true,
     ),
     [PROVIDER_CAPABILITIES.QWEN_MODE]: Object.freeze({
       capability: PROVIDER_CAPABILITIES.QWEN_MODE,

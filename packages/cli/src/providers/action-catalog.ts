@@ -6,6 +6,7 @@ import type { ProviderCapabilityId } from './provider-identity.js'
 import type {
   AttachmentInput,
   ArenaSurfaceSelectionPayload,
+  GrokImagineSelectionPayload,
   EmptyVisibleActionPayload,
   FileUploadPayload,
   PromptInputPayload,
@@ -115,6 +116,18 @@ export const VISIBLE_ACTION_CATALOG = Object.freeze({
     lifecycle: reconstructableGatedMutation,
     requiredCapabilities: [PROVIDER_CAPABILITIES.ARENA_SURFACE],
     validatePayload: validateArenaSurfaceSelectionPayload,
+  }),
+  [VISIBLE_ACTIONS.GROK_IMAGINE_INSPECT]: defineAction({
+    action: VISIBLE_ACTIONS.GROK_IMAGINE_INSPECT,
+    lifecycle: gatedReadOnly,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.GROK_IMAGINE],
+    validatePayload: validateEmptyPayload,
+  }),
+  [VISIBLE_ACTIONS.GROK_IMAGINE_SELECT]: defineAction({
+    action: VISIBLE_ACTIONS.GROK_IMAGINE_SELECT,
+    lifecycle: reconstructableGatedMutation,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.GROK_IMAGINE],
+    validatePayload: validateGrokImagineSelectionPayload,
   }),
   [VISIBLE_ACTIONS.EFFORT_INSPECT]: defineAction({
     action: VISIBLE_ACTIONS.EFFORT_INSPECT,
@@ -373,6 +386,14 @@ function validateArenaSurfaceSelectionPayload(payload: Record<string, unknown>):
     throw tokenlessError('invalid_visible_action_payload', 'Arena surface modality must be text, search, image, or code.')
   }
   return payload as ArenaSurfaceSelectionPayload
+}
+
+function validateGrokImagineSelectionPayload(payload: Record<string, unknown>): GrokImagineSelectionPayload {
+  requireExactKeys(payload, ['modality'], 'invalid_visible_action_payload')
+  if (payload.modality !== 'image') {
+    throw tokenlessError('invalid_visible_action_payload', 'Grok Imagine modality must be image.')
+  }
+  return payload as GrokImagineSelectionPayload
 }
 
 function validateQwenModeSelectionPayload(payload: Record<string, unknown>): QwenModeSelectionPayload {
