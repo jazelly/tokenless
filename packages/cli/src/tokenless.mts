@@ -46,6 +46,7 @@ import {
   deleteTokenlessProfileConfig,
   drainDaemonReplay,
   ensureDaemonReady,
+  generateImage,
   getDaemonJob,
   getProviderCapacity,
   inspectManagedRuntime,
@@ -1251,7 +1252,86 @@ async function runCommand(args: CliArgs) {
   args = applyBoundAgentContext(args)
   assertVisibleRunArguments(args)
   const prompt = await promptFromArgs(args)
+  const requirements = taskCapabilityRequirementsForExecution(args, args.action || 'submit_and_read', undefined)
+  if (requirements.includes(TASK_CAPABILITIES.IMAGE_GENERATION)) {
+    await imageGenerationCommand(args, prompt, requirements)
+    return
+  }
   await executeDaemonJob({ args, action: args.action || 'submit_and_read', prompt })
+}
+
+async function imageGenerationCommand(
+  args: CliArgs,
+  prompt: string,
+  requirements: readonly TaskCapabilityId[],
+) {
+  const homeDir = tokenlessHome(args.home)
+  const config = await readTokenlessConfig(homeDir)
+  const executionMode = normalizeExecutionMode(args.executionMode)
+  const requestedProvider = String(args.provider || process.env.TOKENLESS_PROVIDER || '').trim().toLowerCase()
+  const provider = requestedProvider || 'auto'
+  if (executionMode === 'browser' && provider !== 'auto') {
+    resolveProviderControls({
+      args,
+      provider: normalizeProvider(provider),
+      action: args.action || 'submit_and_read',
+      requirements,
+    })
+  }
+  const allowed = new Set<TaskCapabilityId>([
+    TASK_CAPABILITIES.CONVERSATION_CHAT,
+    TASK_CAPABILITIES.IMAGE_GENERATION,
+    TASK_CAPABILITIES.ARTIFACT_DOWNLOAD,
+  ])
+  const unsupported = requirements.filter((capability) => !allowed.has(capability))
+  if (unsupported.length > 0) {
+    throw usageError(
+      'task_capability_combination_unsupported',
+      `The image generation HTTP endpoint does not accept additional capabilities: ${unsupported.join(', ')}.`,
+    )
+  }
+  const unsupportedControls = explicitlySelectedArgumentFlags(
+    args,
+    executionMode === 'browser'
+      ? ['model', 'arenaMode', 'arenaModality', 'workspaceMode']
+      : ['arenaMode', 'arenaModality', 'workspaceMode'],
+  )
+  if (unsupportedControls.length > 0) {
+    throw usageError(
+      'controls_unsupported_for_action',
+      `The image generation HTTP endpoint does not support: ${unsupportedControls.join(', ')}.`,
+    )
+  }
+  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
+  const daemon = await ensureDaemonReady({
+    homeDir,
+    daemonUrl: configuredDaemonUrl,
+    timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
+    ...(executionMode === 'browser' && provider !== 'auto' ? { requiredProvider: provider } : {}),
+  })
+  const response = await generateImage({
+    homeDir,
+    daemonUrl: daemon.url,
+    model: `tokenless/${provider}${args.model === undefined ? '' : `/${String(args.model).trim()}`}`,
+    prompt,
+    executionMode,
+    ...(args.profile === undefined ? {} : { profile: String(args.profile) }),
+    ...(args.taskId === undefined ? {} : { taskId: String(args.taskId) }),
+    ...(args.pageRef === undefined ? {} : { pageRef: String(args.pageRef) }),
+    ...(args.browserVisibility === undefined ? {} : { browserVisibility: requiredBrowserVisibility(args.browserVisibility) }),
+    ...(args.timeoutMs === undefined ? {} : { timeoutMs: strictPositiveInteger(args.timeoutMs, '--timeout-ms') }),
+  })
+  printPayload({
+    ok: true,
+    status: 'succeeded',
+    transport: 'daemon',
+    jobId: response.tokenless.job_id ?? response.tokenless.request_id,
+    taskId: response.tokenless.task_id,
+    provider: response.tokenless.provider,
+    created: response.created,
+    data: response.data,
+    tokenless: response.tokenless,
+  }, args)
 }
 
 async function capabilitiesCommand(subcommand: string | undefined, args: CliArgs) {
@@ -4578,6 +4658,7 @@ async function apiProxyCommand(subcommand: string | undefined, args: CliArgs) {
       endpoints: {
         openai: `${baseUrl}/v1/openai`,
         anthropic: `${baseUrl}/v1/anthropic`,
+        images: `${baseUrl}/v1/images/generations`,
         // An unmodified OpenAI client can point at the bare /v1 base, so report
         // it alongside the prefixed routes rather than leaving callers to guess.
         openaiDefault: `${baseUrl}/v1`,
@@ -5510,7 +5591,38 @@ function assertVisibleRunArguments(args: CliArgs) {
   if (args.attachFiles.length > 0 && !['submit', 'submit_and_read'].includes(action)) {
     throw usageError('attachment_action_unsupported', '--attach-file requires the submit or submit_and_read visible action.')
   }
-  if (normalizeExecutionMode(args.executionMode) !== 'direct') return
+  const executionMode = normalizeExecutionMode(args.executionMode)
+  if (args.capabilities.includes(TASK_CAPABILITIES.IMAGE_GENERATION)) {
+    if (action !== 'submit_and_read') {
+      throw usageError('unsupported_visible_action', 'image.generation requires the default submit_and_read action.')
+    }
+    if (args.attachFiles.length > 0) {
+      throw usageError('attachment_action_unsupported', 'The image generation endpoint does not accept attachments; use image.edit for source images.')
+    }
+    const provider = String(args.provider || process.env.TOKENLESS_PROVIDER || '').trim().toLowerCase()
+    if (executionMode === 'direct' && provider && provider !== 'pollinations') {
+      throw usageError('unsupported_provider', '--execution-mode direct image generation supports --provider pollinations or automatic routing.')
+    }
+    if (executionMode === 'browser' && provider) normalizeProvider(provider)
+    if (args.providerBackend !== undefined) {
+      throw usageError('controls_unsupported_for_action', 'Image generation selects its implementation through --execution-mode; --provider-backend is not exposed.')
+    }
+    const unsupported = explicitlySelectedArgumentFlags(args, [
+      'targetUrl', 'idempotencyKey', 'projectName', 'chatName',
+      'projectInstructions', 'projectInstructionsFile', 'modelFallbacks', 'effort',
+      'thinkingEffort', 'qwenMode', 'qwenModeVariant',
+      'deepSeekMode', 'deepSeekDeepThink', 'deepSeekSearch', 'kimiSearch', 'kimiPlugin',
+      'kimiSkill', 'chatSurface', 'longRunning', 'noWait',
+    ])
+    if (unsupported.length > 0) {
+      throw usageError(
+        'controls_unsupported_for_action',
+        `The image generation endpoint does not support: ${unsupported.join(', ')}.`,
+      )
+    }
+    return
+  }
+  if (executionMode !== 'direct') return
 
   const provider = args.provider ?? process.env.TOKENLESS_PROVIDER
   const directProvider = provider === undefined ? undefined : normalizeProvider(provider)

@@ -29,32 +29,33 @@ test('real G4F image generation persists a task and conversation scoped Tokenles
   const token = await readDaemonToken({ homeDir: target.homeDir })
   const authorization = `Bearer ${token}`
   const marker = randomUUID().replaceAll('-', '')
-  const taskId = `TOKENLESS_G4F_IMAGE_${marker}`
-  const conversationId = `pollinations-sana-${marker}`
+  const taskId = `TOKENLESS_IMAGE_${marker}`
 
-  const response = await fetch(`${daemon.url}/v1/direct/g4f/g4f%3APollinationsImage/images/generations`, {
+  const response = await fetch(`${daemon.url}/v1/images/generations`, {
     method: 'POST',
     headers: { authorization, 'content-type': 'application/json' },
     body: JSON.stringify({
-      model: 'sana',
+      model: 'tokenless/pollinations/sana',
       prompt: 'A simple flat green leaf icon centered on a plain white background, no text.',
-      width: 768,
-      height: 768,
-      tokenless: { taskId, conversationId },
+      size: '768x768',
+      tokenless: { execution_mode: 'direct', task_id: taskId },
     }),
     signal: AbortSignal.timeout(480_000),
   })
   assert.equal(response.status, 200)
   const payload = await response.json()
-  assert.equal(payload.provider, 'PollinationsImage')
-  assert.equal(payload.model, 'sana')
   assert.equal(payload.data.length, 1)
+  assert.equal(payload.tokenless.provider, 'pollinations')
+  assert.equal(payload.tokenless.execution_mode, 'direct')
+  assert.equal(payload.tokenless.task_id, taskId)
+  assert.equal(JSON.stringify(payload).toLowerCase().includes('g4f'), false)
+  assert.equal(JSON.stringify(payload).includes('PollinationsImage'), false)
   const result = payload.data[0]
   const asset = result.asset
   assert.equal(result.url, `/${asset.assetRef}`.replace('/assets/', '/v1/asset/'))
-  assert.equal(asset.provider, 'g4f')
+  assert.equal(asset.provider, 'pollinations')
   assert.equal(asset.taskId, taskId)
-  assert.equal(asset.conversationId, conversationId)
+  assert.match(asset.conversationId, /^pollinations-sana-/)
   assert.equal(asset.mediaType, 'image/jpeg')
   assert.ok(asset.width > 0 && asset.height > 0)
   assert.equal(asset.downloadAvailable, true)
@@ -71,6 +72,22 @@ test('real G4F image generation persists a task and conversation scoped Tokenles
   assert.equal(readback.status, 200)
   assert.equal(readback.headers.get('content-type'), 'image/jpeg')
   assert.deepEqual(Buffer.from(await readback.arrayBuffer()), bytes)
+
+  const timeoutResponse = await fetch(`${daemon.url}/v1/images/generations`, {
+    method: 'POST',
+    headers: { authorization, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      model: 'tokenless/pollinations/sana',
+      prompt: 'A timeout boundary check.',
+      tokenless: { execution_mode: 'direct', task_id: `${taskId}_TIMEOUT`, timeout_ms: 1 },
+    }),
+    signal: AbortSignal.timeout(30_000),
+  })
+  assert.equal(timeoutResponse.status, 504)
+  const timeoutPayload = await timeoutResponse.json()
+  assert.equal(timeoutPayload.error.code, 'image_generation_timeout')
+  assert.equal(timeoutPayload.error.retryable, true)
+  assert.equal(JSON.stringify(timeoutPayload).toLowerCase().includes('g4f'), false)
 })
 
 function requiredEnvironment(name) {

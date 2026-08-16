@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Tokenless daemon HTTP API",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "description": "Local loopback daemon HTTP API. Every daemon route, readiness proof, error envelope, job payload, and browser runtime control response belongs to this OpenAPI contract."
   },
   "servers": [
@@ -134,6 +134,61 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/v1/images/generations": {
+      "post": {
+        "operationId": "createImageGeneration",
+        "summary": "Generate images through one browser or direct provider interface",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImageGenerationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Generated image assets persisted behind authenticated daemon URLs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageGenerationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/GatewayTimeout"
           }
         }
       }
@@ -1958,15 +2013,6 @@
         "responses": { "200": { "$ref": "#/components/responses/G4fData" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "502": { "$ref": "#/components/responses/G4fUpstreamError" } }
       }
     },
-    "/v1/direct/g4f/{provider}/images/generations": {
-      "post": {
-        "operationId": "createG4fImage",
-        "summary": "Generate and persist images from one exact G4F provider",
-        "parameters": [{ "$ref": "#/components/parameters/G4fProvider" }, { "$ref": "#/components/parameters/G4fAuthContext" }],
-        "requestBody": { "$ref": "#/components/requestBodies/G4fImageGeneration" },
-        "responses": { "200": { "$ref": "#/components/responses/G4fData" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "502": { "$ref": "#/components/responses/G4fUpstreamError" } }
-      }
-    },
     "/v1/direct/g4f/{provider}/audio/transcriptions": {
       "post": {
         "operationId": "createG4fTranscription",
@@ -2262,39 +2308,295 @@
             }
           }
         }
+      },
+      "BadGateway": {
+        "description": "The selected image provider failed or returned an invalid result",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/DaemonErrorResponse"
+            }
+          }
+        }
+      },
+      "ServiceUnavailable": {
+        "description": "No eligible image route or direct image service is available",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/DaemonErrorResponse"
+            }
+          }
+        }
+      },
+      "GatewayTimeout": {
+        "description": "Image generation did not reach a terminal persisted artifact before the deadline",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/DaemonErrorResponse"
+            }
+          }
+        }
       }
     },
     "requestBodies": {
       "G4fJson": {
         "required": true,
         "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } }
-      },
-      "G4fImageGeneration": {
-        "required": true,
-        "content": {
-          "application/json": {
-            "schema": {
-              "type": "object",
-              "additionalProperties": true,
-              "required": ["prompt", "tokenless"],
-              "properties": {
-                "prompt": { "type": "string", "minLength": 1 },
-                "tokenless": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "required": ["taskId", "conversationId"],
-                  "properties": {
-                    "taskId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
-                    "conversationId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" }
-                  }
-                }
+      }
+    },
+    "schemas": {
+      "ImageGenerationRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "model",
+          "prompt",
+          "tokenless"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "pattern": "^tokenless/[a-z0-9-]{1,64}(?:/.*)?$",
+            "description": "tokenless/auto or a Tokenless provider id. Direct mode currently exposes tokenless/pollinations and optional /sana suffix only."
+          },
+          "prompt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1048576
+          },
+          "size": {
+            "enum": [
+              "768x768"
+            ]
+          },
+          "tokenless": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "execution_mode"
+            ],
+            "properties": {
+              "execution_mode": {
+                "enum": [
+                  "browser",
+                  "direct"
+                ]
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "task_id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+              },
+              "page_ref": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "browser_visibility": {
+                "enum": [
+                  "auto",
+                  "headed",
+                  "headless"
+                ]
+              },
+              "timeout_ms": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 900000,
+                "default": 600000
               }
             }
           }
         }
-      }
-    },
-    "schemas": {
+      },
+      "ImageGenerationResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "created",
+          "data",
+          "tokenless"
+        ],
+        "properties": {
+          "created": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "data": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "url",
+                "asset"
+              ],
+              "properties": {
+                "url": {
+                  "type": "string",
+                  "pattern": "^/v1/asset/"
+                },
+                "asset": {
+                  "$ref": "#/components/schemas/PersistedImageAsset"
+                }
+              }
+            }
+          },
+          "tokenless": {
+            "$ref": "#/components/schemas/ImageGenerationMetadata"
+          }
+        }
+      },
+      "ImageGenerationMetadata": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "provider",
+          "execution_mode",
+          "request_id",
+          "task_id",
+          "job_id",
+          "capability_route"
+        ],
+        "properties": {
+          "provider": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,63}$"
+          },
+          "execution_mode": {
+            "enum": [
+              "browser",
+              "direct"
+            ]
+          },
+          "request_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "task_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+          },
+          "job_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "capability_route": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TaskCapabilityRoute"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "PersistedImageAsset": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "assetRef",
+          "mediaType",
+          "alt",
+          "width",
+          "height",
+          "byteSize",
+          "sha256",
+          "createdAt",
+          "provider",
+          "jobId",
+          "taskId",
+          "conversationId",
+          "downloadAvailable",
+          "visibleProof"
+        ],
+        "properties": {
+          "kind": {
+            "const": "image"
+          },
+          "assetRef": {
+            "type": "string",
+            "pattern": "^assets/"
+          },
+          "mediaType": {
+            "enum": [
+              "image/png",
+              "image/jpeg",
+              "image/webp"
+            ]
+          },
+          "alt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "width": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "height": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "byteSize": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 33554432
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "provider": {
+            "enum": [
+              "arena",
+              "meta",
+              "chatgpt",
+              "grok",
+              "gemini",
+              "pollinations"
+            ]
+          },
+          "jobId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "taskId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "conversationId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "downloadAvailable": {
+            "const": true
+          },
+          "visibleProof": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
       "G4fUpstreamError": {
         "type": "object",
         "additionalProperties": false,

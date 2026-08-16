@@ -40,7 +40,7 @@ async function inspectGrokSubscription(
   page: Page,
   provider: ProviderDomDefinition,
   signal: AbortSignal | undefined,
-): Promise<'Free' | 'SuperGrok' | null> {
+): Promise<'Free' | 'SuperGrok Lite' | 'SuperGrok' | null> {
   const trigger = await firstLocator(page, provider.modelControlSelectors)
   if (!trigger) return null
 
@@ -51,13 +51,14 @@ async function inspectGrokSubscription(
       await trigger.click({ timeout: 2000 })
       openedHere = true
     }
-    for (let attempt = 0; attempt <= 10; attempt += 1) {
-      assertNotAborted(signal)
-      const rows = await collectGrokEntitlementRows(page)
-      if (rows.length === 3) {
-        return rows.every((row) => row.unavailable) ? 'Free' : 'SuperGrok'
-      }
-      if (attempt < 10) await page.waitForTimeout(100)
+    await page.waitForTimeout(300)
+    assertNotAborted(signal)
+    const surface = await inspectGrokEntitlementSurface(page)
+    if (surface.modeLabels.length === 1 && surface.modeLabels[0] === 'fast') {
+      return 'Free'
+    }
+    if (surface.modeLabels.length > 1) {
+      return surface.hasSuperGrokUpgrade ? 'SuperGrok Lite' : 'SuperGrok'
     }
     return null
   } catch {
@@ -69,10 +70,13 @@ async function inspectGrokSubscription(
   }
 }
 
-async function collectGrokEntitlementRows(page: Page): Promise<Array<{ label: string, unavailable: boolean }>> {
+async function inspectGrokEntitlementSurface(page: Page): Promise<{
+  modeLabels: string[]
+  hasSuperGrokUpgrade: boolean
+}> {
   return await page.locator('[role="menuitem"][data-radix-collection-item]').evaluateAll((elements) => {
-    const entitlementLabels = new Set(['auto', 'expert', 'heavy'])
-    return elements.flatMap((element) => {
+    const modeLabels = new Set(['auto', 'fast', 'expert', 'heavy', 'build'])
+    const visibleText = elements.flatMap((element) => {
       if (!(element instanceof HTMLElement)) return []
       const rect = element.getBoundingClientRect()
       const style = window.getComputedStyle(element)
@@ -83,30 +87,17 @@ async function collectGrokEntitlementRows(page: Page): Promise<Array<{ label: st
         style.visibility === 'hidden' ||
         Number(style.opacity) === 0
       ) return []
-      const label = (element.querySelector('.font-semibold')?.textContent ?? '')
-        .replace(/\s+/g, ' ')
-        .trim()
-      if (!entitlementLabels.has(label.toLowerCase())) return []
-      const classTokens = new Set((element.getAttribute('class') ?? '').split(/\s+/).filter(Boolean))
-      const dataDisabled = element.getAttribute('data-disabled')
-      const explicitlyDisabled = (
-        element.hasAttribute('disabled') ||
-        element.getAttribute('aria-disabled') === 'true' ||
-        (dataDisabled !== null && dataDisabled !== 'false') ||
-        Boolean(element.querySelector(':disabled, [aria-disabled="true"], [data-disabled]:not([data-disabled="false"])'))
-      )
-      const visuallyUnavailable = (
-        classTokens.has('cursor-not-allowed') ||
-        (
-          classTokens.has('text-secondary') &&
-          (classTokens.has('opacity-75') || Number(style.opacity) < 1)
-        )
-      )
-      return [{
-        label,
-        unavailable: explicitlyDisabled || visuallyUnavailable,
-      }]
+      return [(element.innerText || element.textContent || '').replace(/\s+/g, ' ').trim()]
     })
+    return {
+      modeLabels: visibleText.flatMap((text) => {
+        const label = text.match(/^(Auto|Fast|Expert|Heavy|Build)\b/i)?.[1]?.toLowerCase()
+        return label && modeLabels.has(label) ? [label] : []
+      }),
+      hasSuperGrokUpgrade: visibleText.some((text) => (
+        /unlock extended capabilities/i.test(text) && /upgrade/i.test(text)
+      )),
+    }
   })
 }
 

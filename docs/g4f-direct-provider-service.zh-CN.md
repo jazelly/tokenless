@@ -49,26 +49,12 @@ Provider guest mode 与 daemon authentication 相互独立：data-plane request 
 | `POST /v1/direct/g4f/{provider}/chat/completions` | Chat completion 与 SSE |
 | `POST /v1/direct/g4f/{provider}/responses` | Responses API |
 | `POST /v1/direct/g4f/{provider}/messages` | Messages API |
-| `POST /v1/direct/g4f/{provider}/images/generations` | Image generation |
 | `POST /v1/direct/g4f/{provider}/audio/transcriptions` | Audio transcription |
 | `POST /v1/direct/g4f/{provider}/audio/speech` | Speech generation |
 | `GET /v1/direct/g4f/assets/{images|media}/{file}` | Generated media |
 | `GET /v1/direct/g4f/pa/providers` | Setup 管理的 PA inventory |
 
-图片生成的 JSON body 必须携带 Tokenless asset context：
-
-```json
-{
-  "model": "sana",
-  "prompt": "A flat green leaf icon on white.",
-  "tokenless": {
-    "taskId": "task-123",
-    "conversationId": "chat-456"
-  }
-}
-```
-
-Tokenless 会在调用 G4F 前移除 `tokenless` object，再下载每个 private generated-media URL，校验图片 bytes 与尺寸，并以 `0600` 权限保存到 `assets/{taskId}/{conversationId}/{utcTimestamp}_{requestId}/{index}.{ext}`。每个 `data[]` item 会返回共有 `asset` metadata 与 `/v1/asset/...` 下的相对 authenticated URL；caller 应以同一个 daemon origin 解析该 URL。
+G4F namespace 刻意不再暴露图片生成 route。请调用 provider-neutral [`POST /v1/images/generations`](api-proxy-integration.zh-CN.md#图片生成) endpoint，并选择 `tokenless.execution_mode`；其 public request 与 response 不会暴露 private backend。
 
 `chatgpt` 等已知 Tokenless ID 会映射到固定 upstream provider。精确 G4F provider 使用 `g4f:<ProviderName>`，包括显式 `g4f:AnyProvider`；Tokenless 永远不会静默选择 `AnyProvider`。
 
@@ -95,7 +81,7 @@ Visible-browser execution 继续由 Tokenless 原生实现。ChatGPT G4F direct 
 
 - Guest：显式请求 `g4f:GLM`，不携带 provider auth-context header，在隔离的 headless browser 中完成 Aliyun traceless verification，要求返回精确随机 marker，并验证请求前后没有创建 auth context。
 - 已登录：ChatGPT direct 只从选中的 Cloak browser profile 读取 ChatGPT cookies、access token、user agent 与 language headers，写入一个 provider-scoped 临时 context。
-- 图片：真实 `g4f:PollinationsImage` / `sana` gate 生成了一张 768×768 JPEG，按请求提供的 task 与 conversation identity 落盘，并验证 digest 与 authenticated byte-for-byte readback。
+- 图片：真实 `tokenless/pollinations/sana` direct gate 通过统一 endpoint 生成了一张 768×768 JPEG，按请求提供的 task identity 落盘，并在不暴露 private backend 的前提下验证 digest 与 authenticated byte-for-byte readback。
 
 ## Provider 错误
 

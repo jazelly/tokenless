@@ -152,6 +152,18 @@ export type IssueFeatureBenchChannelOptions = DaemonClientOptions & {
   providerTurnTimeoutMs?: number | undefined
 }
 
+export type GenerateImageOptions = DaemonClientOptions & {
+  model: string
+  prompt: string
+  executionMode: 'browser' | 'direct'
+  profile?: string | undefined
+  taskId?: string | undefined
+  pageRef?: string | undefined
+  browserVisibility?: 'auto' | 'headed' | 'headless' | undefined
+  timeoutMs?: number | undefined
+  size?: '768x768' | undefined
+}
+
 export type BrowserRuntimeStatus = {
   status: 'running' | 'quiescing' | 'quiesced' | 'stopped'
   activeProfileCount: number
@@ -271,6 +283,55 @@ export async function createDaemonJob({
     },
     token: daemon.token,
     timeoutMs: requestTimeoutMs,
+    signal,
+  })
+}
+
+export async function generateImage({
+  daemonUrl: explicitDaemonUrl,
+  homeDir,
+  requestTimeoutMs,
+  signal,
+  model,
+  prompt,
+  executionMode,
+  profile,
+  taskId,
+  pageRef,
+  browserVisibility,
+  timeoutMs,
+  size,
+}: GenerateImageOptions) {
+  const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
+  return daemonRequest<{
+    created: number
+    data: readonly { url: string; asset: Record<string, unknown> }[]
+    tokenless: {
+      provider: string
+      execution_mode: 'browser' | 'direct'
+      request_id: string
+      task_id: string
+      job_id: string | null
+      capability_route: unknown
+    }
+  }>({
+    daemonUrl: daemon.daemonUrl,
+    path: '/v1/images/generations',
+    body: {
+      model,
+      prompt,
+      size,
+      tokenless: {
+        execution_mode: executionMode,
+        profile,
+        task_id: taskId,
+        page_ref: pageRef,
+        browser_visibility: browserVisibility,
+        timeout_ms: timeoutMs,
+      },
+    },
+    token: daemon.token,
+    timeoutMs: requestTimeoutMs ?? (timeoutMs === undefined ? 605_000 : timeoutMs + 5_000),
     signal,
   })
 }

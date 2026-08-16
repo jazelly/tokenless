@@ -22,6 +22,90 @@ const ROUTES = [
   ['POST', '/v1/anthropic/messages'],
 ]
 
+test('image generation is authenticated and the old direct G4F image route is unavailable', async () => {
+  await withDaemon(async (daemon) => {
+    const unauthorized = await fetch(`${daemon.origin}/v1/images/generations`, { method: 'POST' })
+    assert.equal(unauthorized.status, 401)
+    assert.equal((await unauthorized.json()).error.code, 'control_auth_missing')
+
+    const oldRoute = await call(
+      daemon,
+      'POST',
+      '/v1/direct/g4f/g4f%3APollinationsImage/images/generations',
+      { prompt: 'A green leaf.' },
+    )
+    assert.equal(oldRoute.status, 404)
+    assert.equal(oldRoute.body.error.code, 'g4f_route_not_found')
+
+    const direct = await call(daemon, 'POST', '/v1/images/generations', {
+      model: 'tokenless/pollinations/sana',
+      prompt: 'A green leaf.',
+      size: '768x768',
+      tokenless: { execution_mode: 'direct', task_id: 'IMAGE_HTTP_DIRECT' },
+    })
+    assert.equal(direct.status, 503)
+    assert.equal(direct.body.error.code, 'image_direct_unavailable')
+    assert.equal(JSON.stringify(direct.body).toLowerCase().includes('g4f'), false)
+  })
+})
+
+test('image auto routing creates one browser job from image-capable providers only', async () => {
+  await withDaemon(async (daemon) => {
+    const { ManagedProfileRegistry } = await import(profileRegistryModule)
+    const registry = new ManagedProfileRegistry(daemon.homeDir)
+    await registry.addProfile({ slug: 'images', setDefault: true, lifecycle: 'ready' })
+    for (const provider of ['gemini', 'grok', 'chatgpt']) {
+      await registry.updateProviderStatus('images', {
+        provider,
+        auth: 'authenticated',
+        access: 'signed_in_free',
+        checkedAt: new Date().toISOString(),
+      })
+    }
+    const { writeTokenlessConfig } = await import(runtimeModule)
+    await writeTokenlessConfig({
+      homeDir: daemon.homeDir,
+      profiles: {
+        images: {
+          roleLabel: '',
+          enabledProviders: ['gemini', 'grok', 'chatgpt'],
+          browserVisibility: 'headed',
+          proxy: null,
+        },
+      },
+    })
+
+    const pending = call(daemon, 'POST', '/v1/images/generations', {
+      model: 'tokenless/auto',
+      prompt: 'A flat green leaf icon on white.',
+      tokenless: {
+        execution_mode: 'browser',
+        profile: 'images',
+        task_id: 'IMAGE_HTTP_AUTO',
+        page_ref: 'page:IMAGE_HTTP_AUTO',
+        timeout_ms: 30_000,
+      },
+    })
+    let job
+    for (let attempt = 0; attempt < 40 && !job; attempt += 1) {
+      job = daemon.store.listJobs({ limit: 1 })[0]
+      if (!job) await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+    assert.ok(job)
+    assert.equal(job.provider, 'grok')
+    assert.deepEqual(job.request_json.capabilityRoute.requirements, [
+      'conversation.chat',
+      'image.generation',
+      'artifact.download',
+    ])
+    assert.equal(job.request_json.fallback, null)
+    await daemon.store.cancelJob(job.job_id, 'focused image routing test completed')
+    const response = await pending
+    assert.equal(response.status, 502)
+    assert.equal(response.body.error.code, 'image_provider_job_failed')
+  })
+})
+
 test('api proxy routes stay behind the daemon control bearer token', async () => {
   await withDaemon(async (daemon) => {
     for (const [method, route] of ROUTES) {

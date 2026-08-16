@@ -31,7 +31,7 @@ tokenless api-proxy status --json
 
 Default `http://127.0.0.1:7331`. It is loopback-only and never binds a public interface.
 
-Do not hardcode it. Read `apiProxy.endpoints` from `tokenless api-proxy status --json` — keys `openai`, `openaiDefault`, and `anthropic` — which already accounts for a custom `daemonUrl` in the config.
+Do not hardcode it. Read `apiProxy.endpoints` from `tokenless api-proxy status --json` — keys `openai`, `openaiDefault`, `anthropic`, and `images` — which already accounts for a custom `daemonUrl` in the config.
 
 | Client style | Base URL |
 | --- | --- |
@@ -69,6 +69,29 @@ Treat it as a local credential: it authorizes every daemon control route, not ju
 | GET | `/v1/openai/models` | List accepted model names |
 | GET | `/v1/models` | Alias of the above |
 | POST | `/v1/anthropic/messages` | Anthropic message |
+| POST | `/v1/images/generations` | Unified browser or direct image generation |
+
+## Image generation
+
+`POST /v1/images/generations` is the canonical image-generation input for both execution modes. The request selects `browser` or `direct`; it never names an internal provider backend.
+
+```json
+{
+  "model": "tokenless/auto",
+  "prompt": "A flat green leaf icon on white.",
+  "tokenless": {
+    "execution_mode": "browser",
+    "profile": "default",
+    "task_id": "task-123"
+  }
+}
+```
+
+Browser `tokenless/auto` considers only enabled, currently usable providers with complete `conversation.chat`, `image.generation`, and `artifact.download` capability routes. Use `tokenless/<provider>` to select one exact browser provider.
+
+Direct V1 accepts `tokenless/auto`, `tokenless/pollinations`, or `tokenless/pollinations/sana`; `size` may be omitted or set to `768x768`. The private implementation is not part of the public schema or response.
+
+Both modes return `data[].url` under the authenticated `/v1/asset/...` route and common `data[].asset` metadata. Browser auto selects the highest-ranked eligible route; cross-provider fallback remains unavailable because image surfaces require provider-specific actions.
 
 ## Model naming
 

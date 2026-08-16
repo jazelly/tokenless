@@ -11,7 +11,7 @@ export const IMAGE_ASSET_MEDIA_TYPES = Object.freeze(['image/png', 'image/jpeg',
 export const MAX_IMAGE_ASSET_BYTES = 32 * 1024 * 1024
 
 export type ImageAssetMediaType = typeof IMAGE_ASSET_MEDIA_TYPES[number]
-export type ImageAssetProvider = 'arena' | 'meta' | 'chatgpt' | 'grok' | 'gemini' | 'g4f'
+export type ImageAssetProvider = 'arena' | 'meta' | 'chatgpt' | 'grok' | 'gemini' | 'pollinations'
 
 export type VisibleImageSource = Readonly<{
   url: string
@@ -316,27 +316,27 @@ async function persistVerifiedImageAsset({
   }
 }
 
-export async function persistDirectG4fImageAsset(
+export async function persistDirectImageAsset(
   bytes: Buffer,
   identity: Omit<ImageAssetIdentity, 'provider'> & { conversationId: string },
   index: number,
 ): Promise<PersistedImageAsset> {
-  const provider = 'g4f' as const
+  const provider = 'pollinations' as const
   const scopedIdentity: ImageAssetIdentity = { ...identity, provider }
   assertNotAborted(identity.signal)
   if (bytes.byteLength > MAX_IMAGE_ASSET_BYTES) {
-    throw imageAssetError(provider, 'bytes_too_large', 'g4f image response exceeds the maximum asset size.', { retryable: false })
+    throw imageAssetError(provider, 'bytes_too_large', 'Pollinations image response exceeds the maximum asset size.', { retryable: false })
   }
   const verified = sniffImageBytes(bytes)
   const decoded = verified ? readEncodedImageDimensions(bytes, verified.mediaType) : null
   if (!verified || !decoded) {
-    throw imageAssetError(provider, 'bytes_invalid', 'g4f image response is not a supported image with readable dimensions.')
+    throw imageAssetError(provider, 'bytes_invalid', 'Pollinations image response is not a supported image with readable dimensions.')
   }
   if (!Number.isSafeInteger(index) || index < 0 || index > 9999) {
-    throw imageAssetError(provider, 'asset_index_invalid', 'g4f image asset index is invalid.')
+    throw imageAssetError(provider, 'asset_index_invalid', 'Pollinations image asset index is invalid.')
   }
   if (!identity.assetRoot || identity.assetRoot.includes('\u0000')) {
-    throw imageAssetError(provider, 'asset_root_invalid', 'g4f image asset root is invalid.')
+    throw imageAssetError(provider, 'asset_root_invalid', 'Pollinations image asset root is invalid.')
   }
   return await persistVerifiedImageAsset({
     bytes,
@@ -348,7 +348,7 @@ export async function persistDirectG4fImageAsset(
     jobId: safeAssetComponent(identity.jobId, 'job id', provider),
     taskSegment: identity.taskId === null ? 'unscoped' : safeAssetComponent(identity.taskId, 'task id', provider),
     conversationId: safeAssetComponent(identity.conversationId, 'conversation id', provider),
-    visibleProof: 'direct-g4f-generated-image-downloaded-asset',
+    visibleProof: 'direct-pollinations-generated-image-downloaded-asset',
   })
 }
 

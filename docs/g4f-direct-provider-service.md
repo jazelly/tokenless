@@ -49,26 +49,12 @@ Provider guest mode is separate from daemon authentication: omit `x-tokenless-au
 | `POST /v1/direct/g4f/{provider}/chat/completions` | Chat completion and SSE |
 | `POST /v1/direct/g4f/{provider}/responses` | Responses API |
 | `POST /v1/direct/g4f/{provider}/messages` | Messages API |
-| `POST /v1/direct/g4f/{provider}/images/generations` | Image generation |
 | `POST /v1/direct/g4f/{provider}/audio/transcriptions` | Audio transcription |
 | `POST /v1/direct/g4f/{provider}/audio/speech` | Speech generation |
 | `GET /v1/direct/g4f/assets/{images|media}/{file}` | Generated media |
 | `GET /v1/direct/g4f/pa/providers` | Setup-managed PA inventory |
 
-Image generation requires a Tokenless asset context in the JSON body:
-
-```json
-{
-  "model": "sana",
-  "prompt": "A flat green leaf icon on white.",
-  "tokenless": {
-    "taskId": "task-123",
-    "conversationId": "chat-456"
-  }
-}
-```
-
-Tokenless removes the `tokenless` object before calling G4F, downloads each private generated-media URL, verifies the image bytes and dimensions, and stores the file at `assets/{taskId}/{conversationId}/{utcTimestamp}_{requestId}/{index}.{ext}` with mode `0600`. Each `data[]` item returns the common `asset` metadata and a relative authenticated URL under `/v1/asset/...`; callers resolve it against the same daemon origin.
+Image generation is deliberately absent from the G4F-namespaced routes. Call the provider-neutral [`POST /v1/images/generations`](api-proxy-integration.md#image-generation) endpoint and select `tokenless.execution_mode`; its public request and response do not expose the private backend.
 
 Known Tokenless IDs such as `chatgpt` map to pinned upstream providers. Use `g4f:<ProviderName>` for an exact G4F provider, including explicit `g4f:AnyProvider`; Tokenless never selects `AnyProvider` silently.
 
@@ -95,7 +81,7 @@ Real E2E covers both authentication boundaries:
 
 - Guest: an explicit `g4f:GLM` request omits the provider auth-context header, completes Aliyun traceless verification in the isolated headless browser, requires an exact random response marker, and verifies that no auth context was created.
 - Signed in: ChatGPT direct reads only the selected Cloak browser profile's ChatGPT cookies, access token, user agent, and language headers into one ephemeral provider-scoped context.
-- Image: the real `g4f:PollinationsImage` / `sana` gate generated a 768×768 JPEG, persisted it under the supplied task and conversation identities, and proved digest plus authenticated byte-for-byte readback.
+- Image: the real `tokenless/pollinations/sana` direct gate generated a 768×768 JPEG through the unified endpoint, persisted it under the supplied task identity, and proved digest plus authenticated byte-for-byte readback without exposing the private backend.
 
 ## Provider errors
 

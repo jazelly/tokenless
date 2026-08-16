@@ -14,7 +14,7 @@ The checked-in runtime catalog and provider routing matrix live in `packages/cli
 
 All other entries below remain discoverable candidates. In particular, `research.deep`, citations as a required production postcondition, continuation as an explicit capability, generated media, and generated work artifacts remain non-routeable until their complete execution contracts are implemented and real-provider E2E-closed.
 
-The separate G4F direct service now persists real `images/generations` output into the same task/conversation/time-scoped asset store. Its `PollinationsImage` / `sana` real gate produced and authenticated-read-back one 768×768 JPEG; this does not add a browser-provider route to the matrix above.
+The unified `POST /v1/images/generations` endpoint persists both browser and direct results into the same scoped asset store. Its logical `tokenless/pollinations/sana` direct gate produced and authenticated-read-back one 768×768 JPEG without exposing the private implementation; this does not add a browser-provider route to the matrix above.
 
 ## Evidence Ladder
 

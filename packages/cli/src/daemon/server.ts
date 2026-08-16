@@ -47,6 +47,7 @@ import {
 import type { G4fServiceProcess } from '../g4f/index.js'
 import { handleG4fApiRequest } from './g4f-api.js'
 import { parseImageAssetReference, readPersistedImageAsset } from '../playwright/image-assets.js'
+import { ImageGenerationAdapter, ImageGenerationError } from './image-generation.js'
 
 import { FeatureBenchChannelError, FeatureBenchChannelManager, type FeatureBenchChannelIssue } from './featurebench-channel.js'
 
@@ -124,8 +125,9 @@ export async function serveHttp({
   const webAi = new WebAiInteractionV0Adapter(store)
   await webAi.initializeCleanup()
   const apiProxy = new ApiProxyAdapter(store, async () => await runtimeController?.wake(), g4fService?.client)
+  const imageGeneration = new ImageGenerationAdapter(store, async () => await runtimeController?.wake(), g4fService?.client)
   server = http.createServer((request, response) => {
-    void handleRequest(store, close, () => active, deactivate, runtimeController, g4fService, uiServer, webAi, apiProxy, featureBench, request, response)
+    void handleRequest(store, close, () => active, deactivate, runtimeController, g4fService, uiServer, webAi, apiProxy, imageGeneration, featureBench, request, response)
   })
   await new Promise<void>((resolve, reject) => {
     const onError = (error: Error) => {
@@ -193,6 +195,7 @@ async function handleRequest(
   uiServer: TokenlessUiServer,
   webAi: WebAiInteractionV0Adapter,
   apiProxy: ApiProxyAdapter,
+  imageGeneration: ImageGenerationAdapter,
   featureBench: FeatureBenchChannelManager,
   request: IncomingMessage,
   response: ServerResponse
@@ -282,6 +285,11 @@ async function handleRequest(
         'cache-control': 'no-store',
       })
       response.end(asset.bytes)
+      return
+    }
+
+    if (method === 'POST' && url.pathname === '/v1/images/generations') {
+      writeJson(response, 200, await imageGeneration.generate(await readJsonObject(request)))
       return
     }
 
@@ -543,6 +551,17 @@ async function handleRequest(
 
     writeJson(response, 404, { error: { message: 'not found' } })
   } catch (error) {
+    if (error instanceof ImageGenerationError) {
+      writeJson(response, error.status, {
+        error: {
+          code: error.code,
+          message: error.message,
+          retryable: error.retryable,
+          ...(error.details === undefined ? {} : { details: error.details }),
+        },
+      })
+      return
+    }
     const directApiStatus = (error as { status?: unknown })?.status
     const directApiCode = (error as { code?: unknown })?.code
     if (

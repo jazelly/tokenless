@@ -278,45 +278,53 @@ async function collectVisibleChoices(page: Page, provider: ProviderDomDefinition
   ]
   const choices: Choice[] = []
   for (const locator of locators) {
-    const values = await locator.evaluateAll((elements, options) => elements.slice(0, 80).map((element) => {
-      const labelElement = (options.providerId === 'arena'
-        ? element.querySelector('.text-lg, .font-mono')
-        : null) ?? element.querySelector('.label') ??
-        (element.matches('[role="menuitemcheckbox"]') ? element.querySelector('.text-subheadline') : null) ??
-        (element.matches('[role="menuitemradio"], [role="menuitemcheckbox"]') ? element.querySelector('.truncate') : null)
-      const text = (labelElement?.textContent ?? element.getAttribute('aria-label') ?? element.textContent ?? '').replace(/\s+/g, ' ').trim()
-      const fullText = (element.textContent ?? '').replace(/\s+/g, ' ').trim()
-      const ariaSelected = element.getAttribute('aria-selected') === 'true' ||
-        element.getAttribute('aria-checked') === 'true' ||
-        element.getAttribute('data-state') === 'checked' ||
-        element.classList.contains('selected') ||
-        element.querySelector('[aria-label="Selected"]') !== null
-      const dataDisabled = element.getAttribute('data-disabled')
-      const classTokens = new Set((element.getAttribute('class') ?? '').split(/\s+/).filter(Boolean))
-      const style = element instanceof HTMLElement ? window.getComputedStyle(element) : null
-      const explicitlyUnavailable = options.choiceAvailability.unavailableClassTokens.some((token) => classTokens.has(token))
-      const mutedUnavailable = options.choiceAvailability.mutedUnavailableClassToken !== null &&
-        classTokens.has(options.choiceAvailability.mutedUnavailableClassToken) &&
-        (
-          (options.choiceAvailability.mutedOpacityClassToken !== null && classTokens.has(options.choiceAvailability.mutedOpacityClassToken)) ||
-          (style !== null && Number(style.opacity) < 1)
+    const values = await locator.evaluateAll((elements, options) => {
+      const grokUpgradeVisible = options.providerId === 'grok' && elements.some((candidate) => {
+        const candidateText = (candidate.textContent ?? '').replace(/\s+/g, ' ').trim()
+        return /unlock extended capabilities/i.test(candidateText) && /upgrade/i.test(candidateText)
+      })
+      return elements.slice(0, 80).map((element) => {
+        const labelElement = (options.providerId === 'arena'
+          ? element.querySelector('.text-lg, .font-mono')
+          : null) ?? element.querySelector('.label') ??
+          (element.matches('[role="menuitemcheckbox"]') ? element.querySelector('.text-subheadline') : null) ??
+          (element.matches('[role="menuitemradio"], [role="menuitemcheckbox"]') ? element.querySelector('.truncate') : null)
+        const text = (labelElement?.textContent ?? element.getAttribute('aria-label') ?? element.textContent ?? '').replace(/\s+/g, ' ').trim()
+        const fullText = (element.textContent ?? '').replace(/\s+/g, ' ').trim()
+        const ariaSelected = element.getAttribute('aria-selected') === 'true' ||
+          element.getAttribute('aria-checked') === 'true' ||
+          element.getAttribute('data-state') === 'checked' ||
+          element.classList.contains('selected') ||
+          element.querySelector('[aria-label="Selected"]') !== null
+        const dataDisabled = element.getAttribute('data-disabled')
+        const classTokens = new Set((element.getAttribute('class') ?? '').split(/\s+/).filter(Boolean))
+        const style = element instanceof HTMLElement ? window.getComputedStyle(element) : null
+        const explicitlyUnavailable = options.choiceAvailability.unavailableClassTokens.some((token) => classTokens.has(token))
+        const mutedUnavailable = options.choiceAvailability.mutedUnavailableClassToken !== null &&
+          classTokens.has(options.choiceAvailability.mutedUnavailableClassToken) &&
+          (
+            (options.choiceAvailability.mutedOpacityClassToken !== null && classTokens.has(options.choiceAvailability.mutedOpacityClassToken)) ||
+            (style !== null && Number(style.opacity) < 1)
+          )
+        const unrelatedAccountControl = /(?:sign|log) in|upgrade|subscribe/i.test(fullText) ||
+          /(?:sign|log)[-_]?in|upgrade|subscribe/i.test(element.getAttribute('data-testid') ?? element.getAttribute('data-test-id') ?? '')
+        const grokUpgradeRestricted = grokUpgradeVisible && /^(?:Heavy|Build)/i.test(text)
+        const disabled = (
+          element.hasAttribute('disabled') ||
+          element.getAttribute('aria-disabled') === 'true' ||
+          (dataDisabled !== null && dataDisabled !== 'false') ||
+          explicitlyUnavailable ||
+          mutedUnavailable ||
+          grokUpgradeRestricted ||
+          unrelatedAccountControl
         )
-      const unrelatedAccountControl = /(?:sign|log) in|upgrade|subscribe/i.test(fullText) ||
-        /(?:sign|log)[-_]?in|upgrade|subscribe/i.test(element.getAttribute('data-testid') ?? element.getAttribute('data-test-id') ?? '')
-      const disabled = (
-        element.hasAttribute('disabled') ||
-        element.getAttribute('aria-disabled') === 'true' ||
-        (dataDisabled !== null && dataDisabled !== 'false') ||
-        explicitlyUnavailable ||
-        mutedUnavailable ||
-        unrelatedAccountControl
-      )
-      return {
-        label: text.slice(0, 120),
-        selected: ariaSelected,
-        enabled: !disabled,
-      }
-    }).filter((entry) => entry.label.length > 0), {
+        return {
+          label: text.slice(0, 120),
+          selected: ariaSelected,
+          enabled: !disabled,
+        }
+      }).filter((entry) => entry.label.length > 0)
+    }, {
       choiceAvailability: provider.choiceAvailability,
       providerId: provider.id,
     })

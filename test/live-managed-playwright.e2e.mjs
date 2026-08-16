@@ -784,7 +784,7 @@ async function arenaImage({ provider, journey }) {
     '--capability', 'artifact.download',
     '--prompt', 'Generate one flat blue paper airplane icon centered on a plain white background, with no text.',
   ])
-  const generatedResponse = responseResult(generated.payload, 'response.read')
+  const generatedResponse = imageGenerationResult(generated.payload, provider)
   const generatedArtifacts = assertArenaImageArtifacts(generatedResponse)
   await assertArenaPersistedAssets(journey.session, generated.page, generatedArtifacts)
   assert.equal(await visibleArenaArtifactCount(generated.page, generatedArtifacts), generatedArtifacts.length)
@@ -816,7 +816,7 @@ async function metaImage({ provider, journey }) {
     '--prompt', 'Generate one flat blue paper airplane icon centered on a plain white background, with no text.',
   ], 360_000)
   try {
-    const response = responseResult(run.payload, 'response.read')
+    const response = imageGenerationResult(run.payload, provider)
     const artifacts = assertMetaImageArtifacts(response)
     await assertPersistedImageAssets(journey.session, run.page, artifacts)
     assert.equal(await visibleMetaArtifactCount(run.page, artifacts), artifacts.length)
@@ -834,7 +834,7 @@ async function chatgptImage({ provider, journey }) {
     '--prompt', 'Generate one flat blue paper airplane icon centered on a plain white background, with no text.',
   ], 360_000)
   try {
-    const response = responseResult(run.payload, 'response.read')
+    const response = imageGenerationResult(run.payload, provider)
     const artifacts = assertChatGptImageArtifacts(response)
     await assertPersistedImageAssets(journey.session, run.page, artifacts)
     assert.equal(await visibleChatGptArtifactCount(run.page, artifacts), artifacts.length)
@@ -852,7 +852,7 @@ async function geminiImage({ provider, journey }) {
     '--prompt', 'Generate one simple flat blue paper airplane icon on a plain white background, with no text.',
   ], 360_000)
   try {
-    const response = responseResult(run.payload, 'response.read')
+    const response = imageGenerationResult(run.payload, provider)
     const artifacts = assertGeminiImageArtifacts(response)
     assert.equal(artifacts.length, 1)
     await assertPersistedImageAssets(journey.session, run.page, artifacts)
@@ -872,7 +872,7 @@ async function grokImage({ provider, journey }) {
     '--prompt', 'Generate one flat blue paper airplane icon centered on a plain white background, with no text.',
   ], 360_000)
   try {
-    const response = responseResult(run.payload, 'response.read')
+    const response = imageGenerationResult(run.payload, provider)
     const artifacts = assertGrokImageArtifacts(response)
     assert.equal(artifacts.length, 2)
     await assertPersistedImageAssets(journey.session, run.page, artifacts)
@@ -1782,6 +1782,19 @@ function responseResult(payload, actionName) {
   return [...responses].reverse().find((response) => response?.ok === true && response.action === actionName)?.result ?? null
 }
 
+function imageGenerationResult(payload, provider) {
+  assert.equal(payload?.tokenless?.provider, provider)
+  assert.equal(payload?.tokenless?.execution_mode, 'browser')
+  assert.equal(typeof payload?.tokenless?.job_id, 'string')
+  assert.ok(Array.isArray(payload?.data) && payload.data.length > 0)
+  assert.ok(payload.data.every((entry) => (
+    typeof entry?.url === 'string' &&
+    entry.url.startsWith('/v1/asset/') &&
+    entry?.asset?.provider === provider
+  )))
+  return { artifacts: payload.data.map((entry) => entry.asset) }
+}
+
 function assertConversationWorkspaceResult(provider, taskId, run) {
   const result = responseResult(run.payload, 'workspace.ensure')
   assert.equal(result?.mode, 'conversation')
@@ -1878,7 +1891,6 @@ async function visibleCitationCount(page, citations) {
 }
 
 function assertArenaImageArtifacts(response) {
-  assert.equal(response?.visibleProof, 'visible-arena-current-turn-image-artifacts-read')
   assert.ok(Array.isArray(response.artifacts) && response.artifacts.length > 0)
   assert.ok(response.artifacts.every((artifact) => (
     artifact?.kind === 'image' &&
@@ -1905,7 +1917,6 @@ function assertArenaImageArtifacts(response) {
 }
 
 function assertMetaImageArtifacts(response) {
-  assert.equal(response?.visibleProof, 'visible-meta-current-turn-image-artifacts-read')
   assert.ok(Array.isArray(response.artifacts) && response.artifacts.length > 0)
   assert.ok(response.artifacts.every((artifact) => (
     artifact?.kind === 'image' &&
@@ -1932,7 +1943,6 @@ function assertMetaImageArtifacts(response) {
 }
 
 function assertChatGptImageArtifacts(response) {
-  assert.equal(response?.visibleProof, 'visible-chatgpt-current-turn-image-artifacts-read')
   assert.ok(Array.isArray(response.artifacts) && response.artifacts.length > 0)
   assert.ok(response.artifacts.every((artifact) => (
     artifact?.kind === 'image' &&
@@ -1959,7 +1969,6 @@ function assertChatGptImageArtifacts(response) {
 }
 
 function assertGeminiImageArtifacts(response) {
-  assert.equal(response?.visibleProof, 'visible-gemini-images-current-response-image-artifacts-read')
   assert.ok(Array.isArray(response.artifacts) && response.artifacts.length === 1)
   assert.ok(response.artifacts.every((artifact) => (
     artifact?.kind === 'image' &&
@@ -1986,7 +1995,6 @@ function assertGeminiImageArtifacts(response) {
 }
 
 function assertGrokImageArtifacts(response) {
-  assert.equal(response?.visibleProof, 'visible-grok-imagine-terminal-image-artifacts-read')
   assert.ok(Array.isArray(response.artifacts) && response.artifacts.length === 2)
   assert.ok(response.artifacts.every((artifact) => (
     artifact?.kind === 'image' &&

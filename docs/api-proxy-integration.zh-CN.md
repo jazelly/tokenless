@@ -31,7 +31,7 @@ tokenless api-proxy status --json
 
 默认 `http://127.0.0.1:7331`。仅监听 loopback，绝不绑定公网接口。
 
-不要硬编码。请从 `tokenless api-proxy status --json` 读取 `apiProxy.endpoints`（键为 `openai`、`openaiDefault`、`anthropic`），它已经考虑了配置中自定义的 `daemonUrl`。
+不要硬编码。请从 `tokenless api-proxy status --json` 读取 `apiProxy.endpoints`（键为 `openai`、`openaiDefault`、`anthropic`、`images`），它已经考虑了配置中自定义的 `daemonUrl`。
 
 | 客户端形态 | Base URL |
 | --- | --- |
@@ -69,6 +69,29 @@ Token 位于 `<TOKENLESS_HOME>/daemon.token`，默认 `~/.tokenless/daemon.token
 | GET | `/v1/openai/models` | 列出可用 model 名称 |
 | GET | `/v1/models` | 上一条的 alias |
 | POST | `/v1/anthropic/messages` | Anthropic message |
+| POST | `/v1/images/generations` | 统一 browser 或 direct 图片生成 |
+
+## 图片生成
+
+`POST /v1/images/generations` 是两种 execution mode 共用的 canonical image-generation input。请求只选择 `browser` 或 `direct`，不会命名内部 provider backend。
+
+```json
+{
+  "model": "tokenless/auto",
+  "prompt": "A flat green leaf icon on white.",
+  "tokenless": {
+    "execution_mode": "browser",
+    "profile": "default",
+    "task_id": "task-123"
+  }
+}
+```
+
+Browser `tokenless/auto` 只考虑已启用、当前可用，并且完整具备 `conversation.chat`、`image.generation` 与 `artifact.download` capability route 的 provider。使用 `tokenless/<provider>` 可精确选择一个 browser provider。
+
+Direct V1 接受 `tokenless/auto`、`tokenless/pollinations` 或 `tokenless/pollinations/sana`；`size` 可以省略或设为 `768x768`。私有实现不属于 public schema 或 response。
+
+两种 mode 都返回 authenticated `/v1/asset/...` 下的 `data[].url` 与共用 `data[].asset` metadata。Browser auto 选择排名最高的 eligible route；由于图片 surface 需要 provider-specific action，目前不提供跨 provider fallback。
 
 ## Model 命名
 
