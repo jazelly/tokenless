@@ -313,6 +313,46 @@
         "local_digest"
       ]
     },
+    "dola-image": {
+      "gate": "mutation",
+      "submissions": 1,
+      "actions": [
+        "dola.image.select",
+        "prompt.input",
+        "prompt.submit",
+        "response.read"
+      ],
+      "closure": [
+        "cli",
+        "visible_dom",
+        "visible_submission",
+        "visible_response",
+        "terminal_artifact",
+        "exact_visible_identity",
+        "authenticated_asset_readback",
+        "local_digest"
+      ]
+    },
+    "doubao-image": {
+      "gate": "mutation",
+      "submissions": 1,
+      "actions": [
+        "doubao.skill.select",
+        "prompt.input",
+        "prompt.submit",
+        "response.read"
+      ],
+      "closure": [
+        "cli",
+        "visible_dom",
+        "visible_submission",
+        "visible_response",
+        "terminal_artifact",
+        "exact_visible_identity",
+        "authenticated_asset_readback",
+        "local_digest"
+      ]
+    },
     "arena-code": {
       "gate": "mutation",
       "submissions": 1,
@@ -628,6 +668,8 @@
         "meta-image": "provider_specific_capability",
         "chatgpt-image": "provider_specific_capability",
         "gemini-image": "provider_specific_capability",
+        "dola-image": "provider_specific_capability",
+        "doubao-image": "provider_specific_capability",
         "grok-image": "provider_specific_capability",
         "effort-choice": "no_real_selection_closure",
         "conversation-workflow": "file_and_citation_closure_not_proven",
@@ -662,6 +704,8 @@
         "arena-image": "provider_specific_capability",
         "meta-image": "provider_specific_capability",
         "gemini-image": "provider_specific_capability",
+        "dola-image": "provider_specific_capability",
+        "doubao-image": "provider_specific_capability",
         "grok-image": "provider_specific_capability",
         "arena-code": "provider_specific_capability",
         "arena-agent": "provider_specific_capability",
@@ -704,6 +748,8 @@
         "meta-image": "provider_specific_capability",
         "chatgpt-image": "provider_specific_capability",
         "gemini-image": "provider_specific_capability",
+        "dola-image": "provider_specific_capability",
+        "doubao-image": "provider_specific_capability",
         "grok-image": "provider_specific_capability",
         "arena-code": "provider_specific_capability",
         "arena-agent": "provider_specific_capability",
@@ -734,15 +780,17 @@
         "session-readiness",
         "prompt-draft",
         "file-selection",
+        "gemini-image",
         "workspace-response-citations"
       ],
       "unavailable": {
-        "gemini-image": "real_provider_generation_timed_out_in_repeated_360_second_built_cli_gates_2026_08_16",
         "arena-search": "provider_specific_capability",
         "arena-image": "provider_specific_capability",
         "meta-image": "provider_specific_capability",
         "chatgpt-image": "provider_specific_capability",
         "grok-image": "provider_specific_capability",
+        "dola-image": "provider_specific_capability",
+        "doubao-image": "provider_specific_capability",
         "arena-code": "provider_specific_capability",
         "arena-agent": "provider_specific_capability",
         "arena-video": "provider_specific_capability",
@@ -783,6 +831,8 @@
         "meta-image": "provider_specific_capability",
         "chatgpt-image": "provider_specific_capability",
         "gemini-image": "provider_specific_capability",
+        "dola-image": "provider_specific_capability",
+        "doubao-image": "provider_specific_capability",
         "arena-code": "provider_specific_capability",
         "arena-agent": "provider_specific_capability",
         "arena-video": "provider_specific_capability",
@@ -822,6 +872,8 @@
         "meta-image": "provider_specific_capability",
         "chatgpt-image": "provider_specific_capability",
         "gemini-image": "provider_specific_capability",
+        "dola-image": "provider_specific_capability",
+        "doubao-image": "provider_specific_capability",
         "arena-code": "provider_specific_capability",
         "arena-agent": "provider_specific_capability",
         "arena-video": "provider_specific_capability",
@@ -862,6 +914,8 @@
         "meta-image": "provider_specific_capability",
         "chatgpt-image": "provider_specific_capability",
         "gemini-image": "provider_specific_capability",
+        "dola-image": "provider_specific_capability",
+        "doubao-image": "provider_specific_capability",
         "grok-image": "provider_specific_capability",
         "arena-code": "provider_specific_capability",
         "arena-agent": "provider_specific_capability",
@@ -901,6 +955,8 @@
         "meta-image": "provider_specific_capability",
         "chatgpt-image": "provider_specific_capability",
         "gemini-image": "provider_specific_capability",
+        "dola-image": "provider_specific_capability",
+        "doubao-image": "provider_specific_capability",
         "grok-image": "provider_specific_capability",
         "arena-code": "provider_specific_capability",
         "arena-agent": "provider_specific_capability",
@@ -942,6 +998,8 @@
         "meta-image": "provider_specific_capability",
         "chatgpt-image": "provider_specific_capability",
         "gemini-image": "provider_specific_capability",
+        "dola-image": "provider_specific_capability",
+        "doubao-image": "provider_specific_capability",
         "grok-image": "provider_specific_capability",
         "arena-code": "provider_specific_capability",
         "arena-agent": "provider_specific_capability",
@@ -975,6 +1033,7 @@
         "prompt-draft",
         "file-selection",
         "doubao-controls",
+        "doubao-image",
         "workspace-response-baseline"
       ],
       "unavailable": {
@@ -983,6 +1042,7 @@
         "meta-image": "provider_specific_capability",
         "chatgpt-image": "provider_specific_capability",
         "gemini-image": "provider_specific_capability",
+        "dola-image": "provider_specific_capability",
         "grok-image": "provider_specific_capability",
         "arena-code": "provider_specific_capability",
         "arena-agent": "provider_specific_capability",
@@ -1024,6 +1084,8 @@
         "meta-image": "provider_specific_capability",
         "chatgpt-image": "provider_specific_capability",
         "gemini-image": "provider_specific_capability",
+        "dola-image": "provider_specific_capability",
+        "doubao-image": "provider_specific_capability",
         "grok-image": "provider_specific_capability",
         "arena-code": "provider_specific_capability",
         "arena-agent": "provider_specific_capability",
@@ -1053,7 +1115,8 @@
       "required": [
         "session-readiness",
         "prompt-draft",
-        "model-choice"
+        "model-choice",
+        "dola-image"
       ],
       "unavailable": {
         "arena-search": "provider_specific_capability",
@@ -1061,6 +1124,7 @@
         "meta-image": "provider_specific_capability",
         "chatgpt-image": "provider_specific_capability",
         "gemini-image": "provider_specific_capability",
+        "doubao-image": "provider_specific_capability",
         "grok-image": "provider_specific_capability",
         "arena-code": "provider_specific_capability",
         "arena-agent": "provider_specific_capability",
@@ -1103,6 +1167,8 @@
         "arena-image": "provider_specific_capability",
         "chatgpt-image": "provider_specific_capability",
         "gemini-image": "provider_specific_capability",
+        "dola-image": "provider_specific_capability",
+        "doubao-image": "provider_specific_capability",
         "grok-image": "provider_specific_capability",
         "arena-code": "provider_specific_capability",
         "arena-agent": "provider_specific_capability",

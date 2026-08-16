@@ -7,6 +7,7 @@ import { DiagnosticsCapability } from './capabilities/diagnostics.js'
 import { UnsupportedImageGenerationCapability } from './capabilities/image-generation.js'
 import { createGrokImagineCapability } from './capabilities/grok-imagine.js'
 import { createGeminiImageSurfaceCapability } from './capabilities/gemini-image-surface.js'
+import { createDolaImageSurfaceCapability } from './capabilities/dola-image-surface.js'
 import { DefaultChoiceAvailability } from './choice-availability.js'
 import { ProviderNavigationPolicy } from './navigation-policy.js'
 import { VISIBLE_ACTIONS } from './contracts.js'
@@ -183,6 +184,10 @@ export type ProviderOptionalCapabilities = Readonly<{
     typeof PROVIDER_CAPABILITIES.GEMINI_IMAGE_SURFACE,
     typeof VISIBLE_ACTIONS.GEMINI_IMAGE_INSPECT | typeof VISIBLE_ACTIONS.GEMINI_IMAGE_SELECT
   >
+  dolaImageSurface: ActionCapabilityWithId<
+    typeof PROVIDER_CAPABILITIES.DOLA_IMAGE_SURFACE,
+    typeof VISIBLE_ACTIONS.DOLA_IMAGE_SELECT
+  >
 }>
 
 export type ProviderOptionalCapabilityOverrides = Partial<ProviderOptionalCapabilities>
@@ -197,6 +202,7 @@ const OPTIONAL_CAPABILITY_ORDER: readonly (keyof ProviderOptionalCapabilities)[]
   'imageGeneration',
   'grokImagine',
   'geminiImageSurface',
+  'dolaImageSurface',
 ])
 
 export function createProviderOptionalCapabilities(
@@ -223,6 +229,7 @@ export function createProviderOptionalCapabilities(
     imageGeneration: new UnsupportedImageGenerationCapability(provider),
     grokImagine: createGrokImagineCapability(provider),
     geminiImageSurface: createGeminiImageSurfaceCapability(provider),
+    dolaImageSurface: createDolaImageSurfaceCapability(provider),
     ...overrides,
   }
   return OPTIONAL_CAPABILITY_ORDER.map((key) => capabilities[key])
@@ -233,6 +240,7 @@ export function providerCapabilities(options: {
   imageGeneration?: boolean
   grokImagine?: boolean
   geminiImageSurface?: boolean
+  dolaImageSurface?: boolean
   arenaSurface?: boolean
   qwenMode?: boolean
   deepSeekControls?: boolean
@@ -417,6 +425,11 @@ export function providerCapabilities(options: {
       PROVIDER_CAPABILITIES.GEMINI_IMAGE_SURFACE,
       'gemini-images',
       options.geminiImageSurface === true,
+    ),
+    [PROVIDER_CAPABILITIES.DOLA_IMAGE_SURFACE]: providerSpecificControlStrategy(
+      PROVIDER_CAPABILITIES.DOLA_IMAGE_SURFACE,
+      'dola-create-image',
+      options.dolaImageSurface === true,
     ),
     [PROVIDER_CAPABILITIES.QWEN_MODE]: Object.freeze({
       capability: PROVIDER_CAPABILITIES.QWEN_MODE,

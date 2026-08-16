@@ -38,6 +38,8 @@ export type {
   GeminiImageInspectActionRequest,
   GeminiImageSelectActionRequest,
   GeminiImageSelectionPayload,
+  DolaImageSelectActionRequest,
+  DolaImageSelectionPayload,
   EmptyVisibleActionPayload,
   FileUploadActionRequest,
   FileUploadPayload,
@@ -223,6 +225,15 @@ export type GeminiImageSelectResult = {
   supported: true
   selectedModality: 'image'
   visibleProof: string
+}
+
+export type DolaImageSelectResult = {
+  supported: true
+  selectedModality: 'image'
+  visibleProof: string
+} | {
+  supported: false
+  reason: 'selector_not_available'
 }
 
 export type QwenModeChoice = {
@@ -524,7 +535,7 @@ export type VisibleImageArtifact = {
   byteSize: number
   sha256: string
   createdAt: string
-  provider: 'arena' | 'meta' | 'chatgpt' | 'grok' | 'gemini' | 'pollinations'
+  provider: 'arena' | 'meta' | 'chatgpt' | 'grok' | 'gemini' | 'dola' | 'doubao' | 'pollinations'
   jobId: string
   taskId: string | null
   conversationId: string
@@ -697,6 +708,7 @@ export type VisibleActionResult = (
   | GrokImagineSelectResult
   | GeminiImageInspectResult
   | GeminiImageSelectResult
+  | DolaImageSelectResult
   | QwenModeInspectResult
   | QwenModeSelectResult
   | DeepSeekModeInspectResult

@@ -32,7 +32,6 @@ const DEFAULT_TIMEOUT_MS = 10 * 60_000
 const POLL_INTERVAL_MS = 250
 const SAFE_ASSET_COMPONENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u
 const IMAGE_REQUIREMENTS = Object.freeze([
-  TASK_CAPABILITIES.CONVERSATION_CHAT,
   TASK_CAPABILITIES.IMAGE_GENERATION,
   TASK_CAPABILITIES.ARTIFACT_DOWNLOAD,
 ])
@@ -361,6 +360,27 @@ function browserImageActions(provider: ProviderId, prompt: string) {
       provider,
       action: VISIBLE_ACTIONS.GROK_IMAGINE_SELECT,
       payload: { modality: 'image' },
+    }))
+  }
+  if (provider === 'gemini') {
+    actions.push(createVisibleActionRequest({
+      provider,
+      action: VISIBLE_ACTIONS.GEMINI_IMAGE_SELECT,
+      payload: { modality: 'image' },
+    }))
+  }
+  if (provider === 'dola') {
+    actions.push(createVisibleActionRequest({
+      provider,
+      action: VISIBLE_ACTIONS.DOLA_IMAGE_SELECT,
+      payload: { modality: 'image' },
+    }))
+  }
+  if (provider === 'doubao') {
+    actions.push(createVisibleActionRequest({
+      provider,
+      action: VISIBLE_ACTIONS.DOUBAO_SKILL_SELECT,
+      payload: { skill: 'image-generation' },
     }))
   }
   actions.push(

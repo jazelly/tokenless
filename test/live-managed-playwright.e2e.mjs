@@ -45,6 +45,8 @@ const handlers = {
   'meta-image': metaImage,
   'chatgpt-image': chatgptImage,
   'gemini-image': geminiImage,
+  'dola-image': dolaImage,
+  'doubao-image': doubaoImage,
   'grok-image': grokImage,
   'arena-code': arenaCode,
   'arena-agent': arenaAgent,
@@ -859,6 +861,42 @@ async function geminiImage({ provider, journey }) {
     assert.equal(await visibleGeminiArtifactCount(run.page, artifacts), 1)
     assert.equal(await run.page.locator('button[aria-label="Stop response"]').filter({ visible: true }).count(), 0)
     assert.ok(await run.page.locator('image-loading-overlay .done-generating').filter({ visible: true }).count() > 0)
+  } finally {
+    await run.close()
+  }
+}
+
+async function dolaImage({ provider, journey }) {
+  assert.equal(provider, 'dola')
+  const run = await journey.run([
+    '--capability', 'image.generation',
+    '--capability', 'artifact.download',
+    '--prompt', 'Generate one simple flat green leaf icon on a plain white background, with no text.',
+  ], 360_000)
+  try {
+    const response = imageGenerationResult(run.payload, provider)
+    const artifacts = assertDolaImageArtifacts(response)
+    assertImageConversationIdentity(run.page, artifacts, provider)
+    await assertPersistedImageAssets(journey.session, run.page, artifacts)
+    assert.equal(await visibleDolaArtifactCount(run.page, artifacts), artifacts.length)
+  } finally {
+    await run.close()
+  }
+}
+
+async function doubaoImage({ provider, journey }) {
+  assert.equal(provider, 'doubao')
+  const run = await journey.run([
+    '--capability', 'image.generation',
+    '--capability', 'artifact.download',
+    '--prompt', '生成一张简洁的蓝色纸飞机图标，白色背景，不要文字。',
+  ], 360_000)
+  try {
+    const response = imageGenerationResult(run.payload, provider)
+    const artifacts = assertDoubaoImageArtifacts(response)
+    assertImageConversationIdentity(run.page, artifacts, provider)
+    await assertPersistedImageAssets(journey.session, run.page, artifacts)
+    assert.equal(await visibleDoubaoArtifactCount(run.page, artifacts), artifacts.length)
   } finally {
     await run.close()
   }
@@ -1994,6 +2032,61 @@ function assertGeminiImageArtifacts(response) {
   return response.artifacts
 }
 
+function assertDolaImageArtifacts(response) {
+  assert.ok(Array.isArray(response.artifacts) && response.artifacts.length > 0)
+  assert.ok(response.artifacts.every((artifact) => (
+    artifact?.kind === 'image' &&
+    !Object.prototype.hasOwnProperty.call(artifact, 'url') &&
+    typeof artifact.mediaType === 'string' &&
+    artifact.mediaType.startsWith('image/') &&
+    typeof artifact.assetRef === 'string' &&
+    artifact.assetRef.startsWith('assets/') &&
+    artifact.downloadAvailable === true &&
+    Number.isSafeInteger(artifact.byteSize) &&
+    artifact.byteSize > 0 &&
+    /^[a-f0-9]{64}$/u.test(artifact.sha256) &&
+    artifact.provider === 'dola' &&
+    typeof artifact.conversationId === 'string' &&
+    Number.isSafeInteger(artifact.width) &&
+    artifact.width > 0 &&
+    Number.isSafeInteger(artifact.height) &&
+    artifact.height > 0
+  )))
+  return response.artifacts
+}
+
+function assertDoubaoImageArtifacts(response) {
+  assert.ok(Array.isArray(response.artifacts) && response.artifacts.length > 0)
+  assert.ok(response.artifacts.every((artifact) => (
+    artifact?.kind === 'image' &&
+    !Object.prototype.hasOwnProperty.call(artifact, 'url') &&
+    typeof artifact.mediaType === 'string' &&
+    artifact.mediaType.startsWith('image/') &&
+    typeof artifact.assetRef === 'string' &&
+    artifact.assetRef.startsWith('assets/') &&
+    artifact.downloadAvailable === true &&
+    Number.isSafeInteger(artifact.byteSize) &&
+    artifact.byteSize > 0 &&
+    /^[a-f0-9]{64}$/u.test(artifact.sha256) &&
+    artifact.provider === 'doubao' &&
+    typeof artifact.conversationId === 'string' &&
+    Number.isSafeInteger(artifact.width) &&
+    artifact.width > 0 &&
+    Number.isSafeInteger(artifact.height) &&
+    artifact.height > 0
+  )))
+  return response.artifacts
+}
+
+function assertImageConversationIdentity(page, artifacts, provider) {
+  const current = new URL(page.url())
+  const expectedOrigin = provider === 'dola' ? 'https://www.dola.com' : 'https://www.doubao.com'
+  assert.equal(current.origin, expectedOrigin)
+  const match = current.pathname.match(/^\/chat\/([^/]+)$/u)
+  assert.ok(match?.[1] && match[1] !== 'create-image', `${provider} must reach an exact image conversation URL`)
+  assert.ok(artifacts.every((artifact) => artifact.conversationId === match[1]))
+}
+
 function assertGrokImageArtifacts(response) {
   assert.ok(Array.isArray(response.artifacts) && response.artifacts.length === 2)
   assert.ok(response.artifacts.every((artifact) => (
@@ -2185,6 +2278,48 @@ async function visibleGeminiArtifactCount(page, artifacts) {
     const artifact = expected.get(createHash('sha256').update(bytes).digest('hex'))
     assert.ok(artifact, 'Gemini current-response blob bytes must match a persisted asset digest')
     assert.equal(bytes.byteLength, artifact.byteSize)
+    const decoded = await decodeImageBytesInBrowser(page, bytes, artifact.mediaType)
+    assert.deepEqual([decoded.width, decoded.height], [artifact.width, artifact.height])
+    count += 1
+  }
+  return count
+}
+
+async function visibleDolaArtifactCount(page, artifacts) {
+  return await visibleProviderImageArtifactCount(
+    page,
+    artifacts,
+    '[data-render-engine="node"]:not(.justify-end) img',
+  )
+}
+
+async function visibleDoubaoArtifactCount(page, artifacts) {
+  return await visibleProviderImageArtifactCount(
+    page,
+    artifacts,
+    'div[data-message-id].grid img',
+  )
+}
+
+async function visibleProviderImageArtifactCount(page, artifacts, selector) {
+  const expected = new Map(artifacts.map((artifact) => [artifact.sha256, artifact]))
+  const images = page.locator(selector).filter({ visible: true })
+  let count = 0
+  for (let index = 0; index < await images.count(); index += 1) {
+    const image = images.nth(index)
+    const source = await image.evaluate((element) => element instanceof HTMLImageElement
+      ? element.currentSrc || element.src
+      : '')
+    if (!source.startsWith('https://')) continue
+    const response = await page.request.get(new URL(source, page.url()).toString(), {
+      timeout: 60_000,
+      failOnStatusCode: false,
+      headers: { referer: page.url() },
+    })
+    assert.equal(response.ok(), true)
+    const bytes = Buffer.from(await response.body())
+    const artifact = expected.get(createHash('sha256').update(bytes).digest('hex'))
+    assert.ok(artifact, 'provider DOM image bytes must match a persisted asset digest')
     const decoded = await decodeImageBytesInBrowser(page, bytes, artifact.mediaType)
     assert.deepEqual([decoded.width, decoded.height], [artifact.width, artifact.height])
     count += 1

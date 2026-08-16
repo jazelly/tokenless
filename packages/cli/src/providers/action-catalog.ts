@@ -8,6 +8,7 @@ import type {
   ArenaSurfaceSelectionPayload,
   GrokImagineSelectionPayload,
   GeminiImageSelectionPayload,
+  DolaImageSelectionPayload,
   EmptyVisibleActionPayload,
   FileUploadPayload,
   PromptInputPayload,
@@ -141,6 +142,12 @@ export const VISIBLE_ACTION_CATALOG = Object.freeze({
     lifecycle: reconstructableGatedMutation,
     requiredCapabilities: [PROVIDER_CAPABILITIES.GEMINI_IMAGE_SURFACE],
     validatePayload: validateGeminiImageSelectionPayload,
+  }),
+  [VISIBLE_ACTIONS.DOLA_IMAGE_SELECT]: defineAction({
+    action: VISIBLE_ACTIONS.DOLA_IMAGE_SELECT,
+    lifecycle: reconstructableGatedMutation,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.DOLA_IMAGE_SURFACE],
+    validatePayload: validateDolaImageSelectionPayload,
   }),
   [VISIBLE_ACTIONS.EFFORT_INSPECT]: defineAction({
     action: VISIBLE_ACTIONS.EFFORT_INSPECT,
@@ -415,6 +422,14 @@ function validateGeminiImageSelectionPayload(payload: Record<string, unknown>): 
     throw tokenlessError('invalid_visible_action_payload', 'Gemini image modality must be image.')
   }
   return payload as GeminiImageSelectionPayload
+}
+
+function validateDolaImageSelectionPayload(payload: Record<string, unknown>): DolaImageSelectionPayload {
+  requireExactKeys(payload, ['modality'], 'invalid_visible_action_payload')
+  if (payload.modality !== 'image') {
+    throw tokenlessError('invalid_visible_action_payload', 'Dola image modality must be image.')
+  }
+  return payload as DolaImageSelectionPayload
 }
 
 function validateQwenModeSelectionPayload(payload: Record<string, unknown>): QwenModeSelectionPayload {

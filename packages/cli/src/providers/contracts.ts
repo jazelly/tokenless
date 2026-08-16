@@ -21,6 +21,7 @@ export const VISIBLE_ACTIONS = Object.freeze({
   GROK_IMAGINE_SELECT: 'grok.imagine.select',
   GEMINI_IMAGE_INSPECT: 'gemini.image.inspect',
   GEMINI_IMAGE_SELECT: 'gemini.image.select',
+  DOLA_IMAGE_SELECT: 'dola.image.select',
   EFFORT_INSPECT: 'effort.inspect',
   EFFORT_SELECT: 'effort.select',
   QWEN_MODE_INSPECT: 'qwen.mode.inspect',
@@ -97,6 +98,9 @@ export type GrokImagineSelectionPayload = {
   modality: 'image'
 }
 export type GeminiImageSelectionPayload = {
+  modality: 'image'
+}
+export type DolaImageSelectionPayload = {
   modality: 'image'
 }
 export type QwenModeSelectionPayload = {
@@ -194,6 +198,10 @@ export type GeminiImageInspectActionRequest = VisibleActionRequestEnvelope<
 export type GeminiImageSelectActionRequest = VisibleActionRequestEnvelope<
   typeof VISIBLE_ACTIONS.GEMINI_IMAGE_SELECT,
   GeminiImageSelectionPayload
+>
+export type DolaImageSelectActionRequest = VisibleActionRequestEnvelope<
+  typeof VISIBLE_ACTIONS.DOLA_IMAGE_SELECT,
+  DolaImageSelectionPayload
 >
 export type EffortInspectActionRequest = VisibleActionRequestEnvelope<
   typeof VISIBLE_ACTIONS.EFFORT_INSPECT,
@@ -323,6 +331,7 @@ export type VisibleActionRequest =
   | GrokImagineSelectActionRequest
   | GeminiImageInspectActionRequest
   | GeminiImageSelectActionRequest
+  | DolaImageSelectActionRequest
   | EffortInspectActionRequest
   | EffortSelectActionRequest
   | QwenModeInspectActionRequest

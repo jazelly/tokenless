@@ -422,7 +422,12 @@ function assertRouteCoversActionRequirements(
   route: TaskCapabilityRoute,
   derivedRequirements: readonly TaskCapabilityId[],
 ) {
-  const missing = derivedRequirements.filter((capability) => !route.requirements.includes(capability))
+  const imageLifecycle = route.requirements.includes(TASK_CAPABILITIES.IMAGE_GENERATION) ||
+    route.requirements.includes(TASK_CAPABILITIES.IMAGE_EDIT)
+  const actionRequirements = imageLifecycle
+    ? derivedRequirements.filter((capability) => capability !== TASK_CAPABILITIES.CONVERSATION_CHAT)
+    : derivedRequirements
+  const missing = actionRequirements.filter((capability) => !route.requirements.includes(capability))
   if (missing.length > 0) {
     throw tokenlessError(
       'invalid_playwright_job_capability_requirements',
@@ -559,6 +564,60 @@ function assertImageCapabilityContract(
             requiredAction: {
               action: VISIBLE_ACTIONS.GEMINI_IMAGE_SELECT,
               payload: { modality: 'image' },
+            },
+          },
+        },
+      )
+    }
+  }
+  const requiresDolaImageSurface = provider === 'dola' && requirements.some((capability) => (
+    capability === TASK_CAPABILITIES.IMAGE_GENERATION ||
+    capability === TASK_CAPABILITIES.ARTIFACT_DOWNLOAD
+  ))
+  if (requiresDolaImageSurface) {
+    const dolaImageIndex = actions.findIndex((action) => (
+      action.action === VISIBLE_ACTIONS.DOLA_IMAGE_SELECT &&
+      action.payload.modality === 'image'
+    ))
+    const promptInputIndex = actions.findIndex((action) => action.action === VISIBLE_ACTIONS.PROMPT_INPUT)
+    if (dolaImageIndex < 0 || promptInputIndex < 0 || dolaImageIndex > promptInputIndex) {
+      throw tokenlessError(
+        'invalid_playwright_job_capability_requirements',
+        'Dola image capabilities require dola.image.select with modality image before prompt.input.',
+        {
+          details: {
+            provider,
+            requirements,
+            requiredAction: {
+              action: VISIBLE_ACTIONS.DOLA_IMAGE_SELECT,
+              payload: { modality: 'image' },
+            },
+          },
+        },
+      )
+    }
+  }
+  const requiresDoubaoImageSkill = provider === 'doubao' && requirements.some((capability) => (
+    capability === TASK_CAPABILITIES.IMAGE_GENERATION ||
+    capability === TASK_CAPABILITIES.ARTIFACT_DOWNLOAD
+  ))
+  if (requiresDoubaoImageSkill) {
+    const doubaoSkillIndex = actions.findIndex((action) => (
+      action.action === VISIBLE_ACTIONS.DOUBAO_SKILL_SELECT &&
+      action.payload.skill === 'image-generation'
+    ))
+    const promptInputIndex = actions.findIndex((action) => action.action === VISIBLE_ACTIONS.PROMPT_INPUT)
+    if (doubaoSkillIndex < 0 || promptInputIndex < 0 || doubaoSkillIndex > promptInputIndex) {
+      throw tokenlessError(
+        'invalid_playwright_job_capability_requirements',
+        'Doubao image capabilities require doubao.skill.select with image-generation before prompt.input.',
+        {
+          details: {
+            provider,
+            requirements,
+            requiredAction: {
+              action: VISIBLE_ACTIONS.DOUBAO_SKILL_SELECT,
+              payload: { skill: 'image-generation' },
             },
           },
         },

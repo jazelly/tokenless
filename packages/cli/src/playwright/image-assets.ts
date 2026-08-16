@@ -11,7 +11,7 @@ export const IMAGE_ASSET_MEDIA_TYPES = Object.freeze(['image/png', 'image/jpeg',
 export const MAX_IMAGE_ASSET_BYTES = 32 * 1024 * 1024
 
 export type ImageAssetMediaType = typeof IMAGE_ASSET_MEDIA_TYPES[number]
-export type ImageAssetProvider = 'arena' | 'meta' | 'chatgpt' | 'grok' | 'gemini' | 'pollinations'
+export type ImageAssetProvider = 'arena' | 'meta' | 'chatgpt' | 'grok' | 'gemini' | 'dola' | 'doubao' | 'pollinations'
 
 export type VisibleImageSource = Readonly<{
   url: string
@@ -397,6 +397,24 @@ export async function persistGeminiImageAsset(
   return persistBrowserImageAsset(page, source, identity, index)
 }
 
+export async function persistDolaImageAsset(
+  page: Page,
+  source: VisibleImageSource,
+  identity: Omit<ImageAssetIdentity, 'provider'> & { provider: 'dola' },
+  index: number,
+) {
+  return persistBrowserImageAsset(page, source, identity, index)
+}
+
+export async function persistDoubaoImageAsset(
+  page: Page,
+  source: VisibleImageSource,
+  identity: Omit<ImageAssetIdentity, 'provider'> & { provider: 'doubao' },
+  index: number,
+) {
+  return persistBrowserImageAsset(page, source, identity, index)
+}
+
 /**
  * Read a persisted image by the relative reference returned in a response.
  * The returned bytes are verified again before crossing the daemon boundary.
@@ -558,6 +576,8 @@ function deriveImageConversationId(value: string, provider: ImageAssetProvider) 
         ? segments[0] === 'imagine' && segments[1] === 'post'
         : provider === 'gemini'
           ? segments[0] === 'app'
+        : provider === 'dola' || provider === 'doubao'
+          ? segments[0] === 'chat'
         : segments[0] === 'c' || segments[0] === 'conversation' || segments[0] === 'agent'
     const identityIndex = provider === 'grok' ? 2 : 1
     if (recognized && segments[identityIndex]) {

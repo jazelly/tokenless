@@ -162,6 +162,7 @@ export const PROVIDER_NAVIGATION_CATALOG = Object.freeze({
     origins: ['https://www.doubao.com'],
     pagePatterns: pages(
       { kind: 'entry', urlPattern: 'https://www.doubao.com/chat/' },
+      { kind: 'conversation', urlPattern: 'https://www.doubao.com/chat/:conversationId' },
     ),
     trustedSignInOrigins: [],
   }),
