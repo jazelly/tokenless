@@ -43,6 +43,7 @@ const handlers = {
   'arena-search': arenaSearch,
   'arena-image': arenaImage,
   'meta-image': metaImage,
+  'chatgpt-image': chatgptImage,
   'arena-code': arenaCode,
   'arena-agent': arenaAgent,
   'arena-video': arenaVideo,
@@ -818,6 +819,24 @@ async function metaImage({ provider, journey }) {
     await assertPersistedImageAssets(journey.session, run.page, artifacts)
     assert.equal(await visibleMetaArtifactCount(run.page, artifacts), artifacts.length)
     assert.equal(await run.page.locator('[data-testid="composer-stop-button"]').filter({ visible: true }).count(), 0)
+  } finally {
+    await run.close()
+  }
+}
+
+async function chatgptImage({ provider, journey }) {
+  assert.equal(provider, 'chatgpt')
+  const run = await journey.run([
+    '--capability', 'image.generation',
+    '--capability', 'artifact.download',
+    '--prompt', 'Generate one flat blue paper airplane icon centered on a plain white background, with no text.',
+  ], 360_000)
+  try {
+    const response = responseResult(run.payload, 'response.read')
+    const artifacts = assertChatGptImageArtifacts(response)
+    await assertPersistedImageAssets(journey.session, run.page, artifacts)
+    assert.equal(await visibleChatGptArtifactCount(run.page, artifacts), artifacts.length)
+    assert.equal(await run.page.locator('button[data-testid="stop-button"], button[aria-label*="Stop generating" i]').filter({ visible: true }).count(), 0)
   } finally {
     await run.close()
   }
@@ -1857,6 +1876,33 @@ function assertMetaImageArtifacts(response) {
   return response.artifacts
 }
 
+function assertChatGptImageArtifacts(response) {
+  assert.equal(response?.visibleProof, 'visible-chatgpt-current-turn-image-artifacts-read')
+  assert.ok(Array.isArray(response.artifacts) && response.artifacts.length > 0)
+  assert.ok(response.artifacts.every((artifact) => (
+    artifact?.kind === 'image' &&
+    !Object.prototype.hasOwnProperty.call(artifact, 'url') &&
+    typeof artifact.mediaType === 'string' &&
+    artifact.mediaType.startsWith('image/') &&
+    typeof artifact.assetRef === 'string' &&
+    artifact.assetRef.startsWith('assets/') &&
+    artifact.downloadAvailable === true &&
+    Number.isSafeInteger(artifact.byteSize) &&
+    artifact.byteSize > 0 &&
+    /^[a-f0-9]{64}$/u.test(artifact.sha256) &&
+    typeof artifact.createdAt === 'string' &&
+    artifact.provider === 'chatgpt' &&
+    typeof artifact.jobId === 'string' &&
+    (artifact.taskId === null || typeof artifact.taskId === 'string') &&
+    typeof artifact.conversationId === 'string' &&
+    Number.isSafeInteger(artifact.width) &&
+    artifact.width > 0 &&
+    Number.isSafeInteger(artifact.height) &&
+    artifact.height > 0
+  )))
+  return response.artifacts
+}
+
 async function assertArenaPersistedAssets(session, page, artifacts) {
   const daemonToken = (await fs.readFile(path.join(session.homeDir, 'daemon.token'), 'utf8')).trim()
   for (const artifact of artifacts) {
@@ -1953,6 +1999,40 @@ async function visibleMetaArtifactCount(page, artifacts) {
   return count
 }
 
+async function visibleChatGptArtifactCount(page, artifacts) {
+  const expected = new Map(artifacts.map((artifact) => [artifact.sha256, artifact]))
+  const assistant = currentChatGptImageAssistant(page)
+  assert.equal(await assistant.isVisible({ timeout: 100 }).catch(() => false), true)
+  const images = assistant.locator('[id^="image-"] img').filter({ visible: true })
+  const seen = new Set()
+  let count = 0
+  for (let index = 0; index < await images.count(); index += 1) {
+    const image = images.nth(index)
+    const source = await image.evaluate((element) => element instanceof HTMLImageElement
+      ? element.currentSrc || element.src
+      : '')
+    if (!source) continue
+    const parsed = new URL(source, page.url())
+    parsed.hash = ''
+    const canonical = parsed.toString()
+    if (seen.has(canonical)) continue
+    seen.add(canonical)
+    const response = await page.request.get(canonical, {
+      timeout: 60_000,
+      failOnStatusCode: false,
+      headers: { referer: page.url() },
+    })
+    assert.equal(response.ok(), true)
+    const bytes = Buffer.from(await response.body())
+    const artifact = expected.get(createHash('sha256').update(bytes).digest('hex'))
+    assert.ok(artifact, 'ChatGPT unique DOM image bytes must match a persisted asset digest')
+    const decoded = await decodeImageBytesInBrowser(page, bytes, artifact.mediaType)
+    assert.deepEqual([decoded.width, decoded.height], [artifact.width, artifact.height])
+    count += 1
+  }
+  return count
+}
+
 async function assertArenaEditSourceDistinct(page, sourceName) {
   const assistant = currentArenaImageAssistant(page)
   const providerLabels = (await assistant.locator('p.text-xs').filter({ visible: true }).allInnerTexts())
@@ -2005,6 +2085,10 @@ function currentArenaImageAssistant(page) {
 
 function currentMetaImageAssistant(page) {
   return page.locator('[data-testid="assistant-message"]').filter({ visible: true }).last()
+}
+
+function currentChatGptImageAssistant(page) {
+  return page.locator('section[data-turn="assistant"]').filter({ visible: true }).last()
 }
 
 async function visibleResearchProgress(page) {

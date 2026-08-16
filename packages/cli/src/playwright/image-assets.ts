@@ -11,7 +11,7 @@ export const IMAGE_ASSET_MEDIA_TYPES = Object.freeze(['image/png', 'image/jpeg',
 export const MAX_IMAGE_ASSET_BYTES = 32 * 1024 * 1024
 
 export type ImageAssetMediaType = typeof IMAGE_ASSET_MEDIA_TYPES[number]
-export type ImageAssetProvider = 'arena' | 'meta'
+export type ImageAssetProvider = 'arena' | 'meta' | 'chatgpt'
 
 export type VisibleImageSource = Readonly<{
   url: string
@@ -285,6 +285,15 @@ export async function persistMetaImageAsset(
   page: Page,
   source: VisibleImageSource,
   identity: Omit<ImageAssetIdentity, 'provider'> & { provider: 'meta' },
+  index: number,
+) {
+  return persistBrowserImageAsset(page, source, identity, index)
+}
+
+export async function persistChatGptImageAsset(
+  page: Page,
+  source: VisibleImageSource,
+  identity: Omit<ImageAssetIdentity, 'provider'> & { provider: 'chatgpt' },
   index: number,
 ) {
   return persistBrowserImageAsset(page, source, identity, index)

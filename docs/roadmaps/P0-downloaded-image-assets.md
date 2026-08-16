@@ -39,9 +39,10 @@ V1 不增加队列、重试、恢复、去重、迁移、跨机器同步、asset
 ## Delivery Slices
 
 1. Arena downloaded asset（完成于 2026-08-16）：定义最小 asset result、目录与落盘流程，并完成 IMG-001 至 IMG-006、IMG-008。
-2. Meta AI downloaded asset（完成于 2026-08-16）：复用 browser-session writer，读取最新 assistant image tile 并提供 authenticated daemon readback；focused real-provider E2E 已完成 IMG-007。之后评估 ChatGPT、Grok、Gemini；每个 provider 独立完成 IMG-007 后才开放 route。
-3. Specialist surfaces：Dola、Doubao、Perplexity、Qwen 按真实可用账号和 terminal artifact evidence 逐个闭环。
-4. GPT4Free parity：把已验证的 `images/generations` bytes 规范化到同一 asset result；不把 raw endpoint 存在当成 provider 支持证据。
+2. Meta AI downloaded asset（完成于 2026-08-16）：复用 browser-session writer，读取最新 assistant image tile 并提供 authenticated daemon readback；focused real-provider E2E 已完成 IMG-007。
+3. ChatGPT downloaded asset（完成于 2026-08-16）：复用 shared browser-session writer，读取最新 assistant turn、按 canonical image URL 去重并提供 authenticated daemon readback；focused real-provider E2E 已完成 IMG-007。之后评估 Grok、Gemini；每个 provider 独立完成 IMG-007 后才开放 route。
+4. Specialist surfaces：Dola、Doubao、Perplexity、Qwen 按真实可用账号和 terminal artifact evidence 逐个闭环。
+5. GPT4Free parity：把已验证的 `images/generations` bytes 规范化到同一 asset result；不把 raw endpoint 存在当成 provider 支持证据。
 
 ## Verified Evidence
 
@@ -51,6 +52,8 @@ V1 不增加队列、重试、恢复、去重、迁移、跨机器同步、asset
 - 两个结果均验证 current assistant bytes、0600 落盘文件、browser decoder 尺寸、authenticated daemon GET 与 traversal rejection。
 - Meta AI real-provider report：`test-results/live-provider-e2e/20260816T015924Z_d46b6c2a-mutation.json`。
 - 真实生成 PNG：1600×1600、181,001 bytes、SHA-256 `142b4cd915c943cd58d2965b1520bcda842deb5e5903d0b62209c76b539fbe1f`；验证 latest assistant DOM bytes、0600 文件、browser decoder 尺寸与 authenticated daemon GET。
+- ChatGPT real-provider report：`test-results/live-provider-e2e/20260816T022709Z_9982f311-mutation.json`。
+- 真实生成 PNG：1254×1254、759,677 bytes、SHA-256 `536f63f2b7585114303c0f26ad30f76db0e058d0d34589168bfa4a5dd5e9cc96`；验证 latest assistant URL 去重、DOM bytes、0600 文件、browser decoder 尺寸与 authenticated daemon GET。
 
 ## Constraints
 

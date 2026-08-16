@@ -7,7 +7,7 @@ This is a product reconnaissance record, not a Tokenless support declaration. Of
 The checked-in runtime catalog and provider routing matrix live in `packages/cli/src/providers/task-capabilities.ts`. `tokenless capabilities list --json` exposes that versioned catalog without opening a browser. The current V2 routeable outcomes are:
 
 - `conversation.chat`: ChatGPT, Claude, Gemini, Grok, Arena, experimental Perplexity, experimental Z.ai, experimental Doubao, experimental Kimi, and experimental Meta AI;
-- `image.generation` and `artifact.download`: experimental Arena and experimental Meta AI;
+- `image.generation` and `artifact.download`: experimental ChatGPT, Arena, and Meta AI;
 - `file.upload`: ChatGPT, Claude, Grok, experimental Gemini, experimental DeepSeek, experimental Z.ai, experimental Doubao, experimental Kimi, and experimental Meta AI;
 - `search.web`: experimental Kimi; and
 - `response.citations`: experimental Kimi search.
@@ -32,7 +32,7 @@ The product surface is broader than the current Tokenless evidence. The middle c
 
 | Provider | Documented or live-observed web product capabilities relevant to Tokenless | Current Tokenless evidence |
 | --- | --- | --- |
-| ChatGPT | Chat, web search with citations, Deep Research, file and image input, image generation and editing, data analysis, Canvas, agent mode, and Projects with files and instructions | Supported baseline chat, file acceptance, response citations, and same-conversation continuation; native Project, Deep Research, image generation, and agent lifecycles are not yet closed |
+| ChatGPT | Chat, web search with citations, Deep Research, file and image input, image generation and editing, data analysis, Canvas, agent mode, and Projects with files and instructions | Supported baseline chat, file acceptance, response citations, and same-conversation continuation; experimental image generation and `artifact.download` persist verified browser-session bytes from the latest assistant turn, with a real deduplicated 1254×1254 PNG, local digest, and authenticated readback closed; native Project, Deep Research, image editing, and agent lifecycles remain unclosed |
 | Claude | Chat, web search, Research, files and images, Projects and project knowledge, Artifacts, model selection, extended thinking, and connectors | Supported baseline chat, model selection, file acceptance, continuation, and citations; native Project, Research, Artifacts, and connector outcomes are not yet routeable |
 | Gemini | Chat, web-grounded answers, Deep Research, file and image input, Deep Think, image/video/music generation, Canvas, Gems, notebooks, connected sources, and GitHub repository import | Supported baseline prompt and cited response for the selected profile; file acceptance, continuation, native workspace, Deep Research, generated media, and connected-source lifecycles are not yet closed |
 | Grok | Chat, X and web search with citations, reasoning modes, image input, and image generation | Supported baseline chat, model and effort selection, file acceptance, continuation, and citations; native Project and generated-image lifecycles are not yet routeable |

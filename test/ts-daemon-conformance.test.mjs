@@ -181,7 +181,7 @@ test('TS daemon rejects under-declared capability routes before durable job crea
   }
 })
 
-test('TS daemon rejects raw Arena image jobs that bypass the shared image/download contract', {
+test('TS daemon rejects raw image jobs that bypass the shared image/download contract', {
   timeout: 60_000,
 }, async () => {
   requireBuiltArtifacts()
@@ -213,9 +213,18 @@ test('TS daemon rejects raw Arena image jobs that bypass the shared image/downlo
       ],
       candidates: [{ provider: 'meta', runtimeEligibility: 'eligible' }],
     })
+    const chatgptImageDownload = playwright.resolveTaskCapabilityRoute({
+      requirements: [
+        playwright.TASK_CAPABILITIES.CONVERSATION_CHAT,
+        playwright.TASK_CAPABILITIES.IMAGE_GENERATION,
+        playwright.TASK_CAPABILITIES.ARTIFACT_DOWNLOAD,
+      ],
+      candidates: [{ provider: 'chatgpt', runtimeEligibility: 'eligible' }],
+    })
     assert.equal(artifactOnly.ok, true)
     assert.equal(imageDownload.ok, true)
     assert.equal(metaImageDownload.ok, true)
+    assert.equal(chatgptImageDownload.ok, true)
     const valid = playwright.createManagedPlaywrightJobRequest({
       provider: 'arena',
       taskId: 'arena-image-contract-task',
@@ -242,6 +251,19 @@ test('TS daemon rejects raw Arena image jobs that bypass the shared image/downlo
     })
     assert.equal(metaValid.actions.some((action) => action.action === playwright.VISIBLE_ACTIONS.ARENA_SURFACE_SELECT), false)
     const { context: _metaContext, ...metaWireBase } = metaValid
+    const chatgptValid = playwright.createManagedPlaywrightJobRequest({
+      provider: 'chatgpt',
+      taskId: 'chatgpt-image-contract-task',
+      capabilityRoute: chatgptImageDownload.route,
+      browserVisibility: 'headless',
+      actions: [
+        { requestId: 'chatgpt-prompt', action: playwright.VISIBLE_ACTIONS.PROMPT_INPUT, payload: { text: 'contract test' } },
+        { requestId: 'chatgpt-submit', action: playwright.VISIBLE_ACTIONS.PROMPT_SUBMIT, payload: {} },
+        { requestId: 'chatgpt-read', action: playwright.VISIBLE_ACTIONS.RESPONSE_READ, payload: {} },
+      ],
+    })
+    assert.equal(chatgptValid.actions.some((action) => action.action === playwright.VISIBLE_ACTIONS.ARENA_SURFACE_SELECT), false)
+    const { context: _chatgptContext, ...chatgptWireBase } = chatgptValid
     const cases = [
       {
         provider: 'arena',
@@ -268,6 +290,14 @@ test('TS daemon rejects raw Arena image jobs that bypass the shared image/downlo
         request_json: {
           ...metaWireBase,
           actions: metaValid.actions.filter((action) => action.action === playwright.VISIBLE_ACTIONS.RESPONSE_READ),
+        },
+        message: /Image capabilities require prompt\.input, prompt\.submit, and response\.read in order/u,
+      },
+      {
+        provider: 'chatgpt',
+        request_json: {
+          ...chatgptWireBase,
+          actions: chatgptValid.actions.filter((action) => action.action === playwright.VISIBLE_ACTIONS.RESPONSE_READ),
         },
         message: /Image capabilities require prompt\.input, prompt\.submit, and response\.read in order/u,
       },

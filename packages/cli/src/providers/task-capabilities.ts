@@ -461,6 +461,8 @@ const PROVIDER_TASK_CAPABILITY_ROUTES = Object.freeze([
   route('kimi', TASK_CAPABILITIES.FILE_UPLOAD, 'experimental', 'visible-file-attachment', ['file-selection']),
   route('kimi', TASK_CAPABILITIES.SEARCH_WEB, 'experimental', 'kimi-web-search-auto', ['kimi-search']),
   route('kimi', TASK_CAPABILITIES.RESPONSE_CITATIONS, 'experimental', 'kimi-visible-citations', ['kimi-search']),
+  route('chatgpt', TASK_CAPABILITIES.IMAGE_GENERATION, 'experimental', 'chatgpt-image-generation', ['chatgpt-image']),
+  route('chatgpt', TASK_CAPABILITIES.ARTIFACT_DOWNLOAD, 'experimental', 'chatgpt-image', ['chatgpt-image']),
   route('meta', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['workspace-response-baseline']),
   route('meta', TASK_CAPABILITIES.FILE_UPLOAD, 'experimental', 'visible-file-attachment', ['file-selection']),
   route('meta', TASK_CAPABILITIES.IMAGE_GENERATION, 'experimental', 'meta-image-generation', ['meta-image']),
