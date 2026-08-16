@@ -33,7 +33,7 @@ test('capabilities list exposes canonical outcomes and only evidence-backed rout
   assert.deepEqual(byId.get('search.web').routes.map((route) => route.provider), ['kimi', 'arena'])
   assert.deepEqual(byId.get('response.citations').routes.map((route) => route.provider), ['kimi', 'arena'])
   assert.deepEqual(byId.get('image.input').routes.map((route) => route.provider), ['arena'])
-  assert.deepEqual(byId.get('image.generation').routes.map((route) => route.provider), ['arena'])
+  assert.deepEqual(byId.get('image.generation').routes.map((route) => route.provider), ['meta', 'arena'])
   assert.deepEqual(byId.get('image.edit').routes.map((route) => route.provider), ['arena'])
   assert.deepEqual(byId.get('website.generation').routes.map((route) => route.provider), ['arena'])
   assert.deepEqual(byId.get('video.generation').routes.map((route) => route.provider), ['arena'])

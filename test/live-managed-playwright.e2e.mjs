@@ -42,6 +42,7 @@ const handlers = {
   'model-comparison': modelComparison,
   'arena-search': arenaSearch,
   'arena-image': arenaImage,
+  'meta-image': metaImage,
   'arena-code': arenaCode,
   'arena-agent': arenaAgent,
   'arena-video': arenaVideo,
@@ -802,6 +803,24 @@ async function arenaImage({ provider, journey }) {
   assert.equal(upload?.attachments?.some((attachment) => attachment.name === 'tokenless-mark.png'), true)
   await assertArenaEditSourceDistinct(edited.page, 'tokenless-mark.png')
   await edited.close()
+}
+
+async function metaImage({ provider, journey }) {
+  assert.equal(provider, 'meta')
+  const run = await journey.run([
+    '--capability', 'image.generation',
+    '--capability', 'artifact.download',
+    '--prompt', 'Generate one flat blue paper airplane icon centered on a plain white background, with no text.',
+  ], 360_000)
+  try {
+    const response = responseResult(run.payload, 'response.read')
+    const artifacts = assertMetaImageArtifacts(response)
+    await assertPersistedImageAssets(journey.session, run.page, artifacts)
+    assert.equal(await visibleMetaArtifactCount(run.page, artifacts), artifacts.length)
+    assert.equal(await run.page.locator('[data-testid="composer-stop-button"]').filter({ visible: true }).count(), 0)
+  } finally {
+    await run.close()
+  }
 }
 
 async function arenaCode({ provider, journey }) {
@@ -1811,6 +1830,33 @@ function assertArenaImageArtifacts(response) {
   return response.artifacts
 }
 
+function assertMetaImageArtifacts(response) {
+  assert.equal(response?.visibleProof, 'visible-meta-current-turn-image-artifacts-read')
+  assert.ok(Array.isArray(response.artifacts) && response.artifacts.length > 0)
+  assert.ok(response.artifacts.every((artifact) => (
+    artifact?.kind === 'image' &&
+    !Object.prototype.hasOwnProperty.call(artifact, 'url') &&
+    typeof artifact.mediaType === 'string' &&
+    artifact.mediaType.startsWith('image/') &&
+    typeof artifact.assetRef === 'string' &&
+    artifact.assetRef.startsWith('assets/') &&
+    artifact.downloadAvailable === true &&
+    Number.isSafeInteger(artifact.byteSize) &&
+    artifact.byteSize > 0 &&
+    /^[a-f0-9]{64}$/u.test(artifact.sha256) &&
+    typeof artifact.createdAt === 'string' &&
+    artifact.provider === 'meta' &&
+    typeof artifact.jobId === 'string' &&
+    (artifact.taskId === null || typeof artifact.taskId === 'string') &&
+    typeof artifact.conversationId === 'string' &&
+    Number.isSafeInteger(artifact.width) &&
+    artifact.width > 0 &&
+    Number.isSafeInteger(artifact.height) &&
+    artifact.height > 0
+  )))
+  return response.artifacts
+}
+
 async function assertArenaPersistedAssets(session, page, artifacts) {
   const daemonToken = (await fs.readFile(path.join(session.homeDir, 'daemon.token'), 'utf8')).trim()
   for (const artifact of artifacts) {
@@ -1834,6 +1880,25 @@ async function assertArenaPersistedAssets(session, page, artifacts) {
   assert.equal(traversal.status, 400)
 }
 
+async function assertPersistedImageAssets(session, page, artifacts) {
+  const daemonToken = (await fs.readFile(path.join(session.homeDir, 'daemon.token'), 'utf8')).trim()
+  for (const artifact of artifacts) {
+    const file = path.join(session.homeDir, artifact.assetRef)
+    const bytes = await fs.readFile(file)
+    assert.equal(bytes.byteLength, artifact.byteSize)
+    assert.equal(createHash('sha256').update(bytes).digest('hex'), artifact.sha256)
+    const assetRoute = artifact.assetRef.slice('assets/'.length)
+    const response = await fetch(`${session.daemonUrl}/v1/asset/${assetRoute}`, {
+      headers: { authorization: `Bearer ${daemonToken}` },
+    })
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get('content-type'), artifact.mediaType)
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes)
+    const decoded = await decodeImageBytesInBrowser(page, bytes, artifact.mediaType)
+    assert.deepEqual([decoded.width, decoded.height], [artifact.width, artifact.height])
+  }
+}
+
 async function visibleArenaArtifactCount(page, artifacts) {
   const expected = new Map(artifacts.map((artifact) => [artifact.sha256, artifact]))
   const assistant = currentArenaImageAssistant(page)
@@ -1853,6 +1918,34 @@ async function visibleArenaArtifactCount(page, artifacts) {
     const bytes = Buffer.from(await response.body())
     const artifact = expected.get(createHash('sha256').update(bytes).digest('hex'))
     if (!artifact) continue
+    const decoded = await decodeImageBytesInBrowser(page, bytes, artifact.mediaType)
+    assert.deepEqual([decoded.width, decoded.height], [artifact.width, artifact.height])
+    count += 1
+  }
+  return count
+}
+
+async function visibleMetaArtifactCount(page, artifacts) {
+  const expected = new Map(artifacts.map((artifact) => [artifact.sha256, artifact]))
+  const assistant = currentMetaImageAssistant(page)
+  assert.equal(await assistant.isVisible({ timeout: 100 }).catch(() => false), true)
+  const images = assistant.locator('button[aria-label="View media"] img[data-testid="ur-image-tile"]').filter({ visible: true })
+  let count = 0
+  for (let index = 0; index < await images.count(); index += 1) {
+    const image = images.nth(index)
+    const source = await image.evaluate((element) => element instanceof HTMLImageElement
+      ? element.currentSrc || element.src
+      : '')
+    if (!source) continue
+    const response = await page.request.get(new URL(source, page.url()).toString(), {
+      timeout: 60_000,
+      failOnStatusCode: false,
+      headers: { referer: page.url() },
+    })
+    assert.equal(response.ok(), true)
+    const bytes = Buffer.from(await response.body())
+    const artifact = expected.get(createHash('sha256').update(bytes).digest('hex'))
+    assert.ok(artifact, 'Meta DOM image bytes must match a persisted asset digest')
     const decoded = await decodeImageBytesInBrowser(page, bytes, artifact.mediaType)
     assert.deepEqual([decoded.width, decoded.height], [artifact.width, artifact.height])
     count += 1
@@ -1908,6 +2001,10 @@ function currentArenaImageAssistant(page) {
     visible: true,
     has: page.locator('p.text-tertiary').filter({ hasText: /^Response provided by$/u }),
   }).first()
+}
+
+function currentMetaImageAssistant(page) {
+  return page.locator('[data-testid="assistant-message"]').filter({ visible: true }).last()
 }
 
 async function visibleResearchProgress(page) {

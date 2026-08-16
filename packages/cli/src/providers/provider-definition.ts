@@ -216,6 +216,7 @@ export function createProviderOptionalCapabilities(
 
 export function providerCapabilities(options: {
   nativeWorkspace?: boolean
+  imageGeneration?: boolean
   arenaSurface?: boolean
   qwenMode?: boolean
   deepSeekControls?: boolean
@@ -366,14 +367,16 @@ export function providerCapabilities(options: {
     }),
     [PROVIDER_CAPABILITIES.IMAGE_GENERATION]: Object.freeze({
       capability: PROVIDER_CAPABILITIES.IMAGE_GENERATION,
-      availability: 'unavailable',
-      visibleProof: 'unsupported-image-generation-capability',
-      reason: 'no_real_provider_visible_image_generation_closure',
+      availability: options.imageGeneration ? 'available' : 'unavailable',
+      visibleProof: options.imageGeneration
+        ? 'provider-visible-image-generation-closure'
+        : 'unsupported-image-generation-capability',
+      reason: options.imageGeneration ? null : 'no_real_provider_visible_image_generation_closure',
       native: Object.freeze({
-        resourceKind: null,
-        availability: 'unavailable',
-        visibleProof: null,
-        reason: 'image_generation_not_advertised_without_provider_evidence',
+        resourceKind: options.imageGeneration ? 'visible_action' : null,
+        availability: options.imageGeneration ? 'available' : 'unavailable',
+        visibleProof: options.imageGeneration ? 'provider-visible-image-generation-closure' : null,
+        reason: options.imageGeneration ? null : 'image_generation_not_advertised_without_provider_evidence',
       }),
       fallback: Object.freeze({
         resourceKind: null,

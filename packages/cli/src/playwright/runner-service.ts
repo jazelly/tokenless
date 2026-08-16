@@ -890,6 +890,7 @@ export class ManagedPlaywrightRunnerService {
           operationId: job.job_id,
           jobId: job.job_id,
           taskId: request.taskId,
+          requirements: request.capabilityRoute?.requirements ?? request.context.requirements,
           signal,
           now: this.now,
           ...(outputSavingsEnabled
@@ -1807,6 +1808,9 @@ function liveInspectionTarget(capability: TaskCapabilityId, provider: ProviderId
     )
   ) {
     return { providerCapability: PROVIDER_CAPABILITIES.ARENA_SURFACE, scope: 'overall' }
+  }
+  if (capability === TASK_CAPABILITIES.IMAGE_GENERATION) {
+    return { providerCapability: PROVIDER_CAPABILITIES.IMAGE_GENERATION, scope: 'overall' }
   }
   if (provider === 'arena' && capability === TASK_CAPABILITIES.WEBSITE_GENERATION) {
     return { providerCapability: PROVIDER_CAPABILITIES.ARENA_SURFACE, scope: 'overall' }

@@ -488,7 +488,7 @@ export type VisibleImageArtifact = {
   byteSize: number
   sha256: string
   createdAt: string
-  provider: 'arena'
+  provider: 'arena' | 'meta'
   jobId: string
   taskId: string | null
   conversationId: string

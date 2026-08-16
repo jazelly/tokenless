@@ -453,6 +453,35 @@ function assertImageCapabilityContract(
       },
     )
   }
+  if (hasImageGeneration || hasImageEdit) {
+    const requiredSequence = [
+      VISIBLE_ACTIONS.PROMPT_INPUT,
+      VISIBLE_ACTIONS.PROMPT_SUBMIT,
+      VISIBLE_ACTIONS.RESPONSE_READ,
+    ]
+    let previousIndex = -1
+    const hasRequiredSequence = requiredSequence.every((requiredAction) => {
+      const index = actions.findIndex((action, actionIndex) => actionIndex > previousIndex && action.action === requiredAction)
+      previousIndex = index
+      return index >= 0
+    })
+    const hasEditUpload = !hasImageEdit || actions.some((action) => action.action === VISIBLE_ACTIONS.FILE_UPLOAD)
+    if (!hasRequiredSequence || !hasEditUpload) {
+      throw tokenlessError(
+        'invalid_playwright_job_capability_requirements',
+        'Image capabilities require prompt.input, prompt.submit, and response.read in order; image.edit also requires file.upload.',
+        {
+          details: {
+            provider,
+            requirements,
+            requiredActions: hasImageEdit
+              ? [VISIBLE_ACTIONS.FILE_UPLOAD, ...requiredSequence]
+              : requiredSequence,
+          },
+        },
+      )
+    }
+  }
   const requiresArenaImageSurface = provider === 'arena' && requirements.some((capability) => (
     capability === TASK_CAPABILITIES.IMAGE_INPUT ||
     capability === TASK_CAPABILITIES.IMAGE_GENERATION ||

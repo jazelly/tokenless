@@ -463,6 +463,8 @@ const PROVIDER_TASK_CAPABILITY_ROUTES = Object.freeze([
   route('kimi', TASK_CAPABILITIES.RESPONSE_CITATIONS, 'experimental', 'kimi-visible-citations', ['kimi-search']),
   route('meta', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['workspace-response-baseline']),
   route('meta', TASK_CAPABILITIES.FILE_UPLOAD, 'experimental', 'visible-file-attachment', ['file-selection']),
+  route('meta', TASK_CAPABILITIES.IMAGE_GENERATION, 'experimental', 'meta-image-generation', ['meta-image']),
+  route('meta', TASK_CAPABILITIES.ARTIFACT_DOWNLOAD, 'experimental', 'meta-image', ['meta-image']),
   route('arena', TASK_CAPABILITIES.CONVERSATION_CHAT, 'supported', 'visible-conversation', ['workspace-response-baseline']),
   route('arena', TASK_CAPABILITIES.CONVERSATION_CONTINUE, 'supported', 'visible-conversation-continuation', ['conversation-continuation']),
   route('arena', TASK_CAPABILITIES.MODEL_COMPARE, 'supported', 'visible-two-model-comparison', ['model-comparison']),

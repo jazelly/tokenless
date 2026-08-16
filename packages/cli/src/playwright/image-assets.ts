@@ -11,6 +11,7 @@ export const IMAGE_ASSET_MEDIA_TYPES = Object.freeze(['image/png', 'image/jpeg',
 export const MAX_IMAGE_ASSET_BYTES = 32 * 1024 * 1024
 
 export type ImageAssetMediaType = typeof IMAGE_ASSET_MEDIA_TYPES[number]
+export type ImageAssetProvider = 'arena' | 'meta'
 
 export type VisibleImageSource = Readonly<{
   url: string
@@ -31,7 +32,7 @@ export type PersistedImageAsset = Readonly<{
   byteSize: number
   sha256: string
   createdAt: string
-  provider: 'arena'
+  provider: ImageAssetProvider
   jobId: string
   taskId: string | null
   conversationId: string
@@ -43,7 +44,7 @@ export type ImageAssetIdentity = Readonly<{
   assetRoot: string
   jobId: string
   taskId: string | null
-  provider: 'arena'
+  provider: ImageAssetProvider
   now?: (() => Date) | undefined
   signal?: AbortSignal | undefined
 }>
@@ -59,23 +60,23 @@ const SAFE_ASSET_COMPONENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u
  * Download an image through the Playwright API context attached to the live page,
  * verify the bytes, and persist one task-scoped local asset.
  */
-export async function persistArenaImageAsset(
+export async function persistBrowserImageAsset(
   page: Page,
   source: VisibleImageSource,
   identity: ImageAssetIdentity,
   index: number,
 ): Promise<PersistedImageAsset> {
   assertNotAborted(identity.signal)
-  const sourceUrl = validateSourceUrl(source.url)
-  const jobId = safeAssetComponent(identity.jobId, 'job id')
-  const taskSegment = identity.taskId === null ? 'unscoped' : safeAssetComponent(identity.taskId, 'task id')
-  const conversationId = deriveArenaConversationId(page.url())
-  const conversationSegment = safeAssetComponent(conversationId, 'conversation id')
+  const sourceUrl = validateSourceUrl(source.url, identity.provider)
+  const jobId = safeAssetComponent(identity.jobId, 'job id', identity.provider)
+  const taskSegment = identity.taskId === null ? 'unscoped' : safeAssetComponent(identity.taskId, 'task id', identity.provider)
+  const conversationId = deriveImageConversationId(page.url(), identity.provider)
+  const conversationSegment = safeAssetComponent(conversationId, 'conversation id', identity.provider)
   if (!Number.isSafeInteger(index) || index < 0 || index > 9999) {
-    throw tokenlessError('arena_image_asset_index_invalid', 'Arena image asset index is invalid.')
+    throw imageAssetError(identity.provider, 'asset_index_invalid', `${identity.provider} image asset index is invalid.`)
   }
   if (!identity.assetRoot || identity.assetRoot.includes('\u0000')) {
-    throw tokenlessError('arena_image_asset_root_invalid', 'Arena image asset root is invalid.')
+    throw imageAssetError(identity.provider, 'asset_root_invalid', `${identity.provider} image asset root is invalid.`)
   }
 
   let response: Awaited<ReturnType<Page['request']['get']>>
@@ -86,17 +87,19 @@ export async function persistArenaImageAsset(
       headers: { referer: page.url() },
     })
   } catch (error) {
-    throw tokenlessError(
-      'arena_image_download_failed',
-      'Arena image bytes could not be downloaded through the selected browser session.',
+    throw imageAssetError(
+      identity.provider,
+      'download_failed',
+      `${identity.provider} image bytes could not be downloaded through the selected browser session.`,
       { retryable: true, cause: error },
     )
   }
   assertNotAborted(identity.signal)
   if (!response.ok()) {
-    throw tokenlessError(
-      'arena_image_download_failed',
-      'Arena image download returned a non-success HTTP response.',
+    throw imageAssetError(
+      identity.provider,
+      'download_failed',
+      `${identity.provider} image download returned a non-success HTTP response.`,
       { retryable: true, details: { status: response.status() } },
     )
   }
@@ -105,9 +108,10 @@ export async function persistArenaImageAsset(
   if (contentLength !== undefined) {
     const declaredLength = Number(contentLength)
     if (!Number.isSafeInteger(declaredLength) || declaredLength < 0 || declaredLength > MAX_IMAGE_ASSET_BYTES) {
-      throw tokenlessError(
-        'arena_image_bytes_too_large',
-        'Arena image response exceeds the maximum asset size.',
+      throw imageAssetError(
+        identity.provider,
+        'bytes_too_large',
+        `${identity.provider} image response exceeds the maximum asset size.`,
         { retryable: false },
       )
     }
@@ -117,49 +121,55 @@ export async function persistArenaImageAsset(
   try {
     bytes = Buffer.from(await response.body())
   } catch (error) {
-    throw tokenlessError(
-      'arena_image_download_failed',
-      'Arena image response bytes could not be read.',
+    throw imageAssetError(
+      identity.provider,
+      'download_failed',
+      `${identity.provider} image response bytes could not be read.`,
       { retryable: true, cause: error },
     )
   }
   assertNotAborted(identity.signal)
   if (bytes.byteLength > MAX_IMAGE_ASSET_BYTES) {
-    throw tokenlessError(
-      'arena_image_bytes_too_large',
-      'Arena image response exceeds the maximum asset size.',
+    throw imageAssetError(
+      identity.provider,
+      'bytes_too_large',
+      `${identity.provider} image response exceeds the maximum asset size.`,
       { retryable: false },
     )
   }
   const declaredMediaType = normalizeMediaType(response.headers()['content-type'])
   if (declaredMediaType === 'invalid') {
-    throw tokenlessError('arena_image_media_type_invalid', 'Arena image response declared a non-image media type.')
+    throw imageAssetError(identity.provider, 'media_type_invalid', `${identity.provider} image response declared a non-image media type.`)
   }
   const verified = sniffImageBytes(bytes)
   if (!verified) {
-    throw tokenlessError(
-      'arena_image_bytes_invalid',
-      'Arena image response is not a valid PNG, JPEG, or WebP image.',
+    throw imageAssetError(
+      identity.provider,
+      'bytes_invalid',
+      `${identity.provider} image response is not a valid PNG, JPEG, or WebP image.`,
     )
   }
   const decoded = await decodeImageBytes(page, bytes, verified.mediaType)
   if (!decoded) {
-    throw tokenlessError(
-      'arena_image_bytes_invalid',
-      'Arena image response could not be decoded by the selected browser.',
+    throw imageAssetError(
+      identity.provider,
+      'bytes_invalid',
+      `${identity.provider} image response could not be decoded by the selected browser.`,
     )
   }
   if (declaredMediaType && declaredMediaType !== 'generic' && declaredMediaType !== verified.mediaType) {
-    throw tokenlessError(
-      'arena_image_media_type_mismatch',
-      'Arena image response media type does not match the verified image bytes.',
+    throw imageAssetError(
+      identity.provider,
+      'media_type_mismatch',
+      `${identity.provider} image response media type does not match the verified image bytes.`,
       { details: { declaredMediaType, verifiedMediaType: verified.mediaType } },
     )
   }
   if (source.mediaType && source.mediaType !== verified.mediaType) {
-    throw tokenlessError(
-      'arena_image_media_type_mismatch',
-      'Arena visible image media type does not match the downloaded image bytes.',
+    throw imageAssetError(
+      identity.provider,
+      'media_type_mismatch',
+      `${identity.provider} visible image media type does not match the downloaded image bytes.`,
       { details: { visibleMediaType: source.mediaType, verifiedMediaType: verified.mediaType } },
     )
   }
@@ -167,9 +177,10 @@ export async function persistArenaImageAsset(
     (source.width !== null && source.width !== decoded.width) ||
     (source.height !== null && source.height !== decoded.height)
   ) {
-    throw tokenlessError(
-      'arena_image_metadata_mismatch',
-      'Arena visible image dimensions do not match the downloaded image bytes.',
+    throw imageAssetError(
+      identity.provider,
+      'metadata_mismatch',
+      `${identity.provider} visible image dimensions do not match the downloaded image bytes.`,
       {
         details: {
           visibleWidth: source.width,
@@ -185,7 +196,7 @@ export async function persistArenaImageAsset(
   const timestampSegment = createdAt
     .replace(/[-:]/gu, '')
     .replace(/\.\d{3}Z$/u, 'Z')
-  const batchSegment = safeAssetComponent(`${timestampSegment}_${jobId}`, 'asset job directory')
+  const batchSegment = safeAssetComponent(`${timestampSegment}_${jobId}`, 'asset job directory', identity.provider)
   const extension = verified.extension
   const relativeAssetPath = path.posix.join(
     taskSegment,
@@ -194,16 +205,18 @@ export async function persistArenaImageAsset(
     `${index}.${extension}`,
   )
   const assetRef = path.posix.join(IMAGE_ASSET_DIRECTORY, relativeAssetPath)
-  const assetRoot = await ensureAssetDirectory(identity.assetRoot)
+  const assetRoot = await ensureAssetDirectory(identity.assetRoot, identity.provider)
   const canonicalAssetRoot = await fs.realpath(assetRoot)
-  const taskDirectory = await ensureAssetDirectoryWithin(canonicalAssetRoot, path.join(assetRoot, taskSegment))
+  const taskDirectory = await ensureAssetDirectoryWithin(canonicalAssetRoot, path.join(assetRoot, taskSegment), identity.provider)
   const conversationDirectory = await ensureAssetDirectoryWithin(
     canonicalAssetRoot,
     path.join(taskDirectory, conversationSegment),
+    identity.provider,
   )
   const batchDirectory = await ensureAssetDirectoryWithin(
     canonicalAssetRoot,
     path.join(conversationDirectory, batchSegment),
+    identity.provider,
   )
   const assetPath = path.join(batchDirectory, `${index}.${extension}`)
   let persisted = false
@@ -222,14 +235,14 @@ export async function persistArenaImageAsset(
       storedBytes.byteLength !== bytes.byteLength ||
       !storedBytes.equals(bytes)
     ) {
-      throw tokenlessError('arena_image_asset_metadata_mismatch', 'Arena image asset changed while being persisted.')
+      throw imageAssetError(identity.provider, 'asset_metadata_mismatch', `${identity.provider} image asset changed while being persisted.`)
     }
     const storedVerified = sniffImageBytes(storedBytes)
     if (
       !storedVerified ||
       storedVerified.mediaType !== verified.mediaType
     ) {
-      throw tokenlessError('arena_image_asset_metadata_mismatch', 'Persisted Arena image asset failed verification.')
+      throw imageAssetError(identity.provider, 'asset_metadata_mismatch', `Persisted ${identity.provider} image asset failed verification.`)
     }
     persisted = true
     return {
@@ -247,16 +260,34 @@ export async function persistArenaImageAsset(
       taskId: identity.taskId,
       conversationId,
       downloadAvailable: true,
-      visibleProof: 'visible-arena-current-turn-image-downloaded-asset',
+      visibleProof: `visible-${identity.provider}-current-turn-image-downloaded-asset`,
     }
   } catch (error) {
     if (error instanceof Error && 'code' in error && (error as { code?: unknown }).code === 'EEXIST') {
-      throw tokenlessError('arena_image_asset_collision', 'Arena image asset path already exists.', { retryable: false })
+      throw imageAssetError(identity.provider, 'asset_collision', `${identity.provider} image asset path already exists.`, { retryable: false })
     }
     throw error
   } finally {
     if (!persisted) await fs.rm(assetPath, { force: true }).catch(() => undefined)
   }
+}
+
+export async function persistArenaImageAsset(
+  page: Page,
+  source: VisibleImageSource,
+  identity: Omit<ImageAssetIdentity, 'provider'> & { provider: 'arena' },
+  index: number,
+) {
+  return persistBrowserImageAsset(page, source, identity, index)
+}
+
+export async function persistMetaImageAsset(
+  page: Page,
+  source: VisibleImageSource,
+  identity: Omit<ImageAssetIdentity, 'provider'> & { provider: 'meta' },
+  index: number,
+) {
+  return persistBrowserImageAsset(page, source, identity, index)
 }
 
 /**
@@ -306,13 +337,13 @@ function sniffImageBytes(bytes: Uint8Array): VerifiedImage | null {
   return null
 }
 
-function validateSourceUrl(value: string) {
+function validateSourceUrl(value: string, provider: ImageAssetProvider) {
   try {
     const parsed = new URL(value)
     if (parsed.protocol !== 'https:') throw new Error('not https')
     return parsed.toString()
   } catch {
-    throw tokenlessError('arena_image_url_invalid', 'Arena image URL must be a visible HTTPS URL.')
+    throw imageAssetError(provider, 'url_invalid', `${provider} image URL must be a visible HTTPS URL.`)
   }
 }
 
@@ -324,11 +355,14 @@ function normalizeMediaType(value: string | undefined): ImageAssetMediaType | 'g
   return 'invalid'
 }
 
-function deriveArenaConversationId(value: string) {
+function deriveImageConversationId(value: string, provider: ImageAssetProvider) {
   try {
     const parsed = new URL(value)
     const segments = parsed.pathname.split('/').filter(Boolean)
-    if ((segments[0] === 'c' || segments[0] === 'conversation' || segments[0] === 'agent') && segments[1]) {
+    const recognized = provider === 'meta'
+      ? segments[0] === 'prompt'
+      : segments[0] === 'c' || segments[0] === 'conversation' || segments[0] === 'agent'
+    if (recognized && segments[1]) {
       return segments[1]
     }
   } catch {
@@ -337,7 +371,7 @@ function deriveArenaConversationId(value: string) {
   return 'new'
 }
 
-function safeAssetComponent(value: string, label: string) {
+function safeAssetComponent(value: string, label: string, provider: ImageAssetProvider) {
   const normalized = value
     .trim()
     .replace(/[^A-Za-z0-9._-]+/gu, '-')
@@ -345,28 +379,37 @@ function safeAssetComponent(value: string, label: string) {
     .replace(/-+$/u, '')
     .slice(0, 120)
   if (!normalized || !SAFE_ASSET_COMPONENT.test(normalized)) {
-    throw tokenlessError('arena_image_asset_identity_invalid', `Arena image ${label} is invalid.`)
+    throw imageAssetError(provider, 'asset_identity_invalid', `${provider} image ${label} is invalid.`)
   }
   return normalized
 }
 
-async function ensureAssetDirectory(directory: string) {
+async function ensureAssetDirectory(directory: string, provider: ImageAssetProvider) {
   const resolved = path.resolve(directory)
   await fs.mkdir(resolved, { recursive: true, mode: 0o700 })
   const stat = await fs.lstat(resolved)
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
-    throw tokenlessError('arena_image_asset_root_invalid', 'Arena image asset path must be a real directory.')
+    throw imageAssetError(provider, 'asset_root_invalid', `${provider} image asset path must be a real directory.`)
   }
   return resolved
 }
 
-async function ensureAssetDirectoryWithin(canonicalRoot: string, directory: string) {
-  const resolved = await ensureAssetDirectory(directory)
+async function ensureAssetDirectoryWithin(canonicalRoot: string, directory: string, provider: ImageAssetProvider) {
+  const resolved = await ensureAssetDirectory(directory, provider)
   const canonicalDirectory = await fs.realpath(resolved)
   if (!isPathInside(canonicalRoot, canonicalDirectory)) {
-    throw tokenlessError('arena_image_asset_root_invalid', 'Arena image asset path escapes the Tokenless asset root.')
+    throw imageAssetError(provider, 'asset_root_invalid', `${provider} image asset path escapes the Tokenless asset root.`)
   }
   return canonicalDirectory
+}
+
+function imageAssetError(
+  provider: ImageAssetProvider,
+  suffix: string,
+  message: string,
+  options: Parameters<typeof tokenlessError>[2] = {},
+) {
+  return tokenlessError(`${provider}_image_${suffix}`, message, options)
 }
 
 function isPathInside(root: string, candidate: string) {

@@ -205,8 +205,17 @@ test('TS daemon rejects raw Arena image jobs that bypass the shared image/downlo
       ],
       candidates: [{ provider: 'arena', runtimeEligibility: 'eligible' }],
     })
+    const metaImageDownload = playwright.resolveTaskCapabilityRoute({
+      requirements: [
+        playwright.TASK_CAPABILITIES.CONVERSATION_CHAT,
+        playwright.TASK_CAPABILITIES.IMAGE_GENERATION,
+        playwright.TASK_CAPABILITIES.ARTIFACT_DOWNLOAD,
+      ],
+      candidates: [{ provider: 'meta', runtimeEligibility: 'eligible' }],
+    })
     assert.equal(artifactOnly.ok, true)
     assert.equal(imageDownload.ok, true)
+    assert.equal(metaImageDownload.ok, true)
     const valid = playwright.createManagedPlaywrightJobRequest({
       provider: 'arena',
       taskId: 'arena-image-contract-task',
@@ -220,8 +229,22 @@ test('TS daemon rejects raw Arena image jobs that bypass the shared image/downlo
       ],
     })
     const { context: _context, ...wireBase } = valid
+    const metaValid = playwright.createManagedPlaywrightJobRequest({
+      provider: 'meta',
+      taskId: 'meta-image-contract-task',
+      capabilityRoute: metaImageDownload.route,
+      browserVisibility: 'headless',
+      actions: [
+        { requestId: 'meta-prompt', action: playwright.VISIBLE_ACTIONS.PROMPT_INPUT, payload: { text: 'contract test' } },
+        { requestId: 'meta-submit', action: playwright.VISIBLE_ACTIONS.PROMPT_SUBMIT, payload: {} },
+        { requestId: 'meta-read', action: playwright.VISIBLE_ACTIONS.RESPONSE_READ, payload: {} },
+      ],
+    })
+    assert.equal(metaValid.actions.some((action) => action.action === playwright.VISIBLE_ACTIONS.ARENA_SURFACE_SELECT), false)
+    const { context: _metaContext, ...metaWireBase } = metaValid
     const cases = [
       {
+        provider: 'arena',
         request_json: {
           ...wireBase,
           capabilityRoute: artifactOnly.route,
@@ -229,6 +252,7 @@ test('TS daemon rejects raw Arena image jobs that bypass the shared image/downlo
         message: /artifact\.download requires image\.generation or image\.edit/u,
       },
       {
+        provider: 'arena',
         request_json: {
           ...wireBase,
           actions: valid.actions.map((action) => (
@@ -239,17 +263,25 @@ test('TS daemon rejects raw Arena image jobs that bypass the shared image/downlo
         },
         message: /Arena image capabilities require arena\.surface\.select with mode direct and modality image/u,
       },
+      {
+        provider: 'meta',
+        request_json: {
+          ...metaWireBase,
+          actions: metaValid.actions.filter((action) => action.action === playwright.VISIBLE_ACTIONS.RESPONSE_READ),
+        },
+        message: /Image capabilities require prompt\.input, prompt\.submit, and response\.read in order/u,
+      },
     ]
     for (const [index, entry] of cases.entries()) {
       const rejected = await fetch(`${daemon.url}/jobs`, {
         method: 'POST',
         headers: jsonHeaders(token),
         body: JSON.stringify({
-          provider: 'arena',
+          provider: entry.provider,
           action: managedPlaywrightJobAction,
           execution_backend: 'playwright',
           profile_id: randomUUID(),
-          job_id: `arena-image-contract-${index}-${randomUUID()}`,
+          job_id: `${entry.provider}-image-contract-${index}-${randomUUID()}`,
           request_json: entry.request_json,
         }),
       })

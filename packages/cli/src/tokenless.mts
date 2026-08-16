@@ -5556,7 +5556,7 @@ function taskCapabilityRequirementsForExecution(
   ) {
     throw usageError(
       'task_capability_combination_unsupported',
-      'artifact.download currently requires image.generation or image.edit so Tokenless can download the Arena image result.',
+      'artifact.download currently requires image.generation or image.edit so Tokenless can download a generated image result.',
     )
   }
 
