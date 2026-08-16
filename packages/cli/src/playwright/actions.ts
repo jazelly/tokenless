@@ -35,6 +35,9 @@ export type {
   GrokImagineInspectActionRequest,
   GrokImagineSelectActionRequest,
   GrokImagineSelectionPayload,
+  GeminiImageInspectActionRequest,
+  GeminiImageSelectActionRequest,
+  GeminiImageSelectionPayload,
   EmptyVisibleActionPayload,
   FileUploadActionRequest,
   FileUploadPayload,
@@ -202,6 +205,21 @@ export type GrokImagineInspectResult = {
 }
 
 export type GrokImagineSelectResult = {
+  supported: true
+  selectedModality: 'image'
+  visibleProof: string
+}
+
+export type GeminiImageInspectResult = {
+  supported: true
+  activeModality: 'image' | null
+  visibleProof: string
+} | {
+  supported: false
+  reason: 'selector_not_available'
+}
+
+export type GeminiImageSelectResult = {
   supported: true
   selectedModality: 'image'
   visibleProof: string
@@ -506,7 +524,7 @@ export type VisibleImageArtifact = {
   byteSize: number
   sha256: string
   createdAt: string
-  provider: 'arena' | 'meta' | 'chatgpt' | 'grok'
+  provider: 'arena' | 'meta' | 'chatgpt' | 'grok' | 'gemini' | 'g4f'
   jobId: string
   taskId: string | null
   conversationId: string
@@ -677,6 +695,8 @@ export type VisibleActionResult = (
   | ArenaSurfaceSelectResult
   | GrokImagineInspectResult
   | GrokImagineSelectResult
+  | GeminiImageInspectResult
+  | GeminiImageSelectResult
   | QwenModeInspectResult
   | QwenModeSelectResult
   | DeepSeekModeInspectResult

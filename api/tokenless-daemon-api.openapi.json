@@ -1961,10 +1961,10 @@
     "/v1/direct/g4f/{provider}/images/generations": {
       "post": {
         "operationId": "createG4fImage",
-        "summary": "Proxy image generation to one exact G4F provider",
+        "summary": "Generate and persist images from one exact G4F provider",
         "parameters": [{ "$ref": "#/components/parameters/G4fProvider" }, { "$ref": "#/components/parameters/G4fAuthContext" }],
-        "requestBody": { "$ref": "#/components/requestBodies/G4fJson" },
-        "responses": { "200": { "$ref": "#/components/responses/G4fData" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "502": { "$ref": "#/components/responses/G4fUpstreamError" } }
+        "requestBody": { "$ref": "#/components/requestBodies/G4fImageGeneration" },
+        "responses": { "200": { "$ref": "#/components/responses/G4fData" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "502": { "$ref": "#/components/responses/G4fUpstreamError" } }
       }
     },
     "/v1/direct/g4f/{provider}/audio/transcriptions": {
@@ -2268,6 +2268,30 @@
       "G4fJson": {
         "required": true,
         "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } }
+      },
+      "G4fImageGeneration": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": true,
+              "required": ["prompt", "tokenless"],
+              "properties": {
+                "prompt": { "type": "string", "minLength": 1 },
+                "tokenless": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["taskId", "conversationId"],
+                  "properties": {
+                    "taskId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+                    "conversationId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     "schemas": {

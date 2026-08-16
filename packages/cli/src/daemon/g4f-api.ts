@@ -1,4 +1,5 @@
 import { once } from 'node:events'
+import { randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import path from 'node:path'
@@ -8,10 +9,12 @@ import type { G4fServiceClient } from '../g4f/client.js'
 import { readG4fUpstreamDiagnostic } from '../g4f/upstream-error.js'
 import { g4fProviderName } from '../providers/direct/g4f-map.js'
 import { ManagedProfileRegistry } from '../playwright/profiles/registry.js'
+import { MAX_IMAGE_ASSET_BYTES, persistDirectG4fImageAsset } from '../playwright/image-assets.js'
 import type { JobStore } from './job-store.js'
 
 const API_PREFIX = '/v1/direct/g4f'
 const MAX_DIRECT_BODY_BYTES = 64 * 1024 * 1024
+const SAFE_IMAGE_ASSET_COMPONENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u
 const DATA_PLANE_SUFFIXES = new Set([
   'chat/completions',
   'responses',
@@ -147,10 +150,16 @@ export async function handleG4fApiRequest({
     const upstream = resolveUpstreamProvider(provider)
     const contentType = headerValue(request, 'content-type')
     const rawBody = method === 'POST' ? await readBoundedBody(request) : undefined
-    const body = rawBody && contentType?.includes('application/json')
-      ? JSON.stringify({ ...parseJson(rawBody), provider: upstream })
+    const parsedBody = rawBody && contentType?.includes('application/json') ? parseJson(rawBody) : null
+    const assetContext = suffix === 'images/generations' && method === 'POST'
+      ? parseImageAssetContext(parsedBody)
+      : null
+    const body = parsedBody
+      ? JSON.stringify(suffix === 'images/generations'
+          ? stripTokenlessImageContext(parsedBody)
+          : { ...parsedBody, provider: upstream })
       : rawBody
-    await proxyResponse(client, {
+    const upstreamResponse = await client.rawRequest({
       path: `/api/${encodeURIComponent(upstream)}/${suffix}${url.search}`,
       method,
       headers: {
@@ -159,12 +168,109 @@ export async function handleG4fApiRequest({
       },
       ...(body === undefined ? {} : { body }),
       ...(authContextHeader(request) ? { authContextId: authContextHeader(request)! } : {}),
-    }, response, url, provider)
+    })
+    if (assetContext) {
+      await forwardG4fImageGeneration(client, upstreamResponse, response, url, store.homeDir, provider, assetContext)
+    } else {
+      await forwardResponse(upstreamResponse, response, url, provider)
+    }
     return true
   }
 
   writeJson(response, 404, { error: { code: 'g4f_route_not_found', message: 'Direct G4F route is not available.' } })
   return true
+}
+
+function parseImageAssetContext(body: Record<string, unknown> | null) {
+  if (!body || !body.tokenless || typeof body.tokenless !== 'object' || Array.isArray(body.tokenless)) {
+    throw publicError(400, 'g4f_image_asset_context_required', 'G4F image generation requires tokenless.taskId and tokenless.conversationId.')
+  }
+  const context = body.tokenless as Record<string, unknown>
+  return {
+    taskId: requiredImageAssetText(context.taskId, 'tokenless.taskId'),
+    conversationId: requiredImageAssetText(context.conversationId, 'tokenless.conversationId'),
+  }
+}
+
+function requiredImageAssetText(value: unknown, field: string) {
+  if (typeof value !== 'string' || !SAFE_IMAGE_ASSET_COMPONENT.test(value.trim())) {
+    throw publicError(400, 'g4f_image_asset_context_invalid', `${field} must be a safe non-empty asset identifier.`)
+  }
+  return value.trim()
+}
+
+function stripTokenlessImageContext(body: Record<string, unknown>) {
+  const { tokenless: _tokenless, provider: _provider, ...upstreamBody } = body
+  return upstreamBody
+}
+
+async function forwardG4fImageGeneration(
+  client: G4fServiceClient,
+  upstream: Response,
+  response: ServerResponse,
+  requestUrl: URL,
+  homeDir: string,
+  requestedProvider: string,
+  context: { taskId: string; conversationId: string },
+) {
+  if (!upstream.ok) {
+    await forwardResponse(upstream, response, requestUrl, requestedProvider)
+    return
+  }
+  const payload = await upstream.json() as Record<string, unknown>
+  if (!Array.isArray(payload.data) || payload.data.length === 0) {
+    throw publicError(502, 'g4f_image_result_invalid', 'G4F image generation returned no downloadable image data.')
+  }
+  const jobId = randomUUID()
+  const data = []
+  for (const [index, item] of payload.data.entries()) {
+    if (!item || typeof item !== 'object' || Array.isArray(item) || typeof (item as Record<string, unknown>).url !== 'string') {
+      throw publicError(502, 'g4f_image_result_invalid', 'G4F image generation returned an invalid image URL.')
+    }
+    const assetPath = privateG4fAssetPath((item as Record<string, unknown>).url as string)
+    const assetResponse = await upstreamAssetResponse(assetPath, requestedProvider)
+    const bytes = Buffer.from(await assetResponse.arrayBuffer())
+    if (bytes.byteLength > MAX_IMAGE_ASSET_BYTES) {
+      throw publicError(502, 'g4f_image_result_too_large', 'G4F generated image exceeds the Tokenless asset size limit.')
+    }
+    const asset = await persistDirectG4fImageAsset(bytes, {
+      assetRoot: path.join(homeDir, 'assets'),
+      jobId,
+      taskId: context.taskId,
+      conversationId: context.conversationId,
+    }, index)
+    data.push({
+      ...(item as Record<string, unknown>),
+      url: `/v1/asset/${asset.assetRef.slice('assets/'.length)}`,
+      asset,
+    })
+  }
+  writeJson(response, upstream.status, { ...payload, data })
+
+  async function upstreamAssetResponse(assetPath: string, provider: string) {
+    const result = await client.rawRequest({ path: assetPath })
+    if (!result.ok) {
+      const diagnostic = await readG4fUpstreamDiagnostic(result, provider)
+      throw publicError(502, diagnostic.code, diagnostic.message)
+    }
+    return result
+  }
+}
+
+function privateG4fAssetPath(value: string) {
+  let candidate: URL
+  try {
+    candidate = new URL(value)
+  } catch {
+    throw publicError(502, 'g4f_image_result_invalid', 'G4F image generation returned a non-URL image result.')
+  }
+  if (!['127.0.0.1', 'localhost', '::1'].includes(candidate.hostname)) {
+    throw publicError(502, 'g4f_image_result_invalid', 'G4F image generation returned an image outside its private service.')
+  }
+  if (!/^\/(?:images|media)\/[^/]+$/u.test(candidate.pathname)) {
+    throw publicError(502, 'g4f_image_result_invalid', 'G4F image generation returned an unsupported private asset path.')
+  }
+  return `${candidate.pathname}${candidate.search}`
 }
 
 async function assertProfileProvider(homeDir: string, profileSlug: string, provider: string) {

@@ -44,6 +44,7 @@ const handlers = {
   'arena-image': arenaImage,
   'meta-image': metaImage,
   'chatgpt-image': chatgptImage,
+  'gemini-image': geminiImage,
   'grok-image': grokImage,
   'arena-code': arenaCode,
   'arena-agent': arenaAgent,
@@ -838,6 +839,26 @@ async function chatgptImage({ provider, journey }) {
     await assertPersistedImageAssets(journey.session, run.page, artifacts)
     assert.equal(await visibleChatGptArtifactCount(run.page, artifacts), artifacts.length)
     assert.equal(await run.page.locator('button[data-testid="stop-button"], button[aria-label*="Stop generating" i]').filter({ visible: true }).count(), 0)
+  } finally {
+    await run.close()
+  }
+}
+
+async function geminiImage({ provider, journey }) {
+  assert.equal(provider, 'gemini')
+  const run = await journey.run([
+    '--capability', 'image.generation',
+    '--capability', 'artifact.download',
+    '--prompt', 'Generate one simple flat blue paper airplane icon on a plain white background, with no text.',
+  ], 360_000)
+  try {
+    const response = responseResult(run.payload, 'response.read')
+    const artifacts = assertGeminiImageArtifacts(response)
+    assert.equal(artifacts.length, 1)
+    await assertPersistedImageAssets(journey.session, run.page, artifacts)
+    assert.equal(await visibleGeminiArtifactCount(run.page, artifacts), 1)
+    assert.equal(await run.page.locator('button[aria-label="Stop response"]').filter({ visible: true }).count(), 0)
+    assert.ok(await run.page.locator('image-loading-overlay .done-generating').filter({ visible: true }).count() > 0)
   } finally {
     await run.close()
   }
@@ -1937,6 +1958,33 @@ function assertChatGptImageArtifacts(response) {
   return response.artifacts
 }
 
+function assertGeminiImageArtifacts(response) {
+  assert.equal(response?.visibleProof, 'visible-gemini-images-current-response-image-artifacts-read')
+  assert.ok(Array.isArray(response.artifacts) && response.artifacts.length === 1)
+  assert.ok(response.artifacts.every((artifact) => (
+    artifact?.kind === 'image' &&
+    !Object.prototype.hasOwnProperty.call(artifact, 'url') &&
+    typeof artifact.mediaType === 'string' &&
+    artifact.mediaType.startsWith('image/') &&
+    typeof artifact.assetRef === 'string' &&
+    artifact.assetRef.startsWith('assets/') &&
+    artifact.downloadAvailable === true &&
+    Number.isSafeInteger(artifact.byteSize) &&
+    artifact.byteSize > 0 &&
+    /^[a-f0-9]{64}$/u.test(artifact.sha256) &&
+    typeof artifact.createdAt === 'string' &&
+    artifact.provider === 'gemini' &&
+    typeof artifact.jobId === 'string' &&
+    (artifact.taskId === null || typeof artifact.taskId === 'string') &&
+    typeof artifact.conversationId === 'string' &&
+    Number.isSafeInteger(artifact.width) &&
+    artifact.width > 0 &&
+    Number.isSafeInteger(artifact.height) &&
+    artifact.height > 0
+  )))
+  return response.artifacts
+}
+
 function assertGrokImageArtifacts(response) {
   assert.equal(response?.visibleProof, 'visible-grok-imagine-terminal-image-artifacts-read')
   assert.ok(Array.isArray(response.artifacts) && response.artifacts.length === 2)
@@ -2088,6 +2136,47 @@ async function visibleChatGptArtifactCount(page, artifacts) {
     const bytes = Buffer.from(await response.body())
     const artifact = expected.get(createHash('sha256').update(bytes).digest('hex'))
     assert.ok(artifact, 'ChatGPT unique DOM image bytes must match a persisted asset digest')
+    const decoded = await decodeImageBytesInBrowser(page, bytes, artifact.mediaType)
+    assert.deepEqual([decoded.width, decoded.height], [artifact.width, artifact.height])
+    count += 1
+  }
+  return count
+}
+
+async function visibleGeminiArtifactCount(page, artifacts) {
+  const expected = new Map(artifacts.map((artifact) => [artifact.sha256, artifact]))
+  const images = page.locator('message-content response-element generated-image single-image img.image.animate.loaded').filter({ visible: true })
+  const seen = new Set()
+  let count = 0
+  for (let index = 0; index < await images.count(); index += 1) {
+    const image = images.nth(index)
+    const source = await image.evaluate((element) => element instanceof HTMLImageElement
+      ? element.currentSrc || element.src
+      : '')
+    if (!source.startsWith('blob:https://gemini.google.com/') || seen.has(source)) continue
+    seen.add(source)
+    const encoded = await image.evaluate(async (element) => {
+      if (!(element instanceof HTMLImageElement)) throw new Error('Gemini image element is invalid')
+      const canvas = document.createElement('canvas')
+      canvas.width = element.naturalWidth
+      canvas.height = element.naturalHeight
+      const context = canvas.getContext('2d')
+      if (!context) throw new Error('Gemini canvas context unavailable')
+      context.drawImage(element, 0, 0)
+      const blob = await new Promise((resolve, reject) => {
+        canvas.toBlob((value) => value ? resolve(value) : reject(new Error('Gemini canvas export failed')), 'image/png')
+      })
+      const bytes = new Uint8Array(await blob.arrayBuffer())
+      let binary = ''
+      for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+        binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + 0x8000, bytes.length)))
+      }
+      return btoa(binary)
+    })
+    const bytes = Buffer.from(encoded, 'base64')
+    const artifact = expected.get(createHash('sha256').update(bytes).digest('hex'))
+    assert.ok(artifact, 'Gemini current-response blob bytes must match a persisted asset digest')
+    assert.equal(bytes.byteLength, artifact.byteSize)
     const decoded = await decodeImageBytesInBrowser(page, bytes, artifact.mediaType)
     assert.deepEqual([decoded.width, decoded.height], [artifact.width, artifact.height])
     count += 1

@@ -515,27 +515,55 @@ function assertImageCapabilityContract(
     capability === TASK_CAPABILITIES.IMAGE_GENERATION ||
     capability === TASK_CAPABILITIES.ARTIFACT_DOWNLOAD
   ))
-  if (!requiresGrokImagineImage) return
-  const grokImagineIndex = actions.findIndex((action) => (
-    action.action === VISIBLE_ACTIONS.GROK_IMAGINE_SELECT &&
-    action.payload.modality === 'image'
-  ))
-  const promptInputIndex = actions.findIndex((action) => action.action === VISIBLE_ACTIONS.PROMPT_INPUT)
-  if (grokImagineIndex < 0 || promptInputIndex < 0 || grokImagineIndex > promptInputIndex) {
-    throw tokenlessError(
-      'invalid_playwright_job_capability_requirements',
-      'Grok Imagine image capabilities require grok.imagine.select with modality image before prompt.input.',
-      {
-        details: {
-          provider,
-          requirements,
-          requiredAction: {
-            action: VISIBLE_ACTIONS.GROK_IMAGINE_SELECT,
-            payload: { modality: 'image' },
+  if (requiresGrokImagineImage) {
+    const grokImagineIndex = actions.findIndex((action) => (
+      action.action === VISIBLE_ACTIONS.GROK_IMAGINE_SELECT &&
+      action.payload.modality === 'image'
+    ))
+    const promptInputIndex = actions.findIndex((action) => action.action === VISIBLE_ACTIONS.PROMPT_INPUT)
+    if (grokImagineIndex < 0 || promptInputIndex < 0 || grokImagineIndex > promptInputIndex) {
+      throw tokenlessError(
+        'invalid_playwright_job_capability_requirements',
+        'Grok Imagine image capabilities require grok.imagine.select with modality image before prompt.input.',
+        {
+          details: {
+            provider,
+            requirements,
+            requiredAction: {
+              action: VISIBLE_ACTIONS.GROK_IMAGINE_SELECT,
+              payload: { modality: 'image' },
+            },
           },
         },
-      },
-    )
+      )
+    }
+  }
+  const requiresGeminiImageSurface = provider === 'gemini' && requirements.some((capability) => (
+    capability === TASK_CAPABILITIES.IMAGE_GENERATION ||
+    capability === TASK_CAPABILITIES.ARTIFACT_DOWNLOAD
+  ))
+  if (requiresGeminiImageSurface) {
+    const geminiImageIndex = actions.findIndex((action) => (
+      action.action === VISIBLE_ACTIONS.GEMINI_IMAGE_SELECT &&
+      action.payload.modality === 'image'
+    ))
+    const promptInputIndex = actions.findIndex((action) => action.action === VISIBLE_ACTIONS.PROMPT_INPUT)
+    if (geminiImageIndex < 0 || promptInputIndex < 0 || geminiImageIndex > promptInputIndex) {
+      throw tokenlessError(
+        'invalid_playwright_job_capability_requirements',
+        'Gemini Images capabilities require gemini.image.select with modality image before prompt.input.',
+        {
+          details: {
+            provider,
+            requirements,
+            requiredAction: {
+              action: VISIBLE_ACTIONS.GEMINI_IMAGE_SELECT,
+              payload: { modality: 'image' },
+            },
+          },
+        },
+      )
+    }
   }
 }
 

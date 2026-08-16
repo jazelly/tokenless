@@ -11,7 +11,7 @@ export const IMAGE_ASSET_MEDIA_TYPES = Object.freeze(['image/png', 'image/jpeg',
 export const MAX_IMAGE_ASSET_BYTES = 32 * 1024 * 1024
 
 export type ImageAssetMediaType = typeof IMAGE_ASSET_MEDIA_TYPES[number]
-export type ImageAssetProvider = 'arena' | 'meta' | 'chatgpt' | 'grok'
+export type ImageAssetProvider = 'arena' | 'meta' | 'chatgpt' | 'grok' | 'gemini' | 'g4f'
 
 export type VisibleImageSource = Readonly<{
   url: string
@@ -67,7 +67,8 @@ export async function persistBrowserImageAsset(
   index: number,
 ): Promise<PersistedImageAsset> {
   assertNotAborted(identity.signal)
-  const sourceUrl = validateSourceUrl(source.url, identity.provider)
+  const isPageBlob = source.url.startsWith('blob:')
+  const sourceUrl = isPageBlob ? validateBlobSourceUrl(source.url, identity.provider) : validateSourceUrl(source.url, identity.provider)
   const jobId = safeAssetComponent(identity.jobId, 'job id', identity.provider)
   const taskSegment = identity.taskId === null ? 'unscoped' : safeAssetComponent(identity.taskId, 'task id', identity.provider)
   const conversationId = deriveImageConversationId(page.url(), identity.provider)
@@ -79,54 +80,60 @@ export async function persistBrowserImageAsset(
     throw imageAssetError(identity.provider, 'asset_root_invalid', `${identity.provider} image asset root is invalid.`)
   }
 
-  let response: Awaited<ReturnType<Page['request']['get']>>
-  try {
-    response = await page.request.get(sourceUrl, {
-      timeout: 60_000,
-      failOnStatusCode: false,
-      headers: { referer: page.url() },
-    })
-  } catch (error) {
-    throw imageAssetError(
-      identity.provider,
-      'download_failed',
-      `${identity.provider} image bytes could not be downloaded through the selected browser session.`,
-      { retryable: true, cause: error },
-    )
-  }
-  assertNotAborted(identity.signal)
-  if (!response.ok()) {
-    throw imageAssetError(
-      identity.provider,
-      'download_failed',
-      `${identity.provider} image download returned a non-success HTTP response.`,
-      { retryable: true, details: { status: response.status() } },
-    )
-  }
-
-  const contentLength = response.headers()['content-length']
-  if (contentLength !== undefined) {
-    const declaredLength = Number(contentLength)
-    if (!Number.isSafeInteger(declaredLength) || declaredLength < 0 || declaredLength > MAX_IMAGE_ASSET_BYTES) {
+  let bytes: Buffer
+  let declaredMediaType: ImageAssetMediaType | 'generic' | 'invalid' | null
+  if (isPageBlob) {
+    const blob = await readPageBlobImage(page, sourceUrl, identity)
+    bytes = Buffer.from(blob.base64, 'base64')
+    declaredMediaType = normalizeMediaType(blob.mediaType ?? undefined)
+  } else {
+    let response: Awaited<ReturnType<Page['request']['get']>>
+    try {
+      response = await page.request.get(sourceUrl, {
+        timeout: 60_000,
+        failOnStatusCode: false,
+        headers: { referer: page.url() },
+      })
+    } catch (error) {
       throw imageAssetError(
         identity.provider,
-        'bytes_too_large',
-        `${identity.provider} image response exceeds the maximum asset size.`,
-        { retryable: false },
+        'download_failed',
+        `${identity.provider} image bytes could not be downloaded through the selected browser session.`,
+        { retryable: true, cause: error },
       )
     }
-  }
-
-  let bytes: Buffer
-  try {
-    bytes = Buffer.from(await response.body())
-  } catch (error) {
-    throw imageAssetError(
-      identity.provider,
-      'download_failed',
-      `${identity.provider} image response bytes could not be read.`,
-      { retryable: true, cause: error },
-    )
+    assertNotAborted(identity.signal)
+    if (!response.ok()) {
+      throw imageAssetError(
+        identity.provider,
+        'download_failed',
+        `${identity.provider} image download returned a non-success HTTP response.`,
+        { retryable: true, details: { status: response.status() } },
+      )
+    }
+    const contentLength = response.headers()['content-length']
+    if (contentLength !== undefined) {
+      const declaredLength = Number(contentLength)
+      if (!Number.isSafeInteger(declaredLength) || declaredLength < 0 || declaredLength > MAX_IMAGE_ASSET_BYTES) {
+        throw imageAssetError(
+          identity.provider,
+          'bytes_too_large',
+          `${identity.provider} image response exceeds the maximum asset size.`,
+          { retryable: false },
+        )
+      }
+    }
+    try {
+      bytes = Buffer.from(await response.body())
+    } catch (error) {
+      throw imageAssetError(
+        identity.provider,
+        'download_failed',
+        `${identity.provider} image response bytes could not be read.`,
+        { retryable: true, cause: error },
+      )
+    }
+    declaredMediaType = normalizeMediaType(response.headers()['content-type'])
   }
   assertNotAborted(identity.signal)
   if (bytes.byteLength > MAX_IMAGE_ASSET_BYTES) {
@@ -137,7 +144,6 @@ export async function persistBrowserImageAsset(
       { retryable: false },
     )
   }
-  const declaredMediaType = normalizeMediaType(response.headers()['content-type'])
   if (declaredMediaType === 'invalid') {
     throw imageAssetError(identity.provider, 'media_type_invalid', `${identity.provider} image response declared a non-image media type.`)
   }
@@ -192,6 +198,44 @@ export async function persistBrowserImageAsset(
     )
   }
 
+  return await persistVerifiedImageAsset({
+    bytes,
+    verified,
+    decoded,
+    alt: source.alt,
+    identity,
+    index,
+    jobId,
+    taskSegment,
+    conversationId,
+    visibleProof: `visible-${identity.provider}-current-turn-image-downloaded-asset`,
+  })
+}
+
+async function persistVerifiedImageAsset({
+  bytes,
+  verified,
+  decoded,
+  alt,
+  identity,
+  index,
+  jobId,
+  taskSegment,
+  conversationId,
+  visibleProof,
+}: {
+  bytes: Buffer
+  verified: VerifiedImage
+  decoded: { width: number; height: number }
+  alt: string | null
+  identity: ImageAssetIdentity
+  index: number
+  jobId: string
+  taskSegment: string
+  conversationId: string
+  visibleProof: string
+}): Promise<PersistedImageAsset> {
+  const conversationSegment = safeAssetComponent(conversationId, 'conversation id', identity.provider)
   const createdAt = (identity.now ?? (() => new Date()))().toISOString()
   const timestampSegment = createdAt
     .replace(/[-:]/gu, '')
@@ -249,7 +293,7 @@ export async function persistBrowserImageAsset(
       kind: 'image',
       assetRef,
       mediaType: verified.mediaType,
-      alt: source.alt,
+      alt,
       width: decoded.width,
       height: decoded.height,
       byteSize: storedBytes.byteLength,
@@ -260,7 +304,7 @@ export async function persistBrowserImageAsset(
       taskId: identity.taskId,
       conversationId,
       downloadAvailable: true,
-      visibleProof: `visible-${identity.provider}-current-turn-image-downloaded-asset`,
+      visibleProof,
     }
   } catch (error) {
     if (error instanceof Error && 'code' in error && (error as { code?: unknown }).code === 'EEXIST') {
@@ -270,6 +314,42 @@ export async function persistBrowserImageAsset(
   } finally {
     if (!persisted) await fs.rm(assetPath, { force: true }).catch(() => undefined)
   }
+}
+
+export async function persistDirectG4fImageAsset(
+  bytes: Buffer,
+  identity: Omit<ImageAssetIdentity, 'provider'> & { conversationId: string },
+  index: number,
+): Promise<PersistedImageAsset> {
+  const provider = 'g4f' as const
+  const scopedIdentity: ImageAssetIdentity = { ...identity, provider }
+  assertNotAborted(identity.signal)
+  if (bytes.byteLength > MAX_IMAGE_ASSET_BYTES) {
+    throw imageAssetError(provider, 'bytes_too_large', 'g4f image response exceeds the maximum asset size.', { retryable: false })
+  }
+  const verified = sniffImageBytes(bytes)
+  const decoded = verified ? readEncodedImageDimensions(bytes, verified.mediaType) : null
+  if (!verified || !decoded) {
+    throw imageAssetError(provider, 'bytes_invalid', 'g4f image response is not a supported image with readable dimensions.')
+  }
+  if (!Number.isSafeInteger(index) || index < 0 || index > 9999) {
+    throw imageAssetError(provider, 'asset_index_invalid', 'g4f image asset index is invalid.')
+  }
+  if (!identity.assetRoot || identity.assetRoot.includes('\u0000')) {
+    throw imageAssetError(provider, 'asset_root_invalid', 'g4f image asset root is invalid.')
+  }
+  return await persistVerifiedImageAsset({
+    bytes,
+    verified,
+    decoded,
+    alt: null,
+    identity: scopedIdentity,
+    index,
+    jobId: safeAssetComponent(identity.jobId, 'job id', provider),
+    taskSegment: identity.taskId === null ? 'unscoped' : safeAssetComponent(identity.taskId, 'task id', provider),
+    conversationId: safeAssetComponent(identity.conversationId, 'conversation id', provider),
+    visibleProof: 'direct-g4f-generated-image-downloaded-asset',
+  })
 }
 
 export async function persistArenaImageAsset(
@@ -303,6 +383,15 @@ export async function persistGrokImageAsset(
   page: Page,
   source: VisibleImageSource,
   identity: Omit<ImageAssetIdentity, 'provider'> & { provider: 'grok' },
+  index: number,
+) {
+  return persistBrowserImageAsset(page, source, identity, index)
+}
+
+export async function persistGeminiImageAsset(
+  page: Page,
+  source: VisibleImageSource,
+  identity: Omit<ImageAssetIdentity, 'provider'> & { provider: 'gemini' },
   index: number,
 ) {
   return persistBrowserImageAsset(page, source, identity, index)
@@ -355,6 +444,39 @@ function sniffImageBytes(bytes: Uint8Array): VerifiedImage | null {
   return null
 }
 
+function readEncodedImageDimensions(bytes: Uint8Array, mediaType: ImageAssetMediaType) {
+  if (mediaType === 'image/png' && bytes.byteLength >= 24) {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+    return validImageDimensions(view.getUint32(16), view.getUint32(20))
+  }
+  if (mediaType !== 'image/jpeg') return null
+  let offset = 2
+  while (offset + 8 < bytes.byteLength) {
+    if (bytes[offset] !== 0xff) return null
+    while (bytes[offset] === 0xff) offset += 1
+    const marker = bytes[offset++]
+    if (marker === undefined || marker === 0xd9 || marker === 0xda) return null
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue
+    if (offset + 2 > bytes.byteLength) return null
+    const length = (bytes[offset]! << 8) | bytes[offset + 1]!
+    if (length < 2 || offset + length > bytes.byteLength) return null
+    if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) {
+      if (length < 7) return null
+      const height = (bytes[offset + 3]! << 8) | bytes[offset + 4]!
+      const width = (bytes[offset + 5]! << 8) | bytes[offset + 6]!
+      return validImageDimensions(width, height)
+    }
+    offset += length
+  }
+  return null
+}
+
+function validImageDimensions(width: number, height: number) {
+  return Number.isSafeInteger(width) && width > 0 && Number.isSafeInteger(height) && height > 0
+    ? { width, height }
+    : null
+}
+
 function validateSourceUrl(value: string, provider: ImageAssetProvider) {
   try {
     const parsed = new URL(value)
@@ -362,6 +484,59 @@ function validateSourceUrl(value: string, provider: ImageAssetProvider) {
     return parsed.toString()
   } catch {
     throw imageAssetError(provider, 'url_invalid', `${provider} image URL must be a visible HTTPS URL.`)
+  }
+}
+
+function validateBlobSourceUrl(value: string, provider: ImageAssetProvider) {
+  if (provider !== 'gemini') {
+    throw imageAssetError(provider, 'url_invalid', `${provider} image URL must be a visible HTTPS URL.`)
+  }
+  try {
+    const parsed = new URL(value)
+    if (parsed.protocol !== 'blob:' || parsed.origin !== 'https://gemini.google.com') throw new Error('not Gemini blob')
+    return parsed.toString()
+  } catch {
+    throw imageAssetError(provider, 'url_invalid', `${provider} image blob URL must belong to the selected Gemini page.`)
+  }
+}
+
+async function readPageBlobImage(
+  page: Page,
+  sourceUrl: string,
+  identity: ImageAssetIdentity,
+) {
+  try {
+    const result = await page.evaluate(async (url) => {
+      const image = [...document.images].find((candidate) => (candidate.currentSrc || candidate.src) === url)
+      if (!image || !image.complete || image.naturalWidth === 0 || image.naturalHeight === 0) {
+        throw new Error('visible blob image is not decoded')
+      }
+      const canvas = document.createElement('canvas')
+      canvas.width = image.naturalWidth
+      canvas.height = image.naturalHeight
+      const context = canvas.getContext('2d')
+      if (!context) throw new Error('canvas context unavailable')
+      context.drawImage(image, 0, 0)
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((value) => value ? resolve(value) : reject(new Error('canvas export failed')), 'image/png')
+      })
+      if (blob.size > 32 * 1024 * 1024) throw new Error('blob too large')
+      const bytes = new Uint8Array(await blob.arrayBuffer())
+      let binary = ''
+      const chunkSize = 0x8000
+      for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+        binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length)))
+      }
+      return { base64: btoa(binary), mediaType: blob.type || null }
+    }, sourceUrl)
+    return result
+  } catch (error) {
+    throw imageAssetError(
+      identity.provider,
+      'download_failed',
+      `${identity.provider} image blob bytes could not be read from the current browser page.`,
+      { retryable: true, cause: error },
+    )
   }
 }
 
@@ -381,6 +556,8 @@ function deriveImageConversationId(value: string, provider: ImageAssetProvider) 
       ? segments[0] === 'prompt'
       : provider === 'grok'
         ? segments[0] === 'imagine' && segments[1] === 'post'
+        : provider === 'gemini'
+          ? segments[0] === 'app'
         : segments[0] === 'c' || segments[0] === 'conversation' || segments[0] === 'agent'
     const identityIndex = provider === 'grok' ? 2 : 1
     if (recognized && segments[identityIndex]) {

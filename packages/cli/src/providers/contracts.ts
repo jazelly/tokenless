@@ -19,6 +19,8 @@ export const VISIBLE_ACTIONS = Object.freeze({
   ARENA_SURFACE_SELECT: 'arena.surface.select',
   GROK_IMAGINE_INSPECT: 'grok.imagine.inspect',
   GROK_IMAGINE_SELECT: 'grok.imagine.select',
+  GEMINI_IMAGE_INSPECT: 'gemini.image.inspect',
+  GEMINI_IMAGE_SELECT: 'gemini.image.select',
   EFFORT_INSPECT: 'effort.inspect',
   EFFORT_SELECT: 'effort.select',
   QWEN_MODE_INSPECT: 'qwen.mode.inspect',
@@ -92,6 +94,9 @@ export type ArenaSurfaceSelectionPayload = {
   modality: ArenaSurfaceModality
 }
 export type GrokImagineSelectionPayload = {
+  modality: 'image'
+}
+export type GeminiImageSelectionPayload = {
   modality: 'image'
 }
 export type QwenModeSelectionPayload = {
@@ -181,6 +186,14 @@ export type GrokImagineInspectActionRequest = VisibleActionRequestEnvelope<
 export type GrokImagineSelectActionRequest = VisibleActionRequestEnvelope<
   typeof VISIBLE_ACTIONS.GROK_IMAGINE_SELECT,
   GrokImagineSelectionPayload
+>
+export type GeminiImageInspectActionRequest = VisibleActionRequestEnvelope<
+  typeof VISIBLE_ACTIONS.GEMINI_IMAGE_INSPECT,
+  EmptyVisibleActionPayload
+>
+export type GeminiImageSelectActionRequest = VisibleActionRequestEnvelope<
+  typeof VISIBLE_ACTIONS.GEMINI_IMAGE_SELECT,
+  GeminiImageSelectionPayload
 >
 export type EffortInspectActionRequest = VisibleActionRequestEnvelope<
   typeof VISIBLE_ACTIONS.EFFORT_INSPECT,
@@ -308,6 +321,8 @@ export type VisibleActionRequest =
   | ArenaSurfaceSelectActionRequest
   | GrokImagineInspectActionRequest
   | GrokImagineSelectActionRequest
+  | GeminiImageInspectActionRequest
+  | GeminiImageSelectActionRequest
   | EffortInspectActionRequest
   | EffortSelectActionRequest
   | QwenModeInspectActionRequest

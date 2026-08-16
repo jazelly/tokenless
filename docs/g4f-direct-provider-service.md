@@ -55,6 +55,21 @@ Provider guest mode is separate from daemon authentication: omit `x-tokenless-au
 | `GET /v1/direct/g4f/assets/{images|media}/{file}` | Generated media |
 | `GET /v1/direct/g4f/pa/providers` | Setup-managed PA inventory |
 
+Image generation requires a Tokenless asset context in the JSON body:
+
+```json
+{
+  "model": "sana",
+  "prompt": "A flat green leaf icon on white.",
+  "tokenless": {
+    "taskId": "task-123",
+    "conversationId": "chat-456"
+  }
+}
+```
+
+Tokenless removes the `tokenless` object before calling G4F, downloads each private generated-media URL, verifies the image bytes and dimensions, and stores the file at `assets/{taskId}/{conversationId}/{utcTimestamp}_{requestId}/{index}.{ext}` with mode `0600`. Each `data[]` item returns the common `asset` metadata and a relative authenticated URL under `/v1/asset/...`; callers resolve it against the same daemon origin.
+
 Known Tokenless IDs such as `chatgpt` map to pinned upstream providers. Use `g4f:<ProviderName>` for an exact G4F provider, including explicit `g4f:AnyProvider`; Tokenless never selects `AnyProvider` silently.
 
 Auth source types are `empty`, `manual`, `har`, `cookie-file`, `browser-cookie3`, `cookie-database`, and loopback `cdp`. Both Cookie DB source types require an exact database path inside the selected managed profile; unscoped browser scanning is rejected. Manual values are limited to the selected provider domains.
@@ -80,6 +95,7 @@ Real E2E covers both authentication boundaries:
 
 - Guest: an explicit `g4f:GLM` request omits the provider auth-context header, completes Aliyun traceless verification in the isolated headless browser, requires an exact random response marker, and verifies that no auth context was created.
 - Signed in: ChatGPT direct reads only the selected Cloak browser profile's ChatGPT cookies, access token, user agent, and language headers into one ephemeral provider-scoped context.
+- Image: the real `g4f:PollinationsImage` / `sana` gate generated a 768×768 JPEG, persisted it under the supplied task and conversation identities, and proved digest plus authenticated byte-for-byte readback.
 
 ## Provider errors
 

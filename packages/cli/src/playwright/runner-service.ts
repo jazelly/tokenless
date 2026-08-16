@@ -1817,6 +1817,9 @@ function liveInspectionTarget(capability: TaskCapabilityId, provider: ProviderId
   if (capability === TASK_CAPABILITIES.IMAGE_GENERATION) {
     return { providerCapability: PROVIDER_CAPABILITIES.IMAGE_GENERATION, scope: 'overall' }
   }
+  if (provider === 'gemini' && capability === TASK_CAPABILITIES.ARTIFACT_DOWNLOAD) {
+    return { providerCapability: PROVIDER_CAPABILITIES.IMAGE_GENERATION, scope: 'overall' }
+  }
   if (provider === 'arena' && capability === TASK_CAPABILITIES.WEBSITE_GENERATION) {
     return { providerCapability: PROVIDER_CAPABILITIES.ARENA_SURFACE, scope: 'overall' }
   }

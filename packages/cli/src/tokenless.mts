@@ -217,6 +217,8 @@ const PRIORITY_VISIBLE_PROVIDER_ACTIONS = new Set([
   'arena.surface.select',
   'grok.imagine.inspect',
   'grok.imagine.select',
+  'gemini.image.inspect',
+  'gemini.image.select',
   'effort.inspect',
   'effort.select',
   'qwen.mode.inspect',
@@ -1340,6 +1342,9 @@ async function visibleProviderActionFromArgs(args: CliArgs) {
   if (action.startsWith('grok.imagine.') && normalizeProvider(args.provider) !== 'grok') {
     throw usageError('grok_imagine_unsupported', 'grok.imagine actions are available only for the Grok provider.')
   }
+  if (action.startsWith('gemini.image.') && normalizeProvider(args.provider) !== 'gemini') {
+    throw usageError('gemini_image_unsupported', 'gemini.image actions are available only for the Gemini provider.')
+  }
   if (action.startsWith('deepseek.') && normalizeProvider(args.provider) !== 'deepseek') {
     throw usageError('deepseek_control_unsupported', 'deepseek actions are available only for the DeepSeek provider.')
   }
@@ -1360,6 +1365,7 @@ async function visibleProviderActionFromArgs(args: CliArgs) {
     action === 'model.inspect' ||
     action === 'arena.surface.inspect' ||
     action === 'grok.imagine.inspect' ||
+    action === 'gemini.image.inspect' ||
     action === 'effort.inspect' ||
     action === 'qwen.mode.inspect' ||
     action === 'deepseek.mode.inspect' ||
@@ -1418,7 +1424,7 @@ async function visibleProviderActionFromArgs(args: CliArgs) {
     }
   }
 
-  if (action === 'grok.imagine.select') {
+  if (action === 'grok.imagine.select' || action === 'gemini.image.select') {
     assertProviderActionPayloadOptions(args, new Set())
     return { action, payload: { modality: 'image' } }
   }
@@ -2202,6 +2208,13 @@ function managedVisibleActions({
         mode: providerControls.arenaMode,
         modality: providerControls.arenaModality,
       },
+    })
+  }
+  if (providerControls.geminiImageSurface === true) {
+    actions.push({
+      requestId: `${requestId}:gemini-image-surface`,
+      action: VISIBLE_ACTIONS.GEMINI_IMAGE_SELECT,
+      payload: { modality: 'image' },
     })
   }
   if (
@@ -5741,6 +5754,10 @@ function resolveProviderControls({
   )
   const requiresArenaCode = provider === 'arena' && requestedCapabilities.has(TASK_CAPABILITIES.WEBSITE_GENERATION)
   const requiresArenaVideo = provider === 'arena' && requestedCapabilities.has(TASK_CAPABILITIES.VIDEO_GENERATION)
+  const requiresGeminiImage = provider === 'gemini' && (
+    requestedCapabilities.has(TASK_CAPABILITIES.IMAGE_GENERATION) ||
+    requestedCapabilities.has(TASK_CAPABILITIES.ARTIFACT_DOWNLOAD)
+  )
   if (requiresArenaAgent && hasRequestedModelControl) {
     throw usageError(
       'arena_agent_model_control_unavailable',
@@ -6027,6 +6044,7 @@ function resolveProviderControls({
       kimiSearch,
       kimiPlugin,
       kimiSkill,
+      geminiImageSurface: requiresGeminiImage,
     }
   }
 

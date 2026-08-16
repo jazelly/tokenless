@@ -18,6 +18,7 @@ export const PROVIDER_CAPABILITIES = Object.freeze({
   IMAGE_GENERATION: 'image.generation',
   ARENA_SURFACE: 'arena.surface',
   GROK_IMAGINE: 'grok.imagine',
+  GEMINI_IMAGE_SURFACE: 'gemini.image.surface',
   QWEN_MODE: 'qwen.mode',
   DEEPSEEK_MODE: 'deepseek.mode',
   DEEPSEEK_DEEPTHINK: 'deepseek.deepthink',

@@ -7,6 +7,7 @@ import type {
   AttachmentInput,
   ArenaSurfaceSelectionPayload,
   GrokImagineSelectionPayload,
+  GeminiImageSelectionPayload,
   EmptyVisibleActionPayload,
   FileUploadPayload,
   PromptInputPayload,
@@ -128,6 +129,18 @@ export const VISIBLE_ACTION_CATALOG = Object.freeze({
     lifecycle: reconstructableGatedMutation,
     requiredCapabilities: [PROVIDER_CAPABILITIES.GROK_IMAGINE],
     validatePayload: validateGrokImagineSelectionPayload,
+  }),
+  [VISIBLE_ACTIONS.GEMINI_IMAGE_INSPECT]: defineAction({
+    action: VISIBLE_ACTIONS.GEMINI_IMAGE_INSPECT,
+    lifecycle: gatedReadOnly,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.GEMINI_IMAGE_SURFACE],
+    validatePayload: validateEmptyPayload,
+  }),
+  [VISIBLE_ACTIONS.GEMINI_IMAGE_SELECT]: defineAction({
+    action: VISIBLE_ACTIONS.GEMINI_IMAGE_SELECT,
+    lifecycle: reconstructableGatedMutation,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.GEMINI_IMAGE_SURFACE],
+    validatePayload: validateGeminiImageSelectionPayload,
   }),
   [VISIBLE_ACTIONS.EFFORT_INSPECT]: defineAction({
     action: VISIBLE_ACTIONS.EFFORT_INSPECT,
@@ -394,6 +407,14 @@ function validateGrokImagineSelectionPayload(payload: Record<string, unknown>): 
     throw tokenlessError('invalid_visible_action_payload', 'Grok Imagine modality must be image.')
   }
   return payload as GrokImagineSelectionPayload
+}
+
+function validateGeminiImageSelectionPayload(payload: Record<string, unknown>): GeminiImageSelectionPayload {
+  requireExactKeys(payload, ['modality'], 'invalid_visible_action_payload')
+  if (payload.modality !== 'image') {
+    throw tokenlessError('invalid_visible_action_payload', 'Gemini image modality must be image.')
+  }
+  return payload as GeminiImageSelectionPayload
 }
 
 function validateQwenModeSelectionPayload(payload: Record<string, unknown>): QwenModeSelectionPayload {

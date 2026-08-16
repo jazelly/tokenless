@@ -93,6 +93,7 @@ export const PROVIDER_NAVIGATION_CATALOG = Object.freeze({
     pagePatterns: pages(
       { kind: 'entry', urlPattern: 'https://gemini.google.com/app' },
       { kind: 'conversation', urlPattern: 'https://gemini.google.com/app/:conversationId' },
+      { kind: 'capability', urlPattern: 'https://gemini.google.com/images' },
     ),
     trustedSignInOrigins: [{ origin: 'https://accounts.google.com' }],
   }),
