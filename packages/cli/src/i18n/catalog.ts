@@ -205,6 +205,7 @@ export const ERROR_SUMMARIES_ZH = {
   invalid_api_proxy_conversation_mode: 'Conversation mode 必须是 new-conversation 或 continue-conversation。',
   invalid_api_proxy_command: '用法：tokenless api-proxy <status|enable|disable> [--conversation-mode <new-conversation|continue-conversation>] --json',
   task_capability_action_unsupported: '该 action 不支持请求的 task capability。',
+  task_capability_combination_unsupported: '请求的 task capability 组合不受支持。',
   task_capability_input_required: '请求的 task capability 缺少必需输入。',
   task_capability_route_unavailable: '没有可用的 provider capability route。',
   task_state_not_found: '找不到 task state。',

@@ -230,7 +230,9 @@
         "visible_submission",
         "visible_response",
         "terminal_artifact",
-        "exact_visible_identity"
+        "exact_visible_identity",
+        "authenticated_asset_readback",
+        "local_digest"
       ]
     },
     "arena-code": {

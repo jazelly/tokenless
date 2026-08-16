@@ -10,6 +10,7 @@ import { PROVIDER_NAVIGATION_CATALOG } from './provider-navigation-catalog.js'
 import { VISIBLE_ACTIONS } from './contracts.js'
 import { ArenaSurfaceCapability, ensureArenaDirectMode } from './capabilities/arena-surface.js'
 import { tokenlessError } from '../playwright/errors.js'
+import { persistArenaImageAsset } from '../playwright/image-assets.js'
 import type { Locator, Page } from 'playwright-core'
 import type { ProviderExecutionContext } from './execution-context.js'
 import type { VisibleActionRequest } from './contracts.js'
@@ -790,11 +791,26 @@ async function readArenaImageResponse(
   }
   const text = visible.text.slice(0, 32_000)
   if (text) context.captureVisibleOutput?.(text)
+  if (!context.assetRoot) {
+    throw tokenlessError(
+      'arena_image_asset_unavailable',
+      'Arena image generation requires a Tokenless asset root before the job can complete.',
+      { retryable: false },
+    )
+  }
+  const assets = await Promise.all(visible.artifacts.map((artifact, index) => persistArenaImageAsset(page, artifact, {
+    assetRoot: context.assetRoot!,
+    jobId: context.jobId ?? context.operationId,
+    taskId: context.taskId ?? null,
+    provider: 'arena',
+    now: context.now,
+    signal: context.signal,
+  }, index)))
   const visibleBusyCount = await visibleArenaBusyCount(page)
   return {
     text,
     citations: [],
-    artifacts: visible.artifacts,
+    artifacts: assets,
     visibleProof: 'visible-arena-current-turn-image-artifacts-read',
     decisionDiagnostics: {
       selected: null,

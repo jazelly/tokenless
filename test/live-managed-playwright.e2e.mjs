@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import net from 'node:net'
 import path from 'node:path'
@@ -777,27 +777,30 @@ async function arenaImage({ provider, journey }) {
   assert.equal(provider, 'arena')
   const generated = await journey.run([
     '--capability', 'image.generation',
+    '--capability', 'artifact.download',
     '--prompt', 'Generate one flat blue paper airplane icon centered on a plain white background, with no text.',
   ])
   const generatedResponse = responseResult(generated.payload, 'response.read')
   const generatedArtifacts = assertArenaImageArtifacts(generatedResponse)
+  await assertArenaPersistedAssets(journey.session, generated.page, generatedArtifacts)
   assert.equal(await visibleArenaArtifactCount(generated.page, generatedArtifacts), generatedArtifacts.length)
   await generated.close()
 
   const edited = await journey.run([
     '--capability', 'image.edit',
+    '--capability', 'artifact.download',
     '--attach-file', path.join(root, 'assets', 'tokenless-mark.png'),
     '--prompt', 'Edit the attached image so its background is pale yellow. Keep the existing logo shape and colors unchanged, and add no text.',
   ])
   const editedResponse = responseResult(edited.payload, 'response.read')
   const editedArtifacts = assertArenaImageArtifacts(editedResponse)
+  await assertArenaPersistedAssets(journey.session, edited.page, editedArtifacts)
   assert.equal(editedResponse.text.includes('Edit the attached image so its background is pale yellow.'), false)
   assert.equal(await visibleArenaArtifactCount(edited.page, editedArtifacts), editedArtifacts.length)
-  assert.notEqual(canonicalPageUrl(editedArtifacts[0].url), canonicalPageUrl(generatedArtifacts[0].url))
   const upload = responseResult(edited.payload, 'file.upload')
   assert.equal(upload?.acceptance, 'accepted')
   assert.equal(upload?.attachments?.some((attachment) => attachment.name === 'tokenless-mark.png'), true)
-  await assertArenaEditSourceDistinct(edited.page, editedArtifacts, 'tokenless-mark.png')
+  await assertArenaEditSourceDistinct(edited.page, 'tokenless-mark.png')
   await edited.close()
 }
 
@@ -1786,10 +1789,20 @@ function assertArenaImageArtifacts(response) {
   assert.ok(Array.isArray(response.artifacts) && response.artifacts.length > 0)
   assert.ok(response.artifacts.every((artifact) => (
     artifact?.kind === 'image' &&
-    typeof artifact.url === 'string' &&
-    artifact.url.startsWith('https://') &&
+    !Object.prototype.hasOwnProperty.call(artifact, 'url') &&
     typeof artifact.mediaType === 'string' &&
     artifact.mediaType.startsWith('image/') &&
+    typeof artifact.assetRef === 'string' &&
+    artifact.assetRef.startsWith('assets/') &&
+    artifact.downloadAvailable === true &&
+    Number.isSafeInteger(artifact.byteSize) &&
+    artifact.byteSize > 0 &&
+    /^[a-f0-9]{64}$/u.test(artifact.sha256) &&
+    typeof artifact.createdAt === 'string' &&
+    artifact.provider === 'arena' &&
+    typeof artifact.jobId === 'string' &&
+    (artifact.taskId === null || typeof artifact.taskId === 'string') &&
+    typeof artifact.conversationId === 'string' &&
     Number.isSafeInteger(artifact.width) &&
     artifact.width >= 256 &&
     Number.isSafeInteger(artifact.height) &&
@@ -1798,8 +1811,31 @@ function assertArenaImageArtifacts(response) {
   return response.artifacts
 }
 
+async function assertArenaPersistedAssets(session, page, artifacts) {
+  const daemonToken = (await fs.readFile(path.join(session.homeDir, 'daemon.token'), 'utf8')).trim()
+  for (const artifact of artifacts) {
+    const file = path.join(session.homeDir, artifact.assetRef)
+    const bytes = await fs.readFile(file)
+    assert.equal(bytes.byteLength, artifact.byteSize)
+    assert.equal(createHash('sha256').update(bytes).digest('hex'), artifact.sha256)
+    const assetRoute = artifact.assetRef.slice('assets/'.length)
+    const response = await fetch(`${session.daemonUrl}/v1/asset/${assetRoute}`, {
+      headers: { authorization: `Bearer ${daemonToken}` },
+    })
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get('content-type'), artifact.mediaType)
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes)
+    const decoded = await decodeImageBytesInBrowser(page, bytes, artifact.mediaType)
+    assert.deepEqual([decoded.width, decoded.height], [artifact.width, artifact.height])
+  }
+  const traversal = await fetch(`${session.daemonUrl}/v1/asset/${encodeURIComponent('../tokenless.sqlite3')}/unused/unused/0.png`, {
+    headers: { authorization: `Bearer ${daemonToken}` },
+  })
+  assert.equal(traversal.status, 400)
+}
+
 async function visibleArenaArtifactCount(page, artifacts) {
-  const expected = new Set(artifacts.map((artifact) => canonicalPageUrl(artifact.url)))
+  const expected = new Map(artifacts.map((artifact) => [artifact.sha256, artifact]))
   const assistant = currentArenaImageAssistant(page)
   assert.equal(await assistant.isVisible({ timeout: 100 }).catch(() => false), true)
   const images = assistant.locator('img').filter({ visible: true })
@@ -1807,12 +1843,24 @@ async function visibleArenaArtifactCount(page, artifacts) {
   for (let index = 0; index < await images.count(); index += 1) {
     const image = images.nth(index)
     const source = await image.getAttribute('src').catch(() => null)
-    if (source && expected.has(canonicalPageUrl(new URL(source, page.url()).toString()))) count += 1
+    if (!source) continue
+    const response = await page.request.get(new URL(source, page.url()).toString(), {
+      timeout: 60_000,
+      failOnStatusCode: false,
+      headers: { referer: page.url() },
+    })
+    assert.equal(response.ok(), true)
+    const bytes = Buffer.from(await response.body())
+    const artifact = expected.get(createHash('sha256').update(bytes).digest('hex'))
+    if (!artifact) continue
+    const decoded = await decodeImageBytesInBrowser(page, bytes, artifact.mediaType)
+    assert.deepEqual([decoded.width, decoded.height], [artifact.width, artifact.height])
+    count += 1
   }
   return count
 }
 
-async function assertArenaEditSourceDistinct(page, artifacts, sourceName) {
+async function assertArenaEditSourceDistinct(page, sourceName) {
   const assistant = currentArenaImageAssistant(page)
   const providerLabels = (await assistant.locator('p.text-xs').filter({ visible: true }).allInnerTexts())
     .map((value) => value.replace(/\s+/gu, ' ').trim())
@@ -1834,9 +1882,25 @@ async function assertArenaEditSourceDistinct(page, artifacts, sourceName) {
     height: image instanceof HTMLImageElement ? image.naturalHeight : 0,
   }))
 
-  assert.equal(canonicalPageUrl(output.url), canonicalPageUrl(artifacts[0].url))
   assert.notEqual(output.url, source.url)
   assert.notDeepEqual([output.width, output.height], [source.width, source.height])
+}
+
+async function decodeImageBytesInBrowser(page, bytes, mediaType) {
+  const encodedBytes = Buffer.from(bytes).toString('base64')
+  const decoded = await page.evaluate(async ({ encodedBytes: encoded, type }) => {
+    const binary = atob(encoded)
+    const decodedBytes = new Uint8Array(binary.length)
+    for (let index = 0; index < binary.length; index += 1) decodedBytes[index] = binary.charCodeAt(index)
+    const blob = new Blob([decodedBytes], { type })
+    const bitmap = await createImageBitmap(blob)
+    const dimensions = { width: bitmap.width, height: bitmap.height }
+    bitmap.close()
+    return dimensions
+  }, { encodedBytes, type: mediaType })
+  assert.ok(Number.isSafeInteger(decoded.width) && decoded.width > 0)
+  assert.ok(Number.isSafeInteger(decoded.height) && decoded.height > 0)
+  return decoded
 }
 
 function currentArenaImageAssistant(page) {

@@ -1,6 +1,6 @@
 # Tokenless Roadmaps
 
-Status: active product direction | Last reviewed: 2026-08-15
+Status: active product direction | Last reviewed: 2026-08-16
 
 This directory contains long-horizon product and engineering roadmaps. It is separate from `plans/`, which contains bounded implementation plans for individual pieces of work.
 
@@ -47,6 +47,7 @@ Every roadmap filename must begin with its product priority (`P0-`, `P1-`, `P2-`
 
 | Roadmap | Outcome | Current priority |
 | --- | --- | --- |
+| [Downloaded Image Assets](P0-downloaded-image-assets.md) | Download verified image bytes from real provider outcomes into task-, conversation-, job-, and time-scoped local assets, beginning with Arena and expanding only through provider-specific real E2E closure. | P0 |
 | [OpenAI Tool Calling, Structured Output, and Portable Provider Context](P0-openai-tool-calling-structured-output-and-portable-context.md) | Guarantee modern OpenAI tool calls and structured JSON across native and prompt-emulated providers, verify the universal API with the real local DSH and frozen SWE-rebench tasks, ground the design in current provider endpoint contracts, and support explicit auto routing without losing tool-call context. | P0 — highest active delivery priority |
 | [Real Provider Browser E2E and Native Projects](P0-real-provider-browser-e2e-and-native-projects.md) | Advance the Web Provider line by proving every advertised visible capability against real provider websites and adding real Claude and Grok native Project creation, reuse, and continuation. | P0 |
 | [Provider Expansion and Parity](P0-provider-expansion.md) | Advance the Web Provider line with high-value AI websites and an evidence-backed visible capability catalog and routing matrix. | P0 |

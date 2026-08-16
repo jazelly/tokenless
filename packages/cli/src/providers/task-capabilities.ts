@@ -472,6 +472,7 @@ const PROVIDER_TASK_CAPABILITY_ROUTES = Object.freeze([
   route('arena', TASK_CAPABILITIES.IMAGE_INPUT, 'experimental', 'arena-image-input', ['arena-image']),
   route('arena', TASK_CAPABILITIES.IMAGE_GENERATION, 'experimental', 'arena-image-generation', ['arena-image']),
   route('arena', TASK_CAPABILITIES.IMAGE_EDIT, 'experimental', 'arena-image-edit', ['arena-image']),
+  route('arena', TASK_CAPABILITIES.ARTIFACT_DOWNLOAD, 'experimental', 'arena-image', ['arena-image']),
   route('arena', TASK_CAPABILITIES.WEBSITE_GENERATION, 'experimental', 'arena-code-website-generation', ['arena-code']),
   route('arena', TASK_CAPABILITIES.AGENT_EXECUTE, 'experimental', 'arena-agent-execution', ['arena-agent']),
   route('arena', TASK_CAPABILITIES.VIDEO_GENERATION, 'experimental', 'arena-video-generation', ['arena-video']),

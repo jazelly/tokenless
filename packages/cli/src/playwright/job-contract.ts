@@ -220,10 +220,11 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
     ? null
     : validateJobCapabilityRoute(input.capabilityRoute, provider.id)
   if (capabilityRoute) assertRouteCoversActionRequirements(capabilityRoute, derivedRequirements)
+  const contextRequirements = capabilityRoute?.requirements ?? derivedRequirements
+  assertImageCapabilityContract(provider.id, contextRequirements, actions)
   const fallback = input.fallback === undefined || input.fallback === null
     ? null
     : validateFallbackPlan(input.fallback, provider, target, capabilityRoute)
-  const contextRequirements = capabilityRoute?.requirements ?? derivedRequirements
   const context = input.context === undefined || input.context === null
     ? createContextEnvelope({ taskId, requirements: contextRequirements, actions })
     : validateContextEnvelope(input.context, { taskId, requirements: contextRequirements, actions })
@@ -427,6 +428,57 @@ function assertRouteCoversActionRequirements(
       'invalid_playwright_job_capability_requirements',
       `Managed Playwright capability route omits action-required capabilities: ${missing.join(', ')}.`,
       { details: { provider: route.provider, declared: route.requirements, required: derivedRequirements, missing } },
+    )
+  }
+}
+
+function assertImageCapabilityContract(
+  provider: ProviderId,
+  requirements: readonly TaskCapabilityId[],
+  actions: readonly VisibleActionRequest[],
+) {
+  const requiresArtifactDownload = requirements.includes(TASK_CAPABILITIES.ARTIFACT_DOWNLOAD)
+  const hasImageGeneration = requirements.includes(TASK_CAPABILITIES.IMAGE_GENERATION)
+  const hasImageEdit = requirements.includes(TASK_CAPABILITIES.IMAGE_EDIT)
+  if (requiresArtifactDownload && !hasImageGeneration && !hasImageEdit) {
+    throw tokenlessError(
+      'invalid_playwright_job_capability_requirements',
+      'artifact.download requires image.generation or image.edit in the same capability route.',
+      {
+        details: {
+          provider,
+          requirements,
+          missing: [TASK_CAPABILITIES.IMAGE_GENERATION, TASK_CAPABILITIES.IMAGE_EDIT],
+        },
+      },
+    )
+  }
+  const requiresArenaImageSurface = provider === 'arena' && requirements.some((capability) => (
+    capability === TASK_CAPABILITIES.IMAGE_INPUT ||
+    capability === TASK_CAPABILITIES.IMAGE_GENERATION ||
+    capability === TASK_CAPABILITIES.IMAGE_EDIT ||
+    capability === TASK_CAPABILITIES.ARTIFACT_DOWNLOAD
+  ))
+  if (!requiresArenaImageSurface) return
+  const hasDirectImageSurface = actions.some((action) => (
+    action.action === VISIBLE_ACTIONS.ARENA_SURFACE_SELECT &&
+    action.payload.mode === 'direct' &&
+    action.payload.modality === 'image'
+  ))
+  if (!hasDirectImageSurface) {
+    throw tokenlessError(
+      'invalid_playwright_job_capability_requirements',
+      'Arena image capabilities require arena.surface.select with mode direct and modality image.',
+      {
+        details: {
+          provider,
+          requirements,
+          requiredAction: {
+            action: VISIBLE_ACTIONS.ARENA_SURFACE_SELECT,
+            payload: { mode: 'direct', modality: 'image' },
+          },
+        },
+      },
     )
   }
 }

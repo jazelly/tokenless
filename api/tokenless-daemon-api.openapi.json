@@ -53,6 +53,91 @@
         }
       }
     },
+    "/v1/asset/{taskId}/{conversationId}/{assetBatch}/{assetFile}": {
+      "get": {
+        "operationId": "getImageAsset",
+        "summary": "Read a verified downloaded image asset",
+        "parameters": [
+          {
+            "name": "taskId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+            }
+          },
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+            }
+          },
+          {
+            "name": "assetBatch",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+            }
+          },
+          {
+            "name": "assetFile",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,3})\\.(?:png|jpg|webp)$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Verified image bytes",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Image asset is missing or failed verification",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DaemonErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/control/browser-runtime/status": {
       "get": {
         "operationId": "getBrowserRuntimeStatus",

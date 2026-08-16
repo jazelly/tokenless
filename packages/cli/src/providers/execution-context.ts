@@ -6,7 +6,10 @@ import type { CaptureVisibleOutput } from '../output-savings/index.js'
 export type ProviderExecutionContext = {
   profileId: string
   operationId: string
+  jobId?: string
+  taskId?: string | null
   attachmentRoot?: string
+  assetRoot?: string
   signal?: AbortSignal
   now?: () => Date
   captureVisibleOutput?: CaptureVisibleOutput

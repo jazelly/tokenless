@@ -58,6 +58,8 @@ const closures = new Set([
   'visible_parallel_progress',
   'visible_tool_steps',
   'visible_search_selection',
+  'authenticated_asset_readback',
+  'local_digest',
 ])
 
 export function loadLiveProviderCapabilityMatrix() {

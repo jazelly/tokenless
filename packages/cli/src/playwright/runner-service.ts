@@ -888,6 +888,8 @@ export class ManagedPlaywrightRunnerService {
         const providerContext = {
           profileId: profile.id,
           operationId: job.job_id,
+          jobId: job.job_id,
+          taskId: request.taskId,
           signal,
           now: this.now,
           ...(outputSavingsEnabled
@@ -896,6 +898,7 @@ export class ManagedPlaywrightRunnerService {
               } }
             : {}),
           ...(attachmentRoot === undefined ? {} : { attachmentRoot }),
+          ...(this.homeDir === undefined ? {} : { assetRoot: path.join(this.homeDir, 'assets') }),
         }
         const response = await (async (): Promise<VisibleActionResponse> => {
           try {

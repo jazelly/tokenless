@@ -46,6 +46,7 @@ import {
 } from './api-proxy.js'
 import type { G4fServiceProcess } from '../g4f/index.js'
 import { handleG4fApiRequest } from './g4f-api.js'
+import { parseImageAssetReference, readPersistedImageAsset } from '../playwright/image-assets.js'
 
 import { FeatureBenchChannelError, FeatureBenchChannelManager, type FeatureBenchChannelIssue } from './featurebench-channel.js'
 
@@ -254,6 +255,35 @@ async function handleRequest(
     }
 
     requireControlAuth(store, request)
+
+    const imageAssetRoute = /^\/v1\/asset(?:\/.*)?$/u.test(url.pathname)
+    if (method === 'GET' && imageAssetRoute) {
+      let assetRef: string
+      try {
+        const segments = url.pathname.split('/').slice(3).map((segment) => decodeURIComponent(segment))
+        if (segments.length !== 4) throw new Error('invalid asset path')
+        assetRef = ['assets', ...segments].join('/')
+      } catch {
+        writeJson(response, 400, { error: { code: 'invalid_asset_reference', message: 'The image asset reference is invalid.', retryable: false } })
+        return
+      }
+      if (!parseImageAssetReference(assetRef)) {
+        writeJson(response, 400, { error: { code: 'invalid_asset_reference', message: 'The image asset reference is invalid.', retryable: false } })
+        return
+      }
+      const asset = await readPersistedImageAsset(store.homeDir, assetRef)
+      if (!asset) {
+        writeJson(response, 404, { error: { code: 'asset_not_found', message: 'The requested image asset was not found.', retryable: false } })
+        return
+      }
+      response.writeHead(200, {
+        'content-type': asset.mediaType,
+        'content-length': String(asset.bytes.byteLength),
+        'cache-control': 'no-store',
+      })
+      response.end(asset.bytes)
+      return
+    }
 
     if (await handleG4fApiRequest({
       store,

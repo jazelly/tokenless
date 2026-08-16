@@ -181,6 +181,91 @@ test('TS daemon rejects under-declared capability routes before durable job crea
   }
 })
 
+test('TS daemon rejects raw Arena image jobs that bypass the shared image/download contract', {
+  timeout: 60_000,
+}, async () => {
+  requireBuiltArtifacts()
+  const homeDir = tempHome('tokenless-ts-arena-image-job-contract-')
+  const daemon = await startTsDaemon(homeDir)
+  try {
+    const token = readControlToken(homeDir)
+    const playwright = await importPlaywright()
+    const artifactOnly = playwright.resolveTaskCapabilityRoute({
+      requirements: [
+        playwright.TASK_CAPABILITIES.CONVERSATION_CHAT,
+        playwright.TASK_CAPABILITIES.ARTIFACT_DOWNLOAD,
+      ],
+      candidates: [{ provider: 'arena', runtimeEligibility: 'eligible' }],
+    })
+    const imageDownload = playwright.resolveTaskCapabilityRoute({
+      requirements: [
+        playwright.TASK_CAPABILITIES.CONVERSATION_CHAT,
+        playwright.TASK_CAPABILITIES.IMAGE_GENERATION,
+        playwright.TASK_CAPABILITIES.ARTIFACT_DOWNLOAD,
+      ],
+      candidates: [{ provider: 'arena', runtimeEligibility: 'eligible' }],
+    })
+    assert.equal(artifactOnly.ok, true)
+    assert.equal(imageDownload.ok, true)
+    const valid = playwright.createManagedPlaywrightJobRequest({
+      provider: 'arena',
+      taskId: 'arena-image-contract-task',
+      capabilityRoute: imageDownload.route,
+      browserVisibility: 'headless',
+      actions: [
+        { requestId: 'arena-surface', action: playwright.VISIBLE_ACTIONS.ARENA_SURFACE_SELECT, payload: { mode: 'direct', modality: 'image' } },
+        { requestId: 'arena-prompt', action: playwright.VISIBLE_ACTIONS.PROMPT_INPUT, payload: { text: 'contract test' } },
+        { requestId: 'arena-submit', action: playwright.VISIBLE_ACTIONS.PROMPT_SUBMIT, payload: {} },
+        { requestId: 'arena-read', action: playwright.VISIBLE_ACTIONS.RESPONSE_READ, payload: {} },
+      ],
+    })
+    const { context: _context, ...wireBase } = valid
+    const cases = [
+      {
+        request_json: {
+          ...wireBase,
+          capabilityRoute: artifactOnly.route,
+        },
+        message: /artifact\.download requires image\.generation or image\.edit/u,
+      },
+      {
+        request_json: {
+          ...wireBase,
+          actions: valid.actions.map((action) => (
+            action.action === playwright.VISIBLE_ACTIONS.ARENA_SURFACE_SELECT
+              ? { ...action, payload: { mode: 'battle', modality: 'image' } }
+              : action
+          )),
+        },
+        message: /Arena image capabilities require arena\.surface\.select with mode direct and modality image/u,
+      },
+    ]
+    for (const [index, entry] of cases.entries()) {
+      const rejected = await fetch(`${daemon.url}/jobs`, {
+        method: 'POST',
+        headers: jsonHeaders(token),
+        body: JSON.stringify({
+          provider: 'arena',
+          action: managedPlaywrightJobAction,
+          execution_backend: 'playwright',
+          profile_id: randomUUID(),
+          job_id: `arena-image-contract-${index}-${randomUUID()}`,
+          request_json: entry.request_json,
+        }),
+      })
+      assert.equal(rejected.status, 400)
+      const body = await rejected.json()
+      assert.equal(body.error.code, 'invalid_input')
+      assert.match(body.error.message, entry.message)
+    }
+    assert.deepEqual(await daemonRequest(daemon.url, token, 'GET', '/jobs?limit=10'), [])
+  } finally {
+    await shutdownDaemon(daemon).catch(() => undefined)
+    await terminateChildrenForHome(homeDir)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
 test('agent replay drains each durable job once, survives restart, and keeps full job state queryable', {
   timeout: 60_000,
 }, async () => {

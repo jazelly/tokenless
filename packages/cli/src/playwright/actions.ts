@@ -480,11 +480,19 @@ export type VisibleAgentRun = {
 
 export type VisibleImageArtifact = {
   kind: 'image'
-  url: string
-  mediaType: string | null
+  assetRef: string
+  mediaType: string
   alt: string | null
-  width: number | null
-  height: number | null
+  width: number
+  height: number
+  byteSize: number
+  sha256: string
+  createdAt: string
+  provider: 'arena'
+  jobId: string
+  taskId: string | null
+  conversationId: string
+  downloadAvailable: true
   visibleProof: string
 }
 

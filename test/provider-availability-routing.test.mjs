@@ -388,6 +388,16 @@ test('Arena image capabilities reject incompatible controls and missing source i
         code: 'arena_image_model_control_unavailable',
       },
       {
+        capabilities: ['artifact.download'],
+        args: [],
+        code: 'task_capability_combination_unsupported',
+      },
+      {
+        capabilities: ['image.generation', 'artifact.download'],
+        args: ['--arena-modality', 'text'],
+        code: 'arena_image_modality_unavailable',
+      },
+      {
         capabilities: ['image.generation', 'conversation.continue'],
         args: [
           '--workspace-mode', 'conversation',

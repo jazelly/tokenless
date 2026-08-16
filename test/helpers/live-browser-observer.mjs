@@ -89,6 +89,7 @@ export async function createLiveBrowserInspectionSession(options) {
   return {
     runId,
     homeDir,
+    daemonUrl,
     profileSlug,
     environment: Object.freeze({ ...env }),
     createJobId() {

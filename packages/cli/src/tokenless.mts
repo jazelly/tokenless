@@ -5549,6 +5549,17 @@ function taskCapabilityRequirementsForExecution(
     throw cliError
   }
 
+  if (
+    explicit.includes(TASK_CAPABILITIES.ARTIFACT_DOWNLOAD) &&
+    !explicit.includes(TASK_CAPABILITIES.IMAGE_GENERATION) &&
+    !explicit.includes(TASK_CAPABILITIES.IMAGE_EDIT)
+  ) {
+    throw usageError(
+      'task_capability_combination_unsupported',
+      'artifact.download currently requires image.generation or image.edit so Tokenless can download the Arena image result.',
+    )
+  }
+
   if (explicit.includes(TASK_CAPABILITIES.FILE_UPLOAD) && args.attachFiles.length === 0) {
     throw usageError('task_capability_input_required', 'file.upload requires at least one --attach-file <path>.')
   }
