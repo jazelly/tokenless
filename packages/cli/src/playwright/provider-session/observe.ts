@@ -14,10 +14,10 @@ export async function observeProviderSession(
     anyNamedControlVisible(page, provider.access.guestContinueControlNames),
     detectStructuredBlockers(page, provider),
   ])
-  const authentication = loginVisible
-    ? 'unauthenticated' as const
-    : authenticatedControlVisible
-      ? 'authenticated' as const
+  const authentication = authenticatedControlVisible
+    ? 'authenticated' as const
+    : loginVisible
+      ? 'unauthenticated' as const
       : 'unknown' as const
   const access = authentication === 'unauthenticated'
     ? provider.access.guest === 'supported' && composerVisible
