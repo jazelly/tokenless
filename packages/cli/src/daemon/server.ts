@@ -612,7 +612,7 @@ async function handleWebAiRequest(
     writeJson(response, 200, await webAi.cancelRequest(decodeURIComponent(requestRoute[1] ?? '')))
     return true
   }
-  const turnRoute = /^\/v1\/web-ai\/turns\/([^/]+)(?:\/(cancel))?$/.exec(url.pathname)
+  const turnRoute = /^\/v1\/web-ai\/turns\/([^/]+)(?:\/(cancel|resume))?$/.exec(url.pathname)
   if (turnRoute) {
     const turnRef = decodeURIComponent(turnRoute[1] ?? '')
     const action = turnRoute[2] ?? null
@@ -624,6 +624,14 @@ async function handleWebAiRequest(
       const rawBody = await readBody(request)
       if (rawBody && Object.keys(parseJsonObject(rawBody)).length > 0) throw invalidInput('web ai cancel body must be empty')
       writeJson(response, 200, { turn: await webAi.cancel(turnRef) })
+      return true
+    }
+    if (method === 'POST' && action === 'resume') {
+      const rawBody = await readBody(request)
+      if (rawBody && Object.keys(parseJsonObject(rawBody)).length > 0) throw invalidInput('web ai resume body must be empty')
+      const turn = webAi.resume(turnRef)
+      await runtimeController?.wake()
+      writeJson(response, 200, { turn })
       return true
     }
   }

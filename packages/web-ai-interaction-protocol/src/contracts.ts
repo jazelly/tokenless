@@ -66,7 +66,7 @@ export type RejectedAttachmentDelivery = AttachmentDeliveryBase & { status: 'rej
 export type AttachmentDelivery = PendingAttachmentDelivery | DeliveredAttachmentDelivery | RejectedAttachmentDelivery
 
 export type BootstrapAttachment = {
-  kind: 'system_prompt' | 'skill'
+  kind: 'system_prompt' | 'skill' | 'tool_result'
   name: string
   attachmentRef: AttachmentRef
   mediaType: 'text/markdown'
@@ -89,7 +89,7 @@ export type CapabilityDocument = {
     | readonly ['file.upload', 'conversation.chat']
 }
 
-export type StartTurnRequest = {
+export type NewTurnRequest = {
   protocol: typeof WEB_AI_INTERACTION_PROTOCOL_V0
   requestRef: RequestRef
   providerRef: ProviderRef
@@ -98,6 +98,21 @@ export type StartTurnRequest = {
   conversation: { mode: 'new' }
   bootstrap: BootstrapStartMessage
 }
+
+export type ContinueTurnRequest = {
+  protocol: typeof WEB_AI_INTERACTION_PROTOCOL_V0
+  requestRef: RequestRef
+  providerRef: ProviderRef
+  providerBindingRef: ProviderBindingRef
+  requiredCapabilities: readonly ['conversation.chat', 'file.upload']
+  conversation: { mode: 'continue'; conversationRef: ConversationRef }
+  continuation: {
+    text: string
+    attachments: readonly [BootstrapAttachment & { kind: 'tool_result' }, ...Array<BootstrapAttachment & { kind: 'skill' }>]
+  }
+}
+
+export type StartTurnRequest = NewTurnRequest | ContinueTurnRequest
 
 type TurnStateBase = {
   protocol: typeof WEB_AI_INTERACTION_PROTOCOL_V0

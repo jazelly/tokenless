@@ -161,6 +161,61 @@ test('unsupported binding stages through local-http but fails closed before job 
   })
 })
 
+test('continuation reuses the proved provider conversation and resumes the same waiting turn', async () => {
+  await withHome(async (homeDir) => {
+    const daemon = await startControlPlane(homeDir)
+    try {
+      const { client, binding } = await configuredClient(homeDir, daemon, 'chatgpt', 'continuation')
+      const first = await startTurn(client, binding, 'a', 'bootstrap')
+      const firstMapping = daemon.store.getWebAiTurn(first.turnRef)
+      const firstJob = daemon.store.getJob(firstMapping.job_id)
+      const firstClaim = daemon.store.claimJob(firstJob.job_id, firstJob.claim_token)
+      daemon.store.markRunning(firstClaim.job_id, firstClaim.claim_token)
+      daemon.store.recordProviderSubmission(firstClaim.job_id, firstClaim.claim_token)
+      daemon.store.upsertProviderTaskConversation({
+        provider: 'chatgpt',
+        profile_id: firstJob.profile_id,
+        task_id: firstJob.request_json.taskId,
+        canonical_url: 'https://chatgpt.com/c/tokenless-continuation',
+        job_id: firstJob.job_id,
+      })
+      daemon.store.completeJob(firstClaim.job_id, firstClaim.claim_token, { result_json: successfulVisibleResult('first') })
+      assert.equal((await client.read(first.turnRef)).lifecycle, 'succeeded')
+
+      const resultAttachment = await client.stage(binding.providerBindingRef, new TextEncoder().encode('{"result":"exact"}'), { name: 'tool-result.md' })
+      const continuationRequest = {
+        protocol: startExample.protocol,
+        requestRef: `request:${'b'.repeat(32)}`,
+        providerRef: binding.capabilities.providerRef,
+        providerBindingRef: binding.providerBindingRef,
+        requiredCapabilities: ['conversation.chat', 'file.upload'],
+        conversation: { mode: 'continue', conversationRef: first.conversationRef },
+        continuation: {
+          text: 'continue from the attached action result',
+          attachments: [{ kind: 'tool_result', name: 'tool-result.md', ...resultAttachment }],
+        },
+      }
+      const continued = await client.continue(binding.providerBindingRef, continuationRequest)
+      const replayed = await client.continue(binding.providerBindingRef, continuationRequest)
+      assert.equal(replayed.turnRef, continued.turnRef)
+      assert.equal(continued.conversationRef, first.conversationRef)
+      const continuedMapping = daemon.store.getWebAiTurn(continued.turnRef)
+      const continuedJob = daemon.store.getJob(continuedMapping.job_id)
+      assert.equal(continuedJob.request_json.taskId, firstJob.request_json.taskId)
+      assert.equal(continuedJob.request_json.target.url, 'https://chatgpt.com/c/tokenless-continuation')
+
+      injectWaitingJob(homeDir, continuedJob.job_id)
+      assert.equal((await client.read(continued.turnRef)).lifecycle, 'waiting_for_user')
+      const resumed = await client.resume(continued.turnRef)
+      assert.equal(resumed.turnRef, continued.turnRef)
+      assert.equal(daemon.store.getWebAiTurn(continued.turnRef).job_id, continuedJob.job_id)
+      assert.equal(daemon.store.getJob(continuedJob.job_id).status, 'queued')
+    } finally {
+      await daemon.close()
+    }
+  })
+})
+
 test('authenticated V0 routes sanitize internal configuration failures', async () => {
   await withHome(async (homeDir) => {
     const daemon = await startControlPlane(homeDir)
@@ -530,6 +585,26 @@ function injectJobState(homeDir, jobId, status, error) {
       .run(status, JSON.stringify(error), new Date().toISOString(), jobId)
   } finally {
     database.close()
+  }
+}
+
+function injectWaitingJob(homeDir, jobId) {
+  const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'))
+  try {
+    database.prepare(`UPDATE jobs SET status = 'waiting_for_user', checkpoint_json = ?, blocker_json = ?, claim_expires_at = NULL WHERE job_id = ?`)
+      .run(JSON.stringify({ phase: { state: 'waiting', action: 'blocker.check', mutating: false } }), JSON.stringify({ code: 'provider_intervention' }), jobId)
+  } finally {
+    database.close()
+  }
+}
+
+function successfulVisibleResult(text) {
+  return {
+    responses: [
+      { action: 'file.upload', ok: true, result: { acceptance: 'accepted' } },
+      { action: 'prompt.submit', ok: true, result: { submitted: true } },
+      { action: 'response.read', ok: true, result: { text, citations: [] } },
+    ],
   }
 }
 

@@ -31,8 +31,9 @@ type StartTurnRequest = {
   providerRef: string
   providerBindingRef: string
   requiredCapabilities: readonly ['conversation.chat', 'file.upload']
-  conversation: { mode: 'new' }
-  bootstrap: { text: string; attachments: readonly [{ kind: 'system_prompt'; name: string; attachmentRef: string; mediaType: 'text/markdown'; byteLength: number; sha256: string }, ...Array<{ kind: 'skill'; name: string; attachmentRef: string; mediaType: 'text/markdown'; byteLength: number; sha256: string }>] }
+  conversation: { mode: 'new' } | { mode: 'continue'; conversationRef: string }
+  bootstrap?: { text: string; attachments: readonly [{ kind: 'system_prompt'; name: string; attachmentRef: string; mediaType: 'text/markdown'; byteLength: number; sha256: string }, ...Array<{ kind: 'skill'; name: string; attachmentRef: string; mediaType: 'text/markdown'; byteLength: number; sha256: string }>] }
+  continuation?: { text: string; attachments: readonly [{ kind: 'tool_result'; name: string; attachmentRef: string; mediaType: 'text/markdown'; byteLength: number; sha256: string }, ...Array<{ kind: 'skill'; name: string; attachmentRef: string; mediaType: 'text/markdown'; byteLength: number; sha256: string }>] }
 }
 type TurnState = Record<string, unknown>
 type RequestCancellationIdentity = {
@@ -131,7 +132,11 @@ export class WebAiInteractionV0Adapter {
     if (request.providerBindingRef !== binding.binding_ref || request.providerRef !== binding.provider_ref) {
       throw invalidInput('web ai request binding does not match the route')
     }
-    const attachments = request.bootstrap.attachments.map((requested) => {
+    if (request.conversation.mode === 'continue') {
+      return this.startContinuation(binding, request, requestSha256)
+    }
+    const bootstrap = request.bootstrap!
+    const attachments = bootstrap.attachments.map((requested) => {
       const attachment = this.store.getWebAiStagedAttachment(requested.attachmentRef)
       if (!attachment || attachment.binding_ref !== binding.binding_ref ||
         attachment.byte_length !== requested.byteLength || attachment.sha256 !== requested.sha256 ||
@@ -166,10 +171,10 @@ export class WebAiInteractionV0Adapter {
           action: VISIBLE_ACTIONS.FILE_UPLOAD,
           payload: { attachments: attachments.map((candidate, index) => ({
             protocol: descriptorProtocol(), bundleId: candidate.bundle_id, attachmentId: candidate.attachment_id,
-            name: request.bootstrap.attachments[index]!.name, type: candidate.media_type, size: candidate.byte_length, sha256: candidate.sha256,
+            name: bootstrap.attachments[index]!.name, type: candidate.media_type, size: candidate.byte_length, sha256: candidate.sha256,
           })) },
         }),
-        createVisibleActionRequest({ provider: binding.provider, action: VISIBLE_ACTIONS.PROMPT_INPUT, payload: { text: request.bootstrap.text } }),
+        createVisibleActionRequest({ provider: binding.provider, action: VISIBLE_ACTIONS.PROMPT_INPUT, payload: { text: bootstrap.text } }),
         createVisibleActionRequest({ provider: binding.provider, action: VISIBLE_ACTIONS.PROMPT_SUBMIT, payload: {} }),
         createVisibleActionRequest({ provider: binding.provider, action: VISIBLE_ACTIONS.RESPONSE_READ, payload: {} }),
       ],
@@ -191,6 +196,64 @@ export class WebAiInteractionV0Adapter {
       },
     })
     return this.project(turn, this.store.getJob(turn.job_id))
+  }
+
+  private startContinuation(binding: WebAiBinding, request: StartTurnRequest, requestSha256: string) {
+    if (request.conversation.mode !== 'continue' || !request.continuation) throw invalidInput('web ai continuation is invalid')
+    const previous = this.store.getLatestWebAiTurnForConversation(request.conversation.conversationRef)
+    if (!previous || previous.binding_ref !== binding.binding_ref) throw invalidInput('web ai continuation conversation was not found')
+    const previousJob = this.store.getJob(previous.job_id)
+    if (previousJob.status !== 'succeeded' || !successfulResult(previousJob.result_json)) throw invalidInput('web ai continuation source turn has not succeeded')
+    const previousRequest = previousJob.request_json as { taskId?: unknown }
+    if (typeof previousRequest.taskId !== 'string') throw invalidInput('web ai continuation task identity is unavailable')
+    const mapping = this.store.resolveProviderTaskConversation({ provider: binding.provider, profile_id: binding.profile_id, task_id: previousRequest.taskId })
+    if (!mapping) throw invalidInput('web ai continuation provider conversation is unavailable')
+    const requested = request.continuation.attachments
+    const attachments = requested.map((descriptor) => this.store.getWebAiStagedAttachment(descriptor.attachmentRef))
+    for (const [index, attachment] of attachments.entries()) {
+      const descriptor = requested[index]!
+      if (!attachment || attachment.binding_ref !== binding.binding_ref || attachment.byte_length !== descriptor.byteLength || attachment.sha256 !== descriptor.sha256 || attachment.media_type !== descriptor.mediaType) {
+        throw invalidInput('web ai continuation attachment is missing or does not match its digest')
+      }
+    }
+    const primary = attachments[0]!
+    if (attachments.some((attachment) => attachment!.bundle_id !== primary.bundle_id)) throw invalidInput('web ai continuation attachments are not one staged bundle')
+    const route = resolveTaskCapabilityRoute({ requirements: REQUIRED_CAPABILITIES, candidates: [{ provider: binding.provider, runtimeEligibility: 'unchecked' }] })
+    if (!route.ok) throw invalidInput('web ai provider does not have a static chat and upload route')
+    const turnRef = opaqueRef('turn')
+    const requestJson = createManagedPlaywrightJobRequest({
+      provider: binding.provider,
+      target: { kind: 'provider_home', url: mapping.canonical_url },
+      taskId: previousRequest.taskId,
+      pageRef: request.conversation.conversationRef,
+      capabilityRoute: route.route,
+      fallback: null,
+      browserVisibility: 'auto',
+      userHandoff: false,
+      actions: [
+        createVisibleActionRequest({ provider: binding.provider, action: VISIBLE_ACTIONS.FILE_UPLOAD, payload: { attachments: attachments.map((attachment, index) => ({ protocol: descriptorProtocol(), bundleId: attachment!.bundle_id, attachmentId: attachment!.attachment_id, name: requested[index]!.name, type: attachment!.media_type, size: attachment!.byte_length, sha256: attachment!.sha256 })) } }),
+        createVisibleActionRequest({ provider: binding.provider, action: VISIBLE_ACTIONS.PROMPT_INPUT, payload: { text: request.continuation.text } }),
+        createVisibleActionRequest({ provider: binding.provider, action: VISIBLE_ACTIONS.PROMPT_SUBMIT, payload: {} }),
+        createVisibleActionRequest({ provider: binding.provider, action: VISIBLE_ACTIONS.RESPONSE_READ, payload: {} }),
+      ],
+    })
+    const turn = this.store.createWebAiTurn({
+      turn_ref: turnRef,
+      binding_ref: binding.binding_ref,
+      conversation_ref: request.conversation.conversationRef,
+      attachment_refs: attachments.map((attachment) => attachment!.attachment_ref),
+      request_ref: request.requestRef,
+      request_sha256: requestSha256,
+      job: { provider: binding.provider, action: MANAGED_PLAYWRIGHT_JOB_ACTION, request_json: requestJson, execution_backend: 'playwright', profile_id: binding.profile_id, job_id: primary.bundle_id },
+    })
+    return this.project(turn, this.store.getJob(turn.job_id))
+  }
+
+  resume(turnRef: string) {
+    const turn = this.store.getWebAiTurn(turnRef)
+    if (!turn) throw invalidInput('web ai turn was not found')
+    const job = this.store.resumeJob(turn.job_id, { browser_visibility: 'headed' })
+    return this.project(turn, job)
   }
 
   async read(turnRef: string) {
@@ -322,11 +385,19 @@ function strictObject(value: unknown, keys: readonly string[]) {
 }
 
 function parseStartTurnRequest(value: unknown): StartTurnRequest {
-  const request = strictObject(value, ['protocol', 'requestRef', 'providerRef', 'providerBindingRef', 'requiredCapabilities', 'conversation', 'bootstrap'])
+  if (!isPlainRecord(value)) throw new Error('start_turn_request is invalid')
+  const conversation = isPlainRecord(value.conversation) ? value.conversation : null
+  const request = strictObject(value, conversation?.mode === 'continue'
+    ? ['protocol', 'requestRef', 'providerRef', 'providerBindingRef', 'requiredCapabilities', 'conversation', 'continuation']
+    : ['protocol', 'requestRef', 'providerRef', 'providerBindingRef', 'requiredCapabilities', 'conversation', 'bootstrap'])
   if (request.protocol !== WEB_AI_INTERACTION_PROTOCOL_V0 || !/^request:[a-f0-9]{32}$/.test(String(request.requestRef)) ||
     !/^provider:[a-f0-9]{32}$/.test(String(request.providerRef)) || !/^binding:[a-f0-9]{32}$/.test(String(request.providerBindingRef)) ||
     !Array.isArray(request.requiredCapabilities) || request.requiredCapabilities.length !== 2 || request.requiredCapabilities[0] !== 'conversation.chat' || request.requiredCapabilities[1] !== 'file.upload' ||
-    !isPlainRecord(request.conversation) || Object.keys(request.conversation).length !== 1 || request.conversation.mode !== 'new' ||
+    !isPlainRecord(request.conversation) || (request.conversation.mode !== 'new' && request.conversation.mode !== 'continue')) {
+    throw new Error('start_turn_request is invalid')
+  }
+  if (request.conversation.mode === 'continue') return parseContinueTurnRequest(request)
+  if (Object.keys(request.conversation).length !== 1 ||
     !isPlainRecord(request.bootstrap) || Object.keys(request.bootstrap).length !== 2 || typeof request.bootstrap.text !== 'string' || request.bootstrap.text.length === 0 || Array.from(request.bootstrap.text).length > 4000 || Buffer.byteLength(request.bootstrap.text, 'utf8') > 8192 || !Array.isArray(request.bootstrap.attachments) || request.bootstrap.attachments.length < 1 || request.bootstrap.attachments.length > 33) {
     throw new Error('start_turn_request is invalid')
   }
@@ -348,6 +419,22 @@ function parseStartTurnRequest(value: unknown): StartTurnRequest {
   return request as unknown as StartTurnRequest
 }
 
+function parseContinueTurnRequest(request: Record<string, unknown>): StartTurnRequest {
+  const conversation = request.conversation as Record<string, unknown>
+  const continuation = request.continuation
+  if (Object.keys(conversation).length !== 2 || !/^conversation:[a-f0-9]{32}$/.test(String(conversation.conversationRef)) || !isPlainRecord(continuation) || Object.keys(continuation).length !== 2 || typeof continuation.text !== 'string' || !continuation.text || Array.from(continuation.text).length > 4000 || Buffer.byteLength(continuation.text, 'utf8') > 8192 || !Array.isArray(continuation.attachments) || continuation.attachments.length < 1 || continuation.attachments.length > 33) throw new Error('continue_turn_request is invalid')
+  const refs = new Set<string>()
+  const names = new Set<string>()
+  for (const [index, attachment] of continuation.attachments.entries()) {
+    const expectedKind = index === 0 ? 'tool_result' : 'skill'
+    const byteLength = isPlainRecord(attachment) ? attachment.byteLength : null
+    if (!isPlainRecord(attachment) || Object.keys(attachment).length !== 6 || attachment.kind !== expectedKind || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(String(attachment.name)) || !/^attachment:[a-f0-9]{32}$/.test(String(attachment.attachmentRef)) || attachment.mediaType !== 'text/markdown' || typeof byteLength !== 'number' || !Number.isSafeInteger(byteLength) || byteLength < 1 || byteLength > SYSTEM_PROMPT_LIMIT_BYTES || !/^[a-f0-9]{64}$/.test(String(attachment.sha256)) || refs.has(String(attachment.attachmentRef)) || names.has(String(attachment.name))) throw new Error('continue_turn_request attachment is invalid')
+    refs.add(String(attachment.attachmentRef))
+    names.add(String(attachment.name))
+  }
+  return request as unknown as StartTurnRequest
+}
+
 function canonicalStartRequestSha256(binding: WebAiBinding, request: StartTurnRequest) {
   return createHash('sha256').update(JSON.stringify({
     provider: binding.provider,
@@ -356,9 +443,18 @@ function canonicalStartRequestSha256(binding: WebAiBinding, request: StartTurnRe
     providerBindingRef: request.providerBindingRef,
     requiredCapabilities: request.requiredCapabilities,
     conversation: request.conversation,
-    bootstrap: {
-      text: request.bootstrap.text,
-      attachments: request.bootstrap.attachments.map((attachment) => ({
+    payload: request.conversation.mode === 'new' ? {
+      text: request.bootstrap!.text,
+      attachments: request.bootstrap!.attachments.map((attachment) => ({
+        kind: attachment.kind,
+        name: attachment.name,
+        mediaType: attachment.mediaType,
+        byteLength: attachment.byteLength,
+        sha256: attachment.sha256,
+      })),
+    } : {
+      text: request.continuation!.text,
+      attachments: request.continuation!.attachments.map((attachment) => ({
         kind: attachment.kind,
         name: attachment.name,
         mediaType: attachment.mediaType,
