@@ -11,7 +11,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliDir = path.join(root, 'packages/cli')
 const cliEntry = path.join(cliDir, 'dist/src/tokenless.mjs')
 
-test('checked-in live provider capability matrix classifies every registered provider and case', () => {
+test('checked-in live provider capability matrix classifies every registered Browser provider and case', () => {
   const matrix = loadLiveProviderCapabilityMatrix()
   assert.equal(matrix.schema, 'tokenless.live-provider-capability-matrix.v2')
   assert.deepEqual(matrix.knownIssueSkips, [{
@@ -24,12 +24,13 @@ test('checked-in live provider capability matrix classifies every registered pro
   }])
 })
 
-test('built provider navigation catalog owns every entry point and known page pattern', async () => {
+test('built Browser provider navigation catalog owns every entry point and known page pattern', async () => {
   const {
     PROVIDER_NAVIGATION_CATALOG,
     listProviderDescriptors,
   } = await import('../packages/cli/dist/src/playwright/index.js')
   const descriptors = listProviderDescriptors()
+    .filter((descriptor) => descriptor.executionModes.includes('browser'))
   assert.deepEqual(
     Object.keys(PROVIDER_NAVIGATION_CATALOG).sort(),
     descriptors.map((descriptor) => descriptor.id).sort(),

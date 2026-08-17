@@ -121,12 +121,13 @@ export function validateLiveProviderCapabilityMatrix(matrix) {
   }
 
   const descriptors = listProviderDescriptors()
+    .filter((provider) => provider.executionModes.includes('browser'))
   const providerIds = new Set(descriptors.map((provider) => provider.id))
   validateKnownIssueSkips(matrix.knownIssueSkips, providerIds)
   assert.deepEqual(
     Object.keys(matrix.providers).sort(),
     descriptors.map((provider) => provider.id).sort(),
-    'live capability matrix must classify every registered provider exactly once',
+    'live capability matrix must classify every registered Browser provider exactly once',
   )
   for (const descriptor of descriptors) {
     const provider = matrix.providers[descriptor.id]

@@ -15,7 +15,13 @@ test('capabilities list exposes canonical outcomes and only evidence-backed rout
   const result = runCli(['capabilities', 'list', '--json'])
   assert.equal(result.status, 0, result.stderr || result.stdout)
   const payload = JSON.parse(result.stdout)
-  assert.equal(payload.schema, 'tokenless.task-capability-catalog.v2')
+  assert.equal(payload.schema, 'tokenless.task-capability-catalog.v3')
+
+  for (const capability of payload.capabilities) {
+    for (const route of capability.routes) {
+      assert.equal(route.executionMode, 'browser')
+    }
+  }
 
   const byId = new Map(payload.capabilities.map((capability) => [capability.id, capability]))
   assert.equal(byId.get('conversation.chat').routeable, true)
@@ -40,6 +46,14 @@ test('capabilities list exposes canonical outcomes and only evidence-backed rout
   assert.deepEqual(
     byId.get('artifact.download').routes.map((route) => route.provider),
     ['gemini', 'grok', 'doubao', 'chatgpt', 'meta', 'arena', 'dola'],
+  )
+  assert.equal(
+    byId.get('image.generation').routes.find((route) => route.provider === 'chatgpt').executionMode,
+    'browser',
+  )
+  assert.equal(
+    byId.get('artifact.download').routes.find((route) => route.provider === 'chatgpt').executionMode,
+    'browser',
   )
   assert.deepEqual(byId.get('image.edit').routes.map((route) => route.provider), ['arena'])
   assert.deepEqual(byId.get('website.generation').routes.map((route) => route.provider), ['arena'])

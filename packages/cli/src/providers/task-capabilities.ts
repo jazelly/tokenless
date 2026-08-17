@@ -1,7 +1,7 @@
 import { isProviderIdSyntax } from './provider-identity.js'
-import type { ProviderId } from './provider-identity.js'
+import type { ProviderExecutionMode, ProviderId } from './provider-identity.js'
 
-export const TASK_CAPABILITY_CATALOG_SCHEMA_ID = 'tokenless.task-capability-catalog.v2'
+export const TASK_CAPABILITY_CATALOG_SCHEMA_ID = 'tokenless.task-capability-catalog.v3'
 export const TASK_CAPABILITY_ROUTE_SCHEMA_ID = 'tokenless.task-capability-route.v1'
 
 export const TASK_CAPABILITIES = Object.freeze({
@@ -92,6 +92,7 @@ export type TaskCapabilityDefinition = Readonly<{
 export type ProviderTaskCapabilityRoute = Readonly<{
   provider: ProviderId
   capability: TaskCapabilityId
+  executionMode: ProviderExecutionMode
   support: 'experimental' | 'supported'
   strategy: string
   evidence: readonly string[]
@@ -776,10 +777,12 @@ function route(
   support: ProviderTaskCapabilityRoute['support'],
   strategy: string,
   evidence: readonly string[],
+  executionMode: ProviderExecutionMode = 'browser',
 ): ProviderTaskCapabilityRoute {
   return Object.freeze({
     provider,
     capability,
+    executionMode,
     support,
     strategy,
     evidence: Object.freeze([...evidence]),

@@ -67,6 +67,8 @@ This table summarizes checked-in routes. The CLI output is the authoritative cur
 
 `—` means no route is advertised. It does not necessarily mean the provider product lacks the feature; the implementation or real-provider evidence may still be incomplete.
 
+The current table is the **Browser execution matrix**. Every checked-in provider binding returned by `tokenless capabilities list --json` includes `executionMode: "browser"`; this includes ChatGPT `image.generation` and `artifact.download`. Direct capabilities are a separate evidence surface and must be added as independent bindings when their direct lifecycle closes. Never infer a direct capability from a provider descriptor that also lists `direct`, or from a Browser route.
+
 Routes are evaluated as a complete requirement set. For example, an image attachment requires both `file.upload` and `image.input`; the `file.upload` row alone does not make image upload routeable.
 
 ChatGPT, Gemini, Grok, Doubao, Dola, Arena, and Meta AI Image artifacts are downloaded through the selected Playwright browser session into task-, conversation-, job-, and time-scoped `assets/` directories. The public response contains only the relative asset reference, media type, dimensions, byte size, and SHA-256 digest; signed provider URLs remain in-memory only. The authenticated daemon `GET /v1/asset/{taskId}/{conversationId}/{assetBatch}/{assetFile}` endpoint returns verified bytes with the actual image media type; traversal, corrupt, and missing assets fail closed.
@@ -226,7 +228,7 @@ Provider-only concepts remain namespaced actions or workflows such as `deepseek.
 
 ## Compatibility and Versioning
 
-The current catalog schema is `tokenless.task-capability-catalog.v2`. V2 removes `skill.invoke`; provider-native workflows remain namespaced provider controls, while user-owned Skills are Harness inputs delivered through `file.upload`.
+The current catalog schema is `tokenless.task-capability-catalog.v3`. V3 adds `executionMode` to each provider binding so Browser and direct evidence cannot be conflated; current checked-in bindings are Browser-only. V2 removed `skill.invoke`; provider-native workflows remain namespaced provider controls, while user-owned Skills are Harness inputs delivered through `file.upload`.
 
 - Adding an independent capability is normally additive.
 - Adding an optional parameter may be additive when existing requests keep identical semantics.

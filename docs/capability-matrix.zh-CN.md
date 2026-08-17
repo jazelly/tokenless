@@ -67,6 +67,8 @@ Provider selection 前会展开所有 implication。同一家 provider 必须满
 
 `—` 表示目前没有公开 route，不一定代表 provider 产品没有该功能；也可能是 implementation 或真实 provider evidence 尚未完成。
 
+当前表是 **Browser execution matrix**。`tokenless capabilities list --json` 返回的每一个 checked-in provider binding 都包含 `executionMode: "browser"`；其中也包括 ChatGPT 的 `image.generation` 与 `artifact.download`。Direct capability 属于独立的 evidence surface，只有在 direct lifecycle 闭环后才能作为独立 binding 加入。不能从同时声明 `direct` 的 provider descriptor，或从 Browser route，推断出 direct capability。
+
 Route 会按完整 requirement set 评估。例如 image attachment 同时要求 `file.upload` 与 `image.input`；仅有 `file.upload` 这一行并不代表图片上传已经 routeable。
 
 ChatGPT、Gemini、Grok、豆包、Dola、Arena 与 Meta AI Image artifact 会通过选定的 Playwright browser session 下载到按 task、conversation、job 与时间划分的 `assets` 目录。公开 response 只包含 relative asset reference、media type、尺寸、byte size 与 SHA-256 digest；带签名的 provider URL 仅在内存中使用。authenticated daemon 的 `GET /v1/asset/{taskId}/{conversationId}/{assetBatch}/{assetFile}` endpoint 会以实际图片 media type 返回已验证 bytes；路径越界、损坏或缺失 asset 会 fail closed。
@@ -226,7 +228,7 @@ Provider-only concept 保留为 `deepseek.mode`、`kimi.skill`、`dola.translate
 
 ## Compatibility 与版本管理
 
-当前 catalog schema 是 `tokenless.task-capability-catalog.v2`。V2 删除 `skill.invoke`：provider-native workflow 保持 namespaced provider control，user-owned Skill 则作为 Harness input 经 `file.upload` 交付。
+当前 catalog schema 是 `tokenless.task-capability-catalog.v3`。V3 为每个 provider binding 增加 `executionMode`，避免混淆 Browser 与 direct evidence；当前 checked-in binding 全部是 Browser-only。V2 删除了 `skill.invoke`：provider-native workflow 保持 namespaced provider control，user-owned Skill 则作为 Harness input 经 `file.upload` 交付。
 
 - 新增独立 capability 通常属于 additive change。
 - 新增 optional parameter 在旧 request 语义完全不变时可以是 additive change。
