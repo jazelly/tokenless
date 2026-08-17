@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import { promisify } from 'node:util'
 
 import { createLocalHttpClient } from 'tokenless-web-ai-interaction-protocol/local-http'
 import {
@@ -18,6 +20,10 @@ import { HarnessRunStore } from '../packages/web-agent-harness/dist/src/internal
 import { serveHttp } from '../packages/cli/dist/src/daemon/server.js'
 import { JobStore } from '../packages/cli/dist/src/daemon/job-store.js'
 import { ManagedProfileRegistry } from '../packages/cli/dist/src/playwright/profiles/registry.js'
+import { writeTokenlessConfig } from '../packages/cli/dist/src/index.js'
+
+const execFileAsync = promisify(execFile)
+const cliEntry = path.resolve('packages/cli/dist/src/tokenless.mjs')
 
 test('an incorrect approval digest preserves the run and the exact approved call resumes through real MCP and local HTTP', async () => {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-harness-approval-')))
@@ -96,6 +102,15 @@ test('an incorrect approval digest preserves the run and the exact approved call
       needs: [], callResults: [], needResults: [], history: [], createdAt: now, updatedAt: now,
     })
     runStore.close()
+    await writeTokenlessConfig({ homeDir, language: 'zh-CN' })
+
+    const inspected = await execFileAsync(process.execPath, [
+      cliEntry, 'agent', 'read', '--run-id', runId, '--home', homeDir, '--daemon-url', daemon.origin,
+    ], { cwd: path.resolve('.'), env: { ...process.env, TOKENLESS_HOME: homeDir } })
+    assert.match(inspected.stdout, /需要批准/)
+    assert.match(inspected.stdout, /\{"message":"approval-boundary"\}/)
+    assert.match(inspected.stdout, new RegExp(argumentsDigest))
+    assert.equal(inspected.stderr, '')
 
     const harness = await openWebAgentHarness({
       tokenlessHome: homeDir,
