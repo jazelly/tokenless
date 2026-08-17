@@ -36,6 +36,8 @@ export {
 export {
   HARNESS_SKILL_MODULE_PROTOCOL,
   HARNESS_SKILL_STATE_PROTOCOL,
+  HARNESS_RUN_PROTOCOL,
+  PROVIDER_TURN_PROTOCOL,
   REQUIRED_HARNESS_PROVIDER_CAPABILITIES,
   WEB_AGENT_PROTOCOL,
   HarnessSkillError,
@@ -61,6 +63,21 @@ export type {
   HarnessSkillTurnPreparation,
   HarnessToolCall,
   HarnessToolDescriptor,
+  HarnessToolCatalogEntry,
+  HarnessToolExecution,
+  HarnessToolRegistry,
+  ProviderTurnClient,
+  ProviderTurnRequest,
+  ProviderTurnState,
+  AgentMcpServerSpec,
+  AgentRunSpec,
+  AgentRunStatus,
+  AgentRunView,
+  AgentRunIntervention,
+  HarnessActionBatchResult,
+  HarnessToolCallResult,
+  HarnessNeedResult,
+  WebAgentHarness,
   JsonPrimitive,
   JsonValue,
   EnqueueSequentialHarnessMissionInput,
@@ -102,3 +119,7 @@ export {
 export {
   openSequentialHarnessMissionQueue,
 } from './mission-queue.js'
+
+export {
+  openWebAgentHarness,
+} from './web-agent-harness.js'
