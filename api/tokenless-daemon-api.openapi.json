@@ -2900,6 +2900,7 @@
         "additionalProperties": false,
         "required": [
           "protocol",
+          "requestRef",
           "turnRef",
           "providerRef",
           "providerBindingRef",
@@ -2911,6 +2912,10 @@
         "properties": {
           "protocol": {
             "const": "tokenless.internal.web-ai-interaction-protocol/v0"
+          },
+          "requestRef": {
+            "type": "string",
+            "pattern": "^request:[a-f0-9]{32}$"
           },
           "turnRef": {
             "type": "string",
