@@ -412,7 +412,13 @@ class DurableWebAgentHarness implements WebAgentHarness {
       ? { code: error.code, message: error.message }
       : { code: 'harness_run_failed', message: 'Harness run failed.' }
     try {
-      return this.store.update(record.runId, record.revision, (current) => ({ ...current, status: 'failed', phase: 'terminal', error: safe }))
+      return this.store.update(record.runId, record.revision, (current) => ({
+        ...current,
+        status: 'failed',
+        phase: 'terminal',
+        pendingProviderRequest: undefined,
+        error: safe,
+      }))
     } catch (failure) {
       if (isConflict(failure)) return this.required(record.runId)
       throw failure
