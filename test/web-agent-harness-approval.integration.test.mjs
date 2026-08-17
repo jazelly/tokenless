@@ -32,6 +32,7 @@ test('an incorrect approval digest preserves the run and the exact approved call
   const store = await JobStore.open(homeDir)
   const daemon = await serveHttp({ store, host: '127.0.0.1', port: 0 })
   daemon.activate()
+  let harness
   try {
     const profile = await new ManagedProfileRegistry(homeDir).addProfile({ slug: 'approval', lifecycle: 'ready' })
     const token = (await fs.readFile(path.join(homeDir, 'daemon.token'), 'utf8')).trim()
@@ -82,22 +83,25 @@ test('an incorrect approval digest preserves the run and the exact approved call
     const argumentsValue = { message: 'approval-boundary' }
     const callId = 'call_echo'
     const tool = catalog[0].name
-    const argumentsDigest = digest({ runId, callId, tool, arguments: argumentsValue })
+    const batch = {
+      protocol: 'tokenless.web-agent/v1', kind: 'action_batch', runId, turn: 1, nonce,
+      skillLoads: [], calls: [{ id: callId, tool, arguments: argumentsValue }], needs: [],
+    }
+    const batchId = digest({ runId, turn: 1, nonce, batch })
+    const argumentsDigest = digest({ runId, turn: 1, nonce, batchId, callId, tool, arguments: argumentsValue })
     const now = new Date().toISOString()
     const runStore = await HarnessRunStore.open(homeDir)
     runStore.create({
-      protocol: 'tokenless.web-agent.run/v1', runId, revision: 0, status: 'waiting_for_approval',
-      spec: { provider: 'chatgpt', profileId: profile.id, taskPrompt, stagingRoot, mcpServers },
+      protocol: 'tokenless.web-agent.run/v1', runId, revision: 0, status: 'waiting_for_approval', phase: 'waiting_intervention',
+      spec: { admissionRef: `admission:${'d'.repeat(32)}`, provider: 'chatgpt', profileId: profile.id, taskPrompt, stagingRoot, mcpServers },
       turn: 1, nonce, requestRef: `request:${'c'.repeat(32)}`, catalog,
       providerTurn: {
         protocol: 'tokenless.provider-turn/v1', requestRef: `request:${'c'.repeat(32)}`,
         turnRef: first.turnRef, providerRef: first.providerRef, providerBindingRef: first.providerBindingRef,
         conversationRef: first.conversationRef, lifecycle: 'succeeded', deliverySha256: staged.sha256,
       },
-      batch: {
-        protocol: 'tokenless.web-agent/v1', kind: 'action_batch', runId, turn: 1, nonce,
-        skillLoads: [], calls: [{ id: callId, tool, arguments: argumentsValue }], needs: [],
-      },
+      batch,
+      batchId,
       calls: [{ id: callId, tool, arguments: argumentsValue, argumentsDigest, dependsOn: [], approval: 'pending', status: 'pending' }],
       needs: [], callResults: [], needResults: [], history: [], createdAt: now, updatedAt: now,
     })
@@ -112,7 +116,7 @@ test('an incorrect approval digest preserves the run and the exact approved call
     assert.match(inspected.stdout, new RegExp(argumentsDigest))
     assert.equal(inspected.stderr, '')
 
-    const harness = await openWebAgentHarness({
+    harness = await openWebAgentHarness({
       tokenlessHome: homeDir,
       providerClient: createLocalHttpProviderTurnClient({ baseUrl: daemon.origin, token }),
       toolRegistry: registry,
@@ -126,12 +130,17 @@ test('an incorrect approval digest preserves the run and the exact approved call
     assert.deepEqual(waiting.waiting.calls[0].arguments, argumentsValue)
     const resumed = await harness.resume(runId, { approvals: [{ callId, argumentsDigest }] })
     assert.equal(resumed.status, 'running')
-    assert.equal(resumed.turn, 2)
+    assert.equal(resumed.turn, 1)
+    const continuing = await harness.read(runId)
+    assert.equal(continuing.status, 'submitting_provider')
+    assert.equal(continuing.turn, 2)
+    const submitted = await harness.read(runId)
+    assert.equal(submitted.status, 'running', JSON.stringify(submitted))
     const latest = store.getLatestWebAiTurnForConversation(first.conversationRef)
     assert.notEqual(latest.turn_ref, first.turnRef)
     assert.equal(latest.conversation_ref, first.conversationRef)
-    harness.close()
   } finally {
+    harness?.close()
     await daemon.close()
     await fs.rm(root, { recursive: true, force: true })
   }

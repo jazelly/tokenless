@@ -8,6 +8,7 @@ import {
   HarnessSkillError,
   type AgentRunSpec,
   type AgentRunStatus,
+  type HarnessRunPhase,
   type HarnessActionBatch,
   type HarnessFinalResponse,
   type HarnessToolCatalogEntry,
@@ -45,6 +46,7 @@ export type HarnessRunRecord = {
   runId: string
   revision: number
   status: AgentRunStatus
+  phase: HarnessRunPhase
   spec: AgentRunSpec
   turn: number
   nonce: string
@@ -53,11 +55,13 @@ export type HarnessRunRecord = {
   pendingProviderRequest?: ProviderTurnRequest | undefined
   providerTurn?: ProviderTurnState | undefined
   batch?: HarnessActionBatch | undefined
+  batchId?: string | undefined
   calls: readonly DurableCall[]
   needs: readonly DurableNeed[]
   callResults: readonly HarnessToolCallResult[]
   needResults: readonly HarnessNeedResult[]
   history: readonly {
+    batchId: string
     batch: HarnessActionBatch
     calls: readonly DurableCall[]
     needs: readonly DurableNeed[]
@@ -99,6 +103,11 @@ export class HarnessRunStore {
         state_json TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS harness_agent_run_admissions (
+        admission_ref TEXT PRIMARY KEY,
+        spec_sha256 TEXT NOT NULL,
+        run_id TEXT NOT NULL UNIQUE
+      );
     `)
     if (process.platform !== 'win32') fsSync.chmodSync(databasePath, 0o600)
   }
@@ -111,6 +120,31 @@ export class HarnessRunStore {
       ).run(record.runId, record.revision, JSON.stringify(record), record.updatedAt)
     })
     return record
+  }
+
+  admit(record: HarnessRunRecord, specSha256: string) {
+    validateRecord(record)
+    if (!/^[a-f0-9]{64}$/u.test(specSha256)) throw new HarnessSkillError('harness_spec_invalid', 'Agent run spec digest is invalid.')
+    return this.transaction(() => {
+      const replay = this.#db.prepare(
+        'SELECT run_id, spec_sha256 FROM harness_agent_run_admissions WHERE admission_ref = ?',
+      ).get(record.spec.admissionRef) as { run_id: string; spec_sha256: string } | undefined
+      if (replay) {
+        if (replay.spec_sha256 !== specSha256) {
+          throw new HarnessSkillError('harness_admission_conflict', 'Agent run admissionRef is already bound to a different specification.')
+        }
+        const existing = this.read(replay.run_id)
+        if (!existing) throw new HarnessSkillError('harness_run_state_invalid', 'Agent run admission points to a missing run.')
+        return { record: existing, replayed: true as const }
+      }
+      this.#db.prepare(
+        'INSERT INTO harness_agent_runs (run_id, revision, state_json, updated_at) VALUES (?, ?, ?, ?)',
+      ).run(record.runId, record.revision, JSON.stringify(record), record.updatedAt)
+      this.#db.prepare(
+        'INSERT INTO harness_agent_run_admissions (admission_ref, spec_sha256, run_id) VALUES (?, ?, ?)',
+      ).run(record.spec.admissionRef, specSha256, record.runId)
+      return { record, replayed: false as const }
+    })
   }
 
   read(runId: string): HarnessRunRecord | null {
@@ -184,6 +218,7 @@ function validateRecord(record: HarnessRunRecord) {
   assertRunId(record.runId)
   if (
     record.protocol !== HARNESS_RUN_PROTOCOL ||
+    !['discovering_tools', 'submitting_provider', 'awaiting_provider', 'waiting_intervention', 'executing_batch', 'terminal', 'reconciliation_required'].includes(record.phase) ||
     !Number.isSafeInteger(record.revision) || record.revision < 0 ||
     !Number.isSafeInteger(record.turn) || record.turn < 1 ||
     typeof record.nonce !== 'string' || record.nonce.length < 8 ||
@@ -193,7 +228,16 @@ function validateRecord(record: HarnessRunRecord) {
   ) {
     throw new HarnessSkillError('harness_run_state_invalid', 'Harness run state is incomplete.')
   }
-  if (record.status === 'submitting_provider' && !record.pendingProviderRequest) {
+  if (record.phase === 'submitting_provider' && !record.pendingProviderRequest) {
     throw new HarnessSkillError('harness_run_state_invalid', 'Harness provider submission intent is missing.')
+  }
+  if (record.phase === 'awaiting_provider' && !record.providerTurn) {
+    throw new HarnessSkillError('harness_run_state_invalid', 'Harness provider turn is missing.')
+  }
+  if (!record.spec || typeof record.spec !== 'object' || !/^admission:[a-f0-9]{32,64}$/u.test(record.spec.admissionRef)) {
+    throw new HarnessSkillError('harness_run_state_invalid', 'Harness admissionRef is invalid.')
+  }
+  if (record.batch && !/^[a-f0-9]{64}$/u.test(record.batchId ?? '')) {
+    throw new HarnessSkillError('harness_run_state_invalid', 'Harness action batch identity is missing.')
   }
 }

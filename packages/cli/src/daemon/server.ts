@@ -605,7 +605,7 @@ async function handleHarnessRequest(
     const action = route[2]
     if (method === 'POST' && runId === undefined) {
       const body = await readJsonObject(request)
-      const allowed = new Set(['provider', 'profileId', 'taskPrompt', 'selectedSkills', 'finalOutput', 'limits', 'maxTurns', 'mcpServers'])
+      const allowed = new Set(['admissionRef', 'provider', 'profileId', 'taskPrompt', 'selectedSkills', 'finalOutput', 'limits', 'maxTurns', 'mcpServers'])
       if (Object.keys(body).some((key) => !allowed.has(key))) throw invalidInput('Harness run request contains an unknown field')
       writeJson(response, 200, await harness.start({
         ...body,
@@ -631,6 +631,25 @@ async function handleHarnessRequest(
       return true
     }
     return false
+  } catch (error) {
+    const code = typeof error === 'object' && error !== null && typeof (error as { code?: unknown }).code === 'string'
+      ? (error as { code: string }).code
+      : ''
+    const status = code === 'harness_run_missing'
+      ? 404
+      : code === 'harness_run_conflict' || code === 'harness_admission_conflict'
+        ? 409
+        : code.startsWith('harness_')
+          ? 400
+          : 500
+    writeJson(response, status, {
+      error: {
+        code: code || 'harness_internal_error',
+        message: status === 500 ? 'Harness operation failed.' : error instanceof Error ? error.message : 'Harness operation failed.',
+        retryable: status >= 500 || code === 'harness_run_conflict',
+      },
+    })
+    return true
   } finally {
     harness.close()
   }

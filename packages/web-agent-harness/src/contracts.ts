@@ -323,6 +323,7 @@ export type AgentMcpServerSpec = {
 }
 
 export type AgentRunSpec = {
+  admissionRef: string
   provider: string
   profileId: string
   taskPrompt: string
@@ -378,8 +379,12 @@ export type ProviderTurnClient = {
   read(request: Pick<ProviderTurnRequest, 'requestRef' | 'runId' | 'turn' | 'nonce' | 'stagingRoot'> & { turnRef: string; expectedDeliverySha256?: string | undefined }): Promise<ProviderTurnState>
   continue(request: ProviderTurnRequest): Promise<ProviderTurnState>
   resume(request: Pick<ProviderTurnRequest, 'requestRef' | 'runId' | 'turn' | 'nonce' | 'stagingRoot'> & { turnRef: string; expectedDeliverySha256?: string | undefined }): Promise<ProviderTurnState>
-  cancel(request: { requestRef: string; turnRef: string }): Promise<ProviderTurnState>
+  cancel(request: { requestRef: string; turnRef?: string | undefined }): Promise<ProviderTurnCancellation>
 }
+
+export type ProviderTurnCancellation =
+  | { protocol: typeof PROVIDER_TURN_PROTOCOL; requestRef: string; kind: 'cancelled_before_start' }
+  | { protocol: typeof PROVIDER_TURN_PROTOCOL; requestRef: string; kind: 'turn'; turn: ProviderTurnState }
 
 export type HarnessToolCallResult = {
   id: string
@@ -431,9 +436,20 @@ export type AgentRunStatus =
   | 'succeeded'
   | 'failed'
   | 'cancelled'
+  | 'reconciliation_required'
+
+export type HarnessRunPhase =
+  | 'discovering_tools'
+  | 'submitting_provider'
+  | 'awaiting_provider'
+  | 'waiting_intervention'
+  | 'executing_batch'
+  | 'terminal'
+  | 'reconciliation_required'
 
 export type AgentRunView = {
   protocol: typeof HARNESS_RUN_PROTOCOL
+  admissionRef: string
   runId: string
   status: AgentRunStatus
   turn: number
@@ -509,5 +525,16 @@ export class HarnessSkillError extends Error {
     this.name = 'HarnessSkillError'
     this.code = code
     this.context = context
+  }
+}
+
+export class ProviderTurnDispatchError extends Error {
+  constructor(
+    readonly dispatch: 'deterministic' | 'ambiguous',
+    readonly code: string,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'ProviderTurnDispatchError'
   }
 }

@@ -14,7 +14,7 @@ import { ManagedProfileRegistry } from '../packages/cli/dist/src/playwright/prof
 const execFileAsync = promisify(execFile)
 const cliEntry = path.resolve('packages/cli/dist/src/tokenless.mjs')
 
-test('built singular agent CLI keeps one durable provider turn across run, read, resume, and cancel', async () => {
+test('built singular agent CLI keeps one local control-plane turn across run, read, resume, and cancel', async () => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-agent-cli-')))
   const homeDir = path.join(root, 'home')
   const store = await JobStore.open(homeDir)
@@ -30,13 +30,33 @@ test('built singular agent CLI keeps one durable provider turn across run, read,
       enabledTools: ['echo'],
       timeoutMs: 30_000,
     }] }))
+    const cancellableCommand = [
+      'agent', 'run', '--provider', 'chatgpt', '--profile', profile.slug,
+      '--prompt', 'Cancel this admitted run.', '--mcp-config', mcpConfig,
+      '--admission-ref', `admission:${'e'.repeat(32)}`,
+    ]
+    const cancellable = await runCli(cancellableCommand, homeDir, daemon.origin)
+    const replayed = await runCli(cancellableCommand, homeDir, daemon.origin)
+    assert.equal(replayed.runId, cancellable.runId)
+    const pending = await runCli(['agent', 'read', '--run-id', cancellable.runId], homeDir, daemon.origin)
+    assert.equal(pending.status, 'submitting_provider')
+    const requestRef = harnessRequestRef(homeDir, cancellable.runId)
+    const cancelledBeforeStart = await runCli(['agent', 'cancel', '--run-id', cancellable.runId], homeDir, daemon.origin)
+    assert.equal(cancelledBeforeStart.status, 'cancelled')
+    assert.equal(store.getWebAiTurnByRequestRef(requestRef), null)
+    assert.equal(requestCancellationCount(homeDir, requestRef), 1)
+
     const started = await runCli([
       'agent', 'run', '--provider', 'chatgpt', '--profile', profile.slug,
       '--prompt', 'Return a final answer.', '--mcp-config', mcpConfig,
     ], homeDir, daemon.origin)
-    assert.equal(started.status, 'running', JSON.stringify(started))
+    assert.equal(started.status, 'discovering_tools', JSON.stringify(started))
     assert.match(started.runId, /^run_[a-f0-9]{32}$/)
-    const providerTurnRef = started.providerTurnRef
+    const submitting = await runCli(['agent', 'read', '--run-id', started.runId], homeDir, daemon.origin)
+    assert.equal(submitting.status, 'submitting_provider')
+    const running = await runCli(['agent', 'read', '--run-id', started.runId], homeDir, daemon.origin)
+    assert.equal(running.status, 'running')
+    const providerTurnRef = running.providerTurnRef
     const mapping = store.getWebAiTurn(providerTurnRef)
     assert.ok(mapping)
 
@@ -71,6 +91,25 @@ async function runCli(command, homeDir, daemonUrl) {
   ], { cwd: path.resolve('.'), env: { ...process.env, TOKENLESS_HOME: homeDir } })
   assert.equal(stderr, '')
   return JSON.parse(stdout)
+}
+
+function harnessRequestRef(homeDir, runId) {
+  const database = new DatabaseSync(path.join(homeDir, 'harness.sqlite3'))
+  try {
+    const row = database.prepare('SELECT state_json FROM harness_agent_runs WHERE run_id = ?').get(runId)
+    return JSON.parse(row.state_json).requestRef
+  } finally {
+    database.close()
+  }
+}
+
+function requestCancellationCount(homeDir, requestRef) {
+  const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'))
+  try {
+    return database.prepare('SELECT COUNT(*) AS count FROM web_ai_v0_request_cancellations WHERE request_ref = ?').get(requestRef).count
+  } finally {
+    database.close()
+  }
 }
 
 function injectWaitingJob(homeDir, jobId) {

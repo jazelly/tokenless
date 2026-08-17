@@ -5,6 +5,7 @@ import {
   PROVIDER_TURN_PROTOCOL,
   WEB_AGENT_PROTOCOL,
   HarnessSkillError,
+  ProviderTurnDispatchError,
   type AgentRunIntervention,
   type AgentRunSpec,
   type AgentRunView,
@@ -14,6 +15,7 @@ import {
   type HarnessToolRegistry,
   type JsonValue,
   type ProviderTurnClient,
+  type ProviderTurnState,
   type ProviderTurnRequest,
   type WebAgentHarness,
 } from './contracts.js'
@@ -47,11 +49,12 @@ class DurableWebAgentHarness implements WebAgentHarness {
     const spec = validateSpec(input)
     const runId = opaqueRef('run')
     const now = new Date().toISOString()
-    let record = this.store.create({
+    const admitted = this.store.admit({
       protocol: HARNESS_RUN_PROTOCOL,
       runId,
       revision: 0,
       status: 'discovering_tools',
+      phase: 'discovering_tools',
       spec,
       turn: 1,
       nonce: opaqueRef('nonce'),
@@ -64,48 +67,22 @@ class DurableWebAgentHarness implements WebAgentHarness {
       history: [],
       createdAt: now,
       updatedAt: now,
-    })
-    try {
-      const catalog = await this.tools.catalog(spec.mcpServers ?? [])
-      record = this.store.update(runId, record.revision, (current) => ({ ...current, catalog }))
-      const pendingProviderRequest = providerRequest(record)
-      record = this.store.update(runId, record.revision, (current) => ({
-        ...current,
-        status: 'submitting_provider',
-        pendingProviderRequest,
-      }))
-      record = await this.submitPending(record)
-      return publicView(record)
-    } catch (error) {
-      record = this.fail(record, error)
-      return publicView(record)
-    }
+    }, sha256(spec))
+    return publicView(admitted.record)
   }
 
   async read(runId: string): Promise<AgentRunView | null> {
     let record = this.store.read(runId)
     if (!record) return null
-    if (record.status === 'submitting_provider') return publicView(await this.submitPending(record))
-    if (record.status !== 'running' || !record.providerTurn) return publicView(record)
     try {
-      const providerTurn = await this.provider.read({
-        runId,
-        requestRef: record.requestRef,
-        turn: record.turn,
-        nonce: record.nonce,
-        stagingRoot: record.spec.stagingRoot,
-        turnRef: record.providerTurn.turnRef,
-        expectedDeliverySha256: record.providerTurn.deliverySha256,
-      })
-      record = this.store.update(runId, record.revision, (current) => ({
-        ...current,
-        status: providerStatus(providerTurn.lifecycle),
-        providerTurn,
-      }))
-      if (providerTurn.lifecycle !== 'succeeded') return publicView(record)
-      return publicView(await this.acceptProviderResponse(record))
+      if (record.phase === 'discovering_tools') record = await this.discoverTools(record)
+      else if (record.phase === 'submitting_provider') record = await this.submitPending(record)
+      else if (record.phase === 'awaiting_provider') record = await this.readProvider(record)
+      else if (record.phase === 'executing_batch') record = await this.executeAndContinue(record)
+      return publicView(record)
     } catch (error) {
       if (isRecoverableInterventionError(error)) throw error
+      if (isConflict(error)) return publicView(this.required(runId))
       return publicView(this.fail(record, error))
     }
   }
@@ -124,7 +101,8 @@ class DurableWebAgentHarness implements WebAgentHarness {
           turnRef: record.providerTurn.turnRef,
           expectedDeliverySha256: record.providerTurn.deliverySha256,
         })
-        record = this.store.update(runId, record.revision, (current) => ({ ...current, providerTurn, status: 'running' }))
+        assertProviderTurnIdentity(record, providerTurn)
+        record = this.store.update(runId, record.revision, (current) => ({ ...current, providerTurn, status: 'running', phase: 'awaiting_provider' }))
         return publicView(record)
       } else if (record.status === 'waiting_for_approval') {
         const approvals = new Map((intervention.approvals ?? []).map((item) => [item.callId, item.argumentsDigest]))
@@ -135,14 +113,14 @@ class DurableWebAgentHarness implements WebAgentHarness {
           }
           return { ...call, approval: 'approved' as const }
         })
-        record = this.store.update(runId, record.revision, (current) => ({ ...current, status: 'running', calls }))
+        record = this.store.update(runId, record.revision, (current) => ({ ...current, status: 'running', phase: 'executing_batch', calls }))
       } else if (record.status === 'waiting_for_input') {
         const answers = intervention.answers ?? {}
         const needs = record.needs.map((need) => {
           if (!Object.hasOwn(answers, need.id)) throw new HarnessSkillError('harness_input_missing', `Answer for need '${need.id}' is required.`)
           return { ...need, answer: answers[need.id]! }
         })
-        record = this.store.update(runId, record.revision, (current) => ({ ...current, status: 'running', needs }))
+        record = this.store.update(runId, record.revision, (current) => ({ ...current, status: 'running', phase: 'executing_batch', needs }))
       } else if (record.status === 'waiting_for_authentication') {
         const completed = new Map((intervention.authenticationCompleted ?? []).map((item) => [item.callId, item.argumentsDigest]))
         const calls = record.calls.map((call) => {
@@ -152,13 +130,14 @@ class DurableWebAgentHarness implements WebAgentHarness {
           }
           return { ...call, status: 'pending' as const, handoff: undefined }
         })
-        record = this.store.update(runId, record.revision, (current) => ({ ...current, status: 'running', calls }))
+        record = this.store.update(runId, record.revision, (current) => ({ ...current, status: 'running', phase: 'executing_batch', calls }))
       } else {
         throw new HarnessSkillError('harness_run_not_resumable', 'Harness run is not waiting for a supported intervention.')
       }
-      return publicView(await this.executeAndContinue(record))
+      return publicView(record)
     } catch (error) {
       if (isRecoverableInterventionError(error)) throw error
+      if (isConflict(error)) throw error
       return publicView(this.fail(record, error))
     }
   }
@@ -167,48 +146,117 @@ class DurableWebAgentHarness implements WebAgentHarness {
     let record = this.required(runId)
     if (isTerminal(record.status)) return publicView(record)
     try {
-      if (record.providerTurn && ['queued', 'running', 'waiting_for_user'].includes(record.providerTurn.lifecycle)) {
-        const providerTurn = await this.provider.cancel({ requestRef: record.requestRef, turnRef: record.providerTurn.turnRef })
-        record = this.store.update(runId, record.revision, (current) => ({ ...current, providerTurn, status: 'cancelled' }))
+      if (record.calls.some((call) => call.status === 'executing')) {
+        record = this.store.update(runId, record.revision, (current) => ({
+          ...current,
+          status: 'reconciliation_required',
+          phase: 'reconciliation_required',
+          error: { code: 'harness_cancel_outcome_ambiguous', message: 'A dispatched tool call requires reconciliation and was not reported cancelled.' },
+        }))
+      } else if (record.phase === 'submitting_provider' && record.providerTurn?.requestRef !== record.requestRef) {
+        const cancellation = await this.provider.cancel({ requestRef: record.requestRef })
+        assertProviderCancellationIdentity(record.requestRef, cancellation)
+        record = this.store.update(runId, record.revision, (current) => cancellation.kind === 'turn'
+          ? { ...current, providerTurn: cancellation.turn, status: 'cancelled', phase: 'terminal', pendingProviderRequest: undefined }
+          : { ...current, status: 'cancelled', phase: 'terminal', pendingProviderRequest: undefined })
+      } else if (record.providerTurn && ['queued', 'running', 'waiting_for_user'].includes(record.providerTurn.lifecycle)) {
+        const cancellation = await this.provider.cancel({ requestRef: record.requestRef, turnRef: record.providerTurn.turnRef })
+        assertProviderCancellationIdentity(record.requestRef, cancellation)
+        record = this.store.update(runId, record.revision, (current) => ({
+          ...current,
+          ...(cancellation.kind === 'turn' ? { providerTurn: cancellation.turn } : {}),
+          status: 'cancelled',
+          phase: 'terminal',
+          pendingProviderRequest: undefined,
+        }))
       } else {
-        record = this.store.update(runId, record.revision, (current) => ({ ...current, status: 'cancelled' }))
+        record = this.store.update(runId, record.revision, (current) => ({ ...current, status: 'cancelled', phase: 'terminal' }))
       }
       return publicView(record)
     } catch (error) {
+      if (isConflict(error)) throw error
       return publicView(this.fail(record, error))
     }
   }
 
   close() { this.store.close() }
 
-  private async acceptProviderResponse(record: HarnessRunRecord) {
-    const response = record.providerTurn?.modelResponse
-    if (!response) throw new HarnessSkillError('harness_provider_response_missing', 'Provider turn succeeded without a validated Harness response.')
-    if (response.kind === 'final') {
-      return this.store.update(record.runId, record.revision, (current) => ({ ...current, status: 'succeeded', final: response }))
-    }
-    if (response.turn !== record.turn) throw new HarnessSkillError('harness_provider_turn_mismatch', 'Provider response turn does not match the durable run.')
-    const calls = response.calls.map((call) => durableCall(record, call))
-    const needs = response.needs.map((need) => ({ id: need.id, prompt: need.prompt, inputSchema: need.inputSchema }))
-    record = this.store.update(record.runId, record.revision, (current) => ({
+  private async discoverTools(record: HarnessRunRecord) {
+    const catalog = await this.tools.catalog(record.spec.mcpServers ?? [])
+    const pendingProviderRequest = providerRequest({ ...record, catalog })
+    return this.store.update(record.runId, record.revision, (current) => ({
       ...current,
+      catalog,
+      status: 'submitting_provider',
+      phase: 'submitting_provider',
+      pendingProviderRequest,
+    }))
+  }
+
+  private async readProvider(record: HarnessRunRecord) {
+    const existing = record.providerTurn
+    if (!existing) throw new HarnessSkillError('harness_provider_state_missing', 'Harness provider turn is missing.')
+    const providerTurn = await this.provider.read({
+      runId: record.runId,
+      requestRef: record.requestRef,
+      turn: record.turn,
+      nonce: record.nonce,
+      stagingRoot: record.spec.stagingRoot,
+      turnRef: existing.turnRef,
+      expectedDeliverySha256: existing.deliverySha256,
+    })
+    assertProviderTurnIdentity(record, providerTurn)
+    if (providerTurn.lifecycle === 'succeeded') return this.acceptProviderResponse(record, providerTurn)
+    const terminal = providerTurn.lifecycle === 'failed' || providerTurn.lifecycle === 'cancelled'
+    return this.store.update(record.runId, record.revision, (current) => ({
+      ...current,
+      providerTurn,
+      status: providerStatus(providerTurn.lifecycle),
+      phase: terminal ? 'terminal' : 'awaiting_provider',
+      ...(providerTurn.lifecycle === 'failed'
+        ? { error: providerTurn.error ?? { code: 'harness_provider_failed', message: 'Provider turn failed.' } }
+        : {}),
+    }))
+  }
+
+  private acceptProviderResponse(record: HarnessRunRecord, providerTurn: ProviderTurnState) {
+    const response = providerTurn.modelResponse
+    if (!response) throw new HarnessSkillError('harness_provider_response_missing', 'Provider turn succeeded without a validated Harness response.')
+    assertModelResponseIdentity(record, response)
+    if (response.kind === 'final') {
+      return this.store.update(record.runId, record.revision, (current) => ({
+        ...current,
+        providerTurn,
+        status: 'succeeded',
+        phase: 'terminal',
+        final: response,
+      }))
+    }
+    const batchId = sha256({ runId: record.runId, turn: record.turn, nonce: record.nonce, batch: response })
+    const calls = response.calls.map((call) => durableCall(record, batchId, call))
+    const needs = response.needs.map((need) => ({ id: need.id, prompt: need.prompt, inputSchema: need.inputSchema }))
+    const status = needs.length > 0
+      ? 'waiting_for_input'
+      : calls.some((call) => call.approval === 'pending')
+        ? 'waiting_for_approval'
+        : 'running'
+    return this.store.update(record.runId, record.revision, (current) => ({
+      ...current,
+      providerTurn,
       batch: response,
+      batchId,
       calls,
       needs,
       callResults: [],
       needResults: [],
-      status: needs.length > 0
-        ? 'waiting_for_input'
-        : calls.some((call) => call.approval === 'pending')
-          ? 'waiting_for_approval'
-          : 'running',
+      status,
+      phase: status === 'running' ? 'executing_batch' : 'waiting_intervention',
     }))
-    if (record.status !== 'running') return record
-    return this.executeAndContinue(record)
   }
 
   private async executeAndContinue(record: HarnessRunRecord): Promise<HarnessRunRecord> {
     if (!record.batch) throw new HarnessSkillError('harness_batch_missing', 'Harness run has no durable action batch to resume.')
+    const batch = record.batch
     for (const durable of record.calls) {
       if (durable.status === 'executing') {
         throw new HarnessSkillError('harness_tool_outcome_ambiguous', `Call '${durable.id}' was interrupted after dispatch and will not be repeated.`)
@@ -229,6 +277,7 @@ class DurableWebAgentHarness implements WebAgentHarness {
         return this.store.update(record.runId, record.revision, (current) => ({
           ...current,
           status: 'waiting_for_authentication',
+          phase: 'waiting_intervention',
           calls: current.calls.map((call) => call.id === durable.id
             ? { ...call, status: 'authentication_required', handoff: outcome.handoff }
             : call),
@@ -249,32 +298,34 @@ class DurableWebAgentHarness implements WebAgentHarness {
       needResults,
     }
     if (record.turn >= (record.spec.maxTurns ?? 8)) throw new HarnessSkillError('harness_turn_limit', 'Harness run reached maxTurns.')
-    const nextTurn = record.turn + 1
-    const nextNonce = opaqueRef('nonce')
-    const nextRequestRef = opaqueRef('request')
-    record = this.store.update(record.runId, record.revision, (current) => ({
-      ...current,
-      turn: nextTurn,
-      nonce: nextNonce,
-      requestRef: nextRequestRef,
+    const next = {
+      ...record,
+      turn: record.turn + 1,
+      nonce: opaqueRef('nonce'),
+      requestRef: opaqueRef('request'),
       needResults,
-      history: [...current.history, {
-        batch: current.batch!, calls: current.calls, needs: current.needs,
-        callResults: current.callResults, needResults,
+      history: [...record.history, {
+        batchId: record.batchId!, batch, calls: record.calls, needs: record.needs,
+        callResults: record.callResults, needResults,
       }],
-    }))
-    const pendingProviderRequest = providerRequest(record, result)
-    record = this.store.update(record.runId, record.revision, (current) => ({
+    }
+    const pendingProviderRequest = providerRequest(next, result)
+    return this.store.update(record.runId, record.revision, (current) => ({
       ...current,
+      turn: next.turn,
+      nonce: next.nonce,
+      requestRef: next.requestRef,
+      history: next.history,
       status: 'submitting_provider',
+      phase: 'submitting_provider',
       pendingProviderRequest,
       batch: undefined,
+      batchId: undefined,
       calls: [],
       needs: [],
       callResults: [],
       needResults: [],
     }))
-    return this.submitPending(record)
   }
 
   private async submitPending(record: HarnessRunRecord) {
@@ -284,15 +335,20 @@ class DurableWebAgentHarness implements WebAgentHarness {
       const providerTurn = request.continuation
         ? await this.provider.continue(request)
         : await this.provider.start(request)
+      assertProviderTurnIdentity(record, providerTurn)
       return this.store.update(record.runId, record.revision, (current) => ({
         ...current,
         status: providerStatus(providerTurn.lifecycle),
+        phase: providerTurn.lifecycle === 'failed' || providerTurn.lifecycle === 'cancelled' ? 'terminal' : 'awaiting_provider',
         providerTurn,
         pendingProviderRequest: undefined,
+        ...(providerTurn.lifecycle === 'failed'
+          ? { error: providerTurn.error ?? { code: 'harness_provider_failed', message: 'Provider turn failed.' } }
+          : {}),
       }))
-    } catch {
-      // An ambiguous transport failure retains the exact request for idempotent replay.
-      return record
+    } catch (error) {
+      if (error instanceof ProviderTurnDispatchError && error.dispatch === 'ambiguous') return record
+      return this.fail(record, error)
     }
   }
 
@@ -306,10 +362,15 @@ class DurableWebAgentHarness implements WebAgentHarness {
 
   private fail(record: HarnessRunRecord, error: unknown) {
     if (isTerminal(record.status)) return record
-    const safe = error instanceof HarnessSkillError
+    const safe = error instanceof HarnessSkillError || error instanceof ProviderTurnDispatchError
       ? { code: error.code, message: error.message }
-      : { code: 'harness_run_failed', message: error instanceof Error ? error.message : 'Harness run failed.' }
-    return this.store.update(record.runId, record.revision, (current) => ({ ...current, status: 'failed', error: safe }))
+      : { code: 'harness_run_failed', message: 'Harness run failed.' }
+    try {
+      return this.store.update(record.runId, record.revision, (current) => ({ ...current, status: 'failed', phase: 'terminal', error: safe }))
+    } catch (failure) {
+      if (isConflict(failure)) return this.required(record.runId)
+      throw failure
+    }
   }
 
   private required(runId: string) {
@@ -349,7 +410,7 @@ function providerRequest(record: HarnessRunRecord, result?: HarnessActionBatchRe
   }
 }
 
-function durableCall(record: HarnessRunRecord, call: HarnessActionBatch['calls'][number]): DurableCall {
+function durableCall(record: HarnessRunRecord, batchId: string, call: HarnessActionBatch['calls'][number]): DurableCall {
   const entry = record.catalog.find((tool) => tool.name === call.tool)
   if (!entry) throw new HarnessSkillError('harness_tool_unknown', `Tool '${call.tool}' is absent from the frozen catalog.`)
   const requiresApproval = entry.approval === 'always' || !entry.readOnly
@@ -357,7 +418,15 @@ function durableCall(record: HarnessRunRecord, call: HarnessActionBatch['calls']
     id: call.id,
     tool: call.tool,
     arguments: call.arguments,
-    argumentsDigest: sha256({ runId: record.runId, callId: call.id, tool: call.tool, arguments: call.arguments }),
+    argumentsDigest: sha256({
+      runId: record.runId,
+      turn: record.turn,
+      nonce: record.nonce,
+      batchId,
+      callId: call.id,
+      tool: call.tool,
+      arguments: call.arguments,
+    }),
     dependsOn: call.dependsOn ?? [],
     approval: requiresApproval ? 'pending' : 'not_required',
     status: 'pending',
@@ -380,6 +449,7 @@ function publicView(record: HarnessRunRecord): AgentRunView {
           : undefined
   return {
     protocol: HARNESS_RUN_PROTOCOL,
+    admissionRef: record.spec.admissionRef,
     runId: record.runId,
     status: record.status,
     turn: record.turn,
@@ -411,7 +481,36 @@ function providerStatus(lifecycle: string) {
   return 'running' as const
 }
 
+function assertProviderTurnIdentity(record: HarnessRunRecord, providerTurn: ProviderTurnState) {
+  if (providerTurn.protocol !== PROVIDER_TURN_PROTOCOL || providerTurn.requestRef !== record.requestRef) {
+    throw new HarnessSkillError('harness_provider_identity_mismatch', 'Provider turn does not match the durable request identity.')
+  }
+  const prior = record.providerTurn
+  if (prior && (
+    (record.phase !== 'submitting_provider' && providerTurn.turnRef !== prior.turnRef) ||
+    providerTurn.providerRef !== prior.providerRef ||
+    providerTurn.providerBindingRef !== prior.providerBindingRef ||
+    providerTurn.conversationRef !== prior.conversationRef
+  )) {
+    throw new HarnessSkillError('harness_provider_identity_mismatch', 'Provider turn changed its frozen provider identity.')
+  }
+}
+
+function assertProviderCancellationIdentity(requestRef: string, cancellation: import('./contracts.js').ProviderTurnCancellation) {
+  if (cancellation.protocol !== PROVIDER_TURN_PROTOCOL || cancellation.requestRef !== requestRef ||
+    (cancellation.kind === 'turn' && cancellation.turn.requestRef !== requestRef)) {
+    throw new HarnessSkillError('harness_provider_identity_mismatch', 'Provider cancellation does not match the durable request identity.')
+  }
+}
+
+function assertModelResponseIdentity(record: HarnessRunRecord, response: HarnessActionBatch | import('./contracts.js').HarnessFinalResponse) {
+  if (response.runId !== record.runId || response.turn !== record.turn || response.nonce !== record.nonce) {
+    throw new HarnessSkillError('harness_provider_response_identity_mismatch', 'Provider response does not match the durable run turn and nonce.')
+  }
+}
+
 function isTerminal(status: string) { return status === 'succeeded' || status === 'failed' || status === 'cancelled' }
+function isConflict(error: unknown) { return error instanceof HarnessSkillError && error.code === 'harness_run_conflict' }
 function isRecoverableInterventionError(error: unknown) {
   return error instanceof HarnessSkillError && [
     'harness_approval_invalid',

@@ -1,5 +1,6 @@
 export const CLI_MESSAGES = {
   en: {
+    agentAdmissionRetry: 'Retry this admission with --admission-ref {admissionRef}.',
     upgradeTitle: 'Tokenless upgrade', failed: 'Tokenless CLI failed.',
     agentsInstallNextStep: 'Restart Codex, open /hooks, and trust the Tokenless hook definition before expecting automatic chat and turn binding.',
     agentsInstalled: 'Tokenless is installed for normal Codex sessions. Restart Codex and trust the Tokenless hooks in /hooks.',
@@ -14,6 +15,7 @@ export const CLI_MESSAGES = {
     agentRunSummary: 'Agent run {runId}: {status}.', agentApprovalCall: 'Approval required for {tool}. Arguments: {arguments}. Digest: {digest}.', agentApprovalResume: 'Approve with: tokenless agent resume --run-id {runId} --approve {callId}:{digest}', agentAuthenticationCall: 'Authentication is required for {tool}. Arguments: {arguments}.', agentAuthenticationResume: 'After completing authentication, run: tokenless agent resume --run-id {runId} --auth-completed {callId}:{digest}', agentInputNeed: 'Input required for {needId}: {prompt}', agentInputResume: 'Answer with: tokenless agent resume --run-id {runId} --answer {needId}=<json>', agentProviderResume: 'After completing the provider handoff, run: tokenless agent resume --run-id {runId} --provider-ready',
   },
   'zh-CN': {
+    agentAdmissionRetry: '请使用 --admission-ref {admissionRef} 重试同一 admission。',
     upgradeTitle: 'Tokenless 升级', failed: 'Tokenless CLI 执行失败。',
     agentsInstallNextStep: '请重启 Codex，打开 /hooks，并信任 Tokenless hook definition，之后才能使用自动 chat 和 turn 绑定。',
     agentsInstalled: 'Tokenless 已安装到普通 Codex sessions。请重启 Codex，并在 /hooks 中信任 Tokenless hooks。',
@@ -39,6 +41,7 @@ export const CLI_ERROR_MESSAGES = {
 export type CliErrorMessageKey = keyof typeof CLI_ERROR_MESSAGES.en
 
 export const ERROR_SUMMARIES_ZH = {
+  agent_admission_ref_invalid: 'Harness admission ref 格式无效。',
   agent_command_invalid: '请使用 `tokenless agent run|read|resume|cancel`。',
   agent_context_identity_conflict: 'Agent context 中的 identity 相互冲突。',
   agent_context_incomplete: 'Agent context 不完整。',
