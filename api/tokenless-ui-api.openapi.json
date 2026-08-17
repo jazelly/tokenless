@@ -607,9 +607,15 @@
           "label": { "type": "string" },
           "stage": { "type": "string" },
           "homeUrl": { "type": "string", "format": "uri" },
+          "executionModes": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "type": "string", "enum": ["browser", "direct"] }
+          },
           "profiles": { "type": "array", "items": { "$ref": "#/components/schemas/ProviderProfileState" } }
         },
-        "required": ["id", "label", "stage", "homeUrl", "profiles"],
+        "required": ["id", "label", "stage", "homeUrl", "executionModes", "profiles"],
         "additionalProperties": false
       },
       "Capability": {

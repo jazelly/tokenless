@@ -6,6 +6,8 @@ Canonical terms for how Tokenless interacts with AI provider web surfaces. This 
 
 | Term | Definition | Do not use as a synonym |
 |---|---|---|
+| **Browser Mode** | The public V1 API route selected by `tokenless.execution_mode: browser`. Tokenless completes the provider turn through visible browser automation. | Headless browser, direct provider protocol |
+| **Direct Mode** | The public V1 API route selected by `tokenless.execution_mode: direct`. Tokenless completes the provider turn through a direct provider protocol and the selected backend. | Official provider API, visible browser automation |
 | **Visible Browser Automation** | Tokenless controls a real, user-visible browser and interacts with the provider website through its UI. | Direct protocol, HTTP impersonation |
 | **Headless Browser Execution** | A real browser process runs without a visible window while retaining its JavaScript engine, DOM, storage, and network stack. | HTTP impersonation, fake browser |
 | **HTTP Impersonation** | A non-browser HTTP client calls provider web endpoints while reproducing browser-like network and request characteristics, such as TLS/HTTP2 fingerprints and headers, without launching a browser process. | Headless browser, browser automation |
@@ -39,6 +41,7 @@ Direct Provider Protocol
 - **Headless Browser Execution** always means that a real browser process is running, even though no window is shown.
 - **Browser-Assisted HTTP Impersonation** uses the headless browser only where the protocol requires browser execution; the main request still travels through the impersonating HTTP client.
 - Daemon authentication and provider **Guest Mode** are separate: a caller may authenticate to Tokenless while the provider request remains guest.
+- **Browser Mode** and **Direct Mode** are values of one V1 API routing contract, not separate public APIs. The JSON request field is `tokenless.execution_mode`; internal TypeScript contracts use `executionMode`.
 
 ## Example dialogue
 
@@ -53,5 +56,5 @@ Direct Provider Protocol
 ## Ambiguous terms to avoid
 
 - **Browser impersonation** is ambiguous. Say **HTTP Impersonation** when no browser process runs, or **Browser-Assisted HTTP Impersonation** when a headless browser supplies a prerequisite.
-- **Browser mode** is ambiguous. Say **Visible Browser Automation**, **Headless Browser Execution**, or **Direct Provider Protocol**.
-- **Direct mode** is incomplete when discussing implementation. Name the backend as **Native Backend** or **G4F Backend**.
+- **Browser Mode** is the API selector. When discussing implementation, say **Visible Browser Automation** rather than using it as a synonym for every kind of browser execution.
+- **Direct Mode** is the API selector. When discussing implementation, also name the **Native Backend** or **G4F Backend** when that distinction matters.

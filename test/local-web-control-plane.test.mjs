@@ -121,6 +121,11 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     assert.equal(snapshotBody.config.outputSavings.enabled, true)
     assert.equal(snapshotBody.diagnostics.find((item) => item.id === 'output-savings')?.state, 'ok')
     assertUiSchema(validateUiSnapshot, snapshotBody)
+    assert.equal(snapshotBody.providers.length, 45)
+    assert.equal(new Set(snapshotBody.providers.map((provider) => provider.id)).size, 45)
+    assert.deepEqual(snapshotBody.providers.find((provider) => provider.id === 'ai-badgr')?.executionModes, ['direct'])
+    assert.deepEqual(snapshotBody.providers.find((provider) => provider.id === 'chatgpt')?.executionModes, ['browser', 'direct'])
+    assert.deepEqual(snapshotBody.providers.find((provider) => provider.id === 'doubao')?.executionModes, ['browser'])
 
     const unchanged = await fetch(`${daemon.origin}/ui-api/v1/snapshot`, {
       headers: { cookie, 'if-none-match': `"${snapshotBody.revision}"` },

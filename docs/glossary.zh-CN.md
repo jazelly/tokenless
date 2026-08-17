@@ -6,6 +6,8 @@
 
 | 术语 | 定义 | 不要作为同义词使用 |
 |---|---|---|
+| **Browser Mode** | 由 public V1 API 的 `tokenless.execution_mode: browser` 选择的 route。Tokenless 通过 visible browser automation 完成 provider turn。 | Headless browser、direct provider protocol |
+| **Direct Mode** | 由 public V1 API 的 `tokenless.execution_mode: direct` 选择的 route。Tokenless 通过 direct provider protocol 与所选 backend 完成 provider turn。 | Provider 官方 API、visible browser automation |
 | **Visible Browser Automation** | Tokenless 控制一个用户可见的真实 browser，并通过 provider 网站 UI 完成交互。 | Direct protocol、HTTP impersonation |
 | **Headless Browser Execution** | 一个没有可见窗口的真实 browser process，仍具备 JavaScript engine、DOM、storage 与 network stack。 | HTTP impersonation、fake browser |
 | **HTTP Impersonation** | 非 browser 的 HTTP client 在不启动 browser process 的情况下，复现 TLS/HTTP2 fingerprint、header 等 browser network/request 特征，并直接调用 provider Web endpoint。 | Headless browser、browser automation |
@@ -39,6 +41,7 @@ Direct Provider Protocol
 - **Headless Browser Execution** 始终表示真实 browser process 正在运行，只是没有显示窗口。
 - **Browser-Assisted HTTP Impersonation** 只在 protocol 必须执行 browser code 时使用 headless browser；主请求仍由 impersonating HTTP client 发送。
 - Daemon authentication 与 provider **Guest Mode** 相互独立：caller 可以通过 Tokenless 认证，而 provider request 仍保持 guest。
+- **Browser Mode** 与 **Direct Mode** 是同一套 V1 API routing contract 的取值，不是两套独立的 public API。JSON request field 使用 `tokenless.execution_mode`；内部 TypeScript contract 使用 `executionMode`。
 
 ## 对话示例
 
@@ -53,5 +56,5 @@ Direct Provider Protocol
 ## 应避免的歧义表达
 
 - **Browser impersonation** 有歧义。没有 browser process 时称为 **HTTP Impersonation**；headless browser 提供前置结果时称为 **Browser-Assisted HTTP Impersonation**。
-- **Browser mode** 有歧义。应明确使用 **Visible Browser Automation**、**Headless Browser Execution** 或 **Direct Provider Protocol**。
-- 讨论实现时，单说 **direct mode** 信息不足；应同时指出 **Native Backend** 或 **G4F Backend**。
+- **Browser Mode** 是 API selector。讨论具体实现时，应使用 **Visible Browser Automation**，不要把它泛化为所有 browser execution 的同义词。
+- **Direct Mode** 是 API selector。讨论具体实现时，如 backend 区别重要，还应指出 **Native Backend** 或 **G4F Backend**。
