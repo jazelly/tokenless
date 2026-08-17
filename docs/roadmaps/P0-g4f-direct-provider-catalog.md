@@ -17,7 +17,7 @@ Related: [Web AI → API: Provider Direct Protocol](P0-direct-provider-protocol.
 
 ## V1 Boundary
 
-完成一条最小端到端路径：用户可以在 dashboard 看到现有 13 个 provider 加上 32 个缺失厂商，共 45 个不重复 provider；其中 G4F direct 子集恰好是 42 个厂商。Detail 显示可用 execution mode，新增 provider 可通过现有 G4F direct router 解析到一个精确 upstream provider。Browser 对接、高级 capability 与逐 provider 真实验收留待后续。
+完成一条最小端到端路径：用户可以在 dashboard 看到现有 13 个 provider 加上 32 个缺失厂商，共 45 个不重复 provider；其中 G4F direct 子集恰好是 42 个厂商。列表用 badge 区分 Browser 与 Direct 的支持和启用状态，Detail 可按 profile opt out 任一支持的 execution mode；新增 provider 可通过现有 G4F direct router 解析到一个精确 upstream provider。Browser 对接、高级 capability 与逐 provider 真实验收留待后续。
 
 ## Assertions
 
@@ -25,7 +25,7 @@ Related: [Web AI → API: Provider Direct Protocol](P0-direct-provider-protocol.
 - `VAL-002`: 每个 provider 都显式暴露 `browser | direct` mode；新增的 32 个只暴露 `direct`。
 - `VAL-003`: 42 个 provider 都能解析为一个精确 G4F upstream adapter，不使用 `AnyProvider` 或隐式 fallback。
 - `VAL-004`: direct-only provider 不会创建 browser readiness/control/open job，也不会为 guest direct request 隐式打开 provider 页面。
-- `VAL-005`: dashboard 英文与简体中文均显示 execution mode；direct-only detail 使用简化 UI，不显示 browser account、DOM control 或 browser routing form。
+- `VAL-005`: dashboard 英文与简体中文均显示 execution mode badge；detail 为 Browser 与 Direct 提供 profile-scoped toggle，未支持的 mode 明确禁用；direct-only detail 不显示 browser account、DOM control 或 browser routing form。
 - `VAL-006`: 现有 browser provider 行为和已有 G4F streaming 工作区改动保持不变。
 
 ## Evidence

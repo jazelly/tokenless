@@ -56,6 +56,7 @@ export type UiProxy = {
 export type UiProfileConfig = {
   roleLabel: string
   enabledProviders: string[]
+  providerModes: { [provider: string]: UiProviderExecutionMode[] }
   browserVisibility: UiBrowserVisibility
   proxy: UiProxy | null
 }
@@ -100,6 +101,7 @@ export type UiProfileCreate = {
   slug: string
   roleLabel?: string
   enabledProviders?: string[]
+  providerModes?: { [provider: string]: UiProviderExecutionMode[] }
   browserVisibility?: UiBrowserVisibility
   setDefault?: boolean
 }
@@ -107,6 +109,7 @@ export type UiProfileCreate = {
 export type UiProfileUpdate = {
   roleLabel?: string
   enabledProviders?: string[]
+  providerModes?: { [provider: string]: UiProviderExecutionMode[] }
   browserVisibility?: UiBrowserVisibility
   setDefault?: boolean
 }
@@ -129,6 +132,7 @@ export type UiProfile = {
   browserBinding: UiBrowserBinding
   roleLabel: string
   enabledProviders: string[]
+  providerModes: { [provider: string]: UiProviderExecutionMode[] }
   browserVisibility: UiBrowserVisibility
   proxy: UiProxy | null
   observations: UiProviderObservation[]
@@ -151,6 +155,7 @@ export type UiProviderExecutionMode = 'browser' | 'direct'
 export type UiProviderProfileState = {
   profileId: string
   enabled: boolean
+  enabledModes: readonly UiProviderExecutionMode[]
   observation: Omit<UiProviderObservation, 'provider'> | null
   runtimeEligibility: 'eligible' | 'ineligible'
   capabilities: Array<{ id: string; support: string }>

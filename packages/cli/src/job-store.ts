@@ -5,6 +5,7 @@ import { normalizeBrowserVisibility } from './browser-visibility.js'
 import { normalizeTokenlessLanguage, type TokenlessLanguage } from './localization.js'
 import { TOKENLESS_CONFIG_SCHEMA_ID } from './schema-ids.js'
 import { providerRegistry } from './providers/registry.js'
+import type { ProviderExecutionMode } from './providers/provider-identity.js'
 import type { BrowserVisibility } from './browser-visibility.js'
 import {
   BROWSER_SELECTIONS,
@@ -79,6 +80,7 @@ export type RouterProviderRule = {
 export type ManagedProfileConfig = {
   roleLabel: string
   enabledProviders: string[]
+  providerModes: Record<string, ProviderExecutionMode[]>
   browserVisibility: BrowserVisibility
   proxy: {
     server: string
@@ -565,6 +567,7 @@ function normalizeProfiles(value: unknown): Record<string, ManagedProfileConfig>
     profiles[profileId] = {
       roleLabel: normalizeRoleLabel(candidate.roleLabel),
       enabledProviders: normalizeProviderList(candidate.enabledProviders),
+      providerModes: normalizeProviderModes(candidate.providerModes),
       browserVisibility: 'headed',
       proxy: null,
     }
@@ -580,6 +583,7 @@ async function configuredProfiles(homeDir: string, payload: JsonRecord): Promise
   return Object.fromEntries(registrySlugs.map((slug) => [slug, configured[slug] ?? legacy[slug] ?? {
     roleLabel: '',
     enabledProviders: legacyProviders,
+    providerModes: normalizeProviderModes(undefined),
     browserVisibility: 'headed' as const,
     proxy: null,
   }]))
@@ -730,6 +734,20 @@ function normalizeProviderList(providers: unknown) {
     normalized.push(resolved.id)
   }
   return normalized
+}
+
+function normalizeProviderModes(value: unknown): Record<string, ProviderExecutionMode[]> {
+  const configured = isJsonRecord(value) ? value : {}
+  return Object.fromEntries([...providerRegistry.descriptors()]
+    .filter((provider) => provider.stage !== 'disabled')
+    .map((provider) => {
+      const candidate = configured[provider.id]
+      if (!Array.isArray(candidate)) return [provider.id, [...provider.executionModes]]
+      const modes = candidate.filter((mode): mode is ProviderExecutionMode => (
+        (mode === 'browser' || mode === 'direct') && provider.executionModes.includes(mode)
+      ))
+      return [provider.id, [...new Set(modes)]]
+    }))
 }
 
 function normalizeDaemonUrl(value: unknown) {

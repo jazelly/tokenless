@@ -1,6 +1,7 @@
 <script lang="ts">
   import { ArrowUpRight, Bot, Calculator, Clock3, Monitor, RefreshCw, UserRound } from '@lucide/svelte'
   import PageHeader from '../components/PageHeader.svelte'
+  import ProviderModeBadges from '../components/ProviderModeBadges.svelte'
   import { formatNumber } from '../formatting.js'
   import { stateLabel, type MessageKey } from '../localization.js'
   import type {
@@ -118,7 +119,7 @@
           {@const label = readinessLabel(provider, state)}
           <a class="data-row" href="#providers">
             <span class="provider-glyph">{provider.label.slice(0, 1)}</span>
-            <span class="data-row-main"><strong>{provider.label}</strong><small>{label}</small></span>
+            <span class="data-row-main"><span class="provider-name-line"><strong>{provider.label}</strong><ProviderModeBadges {provider} {state} {t} /></span><small>{label}</small></span>
             <span class:ok={!readiness && state?.observation?.auth === 'authenticated'} class:error={readiness?.status === 'failed' || readiness?.status === 'canceled' || readiness?.status === 'timed_out'} class={`status-dot ${readiness ? `job-state ${readinessStatus(provider)}` : ''}`} aria-label={label}></span>
             <ArrowUpRight size={15} />
           </a>

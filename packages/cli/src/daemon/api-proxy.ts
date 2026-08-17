@@ -248,8 +248,14 @@ export class ApiProxyAdapter {
     }
 
     const executionMode = request.executionMode ?? config.apiProxy.executionMode
+    const modeEnabledProviders = enabledProviders.filter((provider) => (
+      config.profiles[profile.slug]?.providerModes[provider]?.includes(executionMode)
+    ))
+    if (!request.auto && !modeEnabledProviders.includes(request.provider)) {
+      throw new ApiProxyError(503, 'model_not_available', `${executionMode === 'browser' ? 'Browser' : 'Direct'} mode is disabled for ${request.provider} in this profile.`, 'model')
+    }
     const autoRoutes = request.auto
-      ? autoStructuredControlRoutes(request, profile, enabledProviders)
+      ? autoStructuredControlRoutes(request, profile, modeEnabledProviders)
       : []
     if (request.auto && autoRoutes.length === 0) {
       throw new ApiProxyError(
@@ -371,6 +377,9 @@ export class ApiProxyAdapter {
         `The managed profile does not have ${request.provider} enabled.`,
         'model',
       )
+    }
+    if (!config.profiles[profile.slug]?.providerModes[request.provider]?.includes('direct')) {
+      throw new ApiProxyError(503, 'model_not_available', `Direct mode is disabled for ${request.provider} in this profile.`, 'model')
     }
     const providerBackend = this.protocolRouter.backend(
       config.directProvider,

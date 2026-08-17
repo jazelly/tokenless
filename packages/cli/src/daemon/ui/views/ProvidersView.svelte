@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { ArrowLeft, ExternalLink, RefreshCw, ScanSearch } from '@lucide/svelte'
+  import { ArrowLeft, ExternalLink, Link2, Monitor, RefreshCw, ScanSearch } from '@lucide/svelte'
   import PageHeader from '../components/PageHeader.svelte'
+  import ProviderModeBadges from '../components/ProviderModeBadges.svelte'
   import { stateLabel, type MessageKey } from '../localization.js'
   import RoutingView from './RoutingView.svelte'
-  import type { DashboardActions, Language, UiProvider, UiSnapshot } from '../types.js'
+  import type { DashboardActions, Language, UiProvider, UiProviderExecutionMode, UiSnapshot } from '../types.js'
 
   let { snapshot, selectedProfile, language, t, busy, onselect, actions }: {
     snapshot: UiSnapshot
@@ -29,14 +30,6 @@
     return provider.executionModes.length === 1 && provider.executionModes[0] === 'direct'
   }
 
-  function modeLabel(mode: 'browser' | 'direct') {
-    return mode === 'direct' ? t('directMode') : t('browserMode')
-  }
-
-  function modeLabels(provider: UiProvider) {
-    return provider.executionModes.map(modeLabel).join(' · ')
-  }
-
   function routingRoleFor(providerId: string) {
     return snapshot.config.router.providers.find((candidate) => candidate.id === providerId)?.suitableTasks ?? ''
   }
@@ -60,6 +53,18 @@
     else next.delete(provider.id)
     try {
       await actions.updateProfile(profile.slug, { enabledProviders: [...next] })
+    } catch {
+      input.checked = !enabled
+    }
+  }
+
+  async function toggleMode(provider: UiProvider, mode: UiProviderExecutionMode, input: HTMLInputElement) {
+    const enabled = input.checked
+    const modes = new Set(profile.providerModes[provider.id] ?? [])
+    if (enabled) modes.add(mode)
+    else modes.delete(mode)
+    try {
+      await actions.updateProfile(profile.slug, { providerModes: { ...profile.providerModes, [provider.id]: [...modes] } })
     } catch {
       input.checked = !enabled
     }
@@ -126,7 +131,18 @@
 
     <section class:disabled={!state?.enabled} class="settings-section system-card provider-detail-controls" data-testid="provider-detail-controls">
       <div class="settings-section-title"><div><h2>{t('providerConfiguration')}</h2><p translate="no">{detailProvider.id}</p></div></div>
-      <div class="provider-mode-row" data-testid={`provider-detail-modes-${detailProvider.id}`}><span>{t('executionMode')}</span><strong>{modeLabels(detailProvider)}</strong></div>
+      <div class="provider-mode-settings" data-testid={`provider-detail-modes-${detailProvider.id}`}>
+        <div class="provider-mode-setting" class:unsupported={!detailProvider.executionModes.includes('browser')}>
+          <span class="provider-mode-icon"><Monitor size={16} /></span>
+          <span class="provider-mode-copy"><strong>{t('browserMode')}</strong><small>{detailProvider.executionModes.includes('browser') ? t('browserModeHelp') : t('modeUnsupportedHelp')}</small></span>
+          <label class="switch" title={state?.enabledModes.includes('browser') ? t('configured') : t('notConfigured')}><input name={`provider-browser-${detailProvider.id}`} type="checkbox" checked={state?.enabledModes.includes('browser') === true} disabled={busy || state?.enabled !== true || !detailProvider.executionModes.includes('browser')} onchange={(event) => toggleMode(detailProvider, 'browser', event.currentTarget)} data-testid={`provider-mode-toggle-browser-${detailProvider.id}`} /><span></span></label>
+        </div>
+        <div class="provider-mode-setting" class:unsupported={!detailProvider.executionModes.includes('direct')}>
+          <span class="provider-mode-icon"><Link2 size={16} /></span>
+          <span class="provider-mode-copy"><strong>{t('directMode')}</strong><small>{detailProvider.executionModes.includes('direct') ? t('directModeHelp') : t('modeUnsupportedHelp')}</small></span>
+          <label class="switch" title={state?.enabledModes.includes('direct') ? t('configured') : t('notConfigured')}><input name={`provider-direct-${detailProvider.id}`} type="checkbox" checked={state?.enabledModes.includes('direct') === true} disabled={busy || state?.enabled !== true || !detailProvider.executionModes.includes('direct')} onchange={(event) => toggleMode(detailProvider, 'direct', event.currentTarget)} data-testid={`provider-mode-toggle-direct-${detailProvider.id}`} /><span></span></label>
+        </div>
+      </div>
       {#if !directOnly(detailProvider)}
         <div class="provider-account">
           <span>{t('account')}</span>
@@ -184,13 +200,12 @@
         <article class:disabled={!state?.enabled} class="provider-card" data-testid={`provider-card-${provider.id}`}>
           <header>
             <span class="provider-glyph large">{provider.label.slice(0, 1)}</span>
-            <div><h2>{provider.label}</h2><p translate="no">{provider.id}</p></div>
+            <div><span class="provider-name-line"><h2>{provider.label}</h2><ProviderModeBadges {provider} {state} {t} /></span><p translate="no">{provider.id}</p></div>
             <label class="switch" title={state?.enabled ? t('enabled') : t('disabled')}>
               <input name={`provider-${provider.id}`} type="checkbox" checked={state?.enabled === true} disabled={busy} onchange={(event) => toggle(provider, event.currentTarget)} data-testid={`provider-toggle-${provider.id}`} />
               <span></span>
             </label>
           </header>
-          <div class="provider-mode-row" data-testid={`provider-modes-${provider.id}`}><span>{t('executionMode')}</span><strong>{modeLabels(provider)}</strong></div>
           {#if !directOnly(provider)}
             <div class="provider-account">
               <span>{t('account')}</span>

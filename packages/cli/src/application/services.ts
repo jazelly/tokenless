@@ -55,6 +55,7 @@ import type {
   UiProfileRemoval,
   UiProfileUpdate,
   UiProviderAction,
+  UiProviderExecutionMode,
   UiProviderReadinessRefresh,
   UiProviderSelection,
   UiRuntimeOpenResult,
@@ -309,7 +310,7 @@ export class TokenlessApplicationServices {
   }
 
   async createProfile(input: UiProfileCreate): Promise<UiProfile> {
-    requireKnownFields(input, ['slug', 'roleLabel', 'enabledProviders', 'browserVisibility', 'setDefault'])
+    requireKnownFields(input, ['slug', 'roleLabel', 'enabledProviders', 'providerModes', 'browserVisibility', 'setDefault'])
     const slug = requiredSlug(input.slug)
     const browserVisibility = input.browserVisibility === undefined
       ? 'headed'
@@ -320,6 +321,7 @@ export class TokenlessApplicationServices {
       enabledProviders: input.enabledProviders === undefined
         ? configurableProviderIds()
         : providerList(input.enabledProviders),
+      providerModes: input.providerModes === undefined ? defaultProviderModes() : providerModes(input.providerModes),
       browserVisibility: 'headed' as const,
       proxy: null,
     }
@@ -340,7 +342,7 @@ export class TokenlessApplicationServices {
   }
 
   async updateProfile(slug: string, input: UiProfileUpdate): Promise<UiProfile> {
-    requireKnownFields(input, ['roleLabel', 'enabledProviders', 'browserVisibility', 'setDefault'])
+    requireKnownFields(input, ['roleLabel', 'enabledProviders', 'providerModes', 'browserVisibility', 'setDefault'])
     let profile = await this.profiles.resolveProfile(slug)
     const current = profileConfig(await this.migratedConfig(), profile.slug)
     const browserVisibility = input.browserVisibility === undefined
@@ -352,6 +354,7 @@ export class TokenlessApplicationServices {
       enabledProviders: input.enabledProviders === undefined
         ? current.enabledProviders
         : providerList(input.enabledProviders),
+      providerModes: input.providerModes === undefined ? current.providerModes : providerModes(input.providerModes),
       browserVisibility: 'headed' as const,
       proxy: null,
     }
@@ -384,6 +387,7 @@ export class TokenlessApplicationServices {
     if (!configured.enabledProviders.includes(provider.id)) {
       throw applicationError('provider_not_enabled', 'Enable the provider for this profile before opening it.')
     }
+    assertProviderModeEnabled(configured, provider.id, 'browser')
     const job = this.createProviderActionJob(profile, provider.id, action)
     await this.runtimeController?.wake()
     return job
@@ -397,6 +401,7 @@ export class TokenlessApplicationServices {
     const jobs = listProviderInstances()
       .filter((provider) => provider.descriptor.stage !== 'disabled' && enabled.has(provider.id))
       .filter((provider) => provider.descriptor.executionModes.includes('browser'))
+      .filter((provider) => configured.providerModes[provider.id]?.includes('browser'))
       .map((provider, index) => this.createProviderActionJob(profile, provider.id, 'readiness', {
         jobId: `ui-readiness-${batchId}-${String(index).padStart(3, '0')}`,
         taskId: `ui:readiness:${batchId}:${provider.id}`,
@@ -463,6 +468,7 @@ export class TokenlessApplicationServices {
     if (!configured.enabledProviders.includes(provider.id)) {
       throw applicationError('provider_not_enabled', 'Enable the provider for this profile before changing controls.')
     }
+    assertProviderModeEnabled(configured, provider.id, 'browser')
     const request = createManagedPlaywrightJobRequest({
       provider: provider.id,
       browserVisibility: 'headed',
@@ -670,6 +676,7 @@ function publicProfile(
     browserBinding,
     roleLabel: configured.roleLabel,
     enabledProviders: configured.enabledProviders,
+    providerModes: configured.providerModes,
     browserVisibility: configured.browserVisibility,
     proxy: configured.proxy,
     observations: Object.values(profile.lastObservedAuth).map((status) => status ? {
@@ -693,6 +700,7 @@ function providerProfileState(
   return {
     profileId: profile.slug,
     enabled: configured.enabledProviders.includes(provider),
+    enabledModes: configured.providerModes[provider] ?? [],
     observation: observation ? {
       auth: observation.auth,
       access: observation.access,
@@ -842,6 +850,12 @@ function configurableProviderIds(): ProviderId[] {
     .map((provider) => provider.id)
 }
 
+function defaultProviderModes(): Record<string, UiProviderExecutionMode[]> {
+  return Object.fromEntries(listProviderDescriptors()
+    .filter((provider) => provider.stage !== 'disabled')
+    .map((provider) => [provider.id, [...provider.executionModes]]))
+}
+
 function supportedProviderIds() {
   return listProviderDescriptors().filter((provider) => provider.stage !== 'disabled').map((provider) => provider.id)
 }
@@ -854,6 +868,11 @@ function assertBrowserProviderActionAllowed(provider: ProviderId) {
   )
 }
 
+function assertProviderModeEnabled(configured: ManagedProfileConfig, provider: ProviderId, mode: UiProviderExecutionMode) {
+  if (configured.providerModes[provider]?.includes(mode)) return
+  throw applicationError('provider_mode_disabled', `${mode === 'browser' ? 'Browser' : 'Direct'} mode is disabled for this provider and profile.`)
+}
+
 function providerList(value: unknown): string[] {
   if (!Array.isArray(value)) throw applicationError('invalid_provider_list', 'Enabled providers must be an array.')
   const supported = new Set(supportedProviderIds())
@@ -863,6 +882,28 @@ function providerList(value: unknown): string[] {
     throw applicationError('invalid_provider_list', 'Enabled providers include an unsupported provider.')
   }
   return providers
+}
+
+function providerModes(value: unknown): Record<string, UiProviderExecutionMode[]> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw applicationError('invalid_provider_modes', 'Provider modes must be an object.')
+  }
+  const descriptors = new Map(listProviderDescriptors()
+    .filter((provider) => provider.stage !== 'disabled')
+    .map((provider) => [provider.id, provider]))
+  const result = defaultProviderModes()
+  for (const [providerId, candidate] of Object.entries(value)) {
+    const descriptor = descriptors.get(providerId as ProviderId)
+    if (!descriptor || !Array.isArray(candidate)) {
+      throw applicationError('invalid_provider_modes', 'Provider modes include an unsupported provider or value.')
+    }
+    const modes = [...new Set(candidate)]
+    if (modes.some((mode) => ((mode !== 'browser' && mode !== 'direct') || !descriptor.executionModes.includes(mode)))) {
+      throw applicationError('invalid_provider_modes', 'Provider modes include an unsupported execution mode.')
+    }
+    result[providerId] = modes as UiProviderExecutionMode[]
+  }
+  return result
 }
 
 function requiredVisibility(value: unknown) {

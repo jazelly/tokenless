@@ -341,10 +341,11 @@
         "properties": {
           "roleLabel": { "type": "string", "maxLength": 80 },
           "enabledProviders": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/components/schemas/ProviderId" } },
+          "providerModes": { "type": "object", "additionalProperties": { "type": "array", "uniqueItems": true, "items": { "type": "string", "enum": ["browser", "direct"] } } },
           "browserVisibility": { "$ref": "#/components/schemas/BrowserVisibility" },
           "proxy": { "$ref": "#/components/schemas/Proxy" }
         },
-        "required": ["roleLabel", "enabledProviders", "browserVisibility", "proxy"],
+        "required": ["roleLabel", "enabledProviders", "providerModes", "browserVisibility", "proxy"],
         "additionalProperties": false
       },
       "RouterProviderRule": {
@@ -536,11 +537,12 @@
           },
           "roleLabel": { "type": "string", "maxLength": 80 },
           "enabledProviders": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/components/schemas/ProviderId" } },
+          "providerModes": { "type": "object", "additionalProperties": { "type": "array", "uniqueItems": true, "items": { "type": "string", "enum": ["browser", "direct"] } } },
           "browserVisibility": { "$ref": "#/components/schemas/BrowserVisibility" },
           "proxy": { "$ref": "#/components/schemas/Proxy" },
           "observations": { "type": "array", "items": { "type": "object" } }
         },
-        "required": ["slug", "id", "lifecycle", "isDefault", "createdAt", "updatedAt", "browserMode", "browserBinding", "roleLabel", "enabledProviders", "browserVisibility", "proxy", "observations"],
+        "required": ["slug", "id", "lifecycle", "isDefault", "createdAt", "updatedAt", "browserMode", "browserBinding", "roleLabel", "enabledProviders", "providerModes", "browserVisibility", "proxy", "observations"],
         "additionalProperties": false
       },
       "JobSummary": {
@@ -592,12 +594,13 @@
         "properties": {
           "profileId": { "$ref": "#/components/schemas/ProfileId" },
           "enabled": { "type": "boolean" },
+          "enabledModes": { "type": "array", "uniqueItems": true, "items": { "type": "string", "enum": ["browser", "direct"] } },
           "observation": { "type": ["object", "null"] },
           "runtimeEligibility": { "type": "string", "enum": ["eligible", "ineligible"] },
           "capabilities": { "type": "array", "items": { "type": "object" } },
           "controls": { "type": "object" }
         },
-        "required": ["profileId", "enabled", "observation", "runtimeEligibility", "capabilities", "controls"],
+        "required": ["profileId", "enabled", "enabledModes", "observation", "runtimeEligibility", "capabilities", "controls"],
         "additionalProperties": false
       },
       "Provider": {
@@ -707,6 +710,7 @@
           "slug": { "$ref": "#/components/schemas/ProfileId" },
           "roleLabel": { "type": "string", "maxLength": 80 },
           "enabledProviders": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/components/schemas/ProviderId" } },
+          "providerModes": { "type": "object", "additionalProperties": { "type": "array", "uniqueItems": true, "items": { "type": "string", "enum": ["browser", "direct"] } } },
           "browserVisibility": { "$ref": "#/components/schemas/BrowserVisibility" },
           "proxy": { "$ref": "#/components/schemas/Proxy" },
           "setDefault": { "type": "boolean" }
@@ -719,6 +723,7 @@
         "properties": {
           "roleLabel": { "type": "string", "maxLength": 80 },
           "enabledProviders": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/components/schemas/ProviderId" } },
+          "providerModes": { "type": "object", "additionalProperties": { "type": "array", "uniqueItems": true, "items": { "type": "string", "enum": ["browser", "direct"] } } },
           "browserVisibility": { "$ref": "#/components/schemas/BrowserVisibility" },
           "proxy": { "$ref": "#/components/schemas/Proxy" },
           "setDefault": { "type": "boolean" }

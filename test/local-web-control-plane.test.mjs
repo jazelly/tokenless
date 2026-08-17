@@ -338,6 +338,10 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
       body: JSON.stringify({
         roleLabel: 'Research',
         enabledProviders: ['chatgpt', 'claude'],
+        providerModes: {
+          chatgpt: ['browser'],
+          claude: ['browser', 'direct'],
+        },
         browserVisibility: 'headed',
       }),
     })
@@ -346,14 +350,19 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     assert.equal(Object.hasOwn(profileBody, 'label'), false)
     assert.equal(profileBody.roleLabel, 'Research')
     assert.deepEqual(profileBody.enabledProviders, ['chatgpt', 'claude'])
+    assert.deepEqual(profileBody.providerModes.chatgpt, ['browser'])
+    assert.deepEqual(profileBody.providerModes.claude, ['browser', 'direct'])
     assert.equal(profileBody.proxy, null)
     assert.equal(Object.hasOwn(profileBody, 'preferences'), false)
     assert.equal(Object.hasOwn(profileBody, 'directory'), false)
-    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8')).profiles.work.enabledProviders, ['chatgpt', 'claude'])
+    const storedWorkProfile = JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8')).profiles.work
+    assert.deepEqual(storedWorkProfile.enabledProviders, ['chatgpt', 'claude'])
+    assert.deepEqual(storedWorkProfile.providerModes.chatgpt, ['browser'])
 
     const afterProfile = await fetch(`${daemon.origin}/ui-api/v1/snapshot`, { headers: { cookie } }).then((response) => response.json())
     assertUiSchema(validateUiSnapshot, afterProfile)
     assert.deepEqual(afterProfile.profiles[0].enabledProviders, ['chatgpt', 'claude'])
+    assert.deepEqual(afterProfile.profiles[0].providerModes.chatgpt, ['browser'])
     assert.deepEqual(afterProfile.profiles[0].browserBinding, {
       browserId: afterProfile.config.browser,
       runtimeId: `native:${afterProfile.config.browser}`,
@@ -363,6 +372,7 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     assert.match(afterProfile.profiles[0].browserBinding.version, /^\d+\./)
     assert.equal(Object.hasOwn(afterProfile.profiles[0], 'preferences'), false)
     assert.equal(afterProfile.providers.find((provider) => provider.id === 'chatgpt').profiles[0].enabled, true)
+    assert.deepEqual(afterProfile.providers.find((provider) => provider.id === 'chatgpt').profiles[0].enabledModes, ['browser'])
     assert.equal(afterProfile.providers.find((provider) => provider.id === 'gemini').profiles[0].enabled, false)
 
     const cloakProfile = await fetch(`${daemon.origin}/ui-api/v1/profiles`, {

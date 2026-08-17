@@ -179,11 +179,23 @@ a.data-row:hover, button.data-row:hover { background: #faf9f7; }
 .provider-card header > div { min-width: 0; flex: 1; }
 .provider-card h2 { font-size: 15px; }
 .provider-card header p { margin-top: 4px; color: var(--muted); font-size: 12px; }
+.provider-name-line { display: flex; min-width: 0; align-items: center; gap: 8px; }
+.provider-name-line > strong, .provider-name-line > h2 { flex: 0 1 auto; }
+.provider-mode-badges { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 4px; }
+.provider-mode-badge { display: inline-flex; min-height: 22px; align-items: center; gap: 4px; padding: 0 7px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 10px; font-weight: 600; line-height: 1; white-space: nowrap; }
+.provider-mode-badge.configured { border-color: rgb(47 143 91 / 30%); background: rgb(47 143 91 / 9%); color: var(--green); }
+.provider-mode-badge.unsupported { border-style: dashed; opacity: .42; }
 .provider-account { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: 12px; margin-top: 18px; border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); font-size: 12px; }
 .provider-account span { color: var(--muted); }
 .provider-account strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.provider-mode-row { display: flex; min-height: 36px; align-items: center; justify-content: space-between; gap: 12px; padding-top: 12px; color: var(--muted); font-size: 12px; }
-.provider-mode-row strong { color: var(--ink); font-size: 12px; font-weight: 600; }
+.provider-mode-settings { margin-top: 14px; overflow: hidden; border: 1px solid var(--line-soft); border-radius: 8px; }
+.provider-mode-setting { display: grid; min-height: 62px; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: 11px; padding: 8px 12px; border-bottom: 1px solid var(--line-soft); }
+.provider-mode-setting:last-child { border-bottom: 0; }
+.provider-mode-setting.unsupported { background: var(--surface-muted); opacity: .55; }
+.provider-mode-icon { display: grid; width: 28px; height: 28px; place-items: center; border: 1px solid var(--line); border-radius: 7px; color: var(--muted); }
+.provider-mode-copy { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.provider-mode-copy strong { font-size: 12px; font-weight: 620; }
+.provider-mode-copy small { overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .provider-routing-summary { display: flex; min-width: 0; flex-direction: column; gap: 5px; margin-top: 16px; }
 .provider-routing-summary span { color: var(--muted); font-size: 12px; }
 .provider-routing-summary strong { overflow: hidden; font-size: 12px; font-weight: 560; text-overflow: ellipsis; white-space: nowrap; }
