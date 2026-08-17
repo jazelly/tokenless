@@ -7,13 +7,12 @@ import test from 'node:test'
 
 const runtimeModule = new URL('../packages/cli/dist/src/index.js', import.meta.url)
 
-test('pinned G4F runtime stays private and is exposed through the authenticated daemon API', async () => {
+test('pinned G4F runtime stays private while the authenticated daemon starts it', async () => {
   const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-g4f-boundary-'))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
   const {
     G4fRuntimeManager,
     ensureDaemonReady,
-    readDaemonToken,
     stopDaemon,
     writeTokenlessConfig,
   } = await import(runtimeModule)
@@ -85,59 +84,6 @@ test('pinned G4F runtime stays private and is exposed through the authenticated 
     })
     const daemon = await ensureDaemonReady({ homeDir, daemonUrl })
     assert.equal(daemon.body?.g4f_ready, true)
-    const token = await readDaemonToken({ homeDir })
-
-    const unauthorizedPublic = await fetch(`${daemon.url}/v1/direct/g4f/providers`)
-    assert.equal(unauthorizedPublic.status, 401)
-    const providersResponse = await fetch(`${daemon.url}/v1/direct/g4f/providers`, {
-      headers: { authorization: `Bearer ${token}` },
-    })
-    assert.equal(providersResponse.status, 200)
-    const providers = await providersResponse.json()
-    assert.equal(Array.isArray(providers), true)
-    assert.equal(providers.every((provider) => typeof provider.id !== 'string' || provider.id.startsWith('g4f:')), true)
-    const exactProvider = await fetch(`${daemon.url}/v1/direct/g4f/providers/g4f%3AOpenaiChat`, {
-      headers: { authorization: `Bearer ${token}` },
-    })
-    assert.equal(exactProvider.status, 200)
-    const unscopedUpstreamName = await fetch(`${daemon.url}/v1/direct/g4f/providers/OpenaiChat`, {
-      headers: { authorization: `Bearer ${token}` },
-    })
-    assert.equal(unscopedUpstreamName.status, 404)
-
-    const missingProviderAuth = await fetch(`${daemon.url}/v1/direct/g4f/g4f%3AAirforce/chat/completions`, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${token}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [{ role: 'user', content: 'Reply with OK.' }],
-        stream: false,
-      }),
-    })
-    assert.equal(missingProviderAuth.status, 502)
-    assert.deepEqual(await missingProviderAuth.json(), {
-      error: {
-        code: 'g4f_upstream_missing_auth_error',
-        message: "G4F provider 'g4f:Airforce' failed with MissingAuthError (upstream HTTP 401).",
-        provider: 'g4f:Airforce',
-        upstream: {
-          system: 'g4f',
-          status: 401,
-          type: 'MissingAuthError',
-          category: 'authentication',
-          provider: 'Airforce',
-          model: 'gpt-4o-mini',
-        },
-      },
-    })
-
-    const paResponse = await fetch(`${daemon.url}/v1/direct/g4f/pa/providers`, {
-      headers: { authorization: `Bearer ${token}` },
-    })
-    assert.equal(paResponse.status, 200)
     await stopDaemon({ homeDir, daemonUrl: daemon.url })
   } finally {
     await service?.close().catch(() => undefined)

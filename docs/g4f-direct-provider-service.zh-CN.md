@@ -34,29 +34,26 @@ tokenless run --profile default --provider chatgpt \
 
 ## Authenticated daemon API
 
-所有 route 都要求普通 Tokenless daemon bearer token。
-Provider guest mode 与 daemon authentication 相互独立：data-plane request 不携带 `x-tokenless-auth-context` 时，Tokenless 不会注入 browser 或已存储的 provider credential。
+Daemon 不暴露 public G4F namespace route。请在标准 API proxy endpoint 上设置 `tokenless.execution_mode: direct`；所选 provider ID 会在内部映射到固定版本的 G4F provider。
 
 | Route | 用途 |
 |---|---|
-| `GET /v1/direct/g4f/providers` | 精确 provider inventory |
-| `GET /v1/direct/g4f/providers/{provider}/models` | Provider models |
-| `GET /v1/direct/g4f/providers/{provider}/quota` | Provider quota |
-| `POST /v1/direct/g4f/auth-contexts/{id}` | 创建 scoped auth context |
-| `GET /v1/direct/g4f/auth-contexts` | 列出不含 session value 的 context metadata |
-| `POST /v1/direct/g4f/auth-contexts/{id}/files` | 上传 `.har` 或 cookie `.json` |
-| `DELETE /v1/direct/g4f/auth-contexts/{id}` | 删除 context 与 private files |
-| `POST /v1/direct/g4f/{provider}/chat/completions` | Chat completion 与 SSE |
-| `POST /v1/direct/g4f/{provider}/responses` | Responses API |
-| `POST /v1/direct/g4f/{provider}/messages` | Messages API |
-| `POST /v1/direct/g4f/{provider}/audio/transcriptions` | Audio transcription |
-| `POST /v1/direct/g4f/{provider}/audio/speech` | Speech generation |
-| `GET /v1/direct/g4f/assets/{images|media}/{file}` | Generated media |
-| `GET /v1/direct/g4f/pa/providers` | Setup 管理的 PA inventory |
+| `POST /v1/chat/completions` | OpenAI Chat Completions；direct G4F plain-text request 在 `stream: true` 时保留 upstream SSE |
+| `POST /v1/responses` | OpenAI Responses；direct G4F plain-text request 在 `stream: true` 时保留 upstream SSE，且不支持 Tokenless `previous_response_id` continuation |
+| `POST /v1/images/generations` | Provider-neutral browser 或 direct image generation |
 
-G4F namespace 刻意不再暴露图片生成 route。请调用 provider-neutral [`POST /v1/images/generations`](api-proxy-integration.zh-CN.md#图片生成) endpoint，并选择 `tokenless.execution_mode`；其 public request 与 response 不会暴露 private backend。
+例如，direct GLM request 使用映射后的 Tokenless model ID：
 
-`chatgpt` 等已知 Tokenless ID 会映射到固定 upstream provider。精确 G4F provider 使用 `g4f:<ProviderName>`，包括显式 `g4f:AnyProvider`；Tokenless 永远不会静默选择 `AnyProvider`。
+```json
+{
+  "model": "tokenless/zai/GLM-4.7",
+  "messages": [{"role": "user", "content": "Reply with OK."}],
+  "stream": true,
+  "tokenless": {"execution_mode": "direct"}
+}
+```
+
+所有 route 都要求普通 Tokenless daemon bearer token。Provider guest mode 与 daemon authentication 相互独立；managed direct CLI execution 会在本地私下创建临时 provider auth context，并在 request 后删除。
 
 Auth source type 包括 `empty`、`manual`、`har`、`cookie-file`、`browser-cookie3`、`cookie-database` 与 loopback `cdp`。两种 Cookie DB source 都必须提供位于所选 managed profile 内的精确 database path；不允许无 scope 的 browser scanning。Manual value 仅限所选 provider domain。
 
@@ -79,7 +76,7 @@ Visible-browser execution 继续由 Tokenless 原生实现。ChatGPT G4F direct 
 
 真实 E2E 同时覆盖两种认证边界：
 
-- Guest：显式请求 `g4f:GLM`，不携带 provider auth-context header，在隔离的 headless browser 中完成 Aliyun traceless verification，要求返回精确随机 marker，并验证请求前后没有创建 auth context。
+- Guest：通过标准 API direct request 请求 `tokenless/zai/GLM-4.7`，不携带 provider credential，在隔离的 headless browser 中完成 Aliyun traceless verification，并要求返回精确随机 marker。
 - 已登录：ChatGPT direct 只从选中的 Cloak browser profile 读取 ChatGPT cookies、access token、user agent 与 language headers，写入一个 provider-scoped 临时 context。
 - 图片：真实 `tokenless/pollinations/sana` direct gate 通过统一 endpoint 生成了一张 768×768 JPEG，按请求提供的 task identity 落盘，并在不暴露 private backend 的前提下验证 digest 与 authenticated byte-for-byte readback。
 

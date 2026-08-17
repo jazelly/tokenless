@@ -154,6 +154,14 @@ export class ApiProxyAdapter {
     return await this.completeRequest(config, request, signal)
   }
 
+  async stream(dialect: ApiProxyDialect, body: unknown, signal?: AbortSignal): Promise<Response | null> {
+    const config = await readTokenlessConfig(this.store.homeDir)
+    if (!config.apiProxy.enabled) throw apiProxyDisabled()
+    const request = dialect === 'openai' ? normalizeOpenAiRequest(body) : normalizeAnthropicRequest(body)
+    if (dialect !== 'openai') return null
+    return await this.openG4fStream(config, request, 'chat', signal)
+  }
+
   async respond(body: unknown, signal?: AbortSignal): Promise<ApiProxyResponseResult> {
     const config = await readTokenlessConfig(this.store.homeDir)
     if (!config.apiProxy.enabled) throw apiProxyDisabled()
@@ -174,6 +182,40 @@ export class ApiProxyAdapter {
       transcript: [...prepared.transcript, ...(response.output as unknown[])],
     })
     return { body: response, stream: prepared.request.stream }
+  }
+
+  async streamResponse(body: unknown, signal?: AbortSignal): Promise<Response | null> {
+    const config = await readTokenlessConfig(this.store.homeDir)
+    if (!config.apiProxy.enabled) throw apiProxyDisabled()
+    const requestBody = plainRecord(body)
+    const options = normalizeTokenlessOptions(requestBody.tokenless)
+    const model = providerFromModel(requestBody.model)
+    const executionMode = options.executionMode ?? config.apiProxy.executionMode
+    const configuredBackend = options.providerBackend
+      ?? config.directProvider.providerBackends[model.provider]
+      ?? config.directProvider.defaultBackend
+    if (
+      requestBody.previous_response_id !== undefined
+      && requestBody.previous_response_id !== null
+      && executionMode === 'direct'
+      && configuredBackend === 'g4f'
+    ) {
+      throw new ApiProxyError(
+        400,
+        'unsupported_parameter',
+        'Direct G4F Responses streaming does not support previous_response_id continuation.',
+        'previous_response_id',
+      )
+    }
+    const previous = previousResponse(requestBody.previous_response_id, this.store)
+    if (previous) assertPreviousResponseRoute(
+      previous,
+      model.provider,
+      String(requestBody.model),
+      executionMode,
+    )
+    const prepared = normalizeOpenAiResponsesRequest(requestBody, previous)
+    return await this.openG4fStream(config, prepared.request, 'responses', signal)
   }
 
   private async completeRequest(
@@ -292,6 +334,58 @@ export class ApiProxyAdapter {
         model: request.upstreamModel,
         ...(request.authContextId ? { authContextId: request.authContextId } : {}),
         signal,
+      })
+    } catch (error) {
+      const directError = safeDirectError(error)
+      throw new ApiProxyError(502, directError.code, directError.message)
+    }
+  }
+
+  private async openG4fStream(
+    config: Awaited<ReturnType<typeof readTokenlessConfig>>,
+    request: NormalizedRequest,
+    endpoint: 'chat' | 'responses',
+    signal?: AbortSignal,
+  ): Promise<Response | null> {
+    const executionMode = request.executionMode ?? config.apiProxy.executionMode
+    if (executionMode !== 'direct') return null
+    if (request.auto) {
+      assertAutoRequestScope(config, request)
+      return null
+    }
+    assertProviderSupported(request.provider)
+    if (request.toolProtocol) return null
+    const profile = await this.profiles.resolveProfile()
+    if (profile.lifecycle !== 'ready') {
+      throw new ApiProxyError(
+        503,
+        'profile_not_ready',
+        'The managed profile is not ready; run tokenless setup before proxying API traffic.',
+      )
+    }
+    const enabledProviders = config.profiles[profile.slug]?.enabledProviders ?? []
+    if (!enabledProviders.includes(request.provider)) {
+      throw new ApiProxyError(
+        503,
+        'model_not_available',
+        `The managed profile does not have ${request.provider} enabled.`,
+        'model',
+      )
+    }
+    const providerBackend = this.protocolRouter.backend(
+      config.directProvider,
+      request.provider,
+      request.providerBackend ?? undefined,
+    )
+    if (providerBackend !== 'g4f') return null
+    try {
+      return await this.protocolRouter.streamG4f({
+        provider: request.provider,
+        messages: providerMessages(request),
+        model: request.upstreamModel,
+        ...(request.authContextId ? { authContextId: request.authContextId } : {}),
+        signal,
+        endpoint,
       })
     } catch (error) {
       const directError = safeDirectError(error)

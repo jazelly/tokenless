@@ -60,9 +60,9 @@ tokenless run \
 
 Use `--provider-backend native` to keep the existing Tokenless ChatGPT or Perplexity implementation for A/B testing and rollback.
 
-Setup installs one pinned private `g4f[all]` Python service. Tokenless keeps browser control and profile ownership; G4F handles direct provider HTTP, impersonation, Sentinel/PoW, streaming, HAR/Cookie auth, media, and provider introspection behind the authenticated daemon API. Omitting `--execution-mode direct` keeps visible-browser behavior.
+Setup installs one pinned private `g4f[all]` Python service. Tokenless keeps browser control and profile ownership; G4F handles direct provider HTTP, impersonation, Sentinel/PoW, streaming, HAR/Cookie auth, and media behind the authenticated daemon API. Omitting `--execution-mode direct` keeps visible-browser behavior.
 
-See [GPT4Free direct provider service](../../docs/g4f-direct-provider-service.md) for backend flags, exact provider IDs, auth contexts, API routes, pins, and isolation boundaries.
+See [GPT4Free direct provider service](../../docs/g4f-direct-provider-service.md) for backend flags, standard API routes, provider mappings, pins, and isolation boundaries.
 
 If no provider is explicit, Tokenless uses the first configured provider with a cached guest or signed-in observation. If none is usable, it fails before creating a job and reports how to refresh access.
 

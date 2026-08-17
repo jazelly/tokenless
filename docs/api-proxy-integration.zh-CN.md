@@ -6,7 +6,7 @@
 
 Tokenless daemon 暴露了 OpenAI 与 Anthropic 兼容的 HTTP 路由。一个请求会变成 durable job，由 Playwright worker 在已登录的浏览器 profile 中把 prompt 输入真实 provider 页面，再把可见回复按你客户端已经预期的 wire shape 返回。
 
-**这是任务级桥接，不是 API 的即插即用替代品。** 在围绕它做设计之前，请先读 [硬性限制](#硬性限制)。此方案是用吞吐、延迟和增量 streaming 换成本。
+**这是任务级桥接，不是 API 的即插即用替代品。** 在围绕它做设计之前，请先读 [硬性限制](#硬性限制)。Browser-backed request 用吞吐和延迟换成本；direct G4F plain-text request 可以保留 upstream 增量 streaming。
 
 Proxy 所映射的 provider-side contract 见 [Provider Tool-Calling Conformance 参考](provider-tool-calling-conformance.zh-CN.md)。该文档把官方 provider 文档与 Tokenless exact live evidence 分开，并明确不宣称浏览器页面拥有 native tool endpoint。
 
@@ -251,7 +251,7 @@ Structured JSON number 必须为 finite，并使用 `JSON.stringify(Number(token
 
 Non-stream output 包含 assistant `message` 或按 model 顺序排列的 `function_call` item。Function item 的 item `id` 与 stable public `call_id` 不同；调用方用 `{type:"function_call_output",call_id,output}` 回复。
 
-Streaming 是 terminal 但 typed。它依次发出 `response.created`、`response.in_progress`、item/content event、可完整重建的 argument 或 text delta、done event 与 `response.completed`。它不发 Chat 的 `[DONE]`，不伪造 token pacing 或 usage；`usage` 为 `null`。
+Browser/native 与 structured request 的 streaming 是 typed 且 terminal。它依次发出 `response.created`、`response.in_progress`、item/content event、可完整重建的 argument 或 text delta、done event 与 `response.completed`。Direct G4F plain-text request 则原样转发 upstream SSE body，不生成 Tokenless Responses event，不会写入 Tokenless response ledger，也不支持 `previous_response_id` continuation；两条路径都不会伪造 usage。
 
 可采用任一种官方 continuation 形式：
 
@@ -414,9 +414,9 @@ OpenAI 文本使用 `finish_reason: stop`；通过校验的 function call 使用
 
 ## Streaming
 
-`stream: true` 会返回 `text/event-stream`，并按该方言的正确事件序列下发。
+`stream: true` 会返回 `text/event-stream`。Browser/native 与 structured request 使用文档中的 terminal event sequence；direct G4F plain-text request 会在 upstream chunk 到达时按原顺序转发每个 body chunk。
 
-**但没有增量文本。** 可见 provider 回复只有渲染完成后才可读，因此整段响应会在完整延迟之后作为一个终态 chunk 一次性到达。保留事件序列是为了让本来兼容的客户端继续可用；直接拒绝 `stream` 只会白白让它们崩掉。
+Direct G4F Chat Completions 保留 provider 原始 SSE frame，包括 `[DONE]`。Direct G4F Responses 同样使用 provider upstream SSE body；这类 raw stream 不会记录为 Tokenless `previous_response_id` continuation。需要 Tokenless typed Responses event sequence 或 ledger continuation 的调用方应使用 browser/native 或 structured request。
 
 OpenAI 帧：
 
@@ -444,7 +444,7 @@ Structured final 使用同样的 full-content delta、`finish_reason: "stop"` �
 
 Anthropic 帧，按顺序：`message_start`、`content_block_start`、`content_block_delta`（携带完整文本）、`content_block_stop`、`message_delta`、`message_stop`。
 
-不要基于这些帧做进度指示。如果 UI 需要"正在输出"的观感，请用 spinner 驱动，而不是靠传输层。
+对 browser/native 与 structured request，不要基于 terminal frame 做进度指示。Direct G4F plain-text stream 可以根据接收到的每个 upstream chunk 推进进度。
 
 ## Conversation 模式
 
@@ -541,7 +541,7 @@ Anthropic：
 | Token 计量 | 无。 |
 | 多模态输入 | 仅文本。 |
 
-可把人类节奏的一问一答、外部 tool turn 与 bounded structured final 放到这条通道上。低延迟增量 streaming 仍应走其他 route。
+可把人类节奏的一问一答、外部 tool turn 与 bounded structured final 放到这条通道上。低延迟 plain-text 增量 streaming 可使用 `tokenless.execution_mode: direct` 与默认 `g4f` backend。
 
 ### 账号风险
 

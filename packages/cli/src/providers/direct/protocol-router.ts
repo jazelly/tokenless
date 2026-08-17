@@ -16,6 +16,8 @@ export type DirectTextCompletion = {
   conversation: Record<string, unknown> | null
 }
 
+export type DirectG4fStreamEndpoint = 'chat' | 'responses'
+
 export class ProviderProtocolRouter {
   constructor(private readonly g4fClient?: G4fServiceClient | undefined) {}
 
@@ -65,6 +67,44 @@ export class ProviderProtocolRouter {
       requestId: parsed.id ?? randomUUID(),
       conversation: parsed.conversation,
     }
+  }
+
+  async streamG4f({
+    provider,
+    messages,
+    model = '',
+    authContextId,
+    signal,
+    endpoint = 'chat',
+  }: {
+    provider: string
+    messages: readonly DirectTextMessage[]
+    model?: string | undefined
+    authContextId?: string | undefined
+    signal?: AbortSignal | undefined
+    endpoint?: DirectG4fStreamEndpoint | undefined
+  }) {
+    if (!this.g4fClient) {
+      const error = new Error('The private G4F service is not running.') as Error & { code?: string }
+      error.code = 'g4f_service_unavailable'
+      throw error
+    }
+    const upstreamProvider = g4fProviderName(provider)
+    if (!upstreamProvider) assertProviderBackendAvailable(provider, 'g4f')
+    const path = endpoint === 'responses'
+      ? `/api/${encodeURIComponent(upstreamProvider!)}/responses`
+      : `/api/${encodeURIComponent(upstreamProvider!)}/chat/completions`
+    const body = endpoint === 'responses'
+      ? { model, provider: upstreamProvider, input: messages, stream: true }
+      : { model, provider: upstreamProvider, messages, stream: true }
+    return await this.g4fClient.request({
+      path,
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      ...(authContextId ? { authContextId } : {}),
+      signal,
+    })
   }
 }
 

@@ -22,20 +22,20 @@ const ROUTES = [
   ['POST', '/v1/anthropic/messages'],
 ]
 
-test('image generation is authenticated and the old direct G4F image route is unavailable', async () => {
+test('image generation is authenticated and the unified direct path remains gated', async () => {
   await withDaemon(async (daemon) => {
+    const removedRoute = '/v1/direct/g4f/g4f%3APollinationsImage/images/generations'
     const unauthorized = await fetch(`${daemon.origin}/v1/images/generations`, { method: 'POST' })
     assert.equal(unauthorized.status, 401)
     assert.equal((await unauthorized.json()).error.code, 'control_auth_missing')
 
-    const oldRoute = await call(
-      daemon,
-      'POST',
-      '/v1/direct/g4f/g4f%3APollinationsImage/images/generations',
-      { prompt: 'A green leaf.' },
-    )
-    assert.equal(oldRoute.status, 404)
-    assert.equal(oldRoute.body.error.code, 'g4f_route_not_found')
+    const unauthorizedRemovedRoute = await fetch(`${daemon.origin}${removedRoute}`, { method: 'POST' })
+    assert.equal(unauthorizedRemovedRoute.status, 401)
+    assert.equal((await unauthorizedRemovedRoute.json()).error.code, 'control_auth_missing')
+
+    const missingRemovedRoute = await call(daemon, 'POST', removedRoute, { prompt: 'A green leaf.' })
+    assert.equal(missingRemovedRoute.status, 404)
+    assert.deepEqual(missingRemovedRoute.body, { error: { message: 'not found' } })
 
     const direct = await call(daemon, 'POST', '/v1/images/generations', {
       model: 'tokenless/pollinations/sana',
@@ -427,6 +427,16 @@ test('Responses rejects missing, expired, mismatched, and opaque replay state be
       execution_mode: 'browser',
       transcript: [{ role: 'user', content: 'prior public input' }],
     })
+    const directStreamContinuation = await call(daemon, 'POST', '/v1/responses', {
+      model: 'tokenless/chatgpt',
+      previous_response_id: responseId,
+      input: 'continue',
+      stream: true,
+      tokenless: { execution_mode: 'direct' },
+    })
+    assert.equal(directStreamContinuation.status, 400)
+    assert.equal(directStreamContinuation.body.error.code, 'unsupported_parameter')
+    assert.equal(directStreamContinuation.body.error.param, 'previous_response_id')
     for (const body of [
       { model: 'tokenless/deepseek', input: 'continue' },
       { model: 'tokenless/chatgpt/other-model', input: 'continue' },

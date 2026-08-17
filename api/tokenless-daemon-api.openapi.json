@@ -444,7 +444,7 @@
       "post": {
         "operationId": "createApiProxyChatCompletionOnDefaultPath",
         "summary": "Run an OpenAI-compatible chat completion on the default OpenAI path",
-        "description": "Accepts the OpenAI chat-completions request shape and returns the visible provider response. Modern function tools, complete tool-result history, json_object, and the documented json_schema subset are validated through one request-scoped protocol; Tokenless returns model-ordered tool calls or a final result that satisfies response_format and never executes caller tools. Streaming returns one terminal full-content or tool-call delta, a terminal finish reason, and [DONE] without usage. parallel_tool_calls defaults to true; false limits the current outcome to one call. tool_choice supports omitted/auto, none, required, and one exact named function. strict tool schemas and structured-final object schemas require recursively closed objects with every property required. Structured-final numbers must be canonical finite JSON numbers, with integral schema and output values limited to the JavaScript safe integer range. Protocol or schema violations terminate with provider_output_protocol_error. Deprecated functions/function_call are rejected. This path is an alias of the /v1/openai prefixed route so an unmodified OpenAI client works with only a baseURL override.",
+        "description": "Accepts the OpenAI chat-completions request shape and returns the visible provider response. Modern function tools, complete tool-result history, json_object, and the documented json_schema subset are validated through one request-scoped protocol; Tokenless returns model-ordered tool calls or a final result that satisfies response_format and never executes caller tools. Streaming for browser/native and structured requests returns one terminal full-content or tool-call delta, a terminal finish reason, and [DONE] without usage; direct G4F plain-text requests instead forward each upstream SSE body chunk unchanged, preserving provider order and [DONE]. parallel_tool_calls defaults to true; false limits the current outcome to one call. tool_choice supports omitted/auto, none, required, and one exact named function. strict tool schemas and structured-final object schemas require recursively closed objects with every property required. Structured-final numbers must be canonical finite JSON numbers, with integral schema and output values limited to the JavaScript safe integer range. Protocol or schema violations terminate with provider_output_protocol_error. Deprecated functions/function_call are rejected. This path is an alias of the /v1/openai prefixed route so an unmodified OpenAI client works with only a baseURL override.",
         "requestBody": {
           "required": true,
           "content": {
@@ -457,7 +457,7 @@
         },
         "responses": {
           "200": {
-            "description": "Visible provider response in OpenAI chat-completion shape",
+            "description": "Visible provider response in OpenAI chat-completion shape; browser/native and structured streams use terminal generated frames, while direct G4F plain-text streams forward raw upstream SSE chunks unchanged.",
             "content": {
               "application/json": {
                 "schema": {
@@ -568,7 +568,7 @@
       "post": {
         "operationId": "createApiProxyResponseOnDefaultPath",
         "summary": "Run an OpenAI-compatible Responses request on the default OpenAI path",
-        "description": "Alias of POST /v1/openai/responses for SDKs configured with the default /v1 base URL.",
+        "description": "Alias of POST /v1/openai/responses for SDKs configured with the default /v1 base URL. Browser/native and structured streams use typed terminal Responses events; direct G4F plain-text streams forward raw upstream SSE unchanged and do not support Tokenless previous_response_id continuation.",
         "requestBody": {
           "required": true,
           "content": {
@@ -581,7 +581,7 @@
         },
         "responses": {
           "200": {
-            "description": "Completed OpenAI Response or a typed terminal SSE event stream",
+            "description": "Completed OpenAI Response, a typed terminal SSE event stream for browser/native or structured requests, or raw upstream SSE for direct G4F plain-text requests; direct raw Responses streams do not support Tokenless previous_response_id continuation.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1489,7 +1489,7 @@
       "post": {
         "operationId": "createApiProxyChatCompletion",
         "summary": "Run an OpenAI-compatible chat completion through a visible provider page",
-        "description": "Accepts the OpenAI chat-completions request shape and returns the visible provider response. Modern function tools, complete tool-result history, json_object, and the documented json_schema subset are validated through one request-scoped protocol; Tokenless returns model-ordered tool calls or a final result that satisfies response_format and never executes caller tools. Streaming returns one terminal full-content or tool-call delta, a terminal finish reason, and [DONE] without usage. parallel_tool_calls defaults to true; false limits the current outcome to one call. tool_choice supports omitted/auto, none, required, and one exact named function. strict tool schemas and structured-final object schemas require recursively closed objects with every property required. Structured-final numbers must be canonical finite JSON numbers, with integral schema and output values limited to the JavaScript safe integer range. Protocol or schema violations terminate with provider_output_protocol_error. Deprecated functions/function_call are rejected. The explicit tokenless/auto model is browser-only and accepts only tool or structured-final requests. It filters enabled, currently usable providers by the complete request requirements and real-evidence matrix, preserves portable canonical tool history and public call ids, and may use the existing fallback plan only before provider_submitted_at. Exact tokenless/<provider> models never auto-switch.",
+        "description": "Accepts the OpenAI chat-completions request shape and returns the visible provider response. Modern function tools, complete tool-result history, json_object, and the documented json_schema subset are validated through one request-scoped protocol; Tokenless returns model-ordered tool calls or a final result that satisfies response_format and never executes caller tools. Streaming for browser/native and structured requests returns one terminal full-content or tool-call delta, a terminal finish reason, and [DONE] without usage; direct G4F plain-text requests instead forward each upstream SSE body chunk unchanged, preserving provider order and [DONE]. parallel_tool_calls defaults to true; false limits the current outcome to one call. tool_choice supports omitted/auto, none, required, and one exact named function. strict tool schemas and structured-final object schemas require recursively closed objects with every property required. Structured-final numbers must be canonical finite JSON numbers, with integral schema and output values limited to the JavaScript safe integer range. Protocol or schema violations terminate with provider_output_protocol_error. Deprecated functions/function_call are rejected. The explicit tokenless/auto model is browser-only and accepts only tool or structured-final requests. It filters enabled, currently usable providers by the complete request requirements and real-evidence matrix, preserves portable canonical tool history and public call ids, and may use the existing fallback plan only before provider_submitted_at. Exact tokenless/<provider> models never auto-switch.",
         "requestBody": {
           "required": true,
           "content": {
@@ -1502,7 +1502,7 @@
         },
         "responses": {
           "200": {
-            "description": "Visible provider response in OpenAI chat-completion shape",
+            "description": "Visible provider response in OpenAI chat-completion shape; browser/native and structured streams use terminal generated frames, while direct G4F plain-text streams forward raw upstream SSE chunks unchanged.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1613,7 +1613,7 @@
       "post": {
         "operationId": "createApiProxyResponse",
         "summary": "Run an OpenAI-compatible Responses request through a visible provider page",
-        "description": "Maps Responses text messages, function_call items, function_call_output items, flat function tools, tool_choice, parallel_tool_calls, and text.format onto the same validated canonical semantics as Chat Completions. The caller executes tools. Streaming emits current typed Responses events with complete terminal content and no fabricated usage. previous_response_id uses a local ledger retained for 24 hours and at most 1000 entries; missing or capacity-evicted ids return response_not_found, expired ids return response_expired, and exact-provider model/execution changes return response_route_mismatch. For portable tokenless/auto transcripts, the ledger's settled provider is affinity rather than a hard pin; opaque replay remains rejected. Auto is browser-only, structured-control-only, and may switch providers only before submission or on a later caller turn.",
+        "description": "Maps Responses text messages, function_call items, function_call_output items, flat function tools, tool_choice, parallel_tool_calls, and text.format onto the same validated canonical semantics as Chat Completions. The caller executes tools. Browser/native and structured-request streaming emits current typed Responses events with complete terminal content and no fabricated usage; direct G4F plain-text streaming instead forwards raw upstream SSE body chunks unchanged, does not emit Tokenless-generated Responses events, and does not support Tokenless previous_response_id continuation. previous_response_id uses a local ledger retained for 24 hours and at most 1000 entries; missing or capacity-evicted ids return response_not_found, expired ids return response_expired, and exact-provider model/execution changes return response_route_mismatch. For portable tokenless/auto transcripts, the ledger's settled provider is affinity rather than a hard pin; opaque replay remains rejected. Auto is browser-only, structured-control-only, and may switch providers only before submission or on a later caller turn.",
         "requestBody": {
           "required": true,
           "content": {
@@ -1626,7 +1626,7 @@
         },
         "responses": {
           "200": {
-            "description": "Completed OpenAI Response or a typed terminal SSE event stream",
+            "description": "Completed OpenAI Response, a typed terminal SSE event stream for browser/native or structured requests, or raw upstream SSE for direct G4F plain-text requests; direct raw Responses streams do not support Tokenless previous_response_id continuation.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1914,147 +1914,6 @@
           }
         }
       }
-    },
-    "/v1/direct/g4f/providers": {
-      "get": {
-        "operationId": "listG4fProviders",
-        "summary": "List exact providers exposed by the pinned private G4F service",
-        "responses": {
-          "200": { "description": "G4F provider inventory", "content": { "application/json": { "schema": { "type": "array", "items": { "type": "object", "additionalProperties": true } } } } },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "503": { "$ref": "#/components/responses/InternalError" }
-        }
-      }
-    },
-    "/v1/direct/g4f/providers/{provider}": {
-      "get": {
-        "operationId": "getG4fProvider",
-        "summary": "Inspect one mapped or exact G4F provider",
-        "parameters": [{ "$ref": "#/components/parameters/G4fProvider" }],
-        "responses": {
-          "200": { "$ref": "#/components/responses/G4fJson" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "404": { "$ref": "#/components/responses/NotFound" }
-        }
-      }
-    },
-    "/v1/direct/g4f/providers/{provider}/models": {
-      "get": {
-        "operationId": "listG4fProviderModels",
-        "summary": "List models reported by one G4F provider",
-        "parameters": [{ "$ref": "#/components/parameters/G4fProvider" }, { "$ref": "#/components/parameters/G4fAuthContext" }],
-        "responses": { "200": { "$ref": "#/components/responses/G4fJson" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" }, "502": { "$ref": "#/components/responses/G4fUpstreamError" } }
-      }
-    },
-    "/v1/direct/g4f/providers/{provider}/quota": {
-      "get": {
-        "operationId": "getG4fProviderQuota",
-        "summary": "Read quota reported by one G4F provider",
-        "parameters": [{ "$ref": "#/components/parameters/G4fProvider" }, { "$ref": "#/components/parameters/G4fAuthContext" }],
-        "responses": { "200": { "$ref": "#/components/responses/G4fJson" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" }, "502": { "$ref": "#/components/responses/G4fUpstreamError" } }
-      }
-    },
-    "/v1/direct/g4f/auth-contexts/{contextId}": {
-      "post": {
-        "operationId": "createG4fAuthContext",
-        "summary": "Create a provider/profile-scoped G4F auth context",
-        "parameters": [{ "$ref": "#/components/parameters/G4fAuthContextId" }],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/G4fAuthContextRequest" } } } },
-        "responses": { "200": { "$ref": "#/components/responses/G4fJson" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "409": { "$ref": "#/components/responses/Conflict" } }
-      },
-      "delete": {
-        "operationId": "deleteG4fAuthContext",
-        "summary": "Delete a G4F auth context and its private files",
-        "parameters": [{ "$ref": "#/components/parameters/G4fAuthContextId" }],
-        "responses": { "200": { "$ref": "#/components/responses/G4fJson" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
-      }
-    },
-    "/v1/direct/g4f/auth-contexts": {
-      "get": {
-        "operationId": "listG4fAuthContexts",
-        "summary": "List public metadata for active G4F auth contexts without session values",
-        "responses": { "200": { "$ref": "#/components/responses/G4fJson" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
-      }
-    },
-    "/v1/direct/g4f/auth-contexts/{contextId}/files": {
-      "post": {
-        "operationId": "uploadG4fAuthFiles",
-        "summary": "Upload HAR or cookie JSON files to a scoped G4F auth context",
-        "parameters": [{ "$ref": "#/components/parameters/G4fAuthContextId" }],
-        "requestBody": { "required": true, "content": { "multipart/form-data": { "schema": { "type": "object", "required": ["files"], "properties": { "files": { "type": "array", "items": { "type": "string", "format": "binary" } } } } } } },
-        "responses": { "200": { "$ref": "#/components/responses/G4fJson" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "413": { "$ref": "#/components/responses/BadRequest" } }
-      }
-    },
-    "/v1/direct/g4f/{provider}/chat/completions": {
-      "post": {
-        "operationId": "createG4fChatCompletion",
-        "summary": "Proxy a chat completion to one exact G4F provider, preserving SSE when requested",
-        "parameters": [{ "$ref": "#/components/parameters/G4fProvider" }, { "$ref": "#/components/parameters/G4fAuthContext" }],
-        "requestBody": { "$ref": "#/components/requestBodies/G4fJson" },
-        "responses": { "200": { "$ref": "#/components/responses/G4fData" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "502": { "$ref": "#/components/responses/G4fUpstreamError" } }
-      }
-    },
-    "/v1/direct/g4f/{provider}/responses": {
-      "post": {
-        "operationId": "createG4fResponse",
-        "summary": "Proxy a Responses API request to one exact G4F provider",
-        "parameters": [{ "$ref": "#/components/parameters/G4fProvider" }, { "$ref": "#/components/parameters/G4fAuthContext" }],
-        "requestBody": { "$ref": "#/components/requestBodies/G4fJson" },
-        "responses": { "200": { "$ref": "#/components/responses/G4fData" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "502": { "$ref": "#/components/responses/G4fUpstreamError" } }
-      }
-    },
-    "/v1/direct/g4f/{provider}/messages": {
-      "post": {
-        "operationId": "createG4fMessage",
-        "summary": "Proxy a Messages API request to one exact G4F provider",
-        "parameters": [{ "$ref": "#/components/parameters/G4fProvider" }, { "$ref": "#/components/parameters/G4fAuthContext" }],
-        "requestBody": { "$ref": "#/components/requestBodies/G4fJson" },
-        "responses": { "200": { "$ref": "#/components/responses/G4fData" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "502": { "$ref": "#/components/responses/G4fUpstreamError" } }
-      }
-    },
-    "/v1/direct/g4f/{provider}/audio/transcriptions": {
-      "post": {
-        "operationId": "createG4fTranscription",
-        "summary": "Proxy audio transcription to one exact G4F provider",
-        "parameters": [{ "$ref": "#/components/parameters/G4fProvider" }, { "$ref": "#/components/parameters/G4fAuthContext" }],
-        "responses": { "200": { "$ref": "#/components/responses/G4fData" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "502": { "$ref": "#/components/responses/G4fUpstreamError" } }
-      }
-    },
-    "/v1/direct/g4f/{provider}/audio/speech": {
-      "post": {
-        "operationId": "createG4fSpeech",
-        "summary": "Proxy speech generation to one exact G4F provider",
-        "parameters": [{ "$ref": "#/components/parameters/G4fProvider" }, { "$ref": "#/components/parameters/G4fAuthContext" }],
-        "requestBody": { "$ref": "#/components/requestBodies/G4fJson" },
-        "responses": { "200": { "$ref": "#/components/responses/G4fData" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "502": { "$ref": "#/components/responses/G4fUpstreamError" } }
-      }
-    },
-    "/v1/direct/g4f/pa/providers": {
-      "get": {
-        "operationId": "listG4fPaProviders",
-        "summary": "List setup-managed G4F PA providers",
-        "responses": { "200": { "$ref": "#/components/responses/G4fJson" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
-      }
-    },
-    "/v1/direct/g4f/pa/providers/{providerId}": {
-      "get": {
-        "operationId": "getG4fPaProvider",
-        "summary": "Inspect one setup-managed G4F PA provider",
-        "parameters": [{ "name": "providerId", "in": "path", "required": true, "schema": { "type": "string", "minLength": 1 } }],
-        "responses": { "200": { "$ref": "#/components/responses/G4fJson" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" } }
-      }
-    },
-    "/v1/direct/g4f/assets/{kind}/{filename}": {
-      "get": {
-        "operationId": "getG4fAsset",
-        "summary": "Read an image or media asset generated by the private G4F service",
-        "parameters": [
-          { "name": "kind", "in": "path", "required": true, "schema": { "type": "string", "enum": ["images", "media"] } },
-          { "name": "filename", "in": "path", "required": true, "schema": { "type": "string", "minLength": 1 } }
-        ],
-        "responses": { "200": { "$ref": "#/components/responses/G4fData" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" } }
-      }
     }
   },
   "components": {
@@ -2066,25 +1925,6 @@
       }
     },
     "parameters": {
-      "G4fProvider": {
-        "name": "provider",
-        "in": "path",
-        "required": true,
-        "description": "Mapped Tokenless provider id or explicit g4f:<ProviderName> id.",
-        "schema": { "type": "string", "minLength": 1, "maxLength": 128 }
-      },
-      "G4fAuthContext": {
-        "name": "x-tokenless-auth-context",
-        "in": "header",
-        "required": false,
-        "schema": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" }
-      },
-      "G4fAuthContextId": {
-        "name": "contextId",
-        "in": "path",
-        "required": true,
-        "schema": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" }
-      },
       "job_id": {
         "name": "job_id",
         "in": "path",
@@ -2188,22 +2028,6 @@
       }
     },
     "responses": {
-      "G4fJson": {
-        "description": "JSON response from the selected private G4F surface",
-        "content": { "application/json": { "schema": { "type": ["object", "array"], "additionalProperties": true } } }
-      },
-      "G4fData": {
-        "description": "JSON, SSE, audio, image, or other media returned by the selected G4F surface",
-        "content": {
-          "application/json": { "schema": { "type": ["object", "array"], "additionalProperties": true } },
-          "text/event-stream": { "schema": { "type": "string" } },
-          "application/octet-stream": { "schema": { "type": "string", "format": "binary" } }
-        }
-      },
-      "G4fUpstreamError": {
-        "description": "Tokenless-wrapped G4F provider failure with a safe upstream classification",
-        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/G4fUpstreamError" } } }
-      },
       "PublicJob": {
         "description": "Public job view",
         "content": {
@@ -2340,12 +2164,7 @@
         }
       }
     },
-    "requestBodies": {
-      "G4fJson": {
-        "required": true,
-        "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } }
-      }
-    },
+    "requestBodies": {},
     "schemas": {
       "ImageGenerationRequest": {
         "type": "object",
@@ -2596,52 +2415,6 @@
             "minLength": 1
           }
         }
-      },
-      "G4fUpstreamError": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["error"],
-        "properties": {
-          "error": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["code", "message", "provider", "upstream"],
-            "properties": {
-              "code": { "type": "string", "pattern": "^g4f_upstream_[a-z0-9_]+$" },
-              "message": { "type": "string" },
-              "provider": { "type": ["string", "null"] },
-              "upstream": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["system", "status", "type", "category", "provider", "model"],
-                "properties": {
-                  "system": { "const": "g4f" },
-                  "status": { "type": "integer", "minimum": 400, "maximum": 599 },
-                  "type": { "type": "string" },
-                  "category": { "type": "string", "enum": ["authentication", "rate_limit", "anti_bot", "model", "timeout", "transport", "invalid_request", "provider"] },
-                  "provider": { "type": ["string", "null"] },
-                  "model": { "type": ["string", "null"] }
-                }
-              }
-            }
-          }
-        }
-      },
-      "G4fAuthContextRequest": {
-        "type": "object",
-        "required": ["provider", "profile", "source"],
-        "properties": {
-          "provider": { "type": "string", "minLength": 1 },
-          "profile": { "type": "string", "minLength": 1 },
-          "lifetime": { "type": "string", "enum": ["ephemeral", "user-persisted"], "default": "ephemeral" },
-          "source": {
-            "type": "object",
-            "required": ["type"],
-            "properties": { "type": { "type": "string", "enum": ["empty", "manual", "har", "cookie-file", "browser-cookie3", "cookie-database", "cdp"] } },
-            "additionalProperties": true
-          }
-        },
-        "additionalProperties": false
       },
       "ApiProxyOpenAiError": {
         "type": "object",

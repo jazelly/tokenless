@@ -62,9 +62,9 @@ tokenless run \
 
 使用 `--provider-backend native` 可保留现有 Tokenless ChatGPT 或 Perplexity 实现，用于 A/B 测试和回切。
 
-Setup 会安装一个固定版本的私有 `g4f[all]` Python service。Tokenless 继续拥有 browser control 与 profile；G4F 在 authenticated daemon API 后处理 direct provider HTTP、impersonation、Sentinel/PoW、streaming、HAR/Cookie auth、media 与 provider introspection。不传 `--execution-mode direct` 时保持 visible-browser 行为。
+Setup 会安装一个固定版本的私有 `g4f[all]` Python service。Tokenless 继续拥有 browser control 与 profile；G4F 在 authenticated daemon API 后处理 direct provider HTTP、impersonation、Sentinel/PoW、streaming、HAR/Cookie auth 与 media。不传 `--execution-mode direct` 时保持 visible-browser 行为。
 
-Backend flag、精确 provider ID、auth context、API route、版本固定与隔离边界见 [GPT4Free direct provider service](../../docs/g4f-direct-provider-service.zh-CN.md)。
+Backend flag、标准 API route、provider mapping、版本固定与隔离边界见 [GPT4Free direct provider service](../../docs/g4f-direct-provider-service.zh-CN.md)。
 
 如未显式指定 provider，Tokenless 会使用第一个已配置且有 guest 或 signed-in 观测的 provider；没有可用项时会在创建 job 前失败。
 

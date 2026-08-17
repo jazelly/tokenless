@@ -6,7 +6,7 @@ How to call the Tokenless local API proxy from an existing project. Written for 
 
 The Tokenless daemon exposes OpenAI- and Anthropic-compatible HTTP routes. A request becomes a durable job, a Playwright worker types the prompt into a real provider page in a signed-in browser profile, and the visible reply is returned in the wire shape your client already expects.
 
-**This is a task-level bridge, not a drop-in API replacement.** Read [Hard limits](#hard-limits) before designing around it. The proxy trades throughput, latency, and incremental streaming for cost.
+**This is a task-level bridge, not a drop-in API replacement.** Read [Hard limits](#hard-limits) before designing around it. Browser-backed requests trade throughput and latency for cost; direct G4F plain-text requests can preserve upstream incremental streaming.
 
 For the provider-side contract that the proxy maps onto, see [Provider Tool-Calling Conformance](provider-tool-calling-conformance.md). It separates official provider documentation from Tokenless's exact live evidence and does not claim native browser tool endpoints.
 
@@ -251,7 +251,7 @@ Structured JSON numbers must be finite and use the unique spelling returned by `
 
 Non-streaming output contains an assistant `message` or model-ordered `function_call` items. A function item has a distinct item `id` and stable public `call_id`; reply with `{type:"function_call_output",call_id,output}`.
 
-Streaming is terminal but typed. It emits `response.created`, `response.in_progress`, item/content events, full reconstructable argument or text deltas, done events, and `response.completed`. It does not emit Chat's `[DONE]`, fake token pacing, or fabricated usage; `usage` is `null`.
+Streaming is typed and terminal for browser/native and structured requests. It emits `response.created`, `response.in_progress`, item/content events, full reconstructable argument or text deltas, done events, and `response.completed`. A direct G4F plain-text request instead forwards the upstream SSE body unchanged; it does not emit Tokenless-generated Responses events, is not recorded in the Tokenless response ledger, and does not support `previous_response_id` continuation. Neither path fabricates usage.
 
 Continue in either official form:
 
@@ -414,9 +414,9 @@ Log `job_id`. It is the only handle that ties a client-side failure to a durable
 
 ## Streaming
 
-`stream: true` returns `text/event-stream` with the correct event sequence for the dialect.
+`stream: true` returns `text/event-stream`. Browser/native and structured requests use the documented terminal event sequence; direct G4F plain-text requests forward each upstream body chunk in order as it arrives.
 
-**There is no incremental text.** A visible provider reply is only readable once it has finished rendering, so the whole response arrives as one terminal chunk after the full latency. The event sequence is preserved so that otherwise-compatible clients keep working; refusing `stream` would break them for no benefit.
+Direct G4F Chat Completions preserve the provider's original SSE frames, including `[DONE]`. Direct G4F Responses use the provider's upstream SSE body as well; these raw streams are not recorded for Tokenless `previous_response_id` continuation. Callers that require Tokenless's typed Responses event sequence or ledger continuation should use browser/native or a structured request.
 
 OpenAI frames:
 
@@ -444,7 +444,7 @@ A structured final uses the same full-content delta, `finish_reason: "stop"`, an
 
 Anthropic frames, in order: `message_start`, `content_block_start`, `content_block_delta` (carries the full text), `content_block_stop`, `message_delta`, `message_stop`.
 
-Do not build a progress indicator off these. If your UI needs perceived streaming, drive it from a spinner, not from the transport.
+For browser/native and structured requests, do not build a progress indicator off the terminal frames. Direct G4F plain-text streams can drive progress from each received upstream chunk.
 
 ## Conversation modes
 
@@ -541,7 +541,7 @@ Design around these, not against them.
 | Token accounting | None. |
 | Multimodal input | Text only. |
 
-Route human-paced Q&A, external-tool turns, and bounded structured finals through this. Keep low-latency incremental streaming on another route.
+Route human-paced Q&A, external-tool turns, and bounded structured finals through this. Use `tokenless.execution_mode: direct` with the default `g4f` backend for low-latency plain-text incremental streaming.
 
 ### Account risk
 

@@ -12,7 +12,6 @@ import {
   browserRuntimeStatus,
   ensureDaemonReady,
   readTokenlessConfig,
-  readDaemonToken,
   stopDaemon,
   writeTokenlessConfig,
 } from '../packages/cli/dist/src/index.js'
@@ -43,9 +42,6 @@ test('built CLI bridges one real ChatGPT browser session into the pinned G4F dir
     homeDir: target.homeDir,
     ...(target.config.daemonUrl ? { daemonUrl: target.config.daemonUrl } : {}),
   })
-  const authorization = `Bearer ${await readDaemonToken({ homeDir: target.homeDir })}`
-  const contextIdsBefore = await authContextIds(daemon.url, authorization)
-
   const marker = `TOKENLESS_G4F_${randomUUID().replaceAll('-', '')}`
   const completed = spawnSync(process.execPath, [
     cliEntry,
@@ -73,8 +69,6 @@ test('built CLI bridges one real ChatGPT browser session into the pinned G4F dir
   assert.equal(read?.ok, true)
   assert.equal(read?.result?.visibleProof, 'g4f-private-service-response')
   assert.equal(read?.result?.text?.trim(), marker)
-  assert.deepEqual(await authContextIds(daemon.url, authorization), contextIdsBefore)
-
   const [runtime, profileDirectory] = await Promise.all([
     browserRuntimeStatus({
       homeDir: target.homeDir,
@@ -86,16 +80,6 @@ test('built CLI bridges one real ChatGPT browser session into the pinned G4F dir
   assert.ok(runtime.activeProfileCount >= 1)
   assert.ok(profileDirectory.isDirectory())
 })
-
-async function authContextIds(daemonUrl, authorization) {
-  const response = await fetch(`${daemonUrl}/v1/direct/g4f/auth-contexts`, {
-    headers: { authorization },
-    signal: AbortSignal.timeout(30_000),
-  })
-  assert.equal(response.status, 200)
-  const contexts = await response.json()
-  return contexts.map((context) => context.contextId).sort()
-}
 
 function requiredEnvironment(name) {
   const value = process.env[name]?.trim()

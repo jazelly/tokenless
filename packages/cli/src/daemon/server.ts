@@ -1,6 +1,5 @@
 import http, { type IncomingMessage, type ServerResponse } from 'node:http'
 import net from 'node:net'
-
 import { tokenlessPackageVersion } from '../platform-package.js'
 import { DAEMON_CONTROL_API_REVISION } from '../schema-ids.js'
 import { normalizeBrowserVisibility } from '../browser-visibility.js'
@@ -45,7 +44,6 @@ import {
   type ApiProxyDialect,
 } from './api-proxy.js'
 import type { G4fServiceProcess } from '../g4f/index.js'
-import { handleG4fApiRequest } from './g4f-api.js'
 import { parseImageAssetReference, readPersistedImageAsset } from '../playwright/image-assets.js'
 import { ImageGenerationAdapter, ImageGenerationError } from './image-generation.js'
 
@@ -292,15 +290,6 @@ async function handleRequest(
       writeJson(response, 200, await imageGeneration.generate(await readJsonObject(request)))
       return
     }
-
-    if (await handleG4fApiRequest({
-      store,
-      client: g4fService?.client,
-      request,
-      response,
-      method,
-      url,
-    })) return
 
     if (method === 'POST' && url.pathname === '/v1/featurebench/channels') {
       const body = await readJsonObject(request)
@@ -562,21 +551,6 @@ async function handleRequest(
       })
       return
     }
-    const directApiStatus = (error as { status?: unknown })?.status
-    const directApiCode = (error as { code?: unknown })?.code
-    if (
-      typeof directApiStatus === 'number' &&
-      typeof directApiCode === 'string' &&
-      directApiCode.startsWith('g4f_')
-    ) {
-      writeJson(response, directApiStatus, {
-        error: {
-          code: directApiCode,
-          message: error instanceof Error ? error.message : 'The direct G4F request was rejected.',
-        },
-      })
-      return
-    }
     if (error instanceof FeatureBenchChannelError) {
       writeJson(response, error.status, { error: { code: error.code, message: error.message, retryable: error.status >= 500, details: { category: error.category } } })
       return
@@ -794,6 +768,13 @@ async function handleApiProxyRequest(
     const body = await readApiProxyJson(request)
     requestedModel = typeof body.model === 'string' ? body.model : 'unknown'
     if (route.kind === 'response') {
+      if (body.stream === true) {
+        const upstream = await apiProxy.streamResponse(body, requestLifetime.signal)
+        if (upstream) {
+          await writeApiProxyUpstreamStream(response, upstream, requestLifetime.signal)
+          return
+        }
+      }
       const result = await apiProxy.respond(body, requestLifetime.signal)
       if (result.stream) {
         writeApiProxyStream(response, openAiResponseStreamFrames(result.body))
@@ -801,6 +782,13 @@ async function handleApiProxyRequest(
       }
       writeJson(response, 200, result.body)
       return
+    }
+    if (body.stream === true) {
+      const upstream = await apiProxy.stream(dialect, body, requestLifetime.signal)
+      if (upstream) {
+        await writeApiProxyUpstreamStream(response, upstream, requestLifetime.signal)
+        return
+      }
     }
     const completion = await apiProxy.complete(dialect, body, requestLifetime.signal)
     if (body.stream === true) {
@@ -820,7 +808,7 @@ async function handleApiProxyRequest(
 }
 
 function writeApiProxyError(response: ServerResponse, dialect: ApiProxyDialect, error: unknown) {
-  if (response.destroyed || response.writableEnded) return
+  if (response.destroyed || response.headersSent || response.writableEnded) return
   if (error instanceof ApiProxyError) {
     writeJson(response, error.status, apiProxyErrorBody(dialect, error.code, error.message, error.status, error.param))
     return
@@ -897,6 +885,60 @@ function writeApiProxyStream(response: ServerResponse, frames: readonly string[]
   })
   for (const frame of frames) response.write(frame)
   response.end()
+}
+
+async function writeApiProxyUpstreamStream(response: ServerResponse, upstream: Response, signal: AbortSignal) {
+  response.writeHead(upstream.status, {
+    'content-type': upstream.headers.get('content-type') ?? 'text/event-stream',
+    'cache-control': upstream.headers.get('cache-control') ?? 'no-cache, no-transform',
+    connection: 'keep-alive',
+  })
+  if (!upstream.body) {
+    response.end()
+    return
+  }
+  const reader = upstream.body.getReader()
+  try {
+    for (;;) {
+      const chunk = await reader.read()
+      if (chunk.done) break
+      if (!response.write(Buffer.from(chunk.value))) await waitForApiProxyDrain(response, signal)
+    }
+    response.end()
+  } catch {
+    if (!response.destroyed) response.destroy()
+  } finally {
+    reader.releaseLock()
+  }
+}
+
+function waitForApiProxyDrain(response: ServerResponse, signal: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    let settled = false
+    const cleanup = () => {
+      response.off('drain', onDrain)
+      response.off('close', onClose)
+      response.off('error', onError)
+      signal.removeEventListener('abort', onAbort)
+    }
+    const finish = (callback: () => void) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      callback()
+    }
+    const onDrain = () => finish(resolve)
+    const onClose = () => finish(() => reject(new Error('The API proxy response closed while streaming.')))
+    const onError = (error: Error) => finish(() => reject(error))
+    const onAbort = () => finish(() => reject(signal.reason instanceof Error
+      ? signal.reason
+      : new Error('The API proxy request was aborted while streaming.')))
+    response.once('drain', onDrain)
+    response.once('close', onClose)
+    response.once('error', onError)
+    signal.addEventListener('abort', onAbort, { once: true })
+    if (response.destroyed || response.writableEnded || signal.aborted) onAbort()
+  })
 }
 
 async function readJsonObject(request: IncomingMessage) {

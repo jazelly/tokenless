@@ -34,29 +34,26 @@ Use `--provider-backend native` for the retained native ChatGPT or Perplexity im
 
 ## Authenticated daemon API
 
-All routes require the normal Tokenless daemon bearer token.
-Provider guest mode is separate from daemon authentication: omit `x-tokenless-auth-context` on a data-plane request to prevent Tokenless from injecting browser or stored provider credentials.
+The daemon does not expose a public G4F-namespaced route. Use the standard API proxy endpoints with `tokenless.execution_mode: direct`; the selected provider ID maps to the pinned G4F provider internally.
 
 | Route | Purpose |
 |---|---|
-| `GET /v1/direct/g4f/providers` | Exact provider inventory |
-| `GET /v1/direct/g4f/providers/{provider}/models` | Provider models |
-| `GET /v1/direct/g4f/providers/{provider}/quota` | Provider quota |
-| `POST /v1/direct/g4f/auth-contexts/{id}` | Create scoped auth context |
-| `GET /v1/direct/g4f/auth-contexts` | List context metadata without session values |
-| `POST /v1/direct/g4f/auth-contexts/{id}/files` | Upload `.har` or cookie `.json` |
-| `DELETE /v1/direct/g4f/auth-contexts/{id}` | Delete context and private files |
-| `POST /v1/direct/g4f/{provider}/chat/completions` | Chat completion and SSE |
-| `POST /v1/direct/g4f/{provider}/responses` | Responses API |
-| `POST /v1/direct/g4f/{provider}/messages` | Messages API |
-| `POST /v1/direct/g4f/{provider}/audio/transcriptions` | Audio transcription |
-| `POST /v1/direct/g4f/{provider}/audio/speech` | Speech generation |
-| `GET /v1/direct/g4f/assets/{images|media}/{file}` | Generated media |
-| `GET /v1/direct/g4f/pa/providers` | Setup-managed PA inventory |
+| `POST /v1/chat/completions` | OpenAI Chat Completions; direct G4F plain-text requests preserve upstream SSE when `stream: true` |
+| `POST /v1/responses` | OpenAI Responses; direct G4F plain-text requests preserve upstream SSE when `stream: true` and do not support Tokenless `previous_response_id` continuation |
+| `POST /v1/images/generations` | Provider-neutral browser or direct image generation |
 
-Image generation is deliberately absent from the G4F-namespaced routes. Call the provider-neutral [`POST /v1/images/generations`](api-proxy-integration.md#image-generation) endpoint and select `tokenless.execution_mode`; its public request and response do not expose the private backend.
+For example, a direct GLM request uses the mapped Tokenless model ID:
 
-Known Tokenless IDs such as `chatgpt` map to pinned upstream providers. Use `g4f:<ProviderName>` for an exact G4F provider, including explicit `g4f:AnyProvider`; Tokenless never selects `AnyProvider` silently.
+```json
+{
+  "model": "tokenless/zai/GLM-4.7",
+  "messages": [{"role": "user", "content": "Reply with OK."}],
+  "stream": true,
+  "tokenless": {"execution_mode": "direct"}
+}
+```
+
+All routes require the normal Tokenless daemon bearer token. Provider guest mode is separate from daemon authentication; managed direct CLI execution creates any ephemeral provider auth context privately and removes it after the request.
 
 Auth source types are `empty`, `manual`, `har`, `cookie-file`, `browser-cookie3`, `cookie-database`, and loopback `cdp`. Both Cookie DB source types require an exact database path inside the selected managed profile; unscoped browser scanning is rejected. Manual values are limited to the selected provider domains.
 
@@ -79,7 +76,7 @@ Visible-browser execution remains Tokenless-native. For ChatGPT G4F direct execu
 
 Real E2E covers both authentication boundaries:
 
-- Guest: an explicit `g4f:GLM` request omits the provider auth-context header, completes Aliyun traceless verification in the isolated headless browser, requires an exact random response marker, and verifies that no auth context was created.
+- Guest: a direct standard API request for `tokenless/zai/GLM-4.7` omits provider credentials, completes Aliyun traceless verification in the isolated headless browser, and requires an exact random response marker.
 - Signed in: ChatGPT direct reads only the selected Cloak browser profile's ChatGPT cookies, access token, user agent, and language headers into one ephemeral provider-scoped context.
 - Image: the real `tokenless/pollinations/sana` direct gate generated a 768×768 JPEG through the unified endpoint, persisted it under the supplied task identity, and proved digest plus authenticated byte-for-byte readback without exposing the private backend.
 
