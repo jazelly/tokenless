@@ -183,7 +183,7 @@ a.data-row:hover, button.data-row:hover { background: #faf9f7; }
 .provider-name-line > strong, .provider-name-line > h2 { flex: 0 1 auto; }
 .provider-mode-badges { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 4px; }
 .provider-mode-badge { display: inline-flex; min-height: 22px; align-items: center; gap: 4px; padding: 0 7px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 10px; font-weight: 600; line-height: 1; white-space: nowrap; }
-.provider-mode-badge.configured { border-color: rgb(47 143 91 / 30%); background: rgb(47 143 91 / 9%); color: var(--green); }
+.provider-mode-badge.configured { border-color: #cfcdc7; background: #f2f1ee; color: #55524b; }
 .provider-mode-badge.unsupported { border-style: dashed; opacity: .42; }
 .provider-account { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: 12px; margin-top: 18px; border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); font-size: 12px; }
 .provider-account span { color: var(--muted); }

@@ -9,6 +9,7 @@
 **Rendered implementation**
 
 - Overview: `/Users/jazelly/.codex/visualizations/2026/08/17/01a00dac-95b3-7112-95cf-5b1a390fd811/provider-modes-overview.png`
+- Neutral badge refinement: `/Users/jazelly/.codex/visualizations/2026/08/17/01a00dac-95b3-7112-95cf-5b1a390fd811/provider-modes-overview-neutral.png`
 - Provider detail: `/Users/jazelly/.codex/visualizations/2026/08/17/01a00dac-95b3-7112-95cf-5b1a390fd811/provider-modes-detail.png`
 - Implementation pixels and CSS viewport: `1920 × 1050`, density `1x`.
 - State: English, `web-ai` profile, ChatGPT Browser and Direct modes configured.
@@ -24,7 +25,7 @@
 
 - Fonts and typography: existing application font family, weights, line heights, and hierarchy are unchanged; badge text uses the existing small UI scale and remains readable.
 - Spacing and layout rhythm: the source row height, dividers, glyph alignment, readiness dot, and arrow positions are preserved. Badges use an `8px` name gap and `4px` internal group gap.
-- Colors and visual tokens: configured badges reuse the existing semantic green; supported-but-disabled badges use the neutral border; unsupported badges use a dashed neutral treatment and reduced opacity.
+- Colors and visual tokens: configured badges use a subtle warm-gray fill (`#f2f1ee`), graphite text (`#55524b`), and neutral border (`#cfcdc7`). This keeps the green readiness dot as the sole positive-status color; supported-but-disabled badges use the neutral border, while unsupported badges use a dashed neutral treatment and reduced opacity.
 - Image and icon fidelity: no raster imagery is required. Browser uses the existing Lucide `Monitor` icon and Direct uses `Link2`, matching the application's current icon family.
 - Copy and content: Browser/Direct labels and supporting detail copy are localized in English and Simplified Chinese.
 
@@ -44,6 +45,7 @@
 **Comparison history**
 
 - First pass: no actionable P0/P1/P2 findings; no visual correction loop was required.
+- Second pass: replaced the configured badge green with a neutral warm-gray treatment after product feedback; verified the Overview and Provider detail at `1920 × 1050` with no new P0/P1/P2 findings.
 
 **Follow-up polish**
 
