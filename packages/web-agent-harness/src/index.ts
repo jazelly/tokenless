@@ -123,3 +123,7 @@ export {
 export {
   openWebAgentHarness,
 } from './web-agent-harness.js'
+
+export {
+  createStdioMcpToolRegistry,
+} from './stdio-mcp.js'
