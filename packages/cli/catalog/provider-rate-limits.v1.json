@@ -77,6 +77,134 @@
       "meta": {
         "modelFamily": "*",
         "promptAction": "interactive.usage"
+      },
+      "ai-badgr": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "airforce": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "black-forest-labs": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "blackbox": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "cerebras": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "cloudflare": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "cohere": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "deepinfra": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "elevenlabs": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "fenay-ai": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "github-copilot": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "glhf": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "groq": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "hugging-face": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "microsoft-copilot": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "minimax": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "nvidia": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "ollama": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "openrouter": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "opera-aria": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "phind": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "pi": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "pollinations": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "puter": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "replicate": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "gigachat": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "stability-ai": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "teach-anything": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "theb-ai": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "together": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "whiterabbitneo": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "yqcloud": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
       }
     }
   },

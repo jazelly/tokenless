@@ -54,7 +54,7 @@
   const displayedAvailability = $derived(!enabled ? 'disabled' : observedAvailabilityContext === availabilityContext ? availability : 'checking')
   const displayedAvailabilityError = $derived(enabled && observedAvailabilityContext === availabilityContext ? availabilityError : '')
   const displayedDownloadProgress = $derived(enabled && observedAvailabilityContext === availabilityContext ? downloadProgress : null)
-  const providers = $derived(snapshot.providers.filter((provider) => provider.stage !== 'disabled'))
+  const providers = $derived(snapshot.providers.filter((provider) => provider.stage !== 'disabled' && provider.executionModes.includes('browser')))
   const candidates = $derived(buildProviderCandidates())
   const enabledProviderCount = $derived(providers.filter((provider) => providerState(provider)?.enabled === true).length)
   const semanticContext = $derived(semanticContextSignature())

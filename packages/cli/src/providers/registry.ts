@@ -3,6 +3,7 @@ import { ChatGptProvider } from './chatgpt-provider.js'
 import { ClaudeProvider } from './claude-provider.js'
 import { DeepSeekProvider } from './deepseek-provider.js'
 import { DolaProvider } from './dola-provider.js'
+import { createDirectOnlyG4fProviders } from './direct/direct-only-provider.js'
 import { DoubaoProvider } from './doubao-provider.js'
 import { GeminiProvider } from './gemini-provider.js'
 import { GrokProvider } from './grok-provider.js'
@@ -26,9 +27,26 @@ import type {
   ProviderDescriptor,
   ProviderGuestAccess,
 } from './provider-definition.js'
-import type { ProviderCapabilityId, ProviderId, ProviderStage } from './provider-identity.js'
+import type {
+  ProviderCapabilityId,
+  ProviderExecutionMode,
+  ProviderId,
+  ProviderStage,
+} from './provider-identity.js'
 
 export { PROVIDER_CAPABILITIES, isProviderIdSyntax } from './provider-identity.js'
+export {
+  G4F_BROWSER_PROVIDER_IDS,
+  G4F_DIRECT_ONLY_PROVIDER_IDS,
+  G4F_PROVIDER_HOME_URLS,
+  G4F_PROVIDER_LABELS,
+  G4F_PROVIDER_MAP,
+  g4fProviderName,
+  isG4fDirectOnlyProvider,
+  isG4fProvider,
+  listG4fProviderCatalog,
+  providerExecutionModes,
+} from './direct/g4f-map.js'
 export {
   TASK_CAPABILITIES,
   TASK_CAPABILITY_CATALOG_SCHEMA_ID,
@@ -76,7 +94,12 @@ export type {
   ProviderDescriptor,
   ProviderGuestAccess,
 } from './provider-definition.js'
-export type { ProviderCapabilityId, ProviderId, ProviderStage } from './provider-identity.js'
+export type {
+  ProviderCapabilityId,
+  ProviderExecutionMode,
+  ProviderId,
+  ProviderStage,
+} from './provider-identity.js'
 export type {
   JsonSchema,
   ProviderTaskCapabilityRoute,
@@ -175,6 +198,7 @@ export const providerInstances = Object.freeze([
   new DolaProvider(),
   new ArenaProvider(),
   new MetaProvider(),
+  ...createDirectOnlyG4fProviders(100),
 ] satisfies readonly ProviderInstance[])
 
 export const providerRegistry = ProviderRegistry.create(providerInstances)
@@ -240,6 +264,14 @@ function validateProviderDescriptor(descriptor: ProviderDescriptor<ProviderId>) 
   }
   if (descriptor.controls?.chatSurface !== true && descriptor.controls?.chatSurface !== false) {
     throw new Error(`Provider ${descriptor.id} controls policy is invalid.`)
+  }
+  if (
+    !Array.isArray(descriptor.executionModes) ||
+    descriptor.executionModes.length === 0 ||
+    new Set(descriptor.executionModes).size !== descriptor.executionModes.length ||
+    descriptor.executionModes.some((mode) => mode !== 'browser' && mode !== 'direct')
+  ) {
+    throw new Error(`Provider ${descriptor.id} execution mode policy is invalid.`)
   }
   const entry = parseDescriptorUrl(descriptor.navigation.entryUrl, { allowPath: true })
   if (!entry) throw new Error(`Provider ${descriptor.id} entry URL is invalid.`)

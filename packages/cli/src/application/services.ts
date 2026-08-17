@@ -17,6 +17,7 @@ import {
   PLAYWRIGHT_EXECUTION_BACKEND,
 } from '../playwright/job-contract.js'
 import { VISIBLE_ACTIONS } from '../providers/contracts.js'
+import { isG4fDirectOnlyProvider } from '../providers/direct/g4f-map.js'
 import {
   listProviderDescriptors,
   listProviderInstances,
@@ -113,6 +114,7 @@ export class TokenlessApplicationServices {
         id: provider.id,
         label: provider.label,
         stage: provider.stage,
+        executionModes: provider.executionModes,
         homeUrl: provider.navigation.entryUrl,
       }))
     const capabilityRoutes = listProviderTaskCapabilityRoutes()
@@ -377,6 +379,7 @@ export class TokenlessApplicationServices {
     if (!provider || provider.descriptor.stage === 'disabled') {
       throw applicationError('provider_not_supported', 'Provider is not supported.')
     }
+    assertBrowserProviderActionAllowed(provider.id)
     const configured = profileConfig(await this.migratedConfig(), profile.slug)
     if (!configured.enabledProviders.includes(provider.id)) {
       throw applicationError('provider_not_enabled', 'Enable the provider for this profile before opening it.')
@@ -393,6 +396,7 @@ export class TokenlessApplicationServices {
     const batchId = randomUUID()
     const jobs = listProviderInstances()
       .filter((provider) => provider.descriptor.stage !== 'disabled' && enabled.has(provider.id))
+      .filter((provider) => provider.descriptor.executionModes.includes('browser'))
       .map((provider, index) => this.createProviderActionJob(profile, provider.id, 'readiness', {
         jobId: `ui-readiness-${batchId}-${String(index).padStart(3, '0')}`,
         taskId: `ui:readiness:${batchId}:${provider.id}`,
@@ -454,6 +458,7 @@ export class TokenlessApplicationServices {
     if (!provider || provider.descriptor.stage === 'disabled') {
       throw applicationError('provider_not_supported', 'Provider is not supported.')
     }
+    assertBrowserProviderActionAllowed(provider.id)
     const configured = profileConfig(await this.migratedConfig(), profile.slug)
     if (!configured.enabledProviders.includes(provider.id)) {
       throw applicationError('provider_not_enabled', 'Enable the provider for this profile before changing controls.')
@@ -839,6 +844,14 @@ function configurableProviderIds(): ProviderId[] {
 
 function supportedProviderIds() {
   return listProviderDescriptors().filter((provider) => provider.stage !== 'disabled').map((provider) => provider.id)
+}
+
+function assertBrowserProviderActionAllowed(provider: ProviderId) {
+  if (!isG4fDirectOnlyProvider(provider)) return
+  throw applicationError(
+    'provider_direct_only',
+    'This provider supports direct execution only; browser actions are unavailable.',
+  )
 }
 
 function providerList(value: unknown): string[] {

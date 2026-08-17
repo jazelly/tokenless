@@ -5,7 +5,7 @@ import { listProviderDescriptors } from './registry.js'
 
 const catalog = providerRateLimitCatalog()
 const supportedProviders = listProviderDescriptors()
-  .filter((provider) => provider.stage !== 'disabled')
+  .filter((provider) => provider.stage !== 'disabled' && provider.executionModes.includes('browser'))
   .map((provider) => provider.id)
 const missingProviders = supportedProviders.filter((provider) => !catalog.providers[provider])
 if (missingProviders.length > 0) {

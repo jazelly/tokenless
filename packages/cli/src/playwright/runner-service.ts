@@ -57,7 +57,7 @@ import type { BrowserContext, Page } from 'playwright-core'
 import type { OutputSavingsWorkInput } from '../daemon/job-store.js'
 import type { G4fServiceClient } from '../g4f/client.js'
 import { ProviderProtocolRouter } from '../providers/direct/protocol-router.js'
-import { g4fProviderName } from '../providers/direct/g4f-map.js'
+import { g4fProviderName, isG4fDirectOnlyProvider } from '../providers/direct/g4f-map.js'
 
 export type ManagedPlaywrightRunnerServiceOptions = {
   homeDir?: string | undefined
@@ -298,6 +298,14 @@ export class ManagedPlaywrightRunnerService {
     const tabs: ManagedProviderTabsOpenResult['tabs'][number][] = []
     const failures: ManagedProviderTabsOpenResult['failures'][number][] = []
     for (const provider of providers) {
+      if (!provider.descriptor.executionModes.includes('browser')) {
+        failures.push({
+          provider: provider.id,
+          code: 'provider_tab_open_failed',
+          message: 'Provider exposes direct execution only and has no browser tab.',
+        })
+        continue
+      }
       let lease: ManagedProviderPageLease | null = null
       try {
         lease = await managedContext.acquireProviderPage({
@@ -1183,7 +1191,7 @@ export class ManagedPlaywrightRunnerService {
     let ephemeralContextId: string | undefined
     let authContextId = request.authContextId ?? undefined
     try {
-      if (!authContextId) {
+      if (!authContextId && !isG4fDirectOnlyProvider(request.provider)) {
         authContextId = await this.createG4fBrowserAuthContext(profile, job, request, signal)
         ephemeralContextId = authContextId
       }

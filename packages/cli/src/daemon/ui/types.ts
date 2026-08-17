@@ -48,6 +48,7 @@ export type {
   UiProviderAction,
   UiProviderChoice,
   UiProviderControls,
+  UiProviderExecutionMode,
   UiProviderObservation,
   UiProviderProfileState,
   UiProviderReadinessRefresh,

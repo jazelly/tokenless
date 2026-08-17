@@ -234,6 +234,12 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
   const executionMode = validateExecutionMode(input.executionMode ?? 'browser')
   const providerBackend = validateProviderBackend(input.providerBackend ?? null)
   const authContextId = validateAuthContextId(input.authContextId ?? null)
+  if (!provider.descriptor.executionModes.includes(executionMode)) {
+    throw tokenlessError(
+      'provider_execution_mode_unsupported',
+      `Provider '${provider.id}' does not support ${executionMode} execution.`,
+    )
+  }
   if (executionMode === 'browser' && (providerBackend !== null || authContextId !== null)) {
     throw tokenlessError('invalid_playwright_job_provider_backend', 'providerBackend and authContextId apply only to direct execution.')
   }

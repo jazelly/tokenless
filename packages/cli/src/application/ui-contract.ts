@@ -146,6 +146,8 @@ export type UiProviderControls = {
   effort: UiProviderChoice[] | null
 }
 
+export type UiProviderExecutionMode = 'browser' | 'direct'
+
 export type UiProviderProfileState = {
   profileId: string
   enabled: boolean
@@ -159,6 +161,7 @@ export type UiProvider = {
   id: string
   label: string
   stage: 'experimental' | 'supported' | 'disabled'
+  executionModes: readonly UiProviderExecutionMode[]
   homeUrl: string
   profiles: UiProviderProfileState[]
 }

@@ -1,5 +1,6 @@
 export type ProviderId = string
 export type ProviderStage = 'experimental' | 'supported' | 'disabled'
+export type ProviderExecutionMode = 'browser' | 'direct'
 
 export const PROVIDER_ID_PATTERN = /^[a-z][a-z0-9-]{0,63}$/
 

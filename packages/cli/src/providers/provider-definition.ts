@@ -11,11 +11,17 @@ import { createDolaImageSurfaceCapability } from './capabilities/dola-image-surf
 import { DefaultChoiceAvailability } from './choice-availability.js'
 import { ProviderNavigationPolicy } from './navigation-policy.js'
 import { VISIBLE_ACTIONS } from './contracts.js'
+import { g4fProviderName } from './direct/g4f-map.js'
 import type { Locator, Page } from 'playwright-core'
 import type { InspectableProviderActionCapability, ProviderCapability } from './capability-set.js'
 import type { ImageGenerationCapability } from './capabilities/image-generation.js'
 import type { VisibleAction } from './contracts.js'
-import type { ProviderCapabilityId, ProviderId, ProviderStage } from './provider-identity.js'
+import type {
+  ProviderCapabilityId,
+  ProviderExecutionMode,
+  ProviderId,
+  ProviderStage,
+} from './provider-identity.js'
 import type { ProviderNavigationDefinition } from './navigation-policy.js'
 
 export type ProviderCapabilityAvailability = 'available' | 'unavailable' | 'unknown'
@@ -39,6 +45,7 @@ export type ProviderDescriptor<TId extends string = string> = Readonly<{
   label: string
   stage: ProviderStage
   setupOrder: number
+  executionModes: readonly ProviderExecutionMode[]
   protocolCompatibility: Readonly<{
     legacyRequests: boolean
   }>
@@ -550,8 +557,24 @@ function deepSeekCapabilityStrategy(
   })
 }
 
-export function defineDescriptor<TId extends ProviderId>(descriptor: ProviderDescriptor<TId>): ProviderDescriptor<TId> {
-  return Object.freeze(descriptor)
+export function defineDescriptor<TId extends ProviderId>(
+  descriptor: Omit<ProviderDescriptor<TId>, 'executionModes'> & {
+    executionModes?: readonly ProviderExecutionMode[]
+  },
+): ProviderDescriptor<TId> {
+  const executionModes = descriptor.executionModes ?? (
+    g4fProviderName(descriptor.id)
+      ? Object.freeze(['browser', 'direct'] as const)
+      : Object.freeze(['browser'] as const)
+  )
+  if (executionModes.length === 0) throw new Error(`Provider ${descriptor.id} must expose at least one execution mode.`)
+  if (executionModes.some((mode) => mode !== 'browser' && mode !== 'direct')) {
+    throw new Error(`Provider ${descriptor.id} execution mode is invalid.`)
+  }
+  return Object.freeze({
+    ...descriptor,
+    executionModes: Object.freeze([...executionModes]),
+  }) as ProviderDescriptor<TId>
 }
 
 export function defineProvider<TId extends ProviderId>(
