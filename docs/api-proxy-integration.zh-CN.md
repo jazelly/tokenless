@@ -650,5 +650,5 @@ Packaged daemon 已通过真实 DeepSeek browser route 完成一次非流式单 
 
 - [CLI 命令](../COMMANDS.zh-CN.md#tokenless-api-proxy) — `tokenless api-proxy`
 - [OpenAPI 契约](../api/tokenless-daemon-api.openapi.json) — 请求与响应 schema
-- [架构](architecture.md) — 执行路径与信任边界
+- [架构](architecture.zh-CN.md) — 执行路径、两层 ownership 与 trust boundary
 - [隐私边界](../PRIVACY.md) — 哪些数据留在本地

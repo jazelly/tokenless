@@ -14,7 +14,7 @@ This index separates user guidance, stable product contracts, implementation arc
 
 ## Concepts and Architecture
 
-- [Architecture](architecture.md) — daemon, managed browser, provider adapter, routing, and control-plane design.
+- [Architecture](architecture.md) — the stable two-layer design: Universal API, Web Agent Harness, provider runtime, ownership, and trust boundaries.
 - [Glossary](glossary.md) — canonical execution, authentication, and direct-provider terms.
 - [Provider Capability Census](provider-capability-census.md) — provider product reconnaissance and evidence gaps; not a support declaration.
 - [Roadmaps](roadmaps/README.md) — active, backlog, and archived delivery plans.
