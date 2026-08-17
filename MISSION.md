@@ -2,12 +2,20 @@
 
 ## Goal
 
-Complete the active P0 tool-calling roadmap so Tokenless can serve an unmodified OpenAI-compatible harness, preserve tool-call history across supported provider strategies, guarantee structured results or explicit protocol errors, and prove the result through the real local DeepSeek Harness and executable software-engineering tasks.
+Complete the active P0 tool-calling roadmap across two product layers: a low-level Universal API that turns visible web providers into OpenAI-compatible provider turns, and a first-party Web Agent Harness that owns Tokenless agent runs, prompt and Skill management, tool execution, MCP, approvals, looping, scaling, and final results. The Universal API must remain directly usable by existing external harnesses such as Pi, Mono, Codex, and DeepSeek Harness, while Tokenless CLI and Tokenless-owned agent flows use the Web Agent Harness layer.
+
+## Two-layer product boundary
+
+Layer 1, the Universal API, is the provider-facing compatibility boundary. It validates caller-provided tools and canonical history, routes model turns to visible or direct providers, and returns validated text, tool calls, structured output, and errors. It does not resolve or execute tools supplied by an external API caller, and it does not own Harness prompts, Skills, approvals, MCP sessions, filesystem roots, or agent-loop state.
+
+Layer 2, the Web Agent Harness, is Tokenless's own agent runtime in `packages/web-agent-harness/`. It owns `AgentRun` state, prompt and Skill compilation, the internal Tool Registry, filesystem and MCP execution, authorization and approvals, batched action loops, recovery, scaling, and final output. It consumes the provider-turn interface through public opaque contracts; the Universal API and provider implementation never import or execute Harness internals.
+
+The same tool-shaped model output can therefore have two valid owners: an external caller executes a tool after using the Universal API, while the Tokenless Web Agent Harness executes a tool proposed inside its own run. These are different access paths and must not be collapsed into one execution policy.
 
 ## Non-goals
 
-- Execute caller-owned tools inside the Universal API.
-- Add a second scheduler, queue, approval system, MCP host, or general conversation database.
+- Execute external caller-owned tools inside the Universal API.
+- Add a second scheduler, queue, approval system, MCP host, or general conversation database inside the Universal API, or duplicate the first-party Harness runtime there.
 - Emulate provider-hosted search, computer use, code interpreter, or MCP as caller function tools.
 - Retry or switch providers after an ambiguous or completed provider submission.
 - Claim access to proprietary provider server source or hidden reasoning.
@@ -41,7 +49,7 @@ That path is the first milestone, not mission completion. Later milestones add t
 - Follow `AGENTS.md`, especially no over-engineering, real-boundary tests, provider credential safety, and browser-profile preservation.
 - Use the existing daemon, provider registry, job model, strict-envelope code, and test boundaries; add no parallel infrastructure.
 - Do not use mocks, fakes, stubs, provider fixtures, intercepted provider responses, or local provider replicas.
-- Keep caller tools ephemeral and scoped to the current request. Tokenless validates but never executes them on the Universal API path.
+- Keep external caller tools ephemeral and scoped to the current request. Tokenless validates but never executes them on the Universal API path; the first-party Web Agent Harness separately executes only its own registered tools under its own authorization and persistence boundary.
 - Treat user/tool/provider content as untrusted data inside protocol framing.
 - Keep provider-local continuation metadata adapter-local; only canonical public history is portable.
 - Every milestone gets one implementation worker, a fresh read-only reviewer, coordinator verification, and exactly one commit on `dev` before the next milestone.
