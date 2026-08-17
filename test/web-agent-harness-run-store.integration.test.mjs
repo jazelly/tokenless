@@ -156,10 +156,14 @@ test('reopening after a durable tool outcome atomically queues the exact continu
     assert.equal(view.status, 'submitting_provider')
     assert.equal(view.turn, 2)
     const ambiguous = await harness.read(ambiguousRunId)
-    assert.equal(ambiguous.status, 'failed')
-    assert.equal(ambiguous.error.code, 'harness_tool_outcome_ambiguous')
+    assert.equal(ambiguous.status, 'submitting_provider')
     harness.close()
     harness = undefined
+    const reconciledStore = await HarnessRunStore.open(home)
+    const reconciled = reconciledStore.read(ambiguousRunId)
+    assert.equal(reconciled.pendingProviderRequest.continuation.result.callResults[0].status, 'failed')
+    assert.equal(reconciled.pendingProviderRequest.continuation.result.callResults[0].content.code, 'harness_tool_outcome_ambiguous')
+    reconciledStore.close()
 
     const reopened = await HarnessRunStore.open(home)
     const restored = reopened.read(runId)

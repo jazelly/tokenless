@@ -69,7 +69,7 @@ export function createStdioMcpToolRegistry(): HarnessToolRegistry {
           undefined,
           { timeout: timeout(server) },
         )
-        if (result.isError === true && authenticationRequired(result.content)) {
+        if (result.isError === true && authenticationRequired(result.structuredContent)) {
           return {
             status: 'authentication_required',
             handoff: `Complete authentication for MCP server '${server.name}' outside Tokenless, then resume this exact call.`,
@@ -163,9 +163,9 @@ function boundedResult(result: unknown): JsonValue {
   }
 }
 
-function authenticationRequired(content: unknown) {
-  const text = JSON.stringify(content).toLowerCase()
-  return text.includes('authentication_required') || text.includes('authorization required') || text.includes('oauth required')
+function authenticationRequired(value: unknown) {
+  return isRecord(value) && Object.keys(value).length === 2 &&
+    value.protocol === 'tokenless.mcp-auth/v1' && value.kind === 'authentication_required'
 }
 
 function jsonValue(value: unknown): JsonValue {
@@ -198,4 +198,8 @@ function resolvedEnvironment(server: AgentMcpServerSpec) {
     if (value !== undefined) environment[key] = value
   }
   return environment
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype)
 }
