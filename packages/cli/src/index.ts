@@ -28,6 +28,7 @@ export {
   waitDaemonJobResult,
   startAgentRun,
   readAgentRun,
+  readAgentRunByAdmission,
   resumeAgentRun,
   cancelAgentRun,
 } from './daemon-client.js'

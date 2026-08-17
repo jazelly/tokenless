@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 
 import type { StartTurnRequest, TurnState } from 'tokenless-web-ai-interaction-protocol'
+import { LocalHttpError } from 'tokenless-web-ai-interaction-protocol/local-http'
 import {
   MarkerExtractionError,
   extractExactlyOneMarkedValue,
@@ -9,6 +10,7 @@ import {
 
 import {
   HarnessSkillError,
+  ProviderTurnDispatchError,
   type CompleteHarnessLocalHttpBootstrapInput,
   type CompleteHarnessLocalHttpContinuationInput,
   type ContinueHarnessLocalHttpTurnInput,
@@ -92,7 +94,7 @@ export async function startHarnessLocalHttpBootstrap(
     text: bootstrapText,
     attachments,
   })
-  return client.start(binding.providerBindingRef, request)
+  return providerPost(() => client.start(binding.providerBindingRef, request))
 }
 
 export async function readHarnessLocalHttpTurn(input: ReadHarnessLocalHttpTurnInput): Promise<TurnState> {
@@ -116,7 +118,14 @@ export async function continueHarnessLocalHttpTurn(input: ContinueHarnessLocalHt
     turn: input.turn - 1,
     ...(input.skillLoads === undefined || input.skillLoads.length === 0 ? {} : { skillLoads: input.skillLoads }),
   })
-  const skillAttachments = []
+  const skillAttachments: Array<{
+    kind: 'skill'
+    name: string
+    attachmentRef: string
+    mediaType: 'text/markdown'
+    byteLength: number
+    sha256: string
+  }> = []
   for (const attachment of skillDelivery.delivery.attachments) {
     const skillBytes = await readFile(attachment.sourcePath)
     const skillDigest = createHash('sha256').update(skillBytes).digest('hex')
@@ -124,7 +133,7 @@ export async function continueHarnessLocalHttpTurn(input: ContinueHarnessLocalHt
     const skill = await client.stage(input.providerBindingRef, skillBytes, { name: attachment.name, bundleWith: staged.attachmentRef })
     skillAttachments.push({ kind: 'skill' as const, name: attachment.name, ...skill })
   }
-  const turnState = await client.continue(input.providerBindingRef, {
+  const turnState = await providerPost(() => client.continue(input.providerBindingRef, {
     protocol: 'tokenless.internal.web-ai-interaction-protocol/v0',
     requestRef: input.requestRef,
     providerRef: input.providerRef,
@@ -139,8 +148,21 @@ export async function continueHarnessLocalHttpTurn(input: ContinueHarnessLocalHt
       }),
       attachments: [{ kind: 'tool_result', name, ...staged }, ...skillAttachments],
     },
-  })
+  }))
   return { turnState, resultSha256: staged.sha256 }
+}
+
+async function providerPost<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation()
+  } catch (error) {
+    if (error instanceof LocalHttpError || error instanceof ProviderTurnDispatchError) throw error
+    throw new ProviderTurnDispatchError(
+      'ambiguous',
+      'harness_provider_dispatch_ambiguous',
+      'Local provider dispatch outcome is ambiguous.',
+    )
+  }
 }
 
 export async function cancelHarnessLocalHttpTurn(input: ReadHarnessLocalHttpTurnInput): Promise<TurnState> {

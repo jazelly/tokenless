@@ -116,6 +116,7 @@ export type StartTurnRequest = NewTurnRequest | ContinueTurnRequest
 
 type TurnStateBase = {
   protocol: typeof WEB_AI_INTERACTION_PROTOCOL_V0
+  requestRef: RequestRef
   turnRef: TurnRef
   providerRef: ProviderRef
   providerBindingRef: ProviderBindingRef

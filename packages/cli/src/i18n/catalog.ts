@@ -42,6 +42,7 @@ export type CliErrorMessageKey = keyof typeof CLI_ERROR_MESSAGES.en
 
 export const ERROR_SUMMARIES_ZH = {
   agent_admission_ref_invalid: 'Harness admission ref 格式无效。',
+  agent_run_selector_conflict: '请只提供 --run-id 或 --admission-ref 其中一个。',
   agent_command_invalid: '请使用 `tokenless agent run|read|resume|cancel`。',
   agent_context_identity_conflict: 'Agent context 中的 identity 相互冲突。',
   agent_context_incomplete: 'Agent context 不完整。',

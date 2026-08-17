@@ -361,6 +361,11 @@ export type ProviderTurnRequest = {
 export type ProviderTurnState = {
   protocol: typeof PROVIDER_TURN_PROTOCOL
   requestRef: string
+  runId: string
+  turn: number
+  nonce: string
+  provider: string
+  profileId: string
   turnRef: string
   providerRef: string
   providerBindingRef: string
@@ -373,13 +378,24 @@ export type ProviderTurnState = {
   error?: { code: string; message: string } | undefined
 }
 
+export type ProviderTurnOperationRequest = Pick<
+  ProviderTurnRequest,
+  'requestRef' | 'runId' | 'turn' | 'nonce' | 'provider' | 'profileId' | 'stagingRoot'
+> & {
+  turnRef: string
+  providerRef: string
+  providerBindingRef: string
+  conversationRef: string
+  expectedDeliverySha256?: string | undefined
+}
+
 export type ProviderTurnClient = {
   /** start and continue must return the original turn when requestRef is replayed. */
   start(request: ProviderTurnRequest): Promise<ProviderTurnState>
-  read(request: Pick<ProviderTurnRequest, 'requestRef' | 'runId' | 'turn' | 'nonce' | 'stagingRoot'> & { turnRef: string; expectedDeliverySha256?: string | undefined }): Promise<ProviderTurnState>
+  read(request: ProviderTurnOperationRequest): Promise<ProviderTurnState>
   continue(request: ProviderTurnRequest): Promise<ProviderTurnState>
-  resume(request: Pick<ProviderTurnRequest, 'requestRef' | 'runId' | 'turn' | 'nonce' | 'stagingRoot'> & { turnRef: string; expectedDeliverySha256?: string | undefined }): Promise<ProviderTurnState>
-  cancel(request: { requestRef: string; turnRef?: string | undefined }): Promise<ProviderTurnCancellation>
+  resume(request: ProviderTurnOperationRequest): Promise<ProviderTurnState>
+  cancel(request: Pick<ProviderTurnRequest, 'requestRef' | 'runId' | 'turn' | 'nonce' | 'provider' | 'profileId'> & Partial<Pick<ProviderTurnOperationRequest, 'turnRef' | 'providerRef' | 'providerBindingRef' | 'conversationRef'>>): Promise<ProviderTurnCancellation>
 }
 
 export type ProviderTurnCancellation =
@@ -442,6 +458,8 @@ export type HarnessRunPhase =
   | 'discovering_tools'
   | 'submitting_provider'
   | 'awaiting_provider'
+  | 'resuming_provider'
+  | 'cancelling_provider'
   | 'waiting_intervention'
   | 'executing_batch'
   | 'terminal'
@@ -474,6 +492,7 @@ export type AgentRunIntervention = {
 export type WebAgentHarness = {
   start(spec: AgentRunSpec): Promise<AgentRunView>
   read(runId: string): Promise<AgentRunView | null>
+  readAdmission(admissionRef: string): Promise<AgentRunView | null>
   resume(runId: string, intervention: AgentRunIntervention): Promise<AgentRunView>
   cancel(runId: string): Promise<AgentRunView>
   close(): void

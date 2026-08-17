@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
 import fsSync from 'node:fs'
 import fs from 'node:fs/promises'
 import { DatabaseSync } from 'node:sqlite'
@@ -7,6 +6,8 @@ import os from 'node:os'
 import path from 'node:path'
 import test, { after, before } from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+
+import { execDeclaredNpmSync } from './helpers/declared-npm.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliDirectory = path.join(root, 'packages/cli')
@@ -146,20 +147,21 @@ async function createPackedCliFixture() {
   const installDirectory = path.join(rootDirectory, 'install')
   await fs.mkdir(packDirectory)
   try {
-    const cliPack = parsePackOutput(execFileSync('npm', ['pack', '--json', '--pack-destination', packDirectory], {
+    const cliPack = parsePackOutput(execDeclaredNpmSync(['pack', '--json', '--pack-destination', packDirectory], {
       cwd: cliDirectory,
       encoding: 'utf8',
     }))
-    const playwrightPack = parsePackOutput(execFileSync('npm', ['pack', '--json', '--pack-destination', packDirectory], {
+    const playwrightPack = parsePackOutput(execDeclaredNpmSync(['pack', '--json', '--pack-destination', packDirectory], {
       cwd: path.join(root, 'node_modules', 'playwright-core'),
       encoding: 'utf8',
     }))
-    execFileSync('npm', [
+    execDeclaredNpmSync([
       'install',
       path.join(packDirectory, cliPack.filename),
       path.join(packDirectory, playwrightPack.filename),
       '--prefix', installDirectory,
       '--omit=optional',
+      '--ignore-scripts',
       '--offline',
       '--no-audit',
       '--no-fund',

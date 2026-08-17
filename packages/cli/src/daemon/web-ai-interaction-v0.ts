@@ -330,8 +330,10 @@ export class WebAiInteractionV0Adapter {
   }
 
   private project(turn: WebAiTurn, job: Job): TurnState {
+    if (!turn.request_ref) throw invalidInput('web ai turn request identity is unavailable')
     const base = {
       protocol: WEB_AI_INTERACTION_PROTOCOL_V0,
+      requestRef: turn.request_ref,
       turnRef: turn.turn_ref,
       providerRef: turn.provider_ref,
       providerBindingRef: turn.binding_ref,

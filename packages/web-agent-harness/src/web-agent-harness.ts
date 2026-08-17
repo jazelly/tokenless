@@ -79,6 +79,8 @@ class DurableWebAgentHarness implements WebAgentHarness {
       if (record.phase === 'discovering_tools') record = await this.discoverTools(record)
       else if (record.phase === 'submitting_provider') record = await this.submitPending(record)
       else if (record.phase === 'awaiting_provider') record = await this.readProvider(record)
+      else if (record.phase === 'resuming_provider') record = await this.resumeProvider(record)
+      else if (record.phase === 'cancelling_provider') record = await this.cancelProvider(record)
       else if (record.phase === 'executing_batch') record = await this.executeAndContinue(record)
       return publicView(record)
     } catch (error) {
@@ -88,23 +90,22 @@ class DurableWebAgentHarness implements WebAgentHarness {
     }
   }
 
+  async readAdmission(admissionRef: string): Promise<AgentRunView | null> {
+    const record = this.store.readByAdmission(admissionRef)
+    return record ? publicView(record) : null
+  }
+
   async resume(runId: string, intervention: AgentRunIntervention): Promise<AgentRunView> {
     let record = this.required(runId)
     try {
       if (record.providerTurn?.lifecycle === 'waiting_for_user') {
         if (intervention.providerReady !== true) throw new HarnessSkillError('harness_provider_resume_invalid', 'Provider intervention must be explicitly confirmed.')
-        const providerTurn = await this.provider.resume({
-          runId,
-          requestRef: record.requestRef,
-          turn: record.turn,
-          nonce: record.nonce,
-          stagingRoot: record.spec.stagingRoot,
-          turnRef: record.providerTurn.turnRef,
-          expectedDeliverySha256: record.providerTurn.deliverySha256,
-        })
-        assertProviderTurnIdentity(record, providerTurn)
-        record = this.store.update(runId, record.revision, (current) => ({ ...current, providerTurn, status: 'running', phase: 'awaiting_provider' }))
-        return publicView(record)
+        record = this.store.update(runId, record.revision, (current) => ({
+          ...current,
+          phase: 'resuming_provider',
+          pendingProviderOperation: { kind: 'resume', requestRef: current.requestRef, turnRef: current.providerTurn!.turnRef },
+        }))
+        return publicView(await this.resumeProvider(record))
       } else if (record.status === 'waiting_for_approval') {
         const approvals = new Map((intervention.approvals ?? []).map((item) => [item.callId, item.argumentsDigest]))
         const calls = record.calls.map((call) => {
@@ -161,21 +162,19 @@ class DurableWebAgentHarness implements WebAgentHarness {
           error: { code: 'harness_cancel_outcome_ambiguous', message: 'A dispatched tool call requires reconciliation and was not reported cancelled.' },
         }))
       } else if (record.phase === 'submitting_provider' && record.providerTurn?.requestRef !== record.requestRef) {
-        const cancellation = await this.provider.cancel({ requestRef: record.requestRef })
-        assertProviderCancellationIdentity(record.requestRef, cancellation)
-        record = this.store.update(runId, record.revision, (current) => cancellation.kind === 'turn'
-          ? { ...current, providerTurn: cancellation.turn, status: 'cancelled', phase: 'terminal', pendingProviderRequest: undefined }
-          : { ...current, status: 'cancelled', phase: 'terminal', pendingProviderRequest: undefined })
-      } else if (record.providerTurn && ['queued', 'running', 'waiting_for_user'].includes(record.providerTurn.lifecycle)) {
-        const cancellation = await this.provider.cancel({ requestRef: record.requestRef, turnRef: record.providerTurn.turnRef })
-        assertProviderCancellationIdentity(record.requestRef, cancellation)
         record = this.store.update(runId, record.revision, (current) => ({
           ...current,
-          ...(cancellation.kind === 'turn' ? { providerTurn: cancellation.turn } : {}),
-          status: 'cancelled',
-          phase: 'terminal',
-          pendingProviderRequest: undefined,
+          phase: 'cancelling_provider',
+          pendingProviderOperation: { kind: 'cancel', requestRef: current.requestRef },
         }))
+        record = await this.cancelProvider(record)
+      } else if (record.providerTurn && ['queued', 'running', 'waiting_for_user'].includes(record.providerTurn.lifecycle)) {
+        record = this.store.update(runId, record.revision, (current) => ({
+          ...current,
+          phase: 'cancelling_provider',
+          pendingProviderOperation: { kind: 'cancel', requestRef: current.requestRef, turnRef: current.providerTurn!.turnRef },
+        }))
+        record = await this.cancelProvider(record)
       } else {
         record = this.store.update(runId, record.revision, (current) => ({ ...current, status: 'cancelled', phase: 'terminal' }))
       }
@@ -187,6 +186,74 @@ class DurableWebAgentHarness implements WebAgentHarness {
   }
 
   close() { this.store.close() }
+
+  private async resumeProvider(record: HarnessRunRecord) {
+    const turn = record.providerTurn
+    if (!turn || record.pendingProviderOperation?.kind !== 'resume') throw new HarnessSkillError('harness_provider_intent_missing', 'Harness provider resume intent is missing.')
+    assertProviderTurnIdentity(record, turn)
+    try {
+      const providerTurn = await this.provider.resume({
+        runId: record.runId, requestRef: record.requestRef, turn: record.turn, nonce: record.nonce,
+        provider: record.spec.provider, profileId: record.spec.profileId, stagingRoot: record.spec.stagingRoot,
+        turnRef: turn.turnRef, providerRef: turn.providerRef, providerBindingRef: turn.providerBindingRef,
+        conversationRef: turn.conversationRef, expectedDeliverySha256: turn.deliverySha256,
+      })
+      assertProviderTurnIdentity(record, providerTurn)
+      const terminal = providerTurn.lifecycle === 'failed' || providerTurn.lifecycle === 'cancelled'
+      return this.store.update(record.runId, record.revision, (current) => ({
+        ...current,
+        providerTurn,
+        pendingProviderOperation: undefined,
+        status: providerStatus(providerTurn.lifecycle),
+        phase: terminal ? 'terminal' : 'awaiting_provider',
+        ...(providerTurn.lifecycle === 'failed'
+          ? { error: providerTurn.error ?? { code: 'harness_provider_failed', message: 'Provider turn failed.' } }
+          : {}),
+      }))
+    } catch (error) {
+      if (error instanceof ProviderTurnDispatchError && error.dispatch === 'ambiguous') return record
+      return this.fail(record, error)
+    }
+  }
+
+  private async cancelProvider(record: HarnessRunRecord) {
+    const operation = record.pendingProviderOperation
+    if (operation?.kind !== 'cancel') throw new HarnessSkillError('harness_provider_intent_missing', 'Harness provider cancel intent is missing.')
+    const prior = operation.turnRef ? record.providerTurn : undefined
+    if (prior) assertProviderTurnIdentity(record, prior)
+    try {
+      const cancellation = await this.provider.cancel({
+        requestRef: record.requestRef, runId: record.runId, turn: record.turn, nonce: record.nonce,
+        provider: record.spec.provider, profileId: record.spec.profileId,
+        ...(prior ? {
+          turnRef: prior.turnRef, providerRef: prior.providerRef,
+          providerBindingRef: prior.providerBindingRef, conversationRef: prior.conversationRef,
+        } : {}),
+      })
+      assertProviderCancellationIdentity(record.requestRef, cancellation)
+      if (cancellation.kind === 'cancelled_before_start') {
+        return this.store.update(record.runId, record.revision, (current) => ({
+          ...current, status: 'cancelled', phase: 'terminal', pendingProviderRequest: undefined, pendingProviderOperation: undefined,
+        }))
+      }
+      assertProviderTurnIdentity(record, cancellation.turn)
+      const terminal = cancellation.turn.lifecycle === 'cancelled' || cancellation.turn.lifecycle === 'failed'
+      return this.store.update(record.runId, record.revision, (current) => ({
+        ...current,
+        providerTurn: cancellation.turn,
+        pendingProviderRequest: undefined,
+        pendingProviderOperation: undefined,
+        status: cancellation.turn.lifecycle === 'cancelled' ? 'cancelled' : providerStatus(cancellation.turn.lifecycle),
+        phase: terminal ? 'terminal' : 'awaiting_provider',
+        ...(cancellation.turn.lifecycle === 'failed'
+          ? { error: cancellation.turn.error ?? { code: 'harness_provider_failed', message: 'Provider turn failed.' } }
+          : {}),
+      }))
+    } catch (error) {
+      if (error instanceof ProviderTurnDispatchError && error.dispatch === 'ambiguous') return record
+      return this.fail(record, error)
+    }
+  }
 
   private async discoverTools(record: HarnessRunRecord) {
     const catalog = await this.tools.catalog(record.spec.mcpServers ?? [])
@@ -203,13 +270,19 @@ class DurableWebAgentHarness implements WebAgentHarness {
   private async readProvider(record: HarnessRunRecord) {
     const existing = record.providerTurn
     if (!existing) throw new HarnessSkillError('harness_provider_state_missing', 'Harness provider turn is missing.')
+    assertProviderTurnIdentity(record, existing)
     const providerTurn = await this.provider.read({
       runId: record.runId,
       requestRef: record.requestRef,
       turn: record.turn,
       nonce: record.nonce,
+      provider: record.spec.provider,
+      profileId: record.spec.profileId,
       stagingRoot: record.spec.stagingRoot,
       turnRef: existing.turnRef,
+      providerRef: existing.providerRef,
+      providerBindingRef: existing.providerBindingRef,
+      conversationRef: existing.conversationRef,
       expectedDeliverySha256: existing.deliverySha256,
     })
     assertProviderTurnIdentity(record, providerTurn)
@@ -417,6 +490,7 @@ class DurableWebAgentHarness implements WebAgentHarness {
         status: 'failed',
         phase: 'terminal',
         pendingProviderRequest: undefined,
+        pendingProviderOperation: undefined,
         error: safe,
       }))
     } catch (failure) {
@@ -599,6 +673,7 @@ function sanitizeLimits(value: unknown): AgentRunSpec['limits'] {
 function sanitizeMcpServers(value: unknown): NonNullable<AgentRunSpec['mcpServers']> {
   if (value === undefined) return []
   if (!Array.isArray(value) || value.length > 16) throw new HarnessSkillError('harness_spec_invalid', 'mcpServers is invalid.')
+  const names = new Set<string>()
   return value.map((item) => {
     if (!isRecord(item)) throw new HarnessSkillError('harness_spec_invalid', 'mcpServers is invalid.')
     assertExactKeys(item, ['name', 'command', 'args', 'envKeys', 'timeoutMs', 'enabledTools'], 'MCP server')
@@ -606,6 +681,8 @@ function sanitizeMcpServers(value: unknown): NonNullable<AgentRunSpec['mcpServer
       typeof item.command !== 'string' || item.command.trim() === '' || item.command.length > 1024 || item.command.includes('\0')) {
       throw new HarnessSkillError('harness_spec_invalid', 'mcpServers is invalid.')
     }
+    if (names.has(item.name)) throw new HarnessSkillError('harness_spec_invalid', 'MCP server names must be unique.')
+    names.add(item.name)
     const args = sanitizeStringArray(item.args, 64, 4096, 'MCP args')
     const envKeys = sanitizeStringArray(item.envKeys, 64, 128, 'MCP envKeys', /^[A-Za-z_][A-Za-z0-9_]*$/u)
     const enabledTools = sanitizeStringArray(item.enabledTools, 256, 128, 'MCP enabledTools')
@@ -628,6 +705,7 @@ function sanitizeStringArray(value: unknown, maxItems: number, maxLength: number
   if (!Array.isArray(value) || value.length > maxItems || value.some((item) => typeof item !== 'string' || item.length < 1 || item.length > maxLength || item.includes('\0') || (pattern && !pattern.test(item)))) {
     throw new HarnessSkillError('harness_spec_invalid', `${label} is invalid.`)
   }
+  if (new Set(value).size !== value.length) throw new HarnessSkillError('harness_spec_invalid', `${label} must not contain duplicates.`)
   return value.map(String)
 }
 
@@ -695,12 +773,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function assertProviderTurnIdentity(record: HarnessRunRecord, providerTurn: ProviderTurnState) {
-  if (providerTurn.protocol !== PROVIDER_TURN_PROTOCOL || providerTurn.requestRef !== record.requestRef) {
+  if (providerTurn.protocol !== PROVIDER_TURN_PROTOCOL || providerTurn.requestRef !== record.requestRef ||
+    providerTurn.runId !== record.runId || providerTurn.turn !== record.turn || providerTurn.nonce !== record.nonce ||
+    providerTurn.provider !== record.spec.provider || providerTurn.profileId !== record.spec.profileId) {
     throw new HarnessSkillError('harness_provider_identity_mismatch', 'Provider turn does not match the durable request identity.')
   }
   const prior = record.providerTurn
   if (prior && (
-    (record.phase !== 'submitting_provider' && providerTurn.turnRef !== prior.turnRef) ||
+    (prior.requestRef === record.requestRef && providerTurn.turnRef !== prior.turnRef) ||
     providerTurn.providerRef !== prior.providerRef ||
     providerTurn.providerBindingRef !== prior.providerBindingRef ||
     providerTurn.conversationRef !== prior.conversationRef

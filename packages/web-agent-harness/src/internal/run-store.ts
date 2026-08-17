@@ -53,6 +53,11 @@ export type HarnessRunRecord = {
   requestRef: string
   catalog: readonly HarnessToolCatalogEntry[]
   pendingProviderRequest?: ProviderTurnRequest | undefined
+  pendingProviderOperation?: {
+    kind: 'resume' | 'cancel'
+    requestRef: string
+    turnRef?: string | undefined
+  } | undefined
   providerTurn?: ProviderTurnState | undefined
   batch?: HarnessActionBatch | undefined
   batchId?: string | undefined
@@ -160,6 +165,15 @@ export class HarnessRunStore {
     return record
   }
 
+  readByAdmission(admissionRef: string): HarnessRunRecord | null {
+    this.assertOpen()
+    assertAdmissionRef(admissionRef)
+    const row = this.#db.prepare(
+      'SELECT run_id FROM harness_agent_run_admissions WHERE admission_ref = ?',
+    ).get(admissionRef) as { run_id: string } | undefined
+    return row ? this.read(row.run_id) : null
+  }
+
   update(runId: string, expectedRevision: number, mutate: (current: HarnessRunRecord) => HarnessRunRecord) {
     return this.transaction(() => {
       const current = this.read(runId)
@@ -214,11 +228,15 @@ function assertRunId(value: string) {
   if (!RUN_ID.test(value)) throw new HarnessSkillError('harness_run_id_invalid', 'runId is not a canonical Harness run reference.')
 }
 
+function assertAdmissionRef(value: string) {
+  if (!/^admission:[a-f0-9]{32,64}$/u.test(value)) throw new HarnessSkillError('harness_admission_ref_invalid', 'admissionRef is invalid.')
+}
+
 function validateRecord(record: HarnessRunRecord) {
   assertRunId(record.runId)
   if (
     record.protocol !== HARNESS_RUN_PROTOCOL ||
-    !['discovering_tools', 'submitting_provider', 'awaiting_provider', 'waiting_intervention', 'executing_batch', 'terminal', 'reconciliation_required'].includes(record.phase) ||
+    !['discovering_tools', 'submitting_provider', 'awaiting_provider', 'resuming_provider', 'cancelling_provider', 'waiting_intervention', 'executing_batch', 'terminal', 'reconciliation_required'].includes(record.phase) ||
     !Number.isSafeInteger(record.revision) || record.revision < 0 ||
     !Number.isSafeInteger(record.turn) || record.turn < 1 ||
     typeof record.nonce !== 'string' || record.nonce.length < 8 ||
@@ -233,6 +251,16 @@ function validateRecord(record: HarnessRunRecord) {
   }
   if (record.phase === 'awaiting_provider' && !record.providerTurn) {
     throw new HarnessSkillError('harness_run_state_invalid', 'Harness provider turn is missing.')
+  }
+  if ((record.phase === 'resuming_provider' || record.phase === 'cancelling_provider') &&
+    (!record.pendingProviderOperation || record.pendingProviderOperation.kind !== (record.phase === 'resuming_provider' ? 'resume' : 'cancel'))) {
+    throw new HarnessSkillError('harness_run_state_invalid', 'Harness provider operation intent is missing.')
+  }
+  if (record.pendingProviderOperation && (
+    record.pendingProviderOperation.requestRef !== record.requestRef ||
+    (record.pendingProviderOperation.turnRef !== undefined && record.pendingProviderOperation.turnRef !== record.providerTurn?.turnRef)
+  )) {
+    throw new HarnessSkillError('harness_run_state_invalid', 'Harness provider operation intent does not match its frozen turn.')
   }
   if (!record.spec || typeof record.spec !== 'object' || !/^admission:[a-f0-9]{32,64}$/u.test(record.spec.admissionRef)) {
     throw new HarnessSkillError('harness_run_state_invalid', 'Harness admissionRef is invalid.')

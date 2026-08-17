@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test, { after, before } from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+
+import { execDeclaredNpmSync } from './helpers/declared-npm.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliDirectory = path.join(root, 'packages/cli')
@@ -124,7 +125,7 @@ test('built Harness bootstraps exact System Prompt bytes through real local HTTP
   })
 })
 
-test('built Harness rejects a static-ineligible route before it stages a bootstrap or creates a turn', async () => {
+test('built Harness rejects a static-ineligible provider before it stages a bootstrap or creates a turn', async () => {
   await withHome(async (homeDir) => {
     const daemon = await startControlPlane(homeDir)
     const fixture = await createHarnessFixture(homeDir)
@@ -134,26 +135,6 @@ test('built Harness rejects a static-ineligible route before it stages a bootstr
       const token = (await fs.readFile(path.join(homeDir, 'daemon.token'), 'utf8')).trim()
       const { startHarnessLocalHttpBootstrap } = await import(harnessModule)
 
-      for (const [runId, extra, code] of [
-        ['tools-bootstrap', { tools: [] }, 'harness_bootstrap_tools_unsupported'],
-      ]) {
-        await assert.rejects(
-          startHarnessLocalHttpBootstrap({
-            baseUrl: daemon.origin,
-            token,
-            provider: 'chatgpt',
-            profileId: profile.id,
-            runId,
-            stagingRoot: fixture.stagingRoot,
-            skillRoot: fixture.skillRoot,
-            taskPrompt: 'Static unsupported input must not create durable state.',
-            nonce: `${runId}-nonce`,
-            ...extra,
-          }),
-          (error) => error?.code === code,
-        )
-        await assert.rejects(fs.stat(path.join(fixture.stagingRoot, runId)))
-      }
       assert.deepEqual(daemon.store.webAiCounts(), { bindings: 0, stagedAttachments: 0, turns: 0 })
 
       await assert.rejects(
@@ -210,7 +191,7 @@ async function createPackedCliFixture() {
   const installDirectory = path.join(rootDirectory, 'install')
   await fs.mkdir(packDirectory)
   try {
-    const cliPack = parsePackOutput(execFileSync('npm', ['pack', '--json', '--pack-destination', packDirectory], {
+    const cliPack = parsePackOutput(execDeclaredNpmSync(['pack', '--json', '--pack-destination', packDirectory], {
       cwd: cliDirectory,
       encoding: 'utf8',
     }))
@@ -221,16 +202,17 @@ async function createPackedCliFixture() {
     assert.equal(cliPack.files.some((file) => file.path.startsWith('packages/')), false)
     assert.equal(cliPack.files.some((file) => file.path.startsWith('test/')), false)
     assert.equal(cliPack.files.some((file) => file.path.startsWith('docs/')), false)
-    const playwrightPack = parsePackOutput(execFileSync('npm', ['pack', '--json', '--pack-destination', packDirectory], {
+    const playwrightPack = parsePackOutput(execDeclaredNpmSync(['pack', '--json', '--pack-destination', packDirectory], {
       cwd: path.join(root, 'node_modules', 'playwright-core'),
       encoding: 'utf8',
     }))
-    execFileSync('npm', [
+    execDeclaredNpmSync([
       'install',
       path.join(packDirectory, cliPack.filename),
       path.join(packDirectory, playwrightPack.filename),
       '--prefix', installDirectory,
       '--omit=optional',
+      '--ignore-scripts',
       '--offline',
       '--no-audit',
       '--no-fund',

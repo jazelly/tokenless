@@ -151,6 +151,26 @@ test('spec secrets are rejected before SQLite admission and deterministic HTTP d
       assert.equal((await fs.readFile(path.join(home, file))).includes(Buffer.from('must-not-persist')), false)
     }
 
+    const correctedAdmissionRef = `admission:${'6'.repeat(32)}`
+    await assert.rejects(harness.start({
+      admissionRef: correctedAdmissionRef,
+      provider: 'chatgpt', profileId: profile.id, taskPrompt: 'Reject duplicate servers.', stagingRoot: path.join(root, 'staging'),
+      mcpServers: [everythingServer, { ...everythingServer }],
+    }), (error) => error?.code === 'harness_spec_invalid')
+    await assert.rejects(harness.start({
+      admissionRef: correctedAdmissionRef,
+      provider: 'chatgpt', profileId: profile.id, taskPrompt: 'Reject duplicate environment keys.', stagingRoot: path.join(root, 'staging'),
+      mcpServers: [{ ...everythingServer, envKeys: ['TOKENLESS_SAFE_ENV', 'TOKENLESS_SAFE_ENV'] }],
+    }), (error) => error?.code === 'harness_spec_invalid')
+    assert.equal(databaseRunCount(home), 0)
+    const corrected = await harness.start({
+      admissionRef: correctedAdmissionRef,
+      provider: 'chatgpt', profileId: profile.id, taskPrompt: 'Accept the corrected server list.', stagingRoot: path.join(root, 'staging'),
+      mcpServers: [everythingServer],
+    })
+    assert.equal(corrected.admissionRef, correctedAdmissionRef)
+    assert.equal(databaseRunCount(home), 1)
+
     const admitted = await harness.start({
       admissionRef: `admission:${'5'.repeat(32)}`,
       provider: 'unsupported-provider', profileId: profile.id, taskPrompt: 'Fail deterministically.',
@@ -230,6 +250,11 @@ async function seededBatch({ suffix, calls, needs, status, phase, servers = [eve
 async function readRecord(home, runId) {
   const store = await HarnessRunStore.open(home)
   try { return store.read(runId) } finally { store.close() }
+}
+
+function databaseRunCount(home) {
+  const database = new DatabaseSync(path.join(home, 'harness.sqlite3'))
+  try { return database.prepare('SELECT COUNT(*) AS count FROM harness_agent_runs').get().count } finally { database.close() }
 }
 
 function digest(value) {

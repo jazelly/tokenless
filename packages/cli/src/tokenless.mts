@@ -64,6 +64,7 @@ import {
   providerWakeUrl,
   readTokenlessConfig,
   readAgentRun,
+  readAgentRunByAdmission,
   hasConfiguredTokenlessLanguage,
   removeStagedVisibleAttachmentBundle,
   resolveChromiumBrowser,
@@ -2862,7 +2863,7 @@ async function agentCommand(subcommand: string | undefined, args: CliArgs) {
     } catch (error) {
       const failure = error as CliError
       if (failure.retryable) {
-        failure.context = { ...(failure.context ?? {}), admissionRef, recoveryCommand: `tokenless agent run --admission-ref ${admissionRef}` }
+        failure.context = { ...(failure.context ?? {}), admissionRef, recoveryCommand: `tokenless agent read --admission-ref ${admissionRef} --json` }
         failure.message = `${failure.message} ${t('agentAdmissionRetry', { admissionRef })}`
       }
       throw failure
@@ -2871,11 +2872,18 @@ async function agentCommand(subcommand: string | undefined, args: CliArgs) {
     return
   }
 
-  const runId = requiredAgentRunId(args.runId)
   if (subcommand === 'read') {
-    printAgentRunView(await readAgentRun({ ...client, runId }), args)
+    if (args.runId !== undefined && args.admissionRef !== undefined) {
+      throw usageError('agent_run_selector_conflict', 'Use either --run-id or --admission-ref, not both.')
+    }
+    if (args.admissionRef !== undefined) {
+      printAgentRunView(await readAgentRunByAdmission({ ...client, admissionRef: agentAdmissionRef(args.admissionRef) }), args)
+    } else {
+      printAgentRunView(await readAgentRun({ ...client, runId: requiredAgentRunId(args.runId) }), args)
+    }
     return
   }
+  const runId = requiredAgentRunId(args.runId)
   if (subcommand === 'cancel') {
     printAgentRunView(await cancelAgentRun({ ...client, runId }), args)
     return
@@ -5360,7 +5368,7 @@ function createCommandContracts(): CommandContract[] {
     { command: 'version', usage: ['tokenless --version', 'tokenless -V', 'tokenless version'], options: [] },
     { command: 'run', usage: [`tokenless run [--capability <capability>] --provider ${VISIBLE_PROVIDER_USAGE} [--execution-mode browser|direct] --prompt <text> --json`], options: runOptions },
     { command: 'agent', subcommand: 'run', usage: [`tokenless agent run --provider ${VISIBLE_PROVIDER_USAGE} [--profile <slug>] (--prompt <text>|--prompt-file <path>) [--admission-ref <ref>] [--skill <name>] [--mcp-config <path>] [--max-turns <count>] --json`], options: ['home', 'json', 'profile', 'provider', 'prompt', 'promptFile', 'admissionRef', 'skills', 'mcpConfig', 'maxTurns', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
-    { command: 'agent', subcommand: 'read', usage: ['tokenless agent read --run-id <run-id> --json'], options: ['home', 'json', 'runId', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
+    { command: 'agent', subcommand: 'read', usage: ['tokenless agent read (--run-id <run-id>|--admission-ref <ref>) --json'], options: ['home', 'json', 'runId', 'admissionRef', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
     { command: 'agent', subcommand: 'resume', usage: ['tokenless agent resume --run-id <run-id> (--approve <call-id:digest>|--auth-completed <call-id:digest>|--answer <need-id=json>|--provider-ready) --json'], options: ['home', 'json', 'runId', 'approvals', 'authenticationCompleted', 'answers', 'providerReady', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
     { command: 'agent', subcommand: 'cancel', usage: ['tokenless agent cancel --run-id <run-id> --json'], options: ['home', 'json', 'runId', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
     { command: 'capabilities', subcommand: 'list', usage: ['tokenless capabilities list --json'], options: ['json'] },

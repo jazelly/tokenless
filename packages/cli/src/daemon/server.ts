@@ -581,12 +581,14 @@ async function handleHarnessRequest(
   url: URL,
 ) {
   const route = /^\/v1\/agent\/runs(?:\/([^/]+)(?:\/(resume|cancel))?)?$/.exec(url.pathname)
-  if (!route) return false
+  const admissionRoute = /^\/v1\/agent\/admissions\/([^/]+)$/.exec(url.pathname)
+  if (!route && !admissionRoute) return false
   const modulePath = '../../web-agent-harness/src/index.js'
   const harnessModule = await import(modulePath) as {
     openWebAgentHarness(input: Record<string, unknown>): Promise<{
       start(spec: Record<string, unknown>): Promise<unknown>
       read(runId: string): Promise<unknown>
+      readAdmission(admissionRef: string): Promise<unknown>
       resume(runId: string, intervention: Record<string, unknown>): Promise<unknown>
       cancel(runId: string): Promise<unknown>
       close(): void
@@ -600,6 +602,17 @@ async function handleHarnessRequest(
     toolRegistry: harnessModule.createStdioMcpToolRegistry(),
   })
   try {
+    if (method === 'GET' && admissionRoute) {
+      const admissionRef = decodeURIComponent(admissionRoute[1] ?? '')
+      const view = await harness.readAdmission(admissionRef)
+      if (!view) {
+        writeJson(response, 404, { error: { code: 'harness_admission_missing', message: 'Harness admission was not found.', retryable: false } })
+        return true
+      }
+      writeJson(response, 200, view)
+      return true
+    }
+    if (!route) return false
     const encodedRunId = route[1]
     const runId = encodedRunId ? decodeURIComponent(encodedRunId) : undefined
     const action = route[2]

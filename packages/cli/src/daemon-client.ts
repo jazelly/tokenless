@@ -264,6 +264,10 @@ export async function readAgentRun(options: AgentRunClientOptions & { runId: str
   return agentRunRequest(options, `/v1/agent/runs/${encodeURIComponent(options.runId)}`, 'GET')
 }
 
+export async function readAgentRunByAdmission(options: AgentRunClientOptions & { admissionRef: string }) {
+  return agentRunRequest(options, `/v1/agent/admissions/${encodeURIComponent(options.admissionRef)}`, 'GET')
+}
+
 export async function resumeAgentRun(options: AgentRunClientOptions & { runId: string }) {
   return agentRunRequest(options, `/v1/agent/runs/${encodeURIComponent(options.runId)}/resume`, 'POST')
 }
