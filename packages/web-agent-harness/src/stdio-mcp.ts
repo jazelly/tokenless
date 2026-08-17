@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 
@@ -31,7 +33,7 @@ export function createStdioMcpToolRegistry(): HarnessToolRegistry {
               server: server.name,
               serverToolName: tool.name,
               description: boundedText(tool.description ?? `MCP tool ${tool.name} from ${server.name}.`, 4096),
-              inputSchema: jsonValue(tool.inputSchema),
+              inputSchema: normalizedInputSchema(tool.inputSchema),
               source: 'mcp',
               readOnly: false,
               approval: 'always',
@@ -154,7 +156,11 @@ function boundedResult(result: unknown): JsonValue {
   const value = jsonValue(result)
   const serialized = JSON.stringify(value)
   if (Buffer.byteLength(serialized, 'utf8') <= MAX_RESULT_BYTES) return value
-  return `${serialized.slice(0, MAX_RESULT_BYTES / 2)}\n[Tool result truncated by Tokenless]`
+  return {
+    truncated: true,
+    byteLength: Buffer.byteLength(serialized, 'utf8'),
+    sha256: createHash('sha256').update(serialized).digest('hex'),
+  }
 }
 
 function authenticationRequired(content: unknown) {
@@ -168,6 +174,14 @@ function jsonValue(value: unknown): JsonValue {
   } catch {
     throw new HarnessSkillError('mcp_result_invalid', 'MCP returned a non-JSON result.')
   }
+}
+
+function normalizedInputSchema(value: unknown): JsonValue {
+  const schema = jsonValue(value)
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return schema
+  const { $schema, ...rest } = schema
+  if ($schema === undefined || $schema === 'http://json-schema.org/draft-07/schema#') return rest
+  return schema
 }
 
 function redactedMcpError(code: string, server: string, error: unknown) {

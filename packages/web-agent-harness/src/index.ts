@@ -50,10 +50,14 @@ export type {
   HarnessBootstrapTurn,
   HarnessBootstrapTurnPreparation,
   CompleteHarnessLocalHttpBootstrapInput,
+  CompleteHarnessLocalHttpContinuationInput,
+  ContinueHarnessLocalHttpTurnInput,
   HarnessFinalOutputContract,
   HarnessFinalResponse,
   HarnessModelResponse,
   HarnessLocalHttpBootstrapCompletion,
+  HarnessLocalHttpContinuationCompletion,
+  HarnessLocalHttpContinuationStart,
   HarnessLocalHttpFinalizedBootstrap,
   HarnessMissionStatus,
   HarnessMissionView,
@@ -112,9 +116,15 @@ export {
 export {
   cancelHarnessLocalHttpTurn,
   completeHarnessLocalHttpBootstrap,
+  completeHarnessLocalHttpContinuation,
+  continueHarnessLocalHttpTurn,
   readHarnessLocalHttpTurn,
   startHarnessLocalHttpBootstrap,
 } from './local-http-bootstrap.js'
+
+export {
+  createLocalHttpProviderTurnClient,
+} from './local-http-provider-client.js'
 
 export {
   openSequentialHarnessMissionQueue,

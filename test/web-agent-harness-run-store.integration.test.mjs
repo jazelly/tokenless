@@ -10,7 +10,7 @@ test('Harness run state survives reopening the real SQLite database with exact c
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-harness-store-'))
   const home = path.join(root, 'home')
   const now = new Date().toISOString()
-  const runId = `run:${'1'.repeat(32)}`
+  const runId = `run_${'1'.repeat(32)}`
   try {
     const first = await HarnessRunStore.open(home)
     const initial = first.create({

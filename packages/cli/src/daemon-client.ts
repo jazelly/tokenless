@@ -17,6 +17,11 @@ export type DaemonClientOptions = {
   signal?: AbortSignal | undefined
 }
 
+export type AgentRunClientOptions = DaemonClientOptions & {
+  runId?: string | undefined
+  body?: Record<string, unknown> | undefined
+}
+
 export type DaemonJobStatus = 'queued' | 'claimed' | 'running' | 'waiting_for_user' | 'succeeded' | 'failed' | 'canceled' | 'timed_out'
 
 export type DaemonJob = {
@@ -244,6 +249,39 @@ export async function readDaemonToken({ homeDir = tokenlessHome() }: DaemonClien
     throw daemonClientError('daemon_token_unavailable', `Tokenless daemon control token is empty at ${tokenPath}.`, true)
   }
   return token
+}
+
+export async function startAgentRun(options: AgentRunClientOptions) {
+  return agentRunRequest(options, '/v1/agent/runs', 'POST')
+}
+
+export async function readAgentRun(options: AgentRunClientOptions & { runId: string }) {
+  return agentRunRequest(options, `/v1/agent/runs/${encodeURIComponent(options.runId)}`, 'GET')
+}
+
+export async function resumeAgentRun(options: AgentRunClientOptions & { runId: string }) {
+  return agentRunRequest(options, `/v1/agent/runs/${encodeURIComponent(options.runId)}/resume`, 'POST')
+}
+
+export async function cancelAgentRun(options: AgentRunClientOptions & { runId: string }) {
+  return agentRunRequest({ ...options, body: {} }, `/v1/agent/runs/${encodeURIComponent(options.runId)}/cancel`, 'POST')
+}
+
+async function agentRunRequest(options: AgentRunClientOptions, requestPath: string, method: 'GET' | 'POST') {
+  const daemon = await authenticatedDaemonAccess({
+    daemonUrl: options.daemonUrl,
+    homeDir: options.homeDir,
+    requestTimeoutMs: options.requestTimeoutMs,
+  })
+  return daemonRequest<Record<string, unknown>>({
+    daemonUrl: daemon.daemonUrl,
+    method,
+    path: requestPath,
+    ...(method === 'POST' ? { body: options.body ?? {} } : {}),
+    token: daemon.token,
+    timeoutMs: options.requestTimeoutMs,
+    signal: options.signal,
+  })
 }
 
 export async function createDaemonJob({

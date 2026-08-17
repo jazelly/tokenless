@@ -19,7 +19,7 @@ import {
 } from '../contracts.js'
 
 const DATABASE_FILE = 'harness.sqlite3'
-const RUN_ID = /^run:[a-f0-9]{32}$/
+const RUN_ID = /^run_[a-f0-9]{32}$/
 
 export type DurableCall = {
   id: string

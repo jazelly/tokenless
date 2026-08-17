@@ -1,5 +1,6 @@
 import http, { type IncomingMessage, type ServerResponse } from 'node:http'
 import net from 'node:net'
+import path from 'node:path'
 import { tokenlessPackageVersion } from '../platform-package.js'
 import { DAEMON_CONTROL_API_REVISION } from '../schema-ids.js'
 import { normalizeBrowserVisibility } from '../browser-visibility.js'
@@ -126,7 +127,7 @@ export async function serveHttp({
   const apiProxy = new ApiProxyAdapter(store, async () => await runtimeController?.wake(), g4fService?.client)
   const imageGeneration = new ImageGenerationAdapter(store, async () => await runtimeController?.wake(), g4fService?.client)
   server = http.createServer((request, response) => {
-    void handleRequest(store, close, () => active, deactivate, runtimeController, g4fService, uiServer, webAi, apiProxy, imageGeneration, featureBench, request, response)
+    void handleRequest(store, close, () => active, deactivate, runtimeController, g4fService, uiServer, webAi, apiProxy, imageGeneration, featureBench, origin(), request, response)
   })
   await new Promise<void>((resolve, reject) => {
     const onError = (error: Error) => {
@@ -196,6 +197,7 @@ async function handleRequest(
   apiProxy: ApiProxyAdapter,
   imageGeneration: ImageGenerationAdapter,
   featureBench: FeatureBenchChannelManager,
+  daemonOrigin: string,
   request: IncomingMessage,
   response: ServerResponse
 ) {
@@ -257,6 +259,12 @@ async function handleRequest(
     }
 
     requireControlAuth(store, request)
+
+    if (url.pathname.startsWith('/v1/agent/')) {
+      const handled = await handleHarnessRequest(store, daemonOrigin, request, response, method, url)
+      if (handled) return
+      throw invalidInput('Harness route is invalid')
+    }
 
     const imageAssetRoute = /^\/v1\/asset(?:\/.*)?$/u.test(url.pathname)
     if (method === 'GET' && imageAssetRoute) {
@@ -561,6 +569,70 @@ async function handleRequest(
       return
     }
     writeDaemonError(response, toDaemonError(error))
+  }
+}
+
+async function handleHarnessRequest(
+  store: JobStore,
+  daemonOrigin: string,
+  request: IncomingMessage,
+  response: ServerResponse,
+  method: string,
+  url: URL,
+) {
+  const route = /^\/v1\/agent\/runs(?:\/([^/]+)(?:\/(resume|cancel))?)?$/.exec(url.pathname)
+  if (!route) return false
+  const modulePath = '../../web-agent-harness/src/index.js'
+  const harnessModule = await import(modulePath) as {
+    openWebAgentHarness(input: Record<string, unknown>): Promise<{
+      start(spec: Record<string, unknown>): Promise<unknown>
+      read(runId: string): Promise<unknown>
+      resume(runId: string, intervention: Record<string, unknown>): Promise<unknown>
+      cancel(runId: string): Promise<unknown>
+      close(): void
+    }>
+    createLocalHttpProviderTurnClient(input: { baseUrl: string; token: string }): unknown
+    createStdioMcpToolRegistry(): unknown
+  }
+  const harness = await harnessModule.openWebAgentHarness({
+    tokenlessHome: store.homeDir,
+    providerClient: harnessModule.createLocalHttpProviderTurnClient({ baseUrl: daemonOrigin, token: store.controlToken() }),
+    toolRegistry: harnessModule.createStdioMcpToolRegistry(),
+  })
+  try {
+    const encodedRunId = route[1]
+    const runId = encodedRunId ? decodeURIComponent(encodedRunId) : undefined
+    const action = route[2]
+    if (method === 'POST' && runId === undefined) {
+      const body = await readJsonObject(request)
+      const allowed = new Set(['provider', 'profileId', 'taskPrompt', 'selectedSkills', 'finalOutput', 'limits', 'maxTurns', 'mcpServers'])
+      if (Object.keys(body).some((key) => !allowed.has(key))) throw invalidInput('Harness run request contains an unknown field')
+      writeJson(response, 200, await harness.start({
+        ...body,
+        stagingRoot: path.join(store.homeDir, 'harness-staging'),
+      }))
+      return true
+    }
+    if (!runId) return false
+    if (method === 'GET' && action === undefined) {
+      const view = await harness.read(runId)
+      if (!view) throw invalidInput('Harness run was not found')
+      writeJson(response, 200, view)
+      return true
+    }
+    if (method === 'POST' && action === 'resume') {
+      writeJson(response, 200, await harness.resume(runId, await readJsonObject(request)))
+      return true
+    }
+    if (method === 'POST' && action === 'cancel') {
+      const body = await readJsonObject(request)
+      if (Object.keys(body).length > 0) throw invalidInput('Harness cancel body must be empty')
+      writeJson(response, 200, await harness.cancel(runId))
+      return true
+    }
+    return false
+  } finally {
+    harness.close()
   }
 }
 

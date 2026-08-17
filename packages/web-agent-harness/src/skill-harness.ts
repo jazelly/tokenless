@@ -115,6 +115,28 @@ export async function prepareHarnessBootstrapTurn(
   }
 }
 
+export async function readHarnessBootstrapTurnPreparation(input: Pick<PrepareHarnessBootstrapTurnInput, 'runId' | 'stagingRoot' | 'taskPrompt' | 'nonce'>): Promise<HarnessBootstrapTurnPreparation> {
+  const runDirectory = await resolveRunDirectory(input.stagingRoot, input.runId)
+  const state = await readHarnessSkillState(runDirectory, input.runId) as HarnessSkillStateWithBootstrap
+  const bootstrap = readBootstrapTurn(state)
+  if (bootstrap.taskPrompt !== input.taskPrompt || bootstrap.nonce !== input.nonce) {
+    throw new HarnessSkillError('harness_bootstrap_replay_conflict', 'Bootstrap replay does not match the frozen task and nonce.')
+  }
+  return {
+    protocol: HARNESS_SKILL_MODULE_PROTOCOL,
+    kind: 'bootstrap_turn_preparation',
+    runId: state.runId,
+    turn: 1,
+    nonce: bootstrap.nonce,
+    requiredProviderCapabilities: REQUIRED_HARNESS_PROVIDER_CAPABILITIES,
+    attachments: [state.systemPrompt, ...bootstrap.candidateDelivery.attachments],
+    runDirectory,
+    registry: bootstrap.registry,
+    systemPrompt: state.systemPrompt,
+    candidateDelivery: bootstrap.candidateDelivery,
+  }
+}
+
 export function assertHarnessBootstrapStaticInput(
   input: Pick<PrepareHarnessBootstrapTurnInput, 'runId' | 'taskPrompt' | 'nonce' | 'finalOutput' | 'limits'>,
 ) {
@@ -357,9 +379,6 @@ export async function validateHarnessBootstrapCompletionResponse(input: ParseHar
   if (!isSkillDeliveryRevision(bootstrap.candidateDelivery) || !isExactCandidateSources(bootstrap.candidateSources, bootstrap.candidateDelivery.attachments)) {
     throw new HarnessSkillError('harness_state_invalid', 'Harness bootstrap candidate state is invalid.')
   }
-  if (state.tools.length !== 0) {
-    throw new HarnessSkillError('harness_bootstrap_tools_unsupported', 'V0 local HTTP bootstrap completion requires an empty tool catalog.')
-  }
   if (bootstrap.status === 'finalized') assertFinalizedBootstrapState(state, bootstrap)
   return {
     response: parseHarnessModelResponseFromState(input, state),
@@ -406,6 +425,21 @@ export async function prepareHarnessSkillTurn(
   const runDirectory = await resolveRunDirectory(input.stagingRoot, input.runId)
   const state = await readHarnessSkillState(runDirectory, input.runId) as HarnessSkillStateWithBootstrap
   assertBootstrapFinalized(state)
+  if (input.turn === state.nextTurn - 1) {
+    const delivery = [...state.deliveries].reverse().find((candidate) => candidate.turn === input.turn)
+    if (!delivery) throw new HarnessSkillError('harness_turn_replay_missing', 'Harness Skill delivery replay is unavailable.')
+    return {
+      protocol: HARNESS_SKILL_MODULE_PROTOCOL,
+      runId: input.runId,
+      runDirectory,
+      delivery,
+      promptManifest: renderPromptManifest({
+        skillAttachments: delivery.attachments,
+        registrySha256: state.registrySha256,
+        deliverySha256: delivery.sha256,
+      }),
+    }
+  }
   if (!Number.isSafeInteger(input.turn) || input.turn !== state.nextTurn) {
     throw new HarnessSkillError(
       'harness_turn_unexpected',

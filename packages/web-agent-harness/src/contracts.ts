@@ -53,12 +53,13 @@ export type PrepareHarnessBootstrapTurnInput = PrepareHarnessSkillRunInput & {
   nonce: string
 }
 
-export type StartHarnessLocalHttpBootstrapInput = Omit<PrepareHarnessBootstrapTurnInput, 'selectedSkills' | 'tools'> & {
+export type StartHarnessLocalHttpBootstrapInput = Omit<PrepareHarnessBootstrapTurnInput, 'selectedSkills'> & {
   baseUrl: string
   token: string
   provider: string
   profileId: string
   selectedSkills?: readonly SkillSelection[] | undefined
+  requestRef?: string | undefined
 }
 
 export type ReadHarnessLocalHttpTurnInput = {
@@ -67,10 +68,43 @@ export type ReadHarnessLocalHttpTurnInput = {
   turnRef: string
 }
 
+export type ContinueHarnessLocalHttpTurnInput = {
+  baseUrl: string
+  token: string
+  providerBindingRef: string
+  providerRef: string
+  conversationRef: string
+  requestRef: string
+  runId: string
+  stagingRoot: string
+  turn: number
+  nonce: string
+  resultText: string
+  skillLoads?: readonly string[] | undefined
+}
+
+export type HarnessLocalHttpContinuationStart = {
+  turnState: TurnState
+  resultSha256: string
+}
+
 export type CompleteHarnessLocalHttpBootstrapInput = ReadHarnessLocalHttpTurnInput & {
   runId: string
   stagingRoot: string
   nonce: string
+}
+
+export type CompleteHarnessLocalHttpContinuationInput = ReadHarnessLocalHttpTurnInput & {
+  runId: string
+  stagingRoot: string
+  turn: number
+  nonce: string
+  resultSha256: string
+}
+
+export type HarnessLocalHttpContinuationCompletion = {
+  turnState: TurnState
+  response: HarnessModelResponse
 }
 
 export type HarnessLocalHttpFinalizedBootstrap = {
@@ -330,6 +364,7 @@ export type ProviderTurnState = {
   providerRef: string
   providerBindingRef: string
   conversationRef: string
+  deliverySha256?: string | undefined
   lifecycle: 'queued' | 'running' | 'waiting_for_user' | 'succeeded' | 'failed' | 'cancelled'
   waitingReason?: string | undefined
   responseText?: string | undefined
@@ -340,9 +375,10 @@ export type ProviderTurnState = {
 export type ProviderTurnClient = {
   /** start and continue must return the original turn when requestRef is replayed. */
   start(request: ProviderTurnRequest): Promise<ProviderTurnState>
-  read(request: Pick<ProviderTurnRequest, 'runId' | 'turn' | 'nonce' | 'stagingRoot'> & { turnRef: string }): Promise<ProviderTurnState>
+  read(request: Pick<ProviderTurnRequest, 'requestRef' | 'runId' | 'turn' | 'nonce' | 'stagingRoot'> & { turnRef: string; expectedDeliverySha256?: string | undefined }): Promise<ProviderTurnState>
   continue(request: ProviderTurnRequest): Promise<ProviderTurnState>
-  cancel(turnRef: string): Promise<ProviderTurnState>
+  resume(request: Pick<ProviderTurnRequest, 'requestRef' | 'runId' | 'turn' | 'nonce' | 'stagingRoot'> & { turnRef: string; expectedDeliverySha256?: string | undefined }): Promise<ProviderTurnState>
+  cancel(request: { requestRef: string; turnRef: string }): Promise<ProviderTurnState>
 }
 
 export type HarnessToolCallResult = {
@@ -404,7 +440,7 @@ export type AgentRunView = {
   providerTurnRef?: string | undefined
   waiting?: {
     kind: 'approval' | 'authentication' | 'user_input' | 'provider'
-    calls?: readonly { id: string; tool: string; argumentsDigest: string }[] | undefined
+    calls?: readonly { id: string; tool: string; arguments: Record<string, JsonValue>; argumentsDigest: string }[] | undefined
     needs?: readonly HarnessRunNeed[] | undefined
     handoff?: string | undefined
   } | undefined
@@ -416,6 +452,7 @@ export type AgentRunIntervention = {
   approvals?: readonly { callId: string; argumentsDigest: string }[] | undefined
   answers?: Readonly<Record<string, JsonValue>> | undefined
   authenticationCompleted?: readonly { callId: string; argumentsDigest: string }[] | undefined
+  providerReady?: true | undefined
 }
 
 export type WebAgentHarness = {

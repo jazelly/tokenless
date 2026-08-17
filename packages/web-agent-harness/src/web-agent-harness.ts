@@ -90,10 +90,12 @@ class DurableWebAgentHarness implements WebAgentHarness {
     try {
       const providerTurn = await this.provider.read({
         runId,
+        requestRef: record.requestRef,
         turn: record.turn,
         nonce: record.nonce,
         stagingRoot: record.spec.stagingRoot,
         turnRef: record.providerTurn.turnRef,
+        expectedDeliverySha256: record.providerTurn.deliverySha256,
       })
       record = this.store.update(runId, record.revision, (current) => ({
         ...current,
@@ -111,7 +113,20 @@ class DurableWebAgentHarness implements WebAgentHarness {
   async resume(runId: string, intervention: AgentRunIntervention): Promise<AgentRunView> {
     let record = this.required(runId)
     try {
-      if (record.status === 'waiting_for_approval') {
+      if (record.providerTurn?.lifecycle === 'waiting_for_user') {
+        if (intervention.providerReady !== true) throw new HarnessSkillError('harness_provider_resume_invalid', 'Provider intervention must be explicitly confirmed.')
+        const providerTurn = await this.provider.resume({
+          runId,
+          requestRef: record.requestRef,
+          turn: record.turn,
+          nonce: record.nonce,
+          stagingRoot: record.spec.stagingRoot,
+          turnRef: record.providerTurn.turnRef,
+          expectedDeliverySha256: record.providerTurn.deliverySha256,
+        })
+        record = this.store.update(runId, record.revision, (current) => ({ ...current, providerTurn, status: 'running' }))
+        return publicView(record)
+      } else if (record.status === 'waiting_for_approval') {
         const approvals = new Map((intervention.approvals ?? []).map((item) => [item.callId, item.argumentsDigest]))
         const calls = record.calls.map((call) => {
           if (call.approval !== 'pending') return call
@@ -143,6 +158,7 @@ class DurableWebAgentHarness implements WebAgentHarness {
       }
       return publicView(await this.executeAndContinue(record))
     } catch (error) {
+      if (isRecoverableInterventionError(error)) throw error
       return publicView(this.fail(record, error))
     }
   }
@@ -152,7 +168,7 @@ class DurableWebAgentHarness implements WebAgentHarness {
     if (isTerminal(record.status)) return publicView(record)
     try {
       if (record.providerTurn && ['queued', 'running', 'waiting_for_user'].includes(record.providerTurn.lifecycle)) {
-        const providerTurn = await this.provider.cancel(record.providerTurn.turnRef)
+        const providerTurn = await this.provider.cancel({ requestRef: record.requestRef, turnRef: record.providerTurn.turnRef })
         record = this.store.update(runId, record.revision, (current) => ({ ...current, providerTurn, status: 'cancelled' }))
       } else {
         record = this.store.update(runId, record.revision, (current) => ({ ...current, status: 'cancelled' }))
@@ -375,7 +391,7 @@ function publicView(record: HarnessRunRecord): AgentRunView {
 }
 
 function publicCall(call: DurableCall) {
-  return { id: call.id, tool: call.tool, argumentsDigest: call.argumentsDigest }
+  return { id: call.id, tool: call.tool, arguments: call.arguments, argumentsDigest: call.argumentsDigest }
 }
 
 function validateSpec(input: AgentRunSpec): AgentRunSpec {
@@ -402,7 +418,11 @@ function isRecoverableInterventionError(error: unknown) {
     'harness_input_missing',
     'harness_auth_resume_invalid',
     'harness_run_not_resumable',
+    'harness_provider_resume_invalid',
   ].includes(error.code)
 }
-function opaqueRef(kind: 'run' | 'nonce' | 'request') { return `${kind}:${randomBytes(16).toString('hex')}` }
+function opaqueRef(kind: 'run' | 'nonce' | 'request') {
+  const separator = kind === 'run' ? '_' : ':'
+  return `${kind}${separator}${randomBytes(16).toString('hex')}`
+}
 function sha256(value: unknown) { return createHash('sha256').update(canonicalJson(value as JsonValue)).digest('hex') }
