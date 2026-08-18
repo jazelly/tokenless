@@ -19,48 +19,78 @@ test('capabilities list exposes canonical outcomes and only evidence-backed rout
 
   for (const capability of payload.capabilities) {
     for (const route of capability.routes) {
-      assert.equal(route.executionMode, 'browser')
+      assert.ok(route.executionMode === 'browser' || route.executionMode === 'direct')
+      if (route.executionMode === 'direct') {
+        assert.equal(JSON.stringify(route).toLowerCase().includes('g4f'), false)
+        assert.equal(JSON.stringify(route).toLowerCase().includes('openaichat'), false)
+      }
     }
   }
 
   const byId = new Map(payload.capabilities.map((capability) => [capability.id, capability]))
   assert.equal(byId.get('conversation.chat').routeable, true)
   assert.deepEqual(
-    byId.get('conversation.chat').routes.map((route) => route.provider),
+    byId.get('conversation.chat').routes
+      .filter((route) => route.executionMode === 'browser')
+      .map((route) => route.provider),
     ['chatgpt', 'claude', 'gemini', 'grok', 'deepseek', 'perplexity', 'zai', 'doubao', 'kimi', 'meta', 'arena'],
   )
   assert.deepEqual(
-    byId.get('file.upload').routes.map((route) => route.provider),
+    byId.get('file.upload').routes
+      .filter((route) => route.executionMode === 'browser')
+      .map((route) => route.provider),
     ['chatgpt', 'claude', 'gemini', 'grok', 'deepseek', 'zai', 'doubao', 'kimi', 'meta', 'arena'],
   )
-  assert.deepEqual(byId.get('conversation.continue').routes.map((route) => route.provider), ['arena'])
-  assert.deepEqual(byId.get('model.compare').routes.map((route) => route.provider), ['arena'])
-  assert.deepEqual(byId.get('agent.execute').routes.map((route) => route.provider), ['arena'])
-  assert.deepEqual(byId.get('search.web').routes.map((route) => route.provider), ['kimi', 'arena'])
-  assert.deepEqual(byId.get('response.citations').routes.map((route) => route.provider), ['kimi', 'arena'])
-  assert.deepEqual(byId.get('image.input').routes.map((route) => route.provider), ['arena'])
+  assert.deepEqual(byId.get('conversation.continue').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), ['arena'])
+  assert.deepEqual(byId.get('model.compare').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), ['arena'])
+  assert.deepEqual(byId.get('agent.execute').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), ['arena'])
+  assert.deepEqual(byId.get('search.web').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), ['kimi', 'arena'])
+  assert.deepEqual(byId.get('response.citations').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), ['kimi', 'arena'])
+  assert.deepEqual(byId.get('image.input').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), ['arena'])
   assert.deepEqual(
-    byId.get('image.generation').routes.map((route) => route.provider),
+    byId.get('image.generation').routes
+      .filter((route) => route.executionMode === 'browser')
+      .map((route) => route.provider),
     ['gemini', 'grok', 'doubao', 'chatgpt', 'meta', 'arena', 'dola'],
   )
   assert.deepEqual(
-    byId.get('artifact.download').routes.map((route) => route.provider),
+    byId.get('artifact.download').routes
+      .filter((route) => route.executionMode === 'browser')
+      .map((route) => route.provider),
     ['gemini', 'grok', 'doubao', 'chatgpt', 'meta', 'arena', 'dola'],
   )
   assert.equal(
     byId.get('image.generation').routes.find((route) => route.provider === 'chatgpt').executionMode,
     'browser',
   )
+  assert.deepEqual(
+    byId.get('conversation.chat').routes
+      .filter((route) => route.executionMode === 'direct')
+      .map((route) => route.provider),
+    ['chatgpt', 'perplexity'],
+  )
+  assert.deepEqual(
+    byId.get('image.generation').routes
+      .filter((route) => route.executionMode === 'direct')
+      .map((route) => route.provider),
+    ['chatgpt'],
+  )
+  assert.deepEqual(
+    byId.get('artifact.download').routes
+      .filter((route) => route.executionMode === 'direct')
+      .map((route) => route.provider),
+    ['chatgpt'],
+  )
   assert.equal(
     byId.get('artifact.download').routes.find((route) => route.provider === 'chatgpt').executionMode,
     'browser',
   )
-  assert.deepEqual(byId.get('image.edit').routes.map((route) => route.provider), ['arena'])
-  assert.deepEqual(byId.get('website.generation').routes.map((route) => route.provider), ['arena'])
-  assert.deepEqual(byId.get('video.generation').routes.map((route) => route.provider), ['arena'])
+  assert.deepEqual(byId.get('image.edit').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), ['arena'])
+  assert.deepEqual(byId.get('website.generation').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), ['arena'])
+  assert.deepEqual(byId.get('video.generation').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), ['arena'])
   assert.equal(byId.get('workspace.native').routeable, true)
   assert.deepEqual(
-    byId.get('workspace.native').routes.map((route) => route.provider),
+    byId.get('workspace.native').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider),
     ['claude'],
   )
   assert.equal(byId.get('research.deep').routeable, false)
@@ -738,9 +768,9 @@ test('attachment media infers its semantic input capability', () => {
   fs.writeFileSync(image, Buffer.from('89504e470d0a1a0a', 'hex'))
   try {
     seedManagedProfile(homeDir, {
-      chatgpt: observedProvider('chatgpt', 'unauthenticated', 'guest'),
+      deepseek: observedProvider('deepseek', 'authenticated', 'signed_in_free'),
     })
-    writeConfig(homeDir, ['chatgpt'], 'http://127.0.0.1:9')
+    writeConfig(homeDir, ['deepseek'], 'http://127.0.0.1:9')
 
     const result = runCli([
       'run',

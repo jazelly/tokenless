@@ -216,9 +216,10 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
   }
   const derivedRequirements = deriveTaskCapabilityRequirements(actions)
   const pageRef = legacyV3 ? null : validatePageRef(input.pageRef)
+  const executionMode = validateExecutionMode(input.executionMode ?? 'browser')
   const capabilityRoute = input.capabilityRoute === undefined || input.capabilityRoute === null
     ? null
-    : validateJobCapabilityRoute(input.capabilityRoute, provider.id)
+    : validateJobCapabilityRoute(input.capabilityRoute, provider.id, executionMode)
   if (capabilityRoute) assertRouteCoversActionRequirements(capabilityRoute, derivedRequirements)
   const contextRequirements = capabilityRoute?.requirements ?? derivedRequirements
   assertImageCapabilityContract(provider.id, contextRequirements, actions)
@@ -231,7 +232,6 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
   const browserVisibility = validateJobBrowserVisibility(input.browserVisibility)
   const userHandoff = validateUserHandoff(input.userHandoff ?? false)
   const pagePolicy = input.pagePolicy === undefined ? undefined : validateManagedPagePolicy(input.pagePolicy)
-  const executionMode = validateExecutionMode(input.executionMode ?? 'browser')
   const providerBackend = validateProviderBackend(input.providerBackend ?? null)
   const authContextId = validateAuthContextId(input.authContextId ?? null)
   if (!provider.descriptor.executionModes.includes(executionMode)) {
@@ -302,6 +302,36 @@ function validateDirectChatRequest(input: {
   userHandoff: boolean
   actions: readonly VisibleActionRequest[]
 }) {
+  const imageGeneration = input.capabilityRoute?.requirements.includes(TASK_CAPABILITIES.IMAGE_GENERATION) ?? false
+  const artifactDownload = input.capabilityRoute?.requirements.includes(TASK_CAPABILITIES.ARTIFACT_DOWNLOAD) ?? false
+  if (imageGeneration || artifactDownload) {
+    if (
+      input.provider.id !== 'chatgpt' ||
+      input.providerBackend !== 'g4f' ||
+      !imageGeneration ||
+      !artifactDownload ||
+      input.capabilityRoute?.requirements.some((capability) => (
+        capability !== TASK_CAPABILITIES.IMAGE_GENERATION &&
+        capability !== TASK_CAPABILITIES.ARTIFACT_DOWNLOAD
+      ))
+    ) {
+      throw tokenlessError('direct_capability_unsupported', 'Direct image execution is available only for ChatGPT image generation and artifact download.')
+    }
+    if (!isProviderHomeTarget(input.target, input.provider) || input.taskId === null) {
+      throw tokenlessError('direct_image_scope_unsupported', 'Direct image execution requires the ChatGPT provider home and a task scope.')
+    }
+    if (input.authContextId !== null) {
+      throw tokenlessError('direct_auth_context_unsupported', 'Direct image execution does not accept a caller-supplied auth context.')
+    }
+    if (input.fallback !== null || input.userHandoff) {
+      throw tokenlessError('direct_fallback_unsupported', 'Direct image execution does not support provider fallback or user handoff.')
+    }
+    const expected = [VISIBLE_ACTIONS.PROMPT_INPUT, VISIBLE_ACTIONS.PROMPT_SUBMIT, VISIBLE_ACTIONS.RESPONSE_READ]
+    if (input.actions.length !== expected.length || input.actions.some((action, index) => action.action !== expected[index])) {
+      throw tokenlessError('direct_action_unsupported', 'Direct image execution requires exactly prompt.input, prompt.submit, and response.read.')
+    }
+    return
+  }
   const nativeAvailable = nativeDirectProviderAvailable(input.provider.id)
   const g4fAvailable = g4fProviderName(input.provider.id) !== null
   if (
@@ -476,11 +506,18 @@ function assertImageCapabilityContract(
       previousIndex = index
       return index >= 0
     })
-    const hasEditUpload = !hasImageEdit || actions.some((action) => action.action === VISIBLE_ACTIONS.FILE_UPLOAD)
+    const editUploadIndex = actions.findIndex((action) => action.action === VISIBLE_ACTIONS.FILE_UPLOAD)
+    const promptInputIndex = actions.findIndex((action) => action.action === VISIBLE_ACTIONS.PROMPT_INPUT)
+    const imageSurfaceIndex = imageSurfaceActionIndex(provider, actions)
+    const hasEditUpload = !hasImageEdit || (
+      editUploadIndex >= 0 &&
+      editUploadIndex < promptInputIndex &&
+      (imageSurfaceIndex < 0 || imageSurfaceIndex < editUploadIndex)
+    )
     if (!hasRequiredSequence || !hasEditUpload) {
       throw tokenlessError(
         'invalid_playwright_job_capability_requirements',
-        'Image capabilities require prompt.input, prompt.submit, and response.read in order; image.edit also requires file.upload.',
+        'Image capabilities require prompt.input, prompt.submit, and response.read in order; image.edit also requires file.upload after the image surface and before prompt.input.',
         {
           details: {
             provider,
@@ -488,6 +525,9 @@ function assertImageCapabilityContract(
             requiredActions: hasImageEdit
               ? [VISIBLE_ACTIONS.FILE_UPLOAD, ...requiredSequence]
               : requiredSequence,
+            imageSurfaceIndex,
+            fileUploadIndex: editUploadIndex,
+            promptInputIndex,
           },
         },
       )
@@ -524,6 +564,7 @@ function assertImageCapabilityContract(
   }
   const requiresGrokImagineImage = provider === 'grok' && requirements.some((capability) => (
     capability === TASK_CAPABILITIES.IMAGE_GENERATION ||
+    capability === TASK_CAPABILITIES.IMAGE_EDIT ||
     capability === TASK_CAPABILITIES.ARTIFACT_DOWNLOAD
   ))
   if (requiresGrokImagineImage) {
@@ -551,6 +592,7 @@ function assertImageCapabilityContract(
   }
   const requiresGeminiImageSurface = provider === 'gemini' && requirements.some((capability) => (
     capability === TASK_CAPABILITIES.IMAGE_GENERATION ||
+    capability === TASK_CAPABILITIES.IMAGE_EDIT ||
     capability === TASK_CAPABILITIES.ARTIFACT_DOWNLOAD
   ))
   if (requiresGeminiImageSurface) {
@@ -578,6 +620,7 @@ function assertImageCapabilityContract(
   }
   const requiresDolaImageSurface = provider === 'dola' && requirements.some((capability) => (
     capability === TASK_CAPABILITIES.IMAGE_GENERATION ||
+    capability === TASK_CAPABILITIES.IMAGE_EDIT ||
     capability === TASK_CAPABILITIES.ARTIFACT_DOWNLOAD
   ))
   if (requiresDolaImageSurface) {
@@ -605,6 +648,7 @@ function assertImageCapabilityContract(
   }
   const requiresDoubaoImageSkill = provider === 'doubao' && requirements.some((capability) => (
     capability === TASK_CAPABILITIES.IMAGE_GENERATION ||
+    capability === TASK_CAPABILITIES.IMAGE_EDIT ||
     capability === TASK_CAPABILITIES.ARTIFACT_DOWNLOAD
   ))
   if (requiresDoubaoImageSkill) {
@@ -630,6 +674,51 @@ function assertImageCapabilityContract(
       )
     }
   }
+  const requiresQwenImageMode = provider === 'qwen' && requirements.some((capability) => (
+    capability === TASK_CAPABILITIES.IMAGE_GENERATION ||
+    capability === TASK_CAPABILITIES.IMAGE_EDIT ||
+    capability === TASK_CAPABILITIES.ARTIFACT_DOWNLOAD
+  ))
+  if (requiresQwenImageMode) {
+    const qwenModeIndex = actions.findIndex((action) => (
+      action.action === VISIBLE_ACTIONS.QWEN_MODE_SELECT &&
+      action.payload.mode === 'Create Image'
+    ))
+    const promptInputIndex = actions.findIndex((action) => action.action === VISIBLE_ACTIONS.PROMPT_INPUT)
+    if (qwenModeIndex < 0 || promptInputIndex < 0 || qwenModeIndex > promptInputIndex) {
+      throw tokenlessError(
+        'invalid_playwright_job_capability_requirements',
+        'Qwen image capabilities require qwen.mode.select with Create Image before prompt.input.',
+        {
+          details: {
+            provider,
+            requirements,
+            requiredAction: {
+              action: VISIBLE_ACTIONS.QWEN_MODE_SELECT,
+              payload: { mode: 'Create Image' },
+            },
+          },
+        },
+      )
+    }
+  }
+}
+
+function imageSurfaceActionIndex(provider: ProviderId, actions: readonly VisibleActionRequest[]) {
+  const surfaceAction = provider === 'arena'
+    ? VISIBLE_ACTIONS.ARENA_SURFACE_SELECT
+    : provider === 'grok'
+      ? VISIBLE_ACTIONS.GROK_IMAGINE_SELECT
+      : provider === 'gemini'
+        ? VISIBLE_ACTIONS.GEMINI_IMAGE_SELECT
+        : provider === 'dola'
+          ? VISIBLE_ACTIONS.DOLA_IMAGE_SELECT
+          : provider === 'doubao'
+            ? VISIBLE_ACTIONS.DOUBAO_SKILL_SELECT
+            : provider === 'qwen'
+              ? VISIBLE_ACTIONS.QWEN_MODE_SELECT
+              : null
+  return surfaceAction === null ? -1 : actions.findIndex((action) => action.action === surfaceAction)
 }
 
 function isProviderHomeTarget(target: ManagedPlaywrightSafeTarget, provider: ProviderInstance) {
@@ -719,9 +808,13 @@ function validateManagedPagePolicy(value: unknown): ManagedPagePolicy {
   return value
 }
 
-function validateJobCapabilityRoute(value: unknown, provider: ProviderId) {
+function validateJobCapabilityRoute(
+  value: unknown,
+  provider: ProviderId,
+  executionMode?: PlaywrightExecutionMode,
+) {
   try {
-    return validateTaskCapabilityRoute(value, provider)
+    return validateTaskCapabilityRoute(value, provider, executionMode)
   } catch (error) {
     throw tokenlessError(
       'invalid_playwright_job_capability_route',

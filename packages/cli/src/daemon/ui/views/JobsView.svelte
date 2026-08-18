@@ -1,11 +1,13 @@
 <script lang="ts">
-  import { ChevronRight, Clock3, Search, X } from '@lucide/svelte'
+  import { ChevronRight, Clock3, ExternalLink, Search, X } from '@lucide/svelte'
   import { onMount, tick } from 'svelte'
   import Modal from '../components/Modal.svelte'
   import PageHeader from '../components/PageHeader.svelte'
+  import ProviderIdentity from '../components/ProviderIdentity.svelte'
   import { formatNumber, formatTime } from '../formatting.js'
   import { stateLabel, translateError, type MessageKey } from '../localization.js'
-  import type { DashboardActions, Language, UiJobDetail, UiSnapshot } from '../types.js'
+  import { createRouterEngine } from '../router-engine.js'
+  import type { DashboardActions, Language, UiJobDetail, UiJobSummary, UiSnapshot } from '../types.js'
 
   let { snapshot, language, t, busy, actions }: {
     snapshot: UiSnapshot
@@ -23,12 +25,15 @@
   let error = $state('')
   let errorElement = $state<HTMLDivElement>()
   let filtersReady = $state(false)
-  let filtered = $derived(snapshot.jobs.filter((job) => {
+  let generatedTitles = $state<Record<string, string>>({})
+  const titleRequests = new Set<string>()
+  let chatJobs = $derived(snapshot.jobs.filter((job) => typeof job.titlePrompt === 'string' && job.titlePrompt.length > 0))
+  let filtered = $derived(chatJobs.filter((job) => {
     const query = search.trim().toLowerCase()
     return (!status || job.status === status)
       && (!provider || job.provider === provider)
       && (!profile || job.profileSlug === profile || job.profileId === profile)
-      && (!query || JSON.stringify([job.jobId, job.taskId, job.provider, job.profileSlug]).toLowerCase().includes(query))
+      && (!query || JSON.stringify([job.jobId, job.taskId, job.chatTitle, job.titlePrompt, job.providers, job.profileSlug]).toLowerCase().includes(query))
   }))
 
   onMount(() => {
@@ -38,6 +43,16 @@
     profile = query.get('jobProfile') ?? ''
     search = query.get('jobSearch') ?? ''
     filtersReady = true
+    try {
+      generatedTitles = JSON.parse(localStorage.getItem('tokenless.chat-titles.v1') ?? '{}') as Record<string, string>
+    } catch {
+      generatedTitles = {}
+    }
+  })
+
+  $effect(() => {
+    if (!filtersReady || !snapshot.config.router.enabled) return
+    for (const job of filtered.slice(0, 20)) void generateTitle(job)
   })
 
   $effect(() => {
@@ -88,6 +103,39 @@
       ? value as { code?: unknown; message?: unknown }
       : null
   }
+
+  function providerLabel(providerId: string) {
+    return snapshot.providers.find((entry) => entry.id === providerId)?.label ?? providerId
+  }
+
+  function titleFor(job: UiJobSummary) {
+    return job.chatTitle ?? generatedTitles[job.jobId] ?? fallbackTitle(job.titlePrompt) ?? t('untitledChat')
+  }
+
+  function fallbackTitle(value: string | null) {
+    if (!value) return null
+    const userTurns = [...value.matchAll(/\[User\]\s*([\s\S]*?)(?=\n\n\[(?:System|Developer|Assistant|Tool|User)\]|$)/giu)]
+    const source = userTurns.at(-1)?.[1] ?? value
+    const normalized = source
+      .replace(/\[(?:System|Developer|Assistant|Tool|User)\]\s*/giu, ' ')
+      .replace(/\s+/gu, ' ')
+      .trim()
+    return normalized.length > 64 ? `${normalized.slice(0, 61).trimEnd()}…` : normalized
+  }
+
+  async function generateTitle(job: UiJobSummary) {
+    if (job.chatTitle || generatedTitles[job.jobId] || !job.titlePrompt || titleRequests.has(job.jobId)) return
+    const profile = snapshot.profiles.find((entry) => entry.id === job.profileId)
+    if (!profile) return
+    titleRequests.add(job.jobId)
+    try {
+      const title = await createRouterEngine(snapshot.config.router.engine).title(job.titlePrompt, profile.browserBinding)
+      generatedTitles = { ...generatedTitles, [job.jobId]: title }
+      localStorage.setItem('tokenless.chat-titles.v1', JSON.stringify(generatedTitles))
+    } catch {
+      // The prompt-derived fallback remains visible when Nano is unavailable.
+    }
+  }
 </script>
 
 <section class="page" data-testid="jobs-view">
@@ -105,7 +153,8 @@
     {#each filtered as job (job.jobId)}
       <button class="data-row job-row" type="button" onclick={() => showDetail(job.jobId)} data-testid={`job-${job.jobId}`}>
         <span class={`job-state ${job.status}`}></span>
-        <span class="data-row-main"><strong>{job.taskId ?? job.jobId}</strong><small>{job.provider ?? '—'} · {job.profileSlug ?? '—'}{#if job.outputSavings.estimatedOutputTokens > 0} · {formatNumber(job.outputSavings.estimatedOutputTokens, language)} {t('tokensSavedShort')}{/if}</small></span>
+        <span class="job-provider-stack">{#each job.providers ?? [job.provider] as providerId}<ProviderIdentity provider={providerId} label={providerLabel(providerId)} compact />{/each}</span>
+        <span class="data-row-main"><strong>{titleFor(job)}</strong><small>{job.executionMode === 'browser' ? t('browserMode') : job.executionMode === 'direct' ? t('directMode') : '—'}{#if typeof job.estimatedTokens === 'number'} · ≈{formatNumber(job.estimatedTokens, language)} {t('estimatedTokensShort')}{/if}</small></span>
         <span class="mono-label">{stateLabel(language, job.status)}</span>
         <time>{formatTime(job.updatedAt, language)}</time>
         <ChevronRight size={15} />
@@ -117,20 +166,20 @@
 </section>
 
 {#if detail}
-  <Modal title={detail.taskId ?? detail.jobId} closeLabel={t('close')} onclose={() => detail = null} wide>
+  <Modal title={titleFor(detail)} closeLabel={t('close')} onclose={() => detail = null} wide>
     <div class="detail-stack" data-testid="job-detail">
-      <div class="detail-meta"><span class={`job-state ${detail.status}`}></span><strong>{stateLabel(language, detail.status)}</strong><span translate="no">{detail.provider ?? '—'}</span><span translate="no">{detail.profileSlug ?? detail.profileId ?? '—'}</span></div>
+      <div class="detail-meta"><span class={`job-state ${detail.status}`}></span><strong>{stateLabel(language, detail.status)}</strong>{#each detail.providers ?? [detail.provider] as providerId}<ProviderIdentity provider={providerId} label={providerLabel(providerId)} />{/each}<span class="badge neutral">{detail.executionMode === 'browser' ? t('browserMode') : detail.executionMode === 'direct' ? t('directMode') : '—'}</span>{#if detail.conversationUrl}<a class="text-button" href={detail.conversationUrl} target="_blank" rel="noreferrer">{t('openProviderChat')} <ExternalLink size={13} /></a>{/if}</div>
       {#if error}<div bind:this={errorElement} class="inline-feedback error" role="alert" tabindex="-1"><span>{error}</span></div>{/if}
       <p class="muted">{t('created')}: {formatTime(detail.createdAt, language)}<br />{t('updated')}: {formatTime(detail.updatedAt, language)}</p>
       {#if detail.status === 'waiting_for_user'}<button class="button primary" type="button" disabled={busy} onclick={() => jobAction('resume')}>{t('resume')}</button>{:else if ['queued', 'claimed', 'running'].includes(detail.status)}<button class="button danger" type="button" disabled={busy} onclick={() => jobAction('cancel')}>{t('cancel')}</button>{/if}
-      {#if detail.outputSavings.responseCount > 0}<section><h3>{t('outputSavings')}</h3><p>{t('estimatedTokensSaved')}: {formatNumber(detail.outputSavings.estimatedOutputTokens, language)}<br />{t('measuredResponses')}: {formatNumber(detail.outputSavings.responseCount, language)}</p></section>{/if}
-      <section><h3>{t('result')}</h3><pre>{JSON.stringify(detail.result, null, 2)}</pre></section>
-      <section>
+      <section><h3>{t('estimatedTokens')}</h3><p class="token-total">{typeof detail.estimatedTokens === 'number' ? `≈${formatNumber(detail.estimatedTokens, language)}` : '—'}</p></section>
+      <section><h3>{t('conversation')}</h3><div class="chat-transcript">{#each detail.transcript as message}<article class={`chat-message ${message.role}`}><strong>{message.role === 'user' ? t('userPrompt') : t('assistantReply')}</strong><p>{message.content}</p></article>{:else}<p class="muted">{t('noConversation')}</p>{/each}</div></section>
+      {#if detail.error || detail.blocker}<section>
         <h3>{t('error')}</h3>
         <p class="inline-feedback error" data-testid="job-error-summary">{jobErrorSummary(detail.error ?? detail.blocker)}</p>
         <details><summary>{t('details')}</summary><pre>{JSON.stringify(detail.error ?? detail.blocker, null, 2)}</pre></details>
-      </section>
-      <section><h3>{t('attempts')}</h3><pre>{JSON.stringify(detail.providerAttempts, null, 2)}</pre></section>
+      </section>{/if}
+      <details class="technical-details"><summary>{t('technicalDetails')}</summary><section><h3>{t('result')}</h3><pre>{JSON.stringify(detail.result, null, 2)}</pre></section><section><h3>{t('attempts')}</h3><pre>{JSON.stringify(detail.providerAttempts, null, 2)}</pre></section></details>
     </div>
   </Modal>
 {/if}

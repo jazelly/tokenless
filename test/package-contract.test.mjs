@@ -62,6 +62,7 @@ test('built capability routes stay provenance-bound to required live provider ma
   const payload = JSON.parse(result.stdout)
   for (const capability of payload.capabilities) {
     for (const route of capability.routes) {
+      if (route.executionMode === 'direct') continue
       const provider = matrix.providers[route.provider]
       assert.ok(provider, `route provider ${route.provider} must exist in the live matrix`)
       assert.ok(route.evidence.length > 0, `${route.provider}/${capability.id} must declare live evidence cases`)

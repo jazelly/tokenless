@@ -2,7 +2,7 @@ import { isProviderIdSyntax } from './provider-identity.js'
 import type { ProviderExecutionMode, ProviderId } from './provider-identity.js'
 
 export const TASK_CAPABILITY_CATALOG_SCHEMA_ID = 'tokenless.task-capability-catalog.v3'
-export const TASK_CAPABILITY_ROUTE_SCHEMA_ID = 'tokenless.task-capability-route.v1'
+export const TASK_CAPABILITY_ROUTE_SCHEMA_ID = 'tokenless.task-capability-route.v2'
 
 export const TASK_CAPABILITIES = Object.freeze({
   CONVERSATION_CHAT: 'conversation.chat',
@@ -123,6 +123,7 @@ export type TaskCapabilityRouteEvaluation = Readonly<{
 export type TaskCapabilityRoute = Readonly<{
   schema: typeof TASK_CAPABILITY_ROUTE_SCHEMA_ID
   provider: ProviderId
+  executionMode: ProviderExecutionMode
   requirements: readonly TaskCapabilityId[]
   strategies: readonly string[]
   support: 'experimental' | 'supported'
@@ -443,6 +444,7 @@ const TASK_CAPABILITY_CATALOG = Object.freeze([
 
 const PROVIDER_TASK_CAPABILITY_ROUTES = Object.freeze([
   route('chatgpt', TASK_CAPABILITIES.CONVERSATION_CHAT, 'supported', 'visible-conversation', ['conversation-workflow']),
+  route('chatgpt', TASK_CAPABILITIES.CONVERSATION_CHAT, 'supported', 'direct-conversation', ['chatgpt-direct'], 'direct'),
   route('chatgpt', TASK_CAPABILITIES.FILE_UPLOAD, 'supported', 'visible-file-attachment', ['conversation-workflow']),
   route('claude', TASK_CAPABILITIES.CONVERSATION_CHAT, 'supported', 'visible-conversation', ['conversation-workflow']),
   route('claude', TASK_CAPABILITIES.FILE_UPLOAD, 'supported', 'visible-file-attachment', ['conversation-workflow', 'native-project']),
@@ -458,6 +460,7 @@ const PROVIDER_TASK_CAPABILITY_ROUTES = Object.freeze([
   route('deepseek', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['workspace-response-baseline']),
   route('deepseek', TASK_CAPABILITIES.FILE_UPLOAD, 'experimental', 'visible-file-attachment', ['file-selection']),
   route('perplexity', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['workspace-response-citations']),
+  route('perplexity', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'direct-conversation', ['perplexity-direct'], 'direct'),
   route('zai', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['workspace-response-baseline']),
   route('zai', TASK_CAPABILITIES.FILE_UPLOAD, 'experimental', 'visible-file-attachment', ['file-selection']),
   route('doubao', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['workspace-response-baseline']),
@@ -470,6 +473,8 @@ const PROVIDER_TASK_CAPABILITY_ROUTES = Object.freeze([
   route('kimi', TASK_CAPABILITIES.RESPONSE_CITATIONS, 'experimental', 'kimi-visible-citations', ['kimi-search']),
   route('chatgpt', TASK_CAPABILITIES.IMAGE_GENERATION, 'experimental', 'chatgpt-image-generation', ['chatgpt-image']),
   route('chatgpt', TASK_CAPABILITIES.ARTIFACT_DOWNLOAD, 'experimental', 'chatgpt-image', ['chatgpt-image']),
+  route('chatgpt', TASK_CAPABILITIES.IMAGE_GENERATION, 'experimental', 'direct-chatgpt-image-generation', ['chatgpt-direct-image'], 'direct'),
+  route('chatgpt', TASK_CAPABILITIES.ARTIFACT_DOWNLOAD, 'experimental', 'direct-chatgpt-image', ['chatgpt-direct-image'], 'direct'),
   route('meta', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['workspace-response-baseline']),
   route('meta', TASK_CAPABILITIES.FILE_UPLOAD, 'experimental', 'visible-file-attachment', ['file-selection']),
   route('meta', TASK_CAPABILITIES.IMAGE_GENERATION, 'experimental', 'meta-image-generation', ['meta-image']),
@@ -492,7 +497,7 @@ const PROVIDER_TASK_CAPABILITY_ROUTES = Object.freeze([
 ] satisfies readonly ProviderTaskCapabilityRoute[])
 
 const DEFINITION_BY_ID = new Map(TASK_CAPABILITY_CATALOG.map((definition) => [definition.id, definition]))
-const ROUTE_BY_KEY = new Map(PROVIDER_TASK_CAPABILITY_ROUTES.map((entry) => [routeKey(entry.provider, entry.capability), entry]))
+const ROUTE_BY_KEY = new Map(PROVIDER_TASK_CAPABILITY_ROUTES.map((entry) => [routeKey(entry.provider, entry.capability, entry.executionMode), entry]))
 
 validateCatalog()
 
@@ -528,6 +533,7 @@ export function normalizeTaskCapabilityRequirements(values: readonly unknown[]):
 export function resolveTaskCapabilityRoute(options: {
   requirements: readonly TaskCapabilityId[]
   candidates: readonly TaskCapabilityRouteCandidate[]
+  executionMode?: ProviderExecutionMode
 }): TaskCapabilityRouteDecision {
   const decision = resolveTaskCapabilityRoutes(options)
   if (!decision.ok) return decision
@@ -545,14 +551,16 @@ export function resolveTaskCapabilityRoute(options: {
 export function resolveTaskCapabilityRoutes(options: {
   requirements: readonly TaskCapabilityId[]
   candidates: readonly TaskCapabilityRouteCandidate[]
+  executionMode?: ProviderExecutionMode
 }): TaskCapabilityRoutesDecision {
   const requirements = expandImpliedCapabilities(options.requirements)
+  const executionMode = options.executionMode ?? 'browser'
   const candidates = options.candidates.map((candidate, index) => ({
     candidate,
     preferenceRank: normalizedPreferenceRank(candidate.preferenceRank, index),
   }))
   const routeCandidates = candidates.flatMap(({ candidate, preferenceRank }) => {
-    const routes = requirements.map((capability) => ROUTE_BY_KEY.get(routeKey(candidate.provider, capability)) ?? null)
+    const routes = requirements.map((capability) => ROUTE_BY_KEY.get(routeKey(candidate.provider, capability, executionMode)) ?? null)
     const missingCapabilities = requirements.filter((_capability, index) => routes[index] === null)
     const compatible = missingCapabilities.length === 0
     const matchedRoutes = routes.filter((entry): entry is ProviderTaskCapabilityRoute => entry !== null)
@@ -570,6 +578,7 @@ export function resolveTaskCapabilityRoutes(options: {
       ? Object.freeze({
           schema: TASK_CAPABILITY_ROUTE_SCHEMA_ID,
           provider: candidate.provider,
+          executionMode,
           requirements: Object.freeze([...requirements]),
           strategies: Object.freeze([...new Set(matchedRoutes.map((entry) => entry.strategy))]),
           support,
@@ -641,11 +650,13 @@ function compareRouteScore(
 export function validateTaskCapabilityRoute(
   value: unknown,
   expectedProvider?: ProviderId,
+  expectedExecutionMode?: ProviderExecutionMode,
 ): TaskCapabilityRoute {
   if (!isPlainRecord(value)) throw new TypeError('Task capability route must be an object.')
   const keys = [
     'schema',
     'provider',
+    'executionMode',
     'requirements',
     'strategies',
     'support',
@@ -658,6 +669,12 @@ export function validateTaskCapabilityRoute(
   }
   if (expectedProvider !== undefined && value.provider !== expectedProvider) {
     throw new TypeError('Task capability route provider does not match the job provider.')
+  }
+  if (value.executionMode !== 'browser' && value.executionMode !== 'direct') {
+    throw new TypeError('Task capability route execution mode is invalid.')
+  }
+  if (expectedExecutionMode !== undefined && value.executionMode !== expectedExecutionMode) {
+    throw new TypeError('Task capability route execution mode does not match the job execution mode.')
   }
   if (!Array.isArray(value.requirements)) throw new TypeError('Task capability route requirements must be an array.')
   const rawRequirements = value.requirements
@@ -677,6 +694,7 @@ export function validateTaskCapabilityRoute(
   }
   const decision = resolveTaskCapabilityRoute({
     requirements,
+    executionMode: value.executionMode,
     candidates: [{
       provider: value.provider,
       runtimeEligibility: value.runtimeEligibility,
@@ -789,8 +807,8 @@ function route(
   })
 }
 
-function routeKey(provider: ProviderId, capability: TaskCapabilityId) {
-  return `${provider}:${capability}`
+function routeKey(provider: ProviderId, capability: TaskCapabilityId, executionMode: ProviderExecutionMode = 'browser') {
+  return `${executionMode}:${provider}:${capability}`
 }
 
 function expandImpliedCapabilities(input: readonly TaskCapabilityId[]) {
@@ -825,7 +843,7 @@ function validateCatalog() {
       throw new Error('Provider task capability route identity is invalid.')
     }
     if (entry.evidence.length === 0 || !entry.strategy) {
-      throw new Error(`Provider task capability route ${routeKey(entry.provider, entry.capability)} lacks evidence.`)
+      throw new Error(`Provider task capability route ${routeKey(entry.provider, entry.capability, entry.executionMode)} lacks evidence.`)
     }
   }
 }
@@ -843,6 +861,7 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 function sameTaskCapabilityRoute(expected: TaskCapabilityRoute, actual: Record<string, unknown>) {
   return actual.schema === expected.schema &&
     actual.provider === expected.provider &&
+    actual.executionMode === expected.executionMode &&
     actual.support === expected.support &&
     actual.runtimeEligibility === expected.runtimeEligibility &&
     sameStringArray(actual.requirements, expected.requirements) &&

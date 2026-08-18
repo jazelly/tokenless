@@ -27,7 +27,7 @@
 | `tokenless capabilities list` | 列出 canonical task capabilities 和已有证据闭环的 provider routes。 | 否 |
 | `tokenless limits inspect` | 根据 packaged catalog 和本地 job 历史查看下一次 prompt 的 provider/profile 容量估算。 | 否 |
 | `tokenless savings <status\|enable\|disable\|clear\|uninstall>` | 管理可选的本地输出节省计量及其 lazy-download tokenizer。 | 否 |
-| `tokenless api-proxy <status\|enable\|disable>` | 管理 OpenAI/Anthropic 兼容的本地 API proxy 及其 conversation mode。 | 否 |
+| `tokenless api-proxy <status\|enable\|disable>` | 管理 OpenAI/Anthropic 兼容的本地 API proxy 及其兼容性 conversation-mode 设置。 | 否 |
 | `tokenless run` | 通过可见 provider session 发送 prompt 和可选文件。 | 是 |
 | `tokenless replay` | 为一个 agent recipient 报告此前未见过的 daemon outcome 摘要。 | 否 |
 | `tokenless state` | 查询 daemon 中持久化的 job 状态。 | 否 |
@@ -470,7 +470,7 @@ tokenless api-proxy disable --json
 
 `model` 必须以 `tokenless/<provider>` 显式指明 provider，例如 `tokenless/chatgpt`。无法映射的 model 会被拒绝，而不会被改写到调用方没有选择的 provider。`GET /v1/openai/models` 会列出全部可用名称。
 
-`--conversation-mode new-conversation` 会把整段对话打平成一条 prompt，每个请求都新建一个 provider 会话，因此相同请求不依赖任何本地既有状态。`--conversation-mode continue-conversation` 会用除最后一条 user message 之外的全部消息推导线程标识，并复用同一个 provider 会话；如果调用方裁剪或修改了历史，它会新建会话，而不是把内容追加到 provider 已经不再共享的对话里。
+`--conversation-mode` 仍保留用于配置/status 兼容，但不会覆盖 API contract。Chat Completions 与 Anthropic 始终新建 provider conversation，并发送完整请求历史。Responses 省略 `previous_response_id` 时新建 chat；只有提供有效 `previous_response_id` 且存在 mapping 时才继续既有 provider conversation；mapping 缺失则以重建 transcript 新建 chat。精确 continuation 规则见 [API proxy 集成文档](docs/api-proxy-integration.zh-CN.md#conversation-状态)。
 
 `tools`、`tool_choice`、`functions`、`function_call` 和 `response_format` 会被拒绝，因为可见 provider 页面没有对应控件。`stream: true` 会返回该方言约定的事件序列，但作为一个终态 chunk 一次性下发，因为可见 response 只有渲染完成后才可读。返回的 `usage` 计数恒为 0：Tokenless 不计量 provider token，该 response 由你自己的网页版订阅承担。
 

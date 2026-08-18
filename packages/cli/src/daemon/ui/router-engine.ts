@@ -143,6 +143,35 @@ export function createRouterEngine(engine: RouterEngineId) {
         session.destroy?.()
       }
     },
+
+    async title(task: string, browserBinding: RouterBrowserBinding): Promise<string> {
+      const observation = await inspectChromePromptApi(browserBinding)
+      requireSupportedObservation(observation)
+      const api = languageModelApi()
+      if (!api) throw new RouterEngineError('api-missing', observation)
+      if (await api.availability() === 'unavailable') throw new RouterEngineError('unavailable', observation)
+      const session = await api.create({ monitor() {} })
+      try {
+        const response = await session.prompt(`${titleInstruction}\n${JSON.stringify({ conversation: task.slice(0, 4_000) })}`, {
+          responseConstraint: {
+            type: 'object',
+            properties: { title: { type: 'string' } },
+            required: ['title'],
+            additionalProperties: false,
+          },
+        })
+        const parsed = JSON.parse(response) as { title?: unknown }
+        const title = typeof parsed.title === 'string' ? parsed.title.trim() : ''
+        if (!title || title.length > 80) throw new RouterEngineError('invalid-result')
+        return title
+      } catch (error) {
+        if (error instanceof RouterEngineError) throw error
+        if (error instanceof SyntaxError) throw new RouterEngineError('invalid-result')
+        throw error
+      } finally {
+        session.destroy?.()
+      }
+    },
   }
 }
 
@@ -211,3 +240,4 @@ function languageModelApi() {
 }
 
 const semanticInstruction = 'Analyze the task. Choose the enabled AI provider whose suitableTasks best matches it. Return that provider ID, its configured model, the task type, complexity, and a concise reason.'
+const titleInstruction = 'Write a direct, descriptive title for this conversation. Use the conversation language. Return only JSON. Keep the title under eight words in English or twenty characters in Chinese.'

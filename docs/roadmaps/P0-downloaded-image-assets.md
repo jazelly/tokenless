@@ -2,7 +2,7 @@
 
 状态：Active  
 优先级：P0  
-最后更新：2026-08-16
+最后更新：2026-08-18
 
 ## Goal
 
@@ -35,6 +35,7 @@ V1 不增加队列、重试、恢复、去重、迁移、跨机器同步、asset
 | IMG-006 | `artifact.download` 只在真实下载闭环完成的 provider 上 routeable。 | capability list 与真实 provider E2E。 |
 | IMG-007 | 每个新增 provider 都分别证明生成、终态识别、下载、落盘和重新读取；未闭环 provider 保持不公开。 | 每个 provider 的 focused real-provider E2E report。 |
 | IMG-008 | 已认证的 daemon asset 接口可按返回 reference 重新读取图片 bytes 与正确 Content-Type，且不能越出 Tokenless asset root。 | 真实 daemon HTTP GET 与落盘文件 digest 对比；路径越界请求明确失败。 |
+| IMG-009 | `/v1/images/generations` 可在 browser mode 接收一个已验证的本地 reference image，并且只路由到完成真实编辑闭环的 provider。 | Local HTTP boundary 验证 data URL、staging、action order、取消清理与 direct rejection；provider route 仍以真实 E2E 为准。 |
 
 ## Delivery Slices
 
@@ -44,8 +45,10 @@ V1 不增加队列、重试、恢复、去重、迁移、跨机器同步、asset
 4. Grok downloaded assets（完成于 2026-08-16）：进入独立 Imagine Image surface、精确选择 ×2 output，以提交前 post set 做差集并等待两个新 post identity，忽略 data-URI preview，逐个打开 post 并下载与 asset ID 精确匹配的 HTTPS 图片；focused real-provider E2E 已完成 IMG-007。
 5. Gemini Images（完成于 2026-08-17）：统一 HTTP route 会在 prompt 前进入 Gemini Images，以提交前 blob baseline 关联新的 decoded `<img>`，再经 canvas 导出 PNG；built CLI 与 packaged daemon 已完成 terminal artifact、digest 与 authenticated readback。
 6. GPT4Free parity（完成于 2026-08-16，public route 已由第 8 切片取代）：早期 G4F-namespaced request 已证明从私有 media route 读取真实 bytes、校验 JPEG/PNG 尺寸、保存统一 asset，并把 `data[].url` 改写为 authenticated Tokenless asset route；该 public input 不再保留。
-7. Specialist surfaces 审计：Qwen 与 Z.ai 按当前要求暂缓。Kimi Design 已真实观察但被可见 capacity queue 阻塞。Dola 与 Doubao 的配置 profile 已分别完成真实图片提交、当前回合终态识别、bytes 下载、digest 与 authenticated readback；其他 specialist surfaces 仍独立受 gate 约束。Perplexity 当前 guest surface 未暴露图片入口；Claude 与 DeepSeek 未观察到 native raster image surface。
+7. Specialist surfaces 审计：Qwen 已进入第 10 切片但受 DNS gate 阻塞，Z.ai 仍暂缓。Kimi Design 已真实观察但被可见 capacity queue 阻塞。Dola 与 Doubao 的配置 profile 已分别完成真实图片提交、当前回合终态识别、bytes 下载、digest 与 authenticated readback；其他 specialist surfaces 仍独立受 gate 约束。Perplexity 当前 guest surface 未暴露图片入口；Claude 与 DeepSeek 未观察到 native raster image surface。
 8. 统一 HTTP image generation（完成于 2026-08-17）：authenticated `POST /v1/images/generations` 以 `tokenless.execution_mode = browser | direct` 选择执行线。Browser named/auto route 只使用同时具备 `image.generation` 与 `artifact.download` 的 provider，再组装该 provider 的 surface action；direct 对外使用 logical `tokenless/pollinations/sana`，不在公开 path、request、response 或 asset provider identity 中暴露 G4F。Built CLI 的 `image.generation` 是该 endpoint 的 HTTP wrapper；旧 G4F-namespaced image route 返回 404。
+9. Browser reference image（完成于 2026-08-18）：endpoint 新增单个 `reference_image` data URL，限定 PNG/JPEG/WebP 与 8 MiB decoded bytes；remote URL 和 direct mode 明确拒绝。请求按 `image.edit`、`image.input`、`file.upload`、`artifact.download` 完整路由，图片只暂存到 job-scoped attachment bundle，任务取消与 terminal runner 会删除该目录。Arena 是当前唯一公开 route；其他 provider 在真实编辑 gate 通过前保持 unavailable。
+10. Qwen browser image（实现完成、route blocked）：Create Image surface、提交前 URL baseline、current-turn terminal reader、Qwen CDN bytes 落盘与 focused generation/edit case 已加入。配置 profile 第三次在 provider submission 前因 `chat.qwen.ai` DNS 失败，因此 `image.generation`、`image.edit` 与 `artifact.download` 均不公开。
 
 ## Verified Evidence
 
@@ -67,7 +70,7 @@ V1 不增加队列、重试、恢复、去重、迁移、跨机器同步、asset
 - 统一 endpoint direct gate：`TOKENLESS_LIVE_G4F_IMAGE_E2E_GATE=real-g4f-image node --test test/live-g4f-image.e2e.mjs`，1/1 passed；公开 payload 使用 `tokenless/pollinations/sana` 与 `provider: pollinations`，并验证不含 G4F/upstream provider identity。
 - 统一 endpoint browser gate：`TOKENLESS_LIVE_E2E_GATE=mutation TOKENLESS_LIVE_E2E_PROVIDER=arena TOKENLESS_LIVE_E2E_CASES=arena-image node --test --test-concurrency=1 test/live-managed-playwright.e2e.mjs`，2/2 passed；report 为 `test-results/live-provider-e2e/20260816T132414Z_3697a1ca-mutation.json`。
 - Gemini provider timeout reports：`test-results/live-provider-e2e/20260816T040646Z_fe42cb94-mutation.json`、`test-results/live-provider-e2e/20260816T042143Z_5a8e040a-mutation.json`、`test-results/live-provider-e2e/20260816T045210Z_21d4cd91-mutation.json`；首份还复现了 revoked blob 无法 fetch，后两份均在 360 秒前未形成 terminal CLI result。
-- Qwen configured-browser DNS blocker reports：`test-results/live-provider-e2e/20260816T044537Z_acd5fb91-mutation.json`、`test-results/live-provider-e2e/20260816T044602Z_fcad3dbd-mutation.json`；两次均在 provider action 前返回 `provider_dns_unavailable`。独立真实页面已观察到 Create Image、Qwen-Image 2.0、一张 terminal CDN PNG 与消失的 Stop，但不能替代 built CLI gate。
+- Qwen configured-browser DNS blocker reports：`test-results/live-provider-e2e/20260816T044537Z_acd5fb91-mutation.json`、`test-results/live-provider-e2e/20260816T044602Z_fcad3dbd-mutation.json`、`test-results/live-provider-e2e/20260817T143923Z_d7056cd4-mutation.json`；三次均在 provider submission 前受 `chat.qwen.ai` DNS failure 阻塞。独立真实页面已观察到 Create Image、Qwen-Image 2.0、一张 terminal CDN PNG 与消失的 Stop，但不能替代 built CLI gate。
 
 ## Constraints
 

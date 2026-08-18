@@ -60,6 +60,7 @@ export type DaemonServer = {
 }
 
 const MAX_HTTP_BODY_BYTES = 2 * 1024 * 1024
+const MAX_IMAGE_GENERATION_BODY_BYTES = 18 * 1024 * 1024
 const BODY_LIMIT_EXCEEDED_MESSAGE = 'Failed to buffer the request body: length limit exceeded'
 
 type JsonRecord = Record<string, unknown>
@@ -287,7 +288,7 @@ async function handleRequest(
     }
 
     if (method === 'POST' && url.pathname === '/v1/images/generations') {
-      writeJson(response, 200, await imageGeneration.generate(await readJsonObject(request)))
+      writeJson(response, 200, await imageGeneration.generate(await readJsonObject(request, MAX_IMAGE_GENERATION_BODY_BYTES)))
       return
     }
 
@@ -941,10 +942,10 @@ function waitForApiProxyDrain(response: ServerResponse, signal: AbortSignal) {
   })
 }
 
-async function readJsonObject(request: IncomingMessage) {
+async function readJsonObject(request: IncomingMessage, maxBytes = MAX_HTTP_BODY_BYTES) {
   let raw
   try {
-    raw = await readBody(request)
+    raw = await readBody(request, maxBytes)
   } catch (error) {
     if (error instanceof BodyLimitExceededError) {
       throw invalidInput('request body must be valid JSON: Failed to buffer the request body')
@@ -967,19 +968,19 @@ function parseJsonObject(raw: string) {
   }
 }
 
-async function readBody(request: IncomingMessage) {
+async function readBody(request: IncomingMessage, maxBytes = MAX_HTTP_BODY_BYTES) {
   const contentLength = request.headers['content-length']
   const declaredLength = Array.isArray(contentLength) ? contentLength[0] : contentLength
   if (declaredLength !== undefined && declaredLength !== '') {
     const length = Number(declaredLength)
-    if (Number.isFinite(length) && length > MAX_HTTP_BODY_BYTES) throw new BodyLimitExceededError()
+    if (Number.isFinite(length) && length > maxBytes) throw new BodyLimitExceededError()
   }
   const chunks: Buffer[] = []
   let totalBytes = 0
   for await (const chunk of request) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
     totalBytes += buffer.length
-    if (totalBytes > MAX_HTTP_BODY_BYTES) throw new BodyLimitExceededError()
+    if (totalBytes > maxBytes) throw new BodyLimitExceededError()
     chunks.push(buffer)
   }
   const body = Buffer.concat(chunks).toString('utf8')

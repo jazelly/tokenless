@@ -1140,11 +1140,13 @@ function resolveDaemonJobCapabilityRoutes({
   profile,
   explicitProvider,
   requirements,
+  executionMode,
 }: {
   config: Awaited<ReturnType<typeof readTokenlessConfig>>
   profile: ManagedProfileRecord
   explicitProvider?: ProviderId | undefined
   requirements: readonly TaskCapabilityId[]
+  executionMode: 'browser' | 'direct'
 }): readonly TaskCapabilityRoute[] {
   const enabledProviders = requiredProfileConfig(config, profile.slug).enabledProviders
   if (explicitProvider && !enabledProviders.includes(explicitProvider)) {
@@ -1166,6 +1168,7 @@ function resolveDaemonJobCapabilityRoutes({
       ), profile)
   const decision = resolveTaskCapabilityRoutes({
     requirements,
+    executionMode,
     candidates: providers.map((provider, preferenceRank) => ({
       provider: provider.provider,
       runtimeEligibility: explicitProvider ? 'unchecked' : provider.runtimeEligibility,
@@ -1740,6 +1743,7 @@ async function executeDaemonJob({
     profile: profileForTarget,
     explicitProvider: explicitProviderId,
     requirements: taskCapabilities,
+    executionMode,
   })
   const capabilityRoute = capabilityRoutes[0]
   if (!capabilityRoute) throw usageError('task_capability_route_unavailable', 'No provider capability route is available.')
@@ -5600,8 +5604,8 @@ function assertVisibleRunArguments(args: CliArgs) {
       throw usageError('attachment_action_unsupported', 'The image generation endpoint does not accept attachments; use image.edit for source images.')
     }
     const provider = String(args.provider || process.env.TOKENLESS_PROVIDER || '').trim().toLowerCase()
-    if (executionMode === 'direct' && provider && provider !== 'pollinations') {
-      throw usageError('unsupported_provider', '--execution-mode direct image generation supports --provider pollinations or automatic routing.')
+    if (executionMode === 'direct' && provider && provider !== 'pollinations' && provider !== 'chatgpt') {
+      throw usageError('unsupported_provider', '--execution-mode direct image generation supports --provider pollinations, chatgpt, or automatic routing.')
     }
     if (executionMode === 'browser' && provider) normalizeProvider(provider)
     if (args.providerBackend !== undefined) {

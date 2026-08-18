@@ -144,12 +144,20 @@ export class G4fRuntimeManager {
         origin,
         health,
         client,
-        close: async () => await stopChild(child),
+        close: async () => {
+          await stopChild(child)
+          await this.removeEmptyAuthDirectory()
+        },
       }
     } catch (error) {
       await stopChild(child).catch(() => undefined)
+      await this.removeEmptyAuthDirectory()
       throw error
     }
+  }
+
+  private async removeEmptyAuthDirectory() {
+    await fs.rm(path.join(this.authRoot, '_empty'), { recursive: true, force: true })
   }
 
   private pythonExecutable() {

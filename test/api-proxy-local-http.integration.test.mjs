@@ -11,6 +11,8 @@ const daemonServer = path.join(root, 'packages/cli/dist/src/daemon/server.js')
 const daemonStore = path.join(root, 'packages/cli/dist/src/daemon/job-store.js')
 const runtimeModule = path.join(root, 'packages/cli/dist/src/index.js')
 const profileRegistryModule = path.join(root, 'packages/cli/dist/src/playwright/profiles/registry.js')
+const REFERENCE_IMAGE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
+const UNPADDED_REFERENCE_IMAGE = REFERENCE_IMAGE.replace(/=+$/u, '')
 
 const ROUTES = [
   ['GET', '/v1/openai/models'],
@@ -46,6 +48,15 @@ test('image generation is authenticated and the unified direct path remains gate
     assert.equal(direct.status, 503)
     assert.equal(direct.body.error.code, 'image_direct_unavailable')
     assert.equal(JSON.stringify(direct.body).toLowerCase().includes('g4f'), false)
+
+    const directReference = await call(daemon, 'POST', '/v1/images/generations', {
+      model: 'tokenless/pollinations/sana',
+      prompt: 'A green leaf edit.',
+      reference_image: UNPADDED_REFERENCE_IMAGE,
+      tokenless: { execution_mode: 'direct', task_id: 'IMAGE_HTTP_DIRECT_REFERENCE' },
+    })
+    assert.equal(directReference.status, 400)
+    assert.equal(directReference.body.error.code, 'image_reference_unsupported')
   })
 })
 
@@ -92,14 +103,85 @@ test('image auto routing creates one browser job from image-capable providers on
       if (!job) await new Promise((resolve) => setTimeout(resolve, 25))
     }
     assert.ok(job)
-    assert.equal(job.provider, 'grok')
+    assert.equal(job.provider, 'gemini')
     assert.deepEqual(job.request_json.capabilityRoute.requirements, [
-      'conversation.chat',
       'image.generation',
       'artifact.download',
     ])
     assert.equal(job.request_json.fallback, null)
     await daemon.store.cancelJob(job.job_id, 'focused image routing test completed')
+    const response = await pending
+    assert.equal(response.status, 502)
+    assert.equal(response.body.error.code, 'image_provider_job_failed')
+  })
+})
+
+test('browser image edit decodes and stages one reference image before the Arena prompt', async () => {
+  await withDaemon(async (daemon) => {
+    const { ManagedProfileRegistry } = await import(profileRegistryModule)
+    const registry = new ManagedProfileRegistry(daemon.homeDir)
+    await registry.addProfile({ slug: 'arena-images', setDefault: true, lifecycle: 'ready' })
+    await registry.updateProviderStatus('arena-images', {
+      provider: 'arena',
+      auth: 'authenticated',
+      access: 'signed_in_free',
+      checkedAt: new Date().toISOString(),
+    })
+    const { writeTokenlessConfig } = await import(runtimeModule)
+    await writeTokenlessConfig({
+      homeDir: daemon.homeDir,
+      profiles: {
+        'arena-images': {
+          roleLabel: '',
+          enabledProviders: ['arena'],
+          browserVisibility: 'headed',
+          proxy: null,
+        },
+      },
+    })
+
+    const pending = call(daemon, 'POST', '/v1/images/generations', {
+      model: 'tokenless/arena',
+      prompt: 'Turn the attached mark into a small green leaf icon.',
+      reference_image: REFERENCE_IMAGE,
+      tokenless: {
+        execution_mode: 'browser',
+        profile: 'arena-images',
+        task_id: 'IMAGE_HTTP_ARENA_REFERENCE',
+        page_ref: 'page:IMAGE_HTTP_ARENA_REFERENCE',
+        timeout_ms: 30_000,
+      },
+    })
+    let job
+    for (let attempt = 0; attempt < 40 && !job; attempt += 1) {
+      job = daemon.store.listJobs({ limit: 1 })[0]
+      if (!job) await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+    assert.ok(job)
+    assert.equal(job.provider, 'arena')
+    assert.deepEqual(job.request_json.capabilityRoute.requirements, [
+      'image.edit',
+      'image.input',
+      'file.upload',
+      'artifact.download',
+    ])
+    assert.deepEqual(job.request_json.actions.map((action) => action.action), [
+      'arena.surface.select',
+      'file.upload',
+      'prompt.input',
+      'prompt.submit',
+      'response.read',
+    ])
+    const upload = job.request_json.actions[1].payload.attachments[0]
+    assert.equal(upload.name, 'reference.png')
+    assert.equal(upload.type, 'image/png')
+    assert.equal(upload.size, Buffer.from(REFERENCE_IMAGE.slice(REFERENCE_IMAGE.indexOf(',') + 1), 'base64').byteLength)
+    const stagedPath = path.join(daemon.homeDir, 'attachments', upload.bundleId, `${upload.attachmentId}.bin`)
+    assert.deepEqual(fs.readFileSync(stagedPath), Buffer.from(REFERENCE_IMAGE.slice(REFERENCE_IMAGE.indexOf(',') + 1), 'base64'))
+    assert.equal(fs.existsSync(path.join(path.dirname(stagedPath), '.tokenless-web-ai-v0-stage')), false)
+
+    await daemon.store.cancelJob(job.job_id, 'focused image reference staging test completed')
+    assert.equal(fs.existsSync(path.dirname(stagedPath)), false)
     const response = await pending
     assert.equal(response.status, 502)
     assert.equal(response.body.error.code, 'image_provider_job_failed')
@@ -1038,9 +1120,197 @@ test('api proxy conversation mode round-trips through the persisted config', asy
   })
 })
 
+test('api proxy keeps Chat Completions fresh and Responses continuation on the mapped provider chat', async () => {
+  await withDaemon(async (daemon) => {
+    const { ManagedProfileRegistry } = await import(profileRegistryModule)
+    const registry = new ManagedProfileRegistry(daemon.homeDir)
+    await registry.addProfile({ slug: 'web-ai', setDefault: true, lifecycle: 'ready' })
+    await registry.updateProviderStatus('web-ai', {
+      provider: 'chatgpt',
+      auth: 'authenticated',
+      access: 'signed_in_free',
+      checkedAt: new Date().toISOString(),
+    })
+    const { writeTokenlessConfig } = await import(runtimeModule)
+    await writeTokenlessConfig({
+      homeDir: daemon.homeDir,
+      apiProxy: { enabled: true, conversationMode: 'continue-conversation', executionMode: 'browser' },
+      profiles: {
+        'web-ai': {
+          roleLabel: '',
+          enabledProviders: ['chatgpt'],
+          browserVisibility: 'headed',
+          proxy: null,
+        },
+      },
+    })
+
+    const firstChat = call(daemon, 'POST', '/v1/chat/completions', {
+      model: 'tokenless/chatgpt',
+      messages: [{ role: 'user', content: 'CHAT_FRESH_FIRST' }],
+    })
+    const firstChatJob = await waitForQueuedApiProxyJob(daemon, 'api-proxy:')
+    assert.match(firstChatJob.request_json.taskId, /^api-proxy:[0-9a-f-]{36}$/)
+    const firstChatTarget = firstChatJob.request_json.target.url
+    assert.match(firstChatJob.request_json.actions[0].payload.text, /CHAT_FRESH_FIRST/)
+    daemon.store.cancelJob(firstChatJob.job_id, 'focused API conversation semantics test completed')
+    assert.equal((await firstChat).status, 502)
+
+    const secondChat = call(daemon, 'POST', '/v1/chat/completions', {
+      model: 'tokenless/chatgpt',
+      messages: [
+        { role: 'user', content: 'CHAT_FRESH_HISTORY' },
+        { role: 'assistant', content: 'CHAT_FRESH_ANSWER' },
+        { role: 'user', content: 'CHAT_FRESH_CURRENT' },
+      ],
+    })
+    const secondChatJob = await waitForQueuedApiProxyJob(daemon, 'api-proxy:')
+    assert.notEqual(secondChatJob.request_json.taskId, firstChatJob.request_json.taskId)
+    assert.equal(secondChatJob.request_json.target.url, firstChatTarget)
+    assert.match(secondChatJob.request_json.actions[0].payload.text, /CHAT_FRESH_HISTORY/)
+    assert.match(secondChatJob.request_json.actions[0].payload.text, /CHAT_FRESH_CURRENT/)
+    daemon.store.cancelJob(secondChatJob.job_id, 'focused API conversation semantics test completed')
+    assert.equal((await secondChat).status, 502)
+
+    const freshResponse = call(daemon, 'POST', '/v1/responses', {
+      model: 'tokenless/chatgpt',
+      input: 'RESPONSES_FRESH_INPUT',
+    })
+    const freshResponseJob = await waitForQueuedApiProxyJob(daemon, 'api-proxy:response:resp_')
+    assert.match(freshResponseJob.request_json.taskId, /^api-proxy:response:resp_[a-f0-9]{32}$/)
+    assert.match(freshResponseJob.request_json.actions[0].payload.text, /RESPONSES_FRESH_INPUT/)
+    const freshResponseTarget = freshResponseJob.request_json.target.url
+    daemon.store.cancelJob(freshResponseJob.job_id, 'focused API conversation semantics test completed')
+    assert.equal((await freshResponse).status, 502)
+
+    const missingMappingResponseId = `resp_${'e'.repeat(32)}`
+    daemon.store.putApiResponse({
+      response_id: missingMappingResponseId,
+      provider: 'chatgpt',
+      model: 'tokenless/chatgpt',
+      execution_mode: 'browser',
+      transcript: [{ role: 'user', content: 'RESPONSES_MAPPING_MISS_OLD' }],
+    })
+    const mappingMiss = call(daemon, 'POST', '/v1/responses', {
+      model: 'tokenless/chatgpt',
+      previous_response_id: missingMappingResponseId,
+      input: 'RESPONSES_MAPPING_MISS_CURRENT',
+    })
+    const mappingMissJob = await waitForQueuedApiProxyJob(daemon, 'api-proxy:response:resp_')
+    assert.equal(mappingMissJob.request_json.target.url, freshResponseTarget)
+    assert.match(mappingMissJob.request_json.actions[0].payload.text, /RESPONSES_MAPPING_MISS_OLD/)
+    assert.match(mappingMissJob.request_json.actions[0].payload.text, /RESPONSES_MAPPING_MISS_CURRENT/)
+    daemon.store.cancelJob(mappingMissJob.job_id, 'focused API conversation semantics test completed')
+    assert.equal((await mappingMiss).status, 502)
+
+    const rootResponseId = `resp_${'d'.repeat(32)}`
+    const seedJob = daemon.store.createJob({
+      provider: 'chatgpt',
+      action: 'api-proxy-test-seed',
+      request_json: {},
+      execution_backend: 'playwright',
+      profile_id: (await registry.resolveProfile()).id,
+    })
+    daemon.store.upsertProviderTaskConversation({
+      provider: 'chatgpt',
+      profile_id: (await registry.resolveProfile()).id,
+      task_id: `api-proxy:response:${rootResponseId}`,
+      canonical_url: 'https://chatgpt.com/c/api-proxy-root-conversation',
+      job_id: seedJob.job_id,
+    })
+    daemon.store.cancelJob(seedJob.job_id, 'focused API conversation semantics seed completed')
+    const largeResponseId = `resp_${'f'.repeat(32)}`
+    daemon.store.upsertProviderTaskConversation({
+      provider: 'chatgpt',
+      profile_id: (await registry.resolveProfile()).id,
+      task_id: `api-proxy:response:${largeResponseId}`,
+      canonical_url: 'https://chatgpt.com/c/api-proxy-large-conversation',
+      job_id: seedJob.job_id,
+    })
+    const largeHistoryMarker = 'RESPONSES_LARGE_OLD_CONTEXT'
+    daemon.store.putApiResponse({
+      response_id: largeResponseId,
+      provider: 'chatgpt',
+      model: 'tokenless/chatgpt',
+      execution_mode: 'browser',
+      transcript: [{ role: 'user', content: `${largeHistoryMarker}${'x'.repeat(1024 * 1024)}` }],
+    })
+    const largeContinuation = call(daemon, 'POST', '/v1/responses', {
+      model: 'tokenless/chatgpt',
+      previous_response_id: largeResponseId,
+      input: 'RESPONSES_LARGE_CURRENT',
+    })
+    const largeContinuationJob = await waitForQueuedApiProxyJob(daemon, 'api-proxy:response:resp_')
+    assert.equal(largeContinuationJob.request_json.target.url, 'https://chatgpt.com/c/api-proxy-large-conversation')
+    const largeContinuationPrompt = largeContinuationJob.request_json.actions[0].payload.text
+    assert.match(largeContinuationPrompt, /RESPONSES_LARGE_CURRENT/)
+    assert.doesNotMatch(largeContinuationPrompt, new RegExp(largeHistoryMarker))
+    assert.ok(Buffer.byteLength(largeContinuationPrompt, 'utf8') < 1024 * 1024)
+    daemon.store.cancelJob(largeContinuationJob.job_id, 'focused API conversation semantics test completed')
+    assert.equal((await largeContinuation).status, 502)
+
+    daemon.store.putApiResponse({
+      response_id: rootResponseId,
+      provider: 'chatgpt',
+      model: 'tokenless/chatgpt',
+      execution_mode: 'browser',
+      transcript: [
+        { role: 'user', content: 'RESPONSES_OLD_CONTEXT' },
+        {
+          type: 'function_call',
+          id: 'fc_root',
+          call_id: 'call_root',
+          name: 'read_file',
+          arguments: '{"path":"package.json"}',
+          status: 'completed',
+        },
+      ],
+    })
+
+    const continuation = call(daemon, 'POST', '/v1/responses', {
+      model: 'tokenless/chatgpt',
+      previous_response_id: rootResponseId,
+      input: [{ type: 'function_call_output', call_id: 'call_root', output: 'RESPONSES_CURRENT_TOOL_RESULT' }],
+      tools: [{
+        type: 'function',
+        name: 'read_file',
+        description: 'Read one UTF-8 file.',
+        parameters: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['path'],
+          properties: { path: { type: 'string' } },
+        },
+        strict: true,
+      }],
+      tool_choice: 'none',
+      parallel_tool_calls: false,
+    })
+    const continuationJob = await waitForQueuedApiProxyJob(daemon, 'api-proxy:response:resp_')
+    assert.match(continuationJob.request_json.taskId, /^api-proxy:response:resp_[a-f0-9]{32}$/)
+    assert.equal(continuationJob.request_json.target.url, 'https://chatgpt.com/c/api-proxy-root-conversation')
+    const continuationPrompt = continuationJob.request_json.actions[0].payload.text
+    assert.match(continuationPrompt, /RESPONSES_CURRENT_TOOL_RESULT/)
+    assert.doesNotMatch(continuationPrompt, /RESPONSES_OLD_CONTEXT/)
+    assert.match(continuationPrompt, /function_catalog/)
+    daemon.store.cancelJob(continuationJob.job_id, 'focused API conversation semantics test completed')
+    assert.equal((await continuation).status, 502)
+  })
+})
+
 async function enableApiProxy(homeDir, conversationMode = 'new-conversation') {
   const { writeTokenlessConfig } = await import(runtimeModule)
   await writeTokenlessConfig({ homeDir, apiProxy: { enabled: true, conversationMode } })
+}
+
+async function waitForQueuedApiProxyJob(daemon, taskPrefix) {
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    const job = daemon.store.listJobs({ status: 'queued', limit: 50 })
+      .find((entry) => entry.request_json?.taskId?.startsWith(taskPrefix))
+    if (job) return job
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+  assert.fail(`timed out waiting for queued API proxy job with task prefix ${taskPrefix}`)
 }
 
 function functionTool(name) {

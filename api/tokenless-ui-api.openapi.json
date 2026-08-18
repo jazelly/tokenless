@@ -555,6 +555,12 @@
           "action": { "type": "string" },
           "status": { "type": "string" },
           "taskId": { "type": ["string", "null"] },
+          "chatTitle": { "type": ["string", "null"] },
+          "titlePrompt": { "type": ["string", "null"] },
+          "executionMode": { "type": ["string", "null"], "enum": ["browser", "direct", null] },
+          "providers": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+          "conversationUrl": { "type": ["string", "null"], "format": "uri" },
+          "estimatedTokens": { "type": ["integer", "null"], "minimum": 0 },
           "capabilityRoute": { "type": ["object", "null"] },
           "agent": { "type": ["object", "null"] },
           "blocker": {},
@@ -562,7 +568,7 @@
           "createdAt": { "type": "string", "format": "date-time" },
           "updatedAt": { "type": "string", "format": "date-time" }
         },
-        "required": ["jobId", "profileId", "profileSlug", "provider", "action", "status", "taskId", "capabilityRoute", "agent", "blocker", "outputSavings", "createdAt", "updatedAt"],
+        "required": ["jobId", "profileId", "profileSlug", "provider", "action", "status", "taskId", "chatTitle", "titlePrompt", "executionMode", "providers", "conversationUrl", "estimatedTokens", "capabilityRoute", "agent", "blocker", "outputSavings", "createdAt", "updatedAt"],
         "additionalProperties": false
       },
       "ProviderReadinessRefresh": {
@@ -580,12 +586,24 @@
           {
             "type": "object",
             "properties": {
+              "transcript": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "role": { "type": "string", "enum": ["user", "assistant"] },
+                    "content": { "type": "string" }
+                  },
+                  "required": ["role", "content"],
+                  "additionalProperties": false
+                }
+              },
               "result": {},
               "error": {},
               "providerAttempts": {},
               "outputSavingsEvents": { "type": "array", "items": { "$ref": "#/components/schemas/OutputSavingsEvent" } }
             },
-            "required": ["result", "error", "providerAttempts", "outputSavingsEvents"]
+            "required": ["transcript", "result", "error", "providerAttempts", "outputSavingsEvents"]
           }
         ]
       },

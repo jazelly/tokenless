@@ -87,7 +87,22 @@ Treat it as a local credential: it authorizes every daemon control route, not ju
 }
 ```
 
-Browser `tokenless/auto` considers only enabled, currently usable providers with complete `conversation.chat`, `image.generation`, and `artifact.download` capability routes. Use `tokenless/<provider>` to select one exact browser provider.
+Browser `tokenless/auto` considers only enabled, currently usable providers with complete `image.generation` and `artifact.download` capability routes. Use `tokenless/<provider>` to select one exact browser provider.
+
+Browser requests may include one `reference_image` as a PNG, JPEG, or WebP base64 data URL. The decoded image is limited to 8 MiB; remote image URLs and direct-mode reference images are rejected. Reference requests require the provider's complete `image.edit`, `image.input`, `file.upload`, and `artifact.download` route. Arena is the only currently advertised browser route with that real-provider closure.
+
+```json
+{
+  "model": "tokenless/arena",
+  "prompt": "Change the background to pale yellow.",
+  "reference_image": "data:image/png;base64,iVBORw0KGgo...",
+  "tokenless": {
+    "execution_mode": "browser",
+    "profile": "default",
+    "task_id": "task-124"
+  }
+}
+```
 
 Direct V1 accepts `tokenless/auto`, `tokenless/pollinations`, or `tokenless/pollinations/sana`; `size` may be omitted or set to `768x768`. The private implementation is not part of the public schema or response.
 
@@ -120,11 +135,11 @@ A well-formed name for a provider that does not exist or is not built in returns
 
 The current scope is deliberately narrow:
 
-- Browser execution, `new-conversation`, and a request containing function tools, `json_object`, or `json_schema`.
+- Browser execution and a request containing function tools, `json_object`, or `json_schema`.
 - Candidates must be enabled on the selected profile, have currently usable observed access, expose an evidence-backed `conversation.chat` route, and satisfy every structured-control requirement.
 - Tool requirements distinguish calls, strict schemas, complete tool history, and multiple-call output. `parallel_tool_calls: true` requires multiple-call evidence only when the current `tool_choice` may return multiple calls; `none` and an exact named choice do not.
 - DeepSeek is admitted for evidenced multiple/strict/history and JSON control. ChatGPT is admitted for evidenced single-call strict/history and JSON control. Gemini tool control is excluded because its real outputs failed the strict whole-response boundary. The current two-provider routing and schema runs are recorded in [redacted evidence](evidence/openai-auto-provider-routing-2026-08-15.md).
-- Unsupported plain text, direct execution, provider backend/auth options, provider-local continuation, opaque replay, or an incomplete candidate set fails before a job is created.
+- Unsupported plain text, direct execution, provider backend/auth options, opaque replay, or an incomplete candidate set fails before a job is created.
 
 Auto calls use versioned opaque public ids that encode only their provider origin. A later full-history turn prefers that provider after rechecking current eligibility; a caller-influenced id cannot bypass the filter. Responses `previous_response_id` uses its existing ledger provider the same way—as portable affinity, not a hard pin.
 
@@ -404,7 +419,7 @@ If you need a savings figure, use `tokenless savings status --json`, which measu
 | --- | --- |
 | `provider` | Which provider actually answered, including the settled fallback provider |
 | `job_id` | Durable job id — pass to `tokenless state --job-id <id> --json` to inspect what happened |
-| `conversation_mode` | Which mapping served this request |
+| `conversation_mode` | Actual route: `new-conversation` for fresh/mapping-miss requests, or `continue-conversation` for a mapped Responses continuation |
 | `execution_mode` / `provider_backend` | Actual execution route |
 | `structured_control_strategy` | `prompt_tool_envelope`, `prompt_json_envelope`, or `null` for plain text |
 | `provider_attempts` | Redacted attempt order/status and blocker classification from the one durable job |
@@ -446,37 +461,23 @@ Anthropic frames, in order: `message_start`, `content_block_start`, `content_blo
 
 For browser/native and structured requests, do not build a progress indicator off the terminal frames. Direct G4F plain-text streams can drive progress from each received upstream chunk.
 
-## Conversation modes
+## Conversation state
 
-Set once, installation-wide, during `tokenless setup` or with `tokenless api-proxy enable --conversation-mode <mode>`. It is not per-request. Read the active mode from `tokenless api-proxy status --json`, and note that responses echo it in `tokenless.conversation_mode`.
+The persisted `conversationMode` option is retained for configuration and status compatibility, but it does not select the API protocol. API behavior follows the endpoint contract and the fields present in each request.
 
-### new-conversation (default)
+### Chat Completions and Anthropic
 
-Every request flattens the entire transcript into one prompt and starts a fresh provider conversation:
+Every Chat Completions or Anthropic request starts a fresh provider conversation and sends the complete request history. The provider website owns the state of that new chat; Tokenless does not infer a thread by hashing caller messages. Configure the client exactly as you would for a stateless Chat Completions API: send the history you want the provider to see on every call.
 
-```
-[System]
-Answer in one sentence.
+### Responses
 
-[User]
-What is 2+2?
-```
+`POST /v1/responses` starts a fresh provider conversation and sends the complete reconstructed input when `previous_response_id` is omitted. The response id is also used as the managed provider-task identity, so a later successful browser turn can be resumed without adding a database schema or a CLI-specific chat id.
 
-Stateless and predictable. Identical requests never depend on prior local state. The cost is that a long chat resends its whole history every turn, and the provider sees no continuity between turns.
+When `previous_response_id` is valid, route-compatible, and has a proved provider-task mapping, Tokenless opens the mapped canonical provider URL and sends only the current `input`. A missing mapping is safe: Tokenless starts a fresh provider conversation with the full reconstructed transcript and establishes a new response-task identity for that turn.
 
-Tool requests always use this request-scoped full-history behavior, regardless of the configured conversation mode. The catalog, nonce, and quoted canonical history are compiled into one strict JSON decision request.
+Structured/tool continuation follows the same rule. The mapped turn contains the current tool result or message delta and the current tool catalog; prior user and assistant content is not replayed into the existing provider chat. Full-input replay remains available when the caller intentionally wants a new provider conversation, such as after context compaction.
 
-**Client implication:** send full history on every call, exactly as you would to a real API. Nothing else to do.
-
-### continue-conversation
-
-Tokenless fingerprints every message *except the final user turn* (SHA-256 over role/text pairs), uses that as a durable thread identity, and reuses one provider conversation for it. On a hit, only the final user message is typed into the existing conversation. On a miss, it starts a new conversation with the full flattened transcript.
-
-Cheaper and closer to how a person uses the site. But the fingerprint is exact:
-
-**Client implication — this is the part to get right.** Any change to prior history starts a new conversation. That includes trimming old turns to fit a context budget, editing a system prompt, renumbering, reformatting whitespace, or normalizing your own assistant text before resending. All of these silently fork a new provider conversation rather than continuing.
-
-If your client rewrites history at all, prefer `new-conversation` — you get the same result without paying for surprise forks. Use `continue-conversation` only when you append and never mutate.
+The response `tokenless.conversation_mode` value reports the actual route: `new-conversation` for fresh or mapping-miss turns, and `continue-conversation` only for a mapped Responses continuation. The CLI `--conversation-mode` value does not override these endpoint rules.
 
 ## Errors
 
@@ -506,7 +507,7 @@ The status is the signal to branch on. Read `code` for the specific cause and tr
 | 400 | `invalid_json` | Body is empty or not JSON | No |
 | 400 | `unsupported_parameter` | Legacy `functions` / `function_call`, or Anthropic tools/structured output | No |
 | 400 | `auto_structured_control_required` | `tokenless/auto` received a plain-text request | No — choose an exact provider or add tools/structured output |
-| 400 | `auto_execution_mode_unsupported` / `auto_conversation_mode_unsupported` / `auto_dialect_unsupported` | Auto was asked to use direct/provider-local/Anthropic state | No — use the documented OpenAI browser scope |
+| 400 | `auto_execution_mode_unsupported` / `auto_dialect_unsupported` | Auto was asked to use direct/provider-local/Anthropic state | No — use the documented OpenAI browser scope |
 | 401 | `control_auth_missing` | No bearer token | No |
 | 403 | `control_auth_rejected` | Wrong bearer token | No |
 | 404 | `model_not_found` | `model` names a provider that does not exist or is not built in | No |
@@ -624,7 +625,7 @@ Note both SDKs need their default timeout raised and their retry count zeroed. D
 - [ ] Before retrying a `502` or `504`, check `job_id` — the original job may still be running.
 - [ ] Log `tokenless.job_id` on every call.
 - [ ] Expect serial execution; do not fan out concurrent requests.
-- [ ] Confirm the active conversation mode, and if the client rewrites history, use `new-conversation`.
+- [ ] For Chat Completions/Anthropic, send full history on every request; for Responses, omit `previous_response_id` when starting a fresh provider chat and use it only for a mapped continuation.
 
 ## Verified DeepSeek tool loop
 

@@ -58,6 +58,7 @@ import type { OutputSavingsWorkInput } from '../daemon/job-store.js'
 import type { G4fServiceClient } from '../g4f/client.js'
 import { ProviderProtocolRouter } from '../providers/direct/protocol-router.js'
 import { g4fProviderName, isG4fDirectOnlyProvider } from '../providers/direct/g4f-map.js'
+import { persistDirectImageAsset } from './image-assets.js'
 
 export type ManagedPlaywrightRunnerServiceOptions = {
   homeDir?: string | undefined
@@ -708,6 +709,9 @@ export class ManagedPlaywrightRunnerService {
         request.providerBackend ?? undefined,
       )
       if (backend === 'g4f') {
+        if (request.context.requirements.includes('image.generation')) {
+          return await this.executeG4fDirectImageActions(profile, job, request, signal, isCanceled, renewalError)
+        }
         return await this.executeG4fDirectChatActions(profile, job, request, signal, isCanceled, renewalError)
       }
       return await this.executeDirectChatActions(profile, job, request, signal, isCanceled, renewalError)
@@ -1240,7 +1244,110 @@ export class ManagedPlaywrightRunnerService {
         outputSavingsWork: [],
       }
     } finally {
-      if (ephemeralContextId) await this.g4fClient?.deleteAuthContext(ephemeralContextId).catch(() => undefined)
+      if (ephemeralContextId) await this.deleteG4fAuthContext(ephemeralContextId)
+    }
+  }
+
+  private async executeG4fDirectImageActions(
+    profile: ManagedBrowserProfile,
+    job: DaemonClaimedJob,
+    request: ManagedPlaywrightJobRequest,
+    signal: AbortSignal,
+    isCanceled: () => boolean,
+    renewalError: () => unknown,
+  ): Promise<ManagedPlaywrightExecutionOutcome> {
+    const promptAction = request.actions[0]
+    const submitAction = request.actions[1]
+    const readAction = request.actions[2]
+    if (
+      promptAction?.action !== VISIBLE_ACTIONS.PROMPT_INPUT ||
+      typeof promptAction.payload.text !== 'string' ||
+      submitAction?.action !== VISIBLE_ACTIONS.PROMPT_SUBMIT ||
+      readAction?.action !== VISIBLE_ACTIONS.RESPONSE_READ
+    ) {
+      throw tokenlessError('direct_action_unsupported', 'Direct image execution requires prompt.input, prompt.submit, and response.read.')
+    }
+    if (job.checkpoint_json !== null || job.provider_submitted_at !== null) {
+      throw tokenlessError(
+        'direct_protocol_resume_unsupported',
+        'A direct image submission cannot be replayed after runner interruption; start a new direct request.',
+      )
+    }
+    if (!this.homeDir) {
+      throw tokenlessError('image_asset_root_unavailable', 'The managed image asset directory is unavailable.')
+    }
+    throwIfStopped(signal, isCanceled, renewalError)
+    let ephemeralContextId: string | undefined
+    let authContextId = request.authContextId ?? undefined
+    try {
+      if (!authContextId && !isG4fDirectOnlyProvider(request.provider)) {
+        authContextId = await this.createG4fBrowserAuthContext(profile, job, request, signal)
+        ephemeralContextId = authContextId
+      }
+      let images: Awaited<ReturnType<ProviderProtocolRouter['generateImageG4f']>>
+      try {
+        images = await this.protocolRouter.generateImageG4f({
+          provider: request.provider,
+          prompt: promptAction.payload.text,
+          model: 'gpt-image',
+          ...(authContextId ? { authContextId } : {}),
+          signal,
+        })
+      } catch (error) {
+        if (signal.aborted) throw signal.reason
+        throw tokenlessError('direct_image_generation_failed', 'Direct image generation failed.', {
+          retryable: true,
+          cause: error,
+          details: { diagnostic: directImageFailureDiagnostic(error) },
+        })
+      }
+      throwIfStopped(signal, isCanceled, renewalError)
+      await this.daemonClient.recordProviderSubmission({
+        jobId: job.job_id,
+        claimToken: job.claim_token,
+        signal,
+      })
+      const conversationId = `chatgpt-gpt-image-${job.job_id}`
+      const artifacts = await Promise.all(images.map((image, index) => persistDirectImageAsset(image.bytes, {
+        assetRoot: path.join(this.homeDir!, 'assets'),
+        jobId: job.job_id,
+        taskId: request.taskId,
+        provider: 'chatgpt',
+        conversationId,
+        signal,
+      }, index)))
+      const responses: VisibleActionResponse[] = [
+        directActionSuccess(promptAction, {
+          visible: true,
+          inputProof: 'direct-protocol-prompt-cached-in-memory',
+        }),
+        directActionSuccess(submitAction, {
+          visible: true,
+          submissionProof: 'direct-image-generation-request-completed',
+        }),
+        directActionSuccess(readAction, {
+          text: '',
+          citations: [],
+          artifacts,
+          visibleProof: 'direct-chatgpt-image-artifacts-read',
+          decisionDiagnostics: {
+            selected: null,
+            visibleAnswerCount: 0,
+            visibleBusyCount: 0,
+            generationStopVisible: false,
+          },
+        }),
+      ]
+      return {
+        result: {
+          protocol: MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID,
+          provider: request.provider,
+          responses,
+        },
+        outputSavingsWork: [],
+      }
+    } finally {
+      if (ephemeralContextId) await this.deleteG4fAuthContext(ephemeralContextId)
     }
   }
 
@@ -1266,43 +1373,67 @@ export class ManagedPlaywrightRunnerService {
         matchesExistingPage: (candidate) => providerOwnsPage(provider, candidate),
         isAvailablePage: (candidate) => providerPageAvailable(provider, candidate),
       })
+      const contextId = `g4f-${job.job_id}-${randomUUID()}`
+      let creationAttempted = false
       try {
-        await navigateToTarget(lease.page, provider, request.target.url, signal, false)
-        const contextId = `g4f-${job.job_id}-${randomUUID()}`
-        const providerCookies = await managedContext.browserContext.cookies([request.target.url])
-        const cookies: Record<string, Record<string, string>> = {}
-        for (const cookie of providerCookies) {
-          const domain = cookie.domain.toLowerCase()
-          cookies[domain] ??= {}
-          cookies[domain]![cookie.name] = cookie.value
+        try {
+          await navigateToTarget(lease.page, provider, request.target.url, signal, false)
+          const providerCookies = await managedContext.browserContext.cookies([request.target.url])
+          const cookies: Record<string, Record<string, string>> = {}
+          for (const cookie of providerCookies) {
+            const domain = cookie.domain.toLowerCase()
+            cookies[domain] ??= {}
+            cookies[domain]![cookie.name] = cookie.value
+          }
+          const browserValues = await lease.page.evaluate(() => ({
+            userAgent: navigator.userAgent,
+            language: navigator.language || 'en-US',
+          }))
+          const headers = {
+            [new URL(request.target.url).hostname]: {
+              'user-agent': browserValues.userAgent,
+              'accept-language': `${browserValues.language},en;q=0.8`,
+            },
+          }
+          let apiKey: string | undefined
+          if (provider.id === 'chatgpt') {
+            const session = await readChatGptBrowserSession(lease.page, managedContext.browserContext)
+            apiKey = session.accessToken
+          }
+          creationAttempted = true
+          await client.createAuthContext({
+            contextId,
+            provider: upstreamProvider,
+            profile: profile.id,
+            lifetime: 'ephemeral',
+            source: { type: 'manual', cookies, headers, ...(apiKey ? { apiKey } : {}) },
+          }, signal)
+        } finally {
+          await lease.release()
         }
-        const browserValues = await lease.page.evaluate(() => ({
-          userAgent: navigator.userAgent,
-          language: navigator.language || 'en-US',
-        }))
-        const headers = {
-          [new URL(request.target.url).hostname]: {
-            'user-agent': browserValues.userAgent,
-            'accept-language': `${browserValues.language},en;q=0.8`,
-          },
-        }
-        let apiKey: string | undefined
-        if (provider.id === 'chatgpt') {
-          const session = await readChatGptBrowserSession(lease.page, managedContext.browserContext)
-          apiKey = session.accessToken
-        }
-        await client.createAuthContext({
-          contextId,
-          provider: upstreamProvider,
-          profile: profile.id,
-          lifetime: 'ephemeral',
-          source: { type: 'manual', cookies, headers, ...(apiKey ? { apiKey } : {}) },
-        }, signal)
         return contextId
-      } finally {
-        await lease.release()
+      } catch (error) {
+        if (creationAttempted) await this.deleteG4fAuthContext(contextId, error)
+        throw error
       }
     })
+  }
+
+  private async deleteG4fAuthContext(contextId: string, operationError?: unknown) {
+    try {
+      await this.g4fClient?.deleteAuthContext(contextId)
+    } catch (cleanupError) {
+      throw tokenlessError(
+        'direct_auth_context_cleanup_failed',
+        'Direct provider auth context cleanup failed.',
+        {
+          retryable: true,
+          cause: operationError === undefined
+            ? cleanupError
+            : new AggregateError([operationError, cleanupError]),
+        },
+      )
+    }
   }
 
   private async outputSavingsEnabled() {
@@ -1583,6 +1714,52 @@ export function serializeRunnerError(error: unknown) {
     retryable: response.retryable,
     ...(response.details === undefined ? {} : { details: response.details }),
   }
+}
+
+const DIRECT_IMAGE_DIAGNOSTIC_CATEGORIES = new Set([
+  'authentication',
+  'rate_limit',
+  'anti_bot',
+  'model',
+  'timeout',
+  'transport',
+  'invalid_request',
+  'provider',
+])
+
+function directImageFailureDiagnostic(error: unknown) {
+  const record = error && typeof error === 'object' && !Array.isArray(error)
+    ? error as Record<string, unknown>
+    : null
+  const upstream = record?.g4f && typeof record.g4f === 'object' && !Array.isArray(record.g4f)
+    ? record.g4f as Record<string, unknown>
+    : null
+  const code = typeof record?.code === 'string' && /^direct_image_[a-z0-9_]{1,64}$/u.test(record.code)
+    ? record.code
+    : 'direct_image_upstream_error'
+  const status = safeDirectImageStatus(record?.status) ?? safeDirectImageStatus(upstream?.status)
+  const category = typeof upstream?.category === 'string' && DIRECT_IMAGE_DIAGNOSTIC_CATEGORIES.has(upstream.category)
+    ? upstream.category
+    : null
+  const type = safeDirectImageType(upstream?.type)
+  return {
+    code,
+    status,
+    type,
+    category,
+  }
+}
+
+function safeDirectImageStatus(value: unknown) {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 100 && value <= 599
+    ? value
+    : null
+}
+
+function safeDirectImageType(value: unknown) {
+  if (typeof value !== 'string' || !/^[A-Za-z][A-Za-z0-9_.]{0,127}$/u.test(value)) return null
+  if (/(?:g4f|openaichat|token|cookie|credential|secret|password|authorization|bearer|session|key)/iu.test(value)) return null
+  return value
 }
 
 function directActionSuccess(

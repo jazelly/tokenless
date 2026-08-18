@@ -160,7 +160,11 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       const work = daemon.store.createJob({
         provider: 'chatgpt',
         action: 'web-ui-display-check',
-        request_json: { taskId: 'web-ui-durable-work' },
+        request_json: {
+          taskId: 'api-proxy:web-ui-durable-work',
+          executionMode: 'browser',
+          actions: [{ action: 'prompt.input', payload: { text: 'Summarize the dashboard work.' } }],
+        },
         execution_backend: 'playwright',
         profile_id: workProfile.id,
       })

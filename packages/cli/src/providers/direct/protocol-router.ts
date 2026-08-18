@@ -18,6 +18,13 @@ export type DirectTextCompletion = {
 
 export type DirectG4fStreamEndpoint = 'chat' | 'responses'
 
+export type DirectG4fImage = Readonly<{
+  bytes: Buffer
+  mediaType: string | null
+}>
+
+const MAX_DIRECT_IMAGE_BYTES = 32 * 1024 * 1024
+
 export class ProviderProtocolRouter {
   constructor(private readonly g4fClient?: G4fServiceClient | undefined) {}
 
@@ -106,6 +113,139 @@ export class ProviderProtocolRouter {
       signal,
     })
   }
+
+  async generateImageG4f({
+    provider,
+    prompt,
+    model = 'gpt-image',
+    authContextId,
+    signal,
+  }: {
+    provider: string
+    prompt: string
+    model?: string | undefined
+    authContextId?: string | undefined
+    signal?: AbortSignal | undefined
+  }): Promise<readonly DirectG4fImage[]> {
+    if (!this.g4fClient) {
+      const error = new Error('The private image service is not running.') as Error & { code?: string }
+      error.code = 'image_service_unavailable'
+      throw error
+    }
+    if (provider !== 'chatgpt') {
+      const error = new Error('The selected provider does not support direct image generation.') as Error & { code?: string }
+      error.code = 'direct_image_provider_unsupported'
+      throw error
+    }
+    const response = await this.g4fClient.request({
+      path: '/api/OpenaiChat/images/generations',
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model, prompt }),
+      ...(authContextId ? { authContextId } : {}),
+      signal,
+    })
+    const payload = await parseG4fImageResponse(response)
+    const images: DirectG4fImage[] = []
+    for (const item of payload) {
+      const assetPath = privateImageAssetPath(item)
+      const assetResponse = await this.g4fClient.rawRequest({ path: assetPath, signal })
+      if (!assetResponse.ok) {
+        const error = new Error('The private image service returned an unavailable image asset.') as Error & { code?: string }
+        error.code = 'direct_image_asset_unavailable'
+        throw error
+      }
+      const bytes = await readBoundedImage(assetResponse, signal)
+      images.push({ bytes, mediaType: assetResponse.headers.get('content-type') })
+    }
+    if (images.length === 0) {
+      const error = new Error('The private image service returned no image assets.') as Error & { code?: string }
+      error.code = 'direct_image_result_empty'
+      throw error
+    }
+    return images
+  }
+}
+
+async function parseG4fImageResponse(response: Response): Promise<readonly string[]> {
+  let payload: unknown
+  try {
+    payload = await response.json()
+  } catch {
+    const error = new Error('The private image service returned invalid image metadata.') as Error & { code?: string }
+    error.code = 'direct_image_result_invalid'
+    throw error
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw directImageResultInvalid()
+  }
+  const data = (payload as Record<string, unknown>).data
+  if (!Array.isArray(data)) throw directImageResultInvalid()
+  const urls = data.map((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item) || typeof (item as Record<string, unknown>).url !== 'string') {
+      throw directImageResultInvalid()
+    }
+    return (item as Record<string, unknown>).url as string
+  })
+  return urls
+}
+
+function privateImageAssetPath(value: string) {
+  let candidate: URL
+  try {
+    candidate = new URL(value)
+  } catch {
+    throw directImageResultInvalid()
+  }
+  if (!['127.0.0.1', 'localhost', '::1', '[::1]'].includes(candidate.hostname)) {
+    throw directImageResultInvalid()
+  }
+  if (!/^\/(?:images|media)\/[^/]+$/u.test(candidate.pathname)) {
+    throw directImageResultInvalid()
+  }
+  return `${candidate.pathname}${candidate.search}`
+}
+
+async function readBoundedImage(response: Response, signal?: AbortSignal): Promise<Buffer> {
+  const declaredLength = response.headers.get('content-length')
+  if (declaredLength !== null) {
+    const bytes = Number(declaredLength)
+    if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > MAX_DIRECT_IMAGE_BYTES) {
+      throw directImageTooLarge()
+    }
+  }
+  if (!response.body) throw directImageResultInvalid()
+  const reader = response.body.getReader()
+  const chunks: Buffer[] = []
+  let byteLength = 0
+  try {
+    for (;;) {
+      if (signal?.aborted) throw signal.reason
+      const { done, value } = await reader.read()
+      if (done) break
+      byteLength += value.byteLength
+      if (byteLength > MAX_DIRECT_IMAGE_BYTES) {
+        await reader.cancel().catch(() => undefined)
+        throw directImageTooLarge()
+      }
+      chunks.push(Buffer.from(value))
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  return Buffer.concat(chunks, byteLength)
+}
+
+function directImageResultInvalid() {
+  const error = new Error('The private image service returned an invalid image result.') as Error & { code?: string }
+  error.code = 'direct_image_result_invalid'
+  return error
+}
+
+function directImageTooLarge() {
+  const error = new Error('The generated image exceeds the Tokenless asset size limit.') as Error & { code?: string }
+  error.code = 'direct_image_result_too_large'
+  return error
 }
 
 async function parseG4fCompletionResponse(response: Response) {

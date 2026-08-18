@@ -53,6 +53,18 @@ For example, a direct GLM request uses the mapped Tokenless model ID:
 }
 ```
 
+Direct ChatGPT image generation uses the same provider-neutral image endpoint:
+
+```json
+{
+  "model": "tokenless/chatgpt/gpt-image",
+  "prompt": "A simple green leaf icon on a white background.",
+  "tokenless": {"execution_mode": "direct"}
+}
+```
+
+The image response contains only the Tokenless asset URL and verified metadata. Direct ChatGPT image failures use the neutral image error contract and do not expose private adapter names.
+
 All routes require the normal Tokenless daemon bearer token. Provider guest mode is separate from daemon authentication; managed direct CLI execution creates any ephemeral provider auth context privately and removes it after the request.
 
 Auth source types are `empty`, `manual`, `har`, `cookie-file`, `browser-cookie3`, `cookie-database`, and loopback `cdp`. Both Cookie DB source types require an exact database path inside the selected managed profile; unscoped browser scanning is rejected. Manual values are limited to the selected provider domains.
@@ -79,6 +91,7 @@ Real E2E covers both authentication boundaries:
 - Guest: a direct standard API request for `tokenless/zai/GLM-4.7` omits provider credentials, completes Aliyun traceless verification in the isolated headless browser, and requires an exact random response marker.
 - Signed in: ChatGPT direct reads only the selected Cloak browser profile's ChatGPT cookies, access token, user agent, and language headers into one ephemeral provider-scoped context.
 - Image: the real `tokenless/pollinations/sana` direct gate generated a 768×768 JPEG through the unified endpoint, persisted it under the supplied task identity, and proved digest plus authenticated byte-for-byte readback without exposing the private backend.
+- ChatGPT image: the direct binding uses the selected managed browser session to create one ephemeral provider-scoped auth context, then persists only verified image bytes under the supplied task identity.
 
 ## Provider errors
 

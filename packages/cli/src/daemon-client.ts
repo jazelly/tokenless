@@ -162,6 +162,7 @@ export type GenerateImageOptions = DaemonClientOptions & {
   browserVisibility?: 'auto' | 'headed' | 'headless' | undefined
   timeoutMs?: number | undefined
   size?: '768x768' | undefined
+  referenceImage?: string | undefined
 }
 
 export type BrowserRuntimeStatus = {
@@ -301,6 +302,7 @@ export async function generateImage({
   browserVisibility,
   timeoutMs,
   size,
+  referenceImage,
 }: GenerateImageOptions) {
   const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
   return daemonRequest<{
@@ -320,6 +322,7 @@ export async function generateImage({
     body: {
       model,
       prompt,
+      reference_image: referenceImage,
       size,
       tokenless: {
         execution_mode: executionMode,

@@ -353,6 +353,28 @@
         "local_digest"
       ]
     },
+    "qwen-image": {
+      "gate": "mutation",
+      "submissions": 2,
+      "actions": [
+        "qwen.mode.select",
+        "file.upload",
+        "prompt.input",
+        "prompt.submit",
+        "response.read"
+      ],
+      "closure": [
+        "cli",
+        "visible_dom",
+        "visible_attachment",
+        "visible_submission",
+        "visible_response",
+        "terminal_artifact",
+        "exact_visible_identity",
+        "authenticated_asset_readback",
+        "local_digest"
+      ]
+    },
     "arena-code": {
       "gate": "mutation",
       "submissions": 1,
@@ -665,6 +687,7 @@
         "workspace-response-baseline"
       ],
       "unavailable": {
+        "qwen-image": "provider_specific_capability",
         "meta-image": "provider_specific_capability",
         "chatgpt-image": "provider_specific_capability",
         "gemini-image": "provider_specific_capability",
@@ -700,6 +723,7 @@
         "chatgpt-image"
       ],
       "unavailable": {
+        "qwen-image": "provider_specific_capability",
         "arena-search": "provider_specific_capability",
         "arena-image": "provider_specific_capability",
         "meta-image": "provider_specific_capability",
@@ -743,6 +767,7 @@
       "native-project"
       ],
       "unavailable": {
+        "qwen-image": "provider_specific_capability",
         "arena-search": "provider_specific_capability",
         "arena-image": "provider_specific_capability",
         "meta-image": "provider_specific_capability",
@@ -784,6 +809,7 @@
         "workspace-response-citations"
       ],
       "unavailable": {
+        "qwen-image": "provider_specific_capability",
         "arena-search": "provider_specific_capability",
         "arena-image": "provider_specific_capability",
         "meta-image": "provider_specific_capability",
@@ -826,6 +852,7 @@
       "grok-image"
       ],
       "unavailable": {
+        "qwen-image": "provider_specific_capability",
         "arena-search": "provider_specific_capability",
         "arena-image": "provider_specific_capability",
         "meta-image": "provider_specific_capability",
@@ -866,6 +893,7 @@
         "effort-choice"
       ],
       "unavailable": {
+        "qwen-image": "configured_profile_dns_unavailable_2026_08_17",
         "grok-image": "provider_specific_capability",
         "arena-search": "provider_specific_capability",
         "arena-image": "provider_specific_capability",
@@ -909,6 +937,7 @@
         "workspace-response-baseline"
       ],
       "unavailable": {
+        "qwen-image": "provider_specific_capability",
         "arena-search": "provider_specific_capability",
         "arena-image": "provider_specific_capability",
         "meta-image": "provider_specific_capability",
@@ -950,6 +979,7 @@
         "workspace-response-citations"
       ],
       "unavailable": {
+        "qwen-image": "provider_specific_capability",
         "arena-search": "provider_specific_capability",
         "arena-image": "provider_specific_capability",
         "meta-image": "provider_specific_capability",
@@ -993,6 +1023,7 @@
         "workspace-response-baseline"
       ],
       "unavailable": {
+        "qwen-image": "provider_specific_capability",
         "arena-search": "provider_specific_capability",
         "arena-image": "provider_specific_capability",
         "meta-image": "provider_specific_capability",
@@ -1037,6 +1068,7 @@
         "workspace-response-baseline"
       ],
       "unavailable": {
+        "qwen-image": "provider_specific_capability",
         "arena-search": "provider_specific_capability",
         "arena-image": "provider_specific_capability",
         "meta-image": "provider_specific_capability",
@@ -1079,6 +1111,7 @@
         "kimi-search"
       ],
       "unavailable": {
+        "qwen-image": "provider_specific_capability",
         "arena-search": "provider_specific_capability",
         "arena-image": "provider_specific_capability",
         "meta-image": "provider_specific_capability",
@@ -1119,6 +1152,7 @@
         "dola-image"
       ],
       "unavailable": {
+        "qwen-image": "provider_specific_capability",
         "arena-search": "provider_specific_capability",
         "arena-image": "provider_specific_capability",
         "meta-image": "provider_specific_capability",
@@ -1163,6 +1197,7 @@
         "workspace-response-baseline"
       ],
       "unavailable": {
+        "qwen-image": "provider_specific_capability",
         "arena-search": "provider_specific_capability",
         "arena-image": "provider_specific_capability",
         "chatgpt-image": "provider_specific_capability",

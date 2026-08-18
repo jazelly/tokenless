@@ -240,6 +240,12 @@ export type UiJobSummary = {
   action: string
   status: UiJobStatus
   taskId: string | null
+  chatTitle: string | null
+  titlePrompt: string | null
+  executionMode: UiProviderExecutionMode | null
+  providers: string[]
+  conversationUrl: string | null
+  estimatedTokens: number | null
   capabilityRoute: unknown
   agent: { kind: string; sessionId: string } | null
   blocker: unknown
@@ -249,6 +255,7 @@ export type UiJobSummary = {
 }
 
 export type UiJobDetail = UiJobSummary & {
+  transcript: Array<{ role: 'user' | 'assistant'; content: string }>
   result: unknown
   error: unknown
   providerAttempts: unknown

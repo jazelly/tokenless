@@ -221,6 +221,14 @@ test('TS daemon rejects raw image jobs that bypass the shared image/download con
       ],
       candidates: [{ provider: 'chatgpt', runtimeEligibility: 'eligible' }],
     })
+    const chatgptDirectImageDownload = playwright.resolveTaskCapabilityRoute({
+      requirements: [
+        playwright.TASK_CAPABILITIES.IMAGE_GENERATION,
+        playwright.TASK_CAPABILITIES.ARTIFACT_DOWNLOAD,
+      ],
+      executionMode: 'direct',
+      candidates: [{ provider: 'chatgpt', runtimeEligibility: 'eligible' }],
+    })
     const grokImageDownload = playwright.resolveTaskCapabilityRoute({
       requirements: [
         playwright.TASK_CAPABILITIES.CONVERSATION_CHAT,
@@ -233,6 +241,9 @@ test('TS daemon rejects raw image jobs that bypass the shared image/download con
     assert.equal(imageDownload.ok, true)
     assert.equal(metaImageDownload.ok, true)
     assert.equal(chatgptImageDownload.ok, true)
+    assert.equal(chatgptDirectImageDownload.ok, true)
+    assert.equal(chatgptImageDownload.route.executionMode, 'browser')
+    assert.equal(chatgptDirectImageDownload.route.executionMode, 'direct')
     assert.equal(grokImageDownload.ok, true)
     const valid = playwright.createManagedPlaywrightJobRequest({
       provider: 'arena',
@@ -273,6 +284,36 @@ test('TS daemon rejects raw image jobs that bypass the shared image/download con
     })
     assert.equal(chatgptValid.actions.some((action) => action.action === playwright.VISIBLE_ACTIONS.ARENA_SURFACE_SELECT), false)
     const { context: _chatgptContext, ...chatgptWireBase } = chatgptValid
+    const chatgptDirectValid = playwright.createManagedPlaywrightJobRequest({
+      provider: 'chatgpt',
+      target: { kind: 'provider_home', url: 'https://chatgpt.com/' },
+      taskId: 'chatgpt-direct-image-contract-task',
+      capabilityRoute: chatgptDirectImageDownload.route,
+      executionMode: 'direct',
+      providerBackend: 'g4f',
+      browserVisibility: 'headless',
+      actions: [
+        { requestId: 'chatgpt-direct-prompt', action: playwright.VISIBLE_ACTIONS.PROMPT_INPUT, payload: { text: 'contract test' } },
+        { requestId: 'chatgpt-direct-submit', action: playwright.VISIBLE_ACTIONS.PROMPT_SUBMIT, payload: {} },
+        { requestId: 'chatgpt-direct-read', action: playwright.VISIBLE_ACTIONS.RESPONSE_READ, payload: {} },
+      ],
+    })
+    assert.equal(chatgptDirectValid.executionMode, 'direct')
+    assert.equal(chatgptDirectValid.capabilityRoute.executionMode, 'direct')
+    assert.throws(
+      () => playwright.createManagedPlaywrightJobRequest({
+        ...chatgptDirectValid,
+        capabilityRoute: chatgptImageDownload.route,
+      }),
+      (error) => error.code === 'invalid_playwright_job_capability_route',
+    )
+    assert.throws(
+      () => playwright.createManagedPlaywrightJobRequest({
+        ...chatgptDirectValid,
+        authContextId: 'caller-context',
+      }),
+      (error) => error.code === 'direct_auth_context_unsupported',
+    )
     const grokValid = playwright.createManagedPlaywrightJobRequest({
       provider: 'grok',
       taskId: 'grok-image-contract-task',

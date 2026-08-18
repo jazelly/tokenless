@@ -61,6 +61,7 @@ export type StageVisibleAttachmentStreamOptions = {
   name: string
   type: string
   maxBytes?: number | undefined
+  webAiStage?: boolean | undefined
 }
 
 export function createVisibleAttachmentId() {
@@ -219,6 +220,7 @@ export async function stageVisibleAttachmentStream({
   name,
   type,
   maxBytes = DEFAULT_MAX_VISIBLE_ATTACHMENT_BYTES,
+  webAiStage = true,
 }: StageVisibleAttachmentStreamOptions): Promise<VisibleAttachmentDescriptor> {
   validateSafeId(bundleId, 'bundleId')
   validateSafeId(attachmentId, 'attachmentId')
@@ -232,7 +234,7 @@ export async function stageVisibleAttachmentStream({
   let staged = false
   let markerCreated = false
   try {
-    markerCreated = await ensureWebAiStageMarker(marker)
+    if (webAiStage) markerCreated = await ensureWebAiStageMarker(marker)
     destinationHandle = await fs.open(
       destination,
       fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | noFollowFlag(),

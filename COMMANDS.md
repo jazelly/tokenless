@@ -27,7 +27,7 @@ This document is the public inventory of the `tokenless` command-line interface.
 | `tokenless capabilities list` | List canonical task capabilities and evidence-backed provider routes. | None |
 | `tokenless limits inspect` | Inspect the next-prompt provider/profile capacity estimate from the packaged catalog and local job history. | None |
 | `tokenless savings <status\|enable\|disable\|clear\|uninstall>` | Manage optional local output savings measurement and its lazily downloaded tokenizer. | None |
-| `tokenless api-proxy <status\|enable\|disable>` | Manage the OpenAI/Anthropic-compatible local API proxy and its conversation mode. | None |
+| `tokenless api-proxy <status\|enable\|disable>` | Manage the OpenAI/Anthropic-compatible local API proxy and its compatibility conversation-mode setting. | None |
 | `tokenless run` | Send a prompt and optional files through a visible provider session. | Yes |
 | `tokenless replay` | Report previously unseen daemon outcome summaries for one agent recipient. | None |
 | `tokenless state` | Inspect durable daemon job state. | None |
@@ -470,7 +470,7 @@ Point a client at the daemon and use the daemon control token as the API key:
 
 `model` must name the provider explicitly as `tokenless/<provider>`, for example `tokenless/chatgpt`. An unmapped model is rejected rather than redirected to a provider the caller did not choose. `GET /v1/openai/models` lists every accepted name.
 
-`--conversation-mode new-conversation` flattens the whole transcript into one prompt and starts a fresh provider conversation per request, so identical requests never depend on prior local state. `--conversation-mode continue-conversation` derives a thread identity from every message except the final user turn and reuses one provider conversation for it; a caller that edits or truncates its history starts a new conversation instead of appending to a transcript the provider no longer shares.
+The `--conversation-mode` option is retained for config/status compatibility, but it does not override the API contract. Chat Completions and Anthropic always start a fresh provider conversation and send the full request history. Responses starts fresh when `previous_response_id` is omitted, and continues a mapped provider conversation only when a valid `previous_response_id` is supplied; a missing mapping falls back to a fresh chat with the reconstructed transcript. See [API proxy integration](docs/api-proxy-integration.md#conversation-state) for the exact continuation rules.
 
 `tools`, `tool_choice`, `functions`, `function_call`, and `response_format` are rejected because visible provider pages expose no equivalent control. `stream: true` returns the documented event sequence for that dialect, delivered as one terminal chunk, because a visible response is only readable once it has finished rendering. Reported `usage` counts are always zero: Tokenless does not meter provider tokens, and the response is billed by your own web subscription.
 

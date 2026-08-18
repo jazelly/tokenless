@@ -48,6 +48,7 @@ const handlers = {
   'dola-image': dolaImage,
   'doubao-image': doubaoImage,
   'grok-image': grokImage,
+  'qwen-image': qwenImage,
   'arena-code': arenaCode,
   'arena-agent': arenaAgent,
   'arena-video': arenaVideo,
@@ -930,6 +931,59 @@ async function grokImage({ provider, journey }) {
     } finally {
       database.close()
     }
+  } finally {
+    await run.close()
+  }
+}
+
+async function qwenImage({ provider, journey }) {
+  assert.equal(provider, 'qwen')
+  const generated = await journey.run([
+    '--capability', 'image.generation',
+    '--capability', 'artifact.download',
+    '--prompt', 'Generate one simple flat green leaf icon on a plain white background, with no text.',
+  ], 360_000)
+  try {
+    const response = imageGenerationResult(generated.payload, provider)
+    const artifacts = assertQwenImageArtifacts(response)
+    await assertPersistedImageAssets(journey.session, generated.page, artifacts)
+    assert.equal(await visibleQwenArtifactCount(generated.page, artifacts), artifacts.length)
+  } finally {
+    await generated.close()
+  }
+  await runImageEdit({
+    provider,
+    journey,
+    prompt: 'Edit the attached image so its background is pale yellow. Preserve the subject and add no text.',
+    assertArtifacts: assertQwenImageArtifacts,
+    visibleArtifacts: visibleQwenArtifactCount,
+  })
+}
+
+async function runImageEdit({
+  provider,
+  journey,
+  prompt,
+  assertArtifacts,
+  visibleArtifacts,
+  assertVisible,
+}) {
+  const run = await journey.run([
+    '--capability', 'image.edit',
+    '--capability', 'artifact.download',
+    '--attach-file', path.join(root, 'assets', 'tokenless-mark.png'),
+    '--prompt', prompt,
+  ], 360_000)
+  try {
+    const response = responseResult(run.payload, 'response.read')
+    const artifacts = assertArtifacts(response)
+    await assertPersistedImageAssets(journey.session, run.page, artifacts)
+    if (visibleArtifacts) assert.equal(await visibleArtifacts(run.page, artifacts), artifacts.length)
+    if (assertVisible) await assertVisible(run.page, artifacts)
+    const upload = responseResult(run.payload, 'file.upload')
+    assert.equal(upload?.acceptance, 'accepted')
+    assert.equal(upload?.attachments?.some((attachment) => attachment.name === 'tokenless-mark.png'), true)
+    assert.equal(response.text?.includes(prompt), false)
   } finally {
     await run.close()
   }
@@ -2114,6 +2168,32 @@ function assertGrokImageArtifacts(response) {
   return response.artifacts
 }
 
+function assertQwenImageArtifacts(response) {
+  assert.ok(Array.isArray(response.artifacts) && response.artifacts.length > 0)
+  assert.ok(response.artifacts.every((artifact) => (
+    artifact?.kind === 'image' &&
+    !Object.prototype.hasOwnProperty.call(artifact, 'url') &&
+    typeof artifact.mediaType === 'string' &&
+    artifact.mediaType.startsWith('image/') &&
+    typeof artifact.assetRef === 'string' &&
+    artifact.assetRef.startsWith('assets/') &&
+    artifact.downloadAvailable === true &&
+    Number.isSafeInteger(artifact.byteSize) &&
+    artifact.byteSize > 0 &&
+    /^[a-f0-9]{64}$/u.test(artifact.sha256) &&
+    typeof artifact.createdAt === 'string' &&
+    artifact.provider === 'qwen' &&
+    typeof artifact.jobId === 'string' &&
+    (artifact.taskId === null || typeof artifact.taskId === 'string') &&
+    typeof artifact.conversationId === 'string' &&
+    Number.isSafeInteger(artifact.width) &&
+    artifact.width > 0 &&
+    Number.isSafeInteger(artifact.height) &&
+    artifact.height > 0
+  )))
+  return response.artifacts
+}
+
 async function assertArenaPersistedAssets(session, page, artifacts) {
   const daemonToken = (await fs.readFile(path.join(session.homeDir, 'daemon.token'), 'utf8')).trim()
   for (const artifact of artifacts) {
@@ -2290,6 +2370,14 @@ async function visibleDolaArtifactCount(page, artifacts) {
     page,
     artifacts,
     '[data-render-engine="node"]:not(.justify-end) img',
+  )
+}
+
+async function visibleQwenArtifactCount(page, artifacts) {
+  return await visibleProviderImageArtifactCount(
+    page,
+    artifacts,
+    '.qwen-chat-message-assistant img.qwen-image',
   )
 }
 

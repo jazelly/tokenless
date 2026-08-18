@@ -87,7 +87,22 @@ Token 位于 `<TOKENLESS_HOME>/daemon.token`，默认 `~/.tokenless/daemon.token
 }
 ```
 
-Browser `tokenless/auto` 只考虑已启用、当前可用，并且完整具备 `conversation.chat`、`image.generation` 与 `artifact.download` capability route 的 provider。使用 `tokenless/<provider>` 可精确选择一个 browser provider。
+Browser `tokenless/auto` 只考虑已启用、当前可用，并且完整具备 `image.generation` 与 `artifact.download` capability route 的 provider。使用 `tokenless/<provider>` 可精确选择一个 browser provider。
+
+Browser 请求可带一个 `reference_image`，格式为 PNG、JPEG 或 WebP 的 base64 data URL。解码后的图片上限为 8 MiB；remote image URL 与 direct-mode reference image 会被拒绝。Reference 请求要求 provider 完整具备 `image.edit`、`image.input`、`file.upload` 与 `artifact.download` route。目前只有 Arena 拥有真实 provider 闭环并对外公开。
+
+```json
+{
+  "model": "tokenless/arena",
+  "prompt": "Change the background to pale yellow.",
+  "reference_image": "data:image/png;base64,iVBORw0KGgo...",
+  "tokenless": {
+    "execution_mode": "browser",
+    "profile": "default",
+    "task_id": "task-124"
+  }
+}
+```
 
 Direct V1 接受 `tokenless/auto`、`tokenless/pollinations` 或 `tokenless/pollinations/sana`；`size` 可以省略或设为 `768x768`。私有实现不属于 public schema 或 response。
 
@@ -120,11 +135,11 @@ tokenless/<provider>
 
 当前 scope 刻意保持狭窄：
 
-- 仅 browser execution、`new-conversation`，且请求必须包含 function tools、`json_object` 或 `json_schema`。
+- 仅 browser execution，且请求必须包含 function tools、`json_object` 或 `json_schema`。
 - Candidate 必须在 selected profile 上启用、具有当前可用的 observed access、拥有 evidence-backed `conversation.chat` route，并满足全部 structured-control requirements。
 - Tool requirements 会区分调用、strict schema、完整 tool history 与 multiple-call output。只有当前 `tool_choice` 可能返回多个调用时，`parallel_tool_calls: true` 才要求 multiple-call evidence；`none` 与精确 named choice 不要求。
 - DeepSeek 凭已验证的 multiple/strict/history 与 JSON control 纳入；ChatGPT 凭已验证的 single-call strict/history 与 JSON control 纳入。Gemini tool control 因真实输出未通过 strict whole-response boundary 而排除。当前双 provider routing 与 schema 实跑记录见[脱敏 evidence](evidence/openai-auto-provider-routing-2026-08-15.md)。
-- Plain text、direct execution、provider backend/auth options、provider-local continuation、opaque replay 或不完整 candidate set 都会在创建 job 前失败。
+- Plain text、direct execution、provider backend/auth options、opaque replay 或不完整 candidate set 都会在创建 job 前失败。
 
 Auto call 使用只编码 provider origin 的版本化 opaque public id。后续 full-history turn 会在重新检查 current eligibility 后优先该 provider；调用方影响 id 也无法绕过 filter。Responses `previous_response_id` 以相同方式使用现有 ledger provider——它是 portable affinity，不是 hard pin。
 
@@ -404,7 +419,7 @@ OpenAI 文本使用 `finish_reason: stop`；通过校验的 function call 使用
 | --- | --- |
 | `provider` | 实际回答的 provider，包括 settle 后的 fallback provider |
 | `job_id` | 持久 job id——可传给 `tokenless state --job-id <id> --json` 查看具体发生了什么 |
-| `conversation_mode` | 本次请求使用的映射模式 |
+| `conversation_mode` | 实际 route：fresh/mapping-miss 为 `new-conversation`，命中 mapping 的 Responses continuation 为 `continue-conversation` |
 | `execution_mode` / `provider_backend` | 实际 execution route |
 | `structured_control_strategy` | `prompt_tool_envelope`、`prompt_json_envelope`，或 plain text 的 `null` |
 | `provider_attempts` | 单个 durable job 的脱敏 attempt 顺序/status 与 blocker classification |
@@ -446,37 +461,23 @@ Anthropic 帧，按顺序：`message_start`、`content_block_start`、`content_b
 
 对 browser/native 与 structured request，不要基于 terminal frame 做进度指示。Direct G4F plain-text stream 可以根据接收到的每个 upstream chunk 推进进度。
 
-## Conversation 模式
+## Conversation 状态
 
-在 `tokenless setup` 中或用 `tokenless api-proxy enable --conversation-mode <mode>` 设置一次，作用于整个安装，**不是按请求指定**。可从 `tokenless api-proxy status --json` 读取当前模式，响应也会在 `tokenless.conversation_mode` 中回显。
+持久化的 `conversationMode` 选项仍保留，用于配置与 status 的兼容性，但它不再选择 API 协议。API 行为由 endpoint contract 以及每次请求中是否提供相应字段决定。
 
-### new-conversation（默认）
+### Chat Completions 与 Anthropic
 
-每个请求都把整段对话打平成一条 prompt，并新建一个 provider 会话：
+每个 Chat Completions 或 Anthropic 请求都会新建 provider conversation，并发送该请求提供的完整历史。网页 provider 负责这个新 chat 的状态；Tokenless 不再通过对调用方 message 做指纹来猜测线程。客户端应像使用 stateless Chat Completions API 一样，在每次调用中发送希望 provider 看到的历史。
 
-```
-[System]
-Answer in one sentence.
+### Responses
 
-[User]
-What is 2+2?
-```
+`POST /v1/responses` 在省略 `previous_response_id` 时会新建 provider conversation，并发送完整的重建 input。返回的 response id 同时作为 managed provider task identity，因此后续成功的 browser turn 可以继续，而无需增加数据库 schema 或 CLI 专属 chat id。
 
-无状态、可预测。相同请求不依赖任何本地既有状态。代价是长对话每轮都要重发全部历史，且 provider 看不到轮次之间的连续性。
+当 `previous_response_id` 有效、route 一致且存在已证明的 provider-task mapping 时，Tokenless 会打开该 canonical provider URL，并只发送当前 `input`。如果 ledger 存在但 mapping 缺失，Tokenless 会安全地新建 provider conversation，发送完整重建 transcript，并为该 turn 建立新的 response-task identity。
 
-无论配置了哪种 conversation mode，tool 请求都会使用这种 request-scoped 完整历史行为。Catalog、nonce 与 quoted canonical history 会被编译为一条严格的 JSON decision request。
+Structured/tool continuation 遵循同一规则：命中 mapping 的 turn 只包含当前 tool result 或 message delta，以及当前 tool catalog；不会把旧 user/assistant 内容再次输入既有 provider chat。若调用方在 context compaction 后希望切换到新 chat，仍可显式使用 full-input replay。
 
-**客户端要做的：** 每次调用都发送完整历史，和面对真实 API 时完全一样。除此之外无需处理。
-
-### continue-conversation
-
-Tokenless 会对**除最后一条 user message 之外**的全部消息做指纹（对 role/text 对做 SHA-256），以此作为持久线程标识，并为其复用同一个 provider 会话。命中时只把最后一条 user message 输入既有会话；未命中则用完整打平文本新建会话。
-
-更省、也更接近真人使用网站的方式。但指纹是精确匹配：
-
-**客户端要注意的重点。** 对既有历史的任何改动都会开启新会话。包括为控制 context 预算而裁剪旧轮次、修改 system prompt、重新编号、调整格式空白，或在重发前归一化自己的 assistant 文本。这些都会静默分叉出新的 provider 会话，而不是接着聊。
-
-如果你的客户端会重写历史，请直接用 `new-conversation`——结果相同，且不必为意外分叉付出代价。只有在你只追加、从不修改的情况下才使用 `continue-conversation`。
+Response 中的 `tokenless.conversation_mode` 报告实际 route：fresh 或 mapping-miss turn 为 `new-conversation`，只有命中 mapping 的 Responses continuation 才是 `continue-conversation`。CLI 的 `--conversation-mode` 不会覆盖这些 endpoint 规则。
 
 ## 错误
 
@@ -506,7 +507,7 @@ Anthropic：
 | 400 | `invalid_json` | 请求体为空或不是 JSON | 否 |
 | 400 | `unsupported_parameter` | 旧版 `functions` / `function_call`，或 Anthropic tools/structured output | 否 |
 | 400 | `auto_structured_control_required` | `tokenless/auto` 收到 plain-text 请求 | 否 —— 请选择 exact provider 或加入 tools/structured output |
-| 400 | `auto_execution_mode_unsupported` / `auto_conversation_mode_unsupported` / `auto_dialect_unsupported` | Auto 被要求使用 direct/provider-local/Anthropic state | 否 —— 使用已文档化的 OpenAI browser scope |
+| 400 | `auto_execution_mode_unsupported` / `auto_dialect_unsupported` | Auto 被要求使用 direct/provider-local/Anthropic state | 否 —— 使用已文档化的 OpenAI browser scope |
 | 401 | `control_auth_missing` | 缺少 bearer token | 否 |
 | 403 | `control_auth_rejected` | bearer token 错误 | 否 |
 | 404 | `model_not_found` | `model` 指向不存在或未内置的 provider | 否 |
@@ -624,7 +625,7 @@ console.log(message.content)
 - [ ] 重试 `502` 或 `504` 前先检查 `job_id` —— 原 job 可能仍在运行。
 - [ ] 每次调用都记录 `tokenless.job_id`。
 - [ ] 按串行执行预期设计；不要并发扇出请求。
-- [ ] 确认当前 conversation 模式；若客户端会重写历史，使用 `new-conversation`。
+- [ ] Chat Completions/Anthropic 每次发送完整历史；Responses 要新建 provider chat 时省略 `previous_response_id`，只在已有 mapping 时使用它继续。
 
 ## 已验证的 DeepSeek tool loop
 

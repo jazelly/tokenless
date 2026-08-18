@@ -35,7 +35,7 @@ from g4f.Provider import ProviderUtils
 SERVICE_PROTOCOL = "tokenless.g4f-service.v1"
 PINNED_G4F_VERSION = "8.1.2"
 PINNED_G4F_COMMIT = "fdbd84b7c5129ea8faa7c66065425ca344ea5fb2"
-SERVICE_REVISION = 14
+SERVICE_REVISION = 15
 SAFE_ID = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$")
 CONTROL_PREFIX = "/tokenless/"
 SERVICE_KEY_HEADER = b"x-tokenless-service-key"
@@ -546,6 +546,8 @@ def create_private_app(
     retain_private_routes(app)
     registry = AuthContextRegistry(auth_root, allowed_roots)
     empty_directory = auth_root / "_empty"
+    if empty_directory.exists():
+        shutil.rmtree(empty_directory)
     empty_directory.mkdir(parents=True, exist_ok=True, mode=0o700)
 
     control = APIRouter(prefix="/tokenless")
@@ -607,6 +609,8 @@ def create_private_app(
     @app.on_event("shutdown")
     async def cleanup_ephemeral_auth_contexts() -> None:
         registry.cleanup_ephemeral()
+        if empty_directory.exists():
+            shutil.rmtree(empty_directory)
 
     app.include_router(control)
     app.middleware_stack = None

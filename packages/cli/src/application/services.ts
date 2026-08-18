@@ -186,10 +186,12 @@ export class TokenlessApplicationServices {
   }
 
   async job(jobId: string): Promise<UiJobDetail> {
+    const job = this.store.getJob(jobId)
     return publicJobDetail(
-      this.store.getJob(jobId),
+      job,
       await this.profiles.listProfiles(),
       this.store.outputSavingsForJob(jobId),
+      publicConversationUrl(this.store, job),
     )
   }
 
@@ -752,8 +754,19 @@ function publicJobSummary(
   job: JobView | Job,
   profiles: ManagedProfileRecord[] = [],
   outputSavings: OutputSavingsEvent[] = [],
+  conversationUrl: string | null = null,
 ) {
   const request = record(job.request_json)
+  const prompt = publicPrompt(request)
+  const response = publicResponse(job.result_json)
+  const measuredOutputTokens = publicJobOutputSavings(outputSavings).estimatedOutputTokens
+  const outputTokens = measuredOutputTokens > 0
+    ? measuredOutputTokens
+    : response ? estimatedTextTokens(response) : 0
+  const titlePrompt = prompt ? publicUserPrompt(prompt).slice(0, 4_000) : null
+  const executionMode = request?.executionMode === 'browser' || request?.executionMode === 'direct'
+    ? request.executionMode as 'browser' | 'direct'
+    : null
   return {
     jobId: job.job_id,
     profileId: job.profile_id,
@@ -762,6 +775,14 @@ function publicJobSummary(
     action: job.action,
     status: job.status,
     taskId: typeof request?.taskId === 'string' ? request.taskId : null,
+    chatTitle: publicChatTitle(request),
+    titlePrompt,
+    executionMode,
+    providers: publicProviders(job),
+    conversationUrl,
+    estimatedTokens: prompt === null
+      ? (response === null ? null : outputTokens)
+      : estimatedTextTokens(prompt) + outputTokens,
     capabilityRoute: record(request?.capabilityRoute),
     agent: 'agent_kind' in job && job.agent_kind && job.agent_session_id
       ? { kind: job.agent_kind, sessionId: job.agent_session_id }
@@ -777,9 +798,16 @@ function publicJobDetail(
   job: JobView | Job,
   profiles: ManagedProfileRecord[] = [],
   outputSavings: OutputSavingsEvent[] = [],
+  conversationUrl: string | null = null,
 ) {
+  const prompt = publicPrompt(record(job.request_json))
+  const response = publicResponse(job.result_json)
   return {
-    ...publicJobSummary(job, profiles, outputSavings),
+    ...publicJobSummary(job, profiles, outputSavings, conversationUrl),
+    transcript: [
+      ...(prompt ? [{ role: 'user' as const, content: publicUserPrompt(prompt) }] : []),
+      ...(response ? [{ role: 'assistant' as const, content: response }] : []),
+    ],
     result: redactPublicValue(job.result_json),
     error: publicError(job.error_json),
     providerAttempts: redactPublicValue(job.provider_attempts_json),
@@ -793,6 +821,76 @@ function publicJobDetail(
       measuredAt: event.measured_at,
     })),
   }
+}
+
+function publicChatTitle(request: Record<string, unknown> | null) {
+  const metadata = record(request?.metadata)
+  const value = metadata?.chatName ?? request?.chatName
+  return typeof value === 'string' && value.trim() ? value.trim().slice(0, 256) : null
+}
+
+function publicPrompt(request: Record<string, unknown> | null) {
+  if (!Array.isArray(request?.actions)) return null
+  for (const entry of request.actions) {
+    const action = record(entry)
+    if (action?.action !== 'prompt.input') continue
+    const payload = record(action.payload)
+    if (typeof payload?.text === 'string' && payload.text.trim()) return payload.text.trim()
+  }
+  return null
+}
+
+function publicUserPrompt(prompt: string) {
+  const turns = [...prompt.matchAll(/\[User\]\s*([\s\S]*?)(?=\n\n\[(?:System|Developer|Assistant|Tool|User)\]|$)/giu)]
+  return turns.at(-1)?.[1]?.trim() || prompt
+}
+
+function publicResponse(value: unknown) {
+  const result = record(value)
+  if (!Array.isArray(result?.responses)) return null
+  for (const entry of result.responses) {
+    const response = record(entry)
+    if (response?.action !== 'response.read') continue
+    const payload = record(response.result)
+    if (typeof payload?.text === 'string' && payload.text.trim()) return payload.text.trim()
+  }
+  return null
+}
+
+function publicProviders(job: JobView | Job) {
+  const providers: string[] = []
+  const attempts = Array.isArray(job.provider_attempts_json) ? job.provider_attempts_json : []
+  for (const entry of attempts) {
+    const provider = record(entry)?.provider
+    if (typeof provider === 'string' && provider && !providers.includes(provider)) providers.push(provider)
+  }
+  if (!providers.includes(job.provider)) providers.push(job.provider)
+  return providers
+}
+
+function publicConversationUrl(store: JobStore, job: JobView | Job) {
+  const request = record(job.request_json)
+  const taskId = typeof request?.taskId === 'string' ? request.taskId : null
+  if (!job.profile_id || !taskId || !publicPrompt(request)) return null
+  for (const provider of publicProviders(job)) {
+    const mapping = store.resolveProviderTaskConversation({
+      provider,
+      profile_id: job.profile_id,
+      task_id: taskId,
+    })
+    if (mapping?.canonical_url) return mapping.canonical_url
+  }
+  return null
+}
+
+function estimatedTextTokens(text: string) {
+  let cjk = 0
+  let other = 0
+  for (const character of text) {
+    if (/\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Hangul}/u.test(character)) cjk += 1
+    else other += 1
+  }
+  return Math.max(1, Math.ceil(cjk + other / 4))
 }
 
 function publicOutputSavingsSummary(summary: OutputSavingsSummary) {

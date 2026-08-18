@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 
 import { readTokenlessConfig, type ApiProxyConversationMode, type ProviderBackend } from '../job-store.js'
 import { createManagedPlaywrightJobRequest, MANAGED_PLAYWRIGHT_JOB_ACTION } from '../playwright/job-contract.js'
@@ -115,10 +115,25 @@ type RawApiProxyCompletion = {
 type PreparedOpenAiResponse = {
   request: NormalizedRequest
   transcript: Record<string, unknown>[]
+  responseId: string
   previousResponseId: string | null
+  continuationMessages: OpenAiProtocolMessage[]
   publicTools: Record<string, unknown>[]
   publicToolChoice: unknown
   publicText: Record<string, unknown>
+}
+
+type ResponseContinuationContext = {
+  responseId: string
+  previous: ApiResponseLedgerEntry | null
+  continuationMessages: OpenAiProtocolMessage[]
+}
+
+type ConversationPlan = {
+  taskId: string
+  promptText: string
+  targetUrl: string | null
+  conversationMode: ApiProxyConversationMode
 }
 
 export type ApiProxyResponseResult = {
@@ -171,8 +186,12 @@ export class ApiProxyAdapter {
     const model = providerFromModel(requestBody.model)
     const previous = previousResponse(requestBody.previous_response_id, this.store)
     if (previous) assertPreviousResponseRoute(previous, model.provider, String(requestBody.model), executionMode)
-    const prepared = normalizeOpenAiResponsesRequest(requestBody, previous)
-    const completion = await this.completeRequest(config, prepared.request, signal)
+    const prepared = normalizeOpenAiResponsesRequest(requestBody, previous, createOpenAiResponseId())
+    const completion = await this.completeRequest(config, prepared.request, signal, {
+      responseId: prepared.responseId,
+      previous,
+      continuationMessages: prepared.continuationMessages,
+    })
     const response = openAiResponseBody(completion, prepared)
     this.store.putApiResponse({
       response_id: String(response.id),
@@ -214,7 +233,7 @@ export class ApiProxyAdapter {
       String(requestBody.model),
       executionMode,
     )
-    const prepared = normalizeOpenAiResponsesRequest(requestBody, previous)
+    const prepared = normalizeOpenAiResponsesRequest(requestBody, previous, createOpenAiResponseId())
     return await this.openG4fStream(config, prepared.request, 'responses', signal)
   }
 
@@ -222,6 +241,7 @@ export class ApiProxyAdapter {
     config: Awaited<ReturnType<typeof readTokenlessConfig>>,
     request: NormalizedRequest,
     signal?: AbortSignal,
+    responseContext?: ResponseContinuationContext,
   ): Promise<ApiProxyCompletion> {
     // Request-level validation first: an unknown provider is the caller's
     // mistake and must be rejected the same way whether or not this
@@ -275,18 +295,14 @@ export class ApiProxyAdapter {
     if (executionMode === 'direct' && providerBackend === 'g4f') {
       const messages = providerMessages(selectedRequest)
       const completion = await this.completeG4f(selectedRequest, messages, signal)
-      return await validatedCompletion(selectedRequest, directRawCompletion(selectedRequest, completion, config.apiProxy.conversationMode), async (prompt) => {
+      return await validatedCompletion(selectedRequest, directRawCompletion(selectedRequest, completion, 'new-conversation'), async (prompt) => {
         const corrected = await this.completeG4f(selectedRequest, [...messages, { role: 'user', content: prompt }], signal)
-        return directRawCompletion(selectedRequest, corrected, config.apiProxy.conversationMode)
+        return directRawCompletion(selectedRequest, corrected, 'new-conversation')
       })
     }
 
-    const mode = config.apiProxy.conversationMode
-    if (executionMode === 'direct' && mode === 'continue-conversation') {
-      throw new ApiProxyError(400, 'unsupported_parameter', 'Native direct execution currently supports only new conversations.')
-    }
-    const plan = mode === 'continue-conversation'
-      ? continuationPlan(selectedRequest, profile.id, this.store)
+    const plan = responseContext
+      ? responseConversationPlan(selectedRequest, responseContext, profile.id, this.store, executionMode)
       : newConversationPlan(selectedRequest)
 
     const completion = await this.completeManagedPrompt({
@@ -295,7 +311,7 @@ export class ApiProxyAdapter {
       taskId: plan.taskId,
       promptText: plan.promptText,
       targetUrl: plan.targetUrl,
-      conversationMode: mode,
+      conversationMode: plan.conversationMode,
       executionMode,
       providerBackend,
       capabilityRoute: selectedRoute?.capabilityRoute ?? null,
@@ -317,7 +333,7 @@ export class ApiProxyAdapter {
         taskId: plan.taskId,
         promptText: prompt,
         targetUrl: mapping?.canonical_url ?? plan.targetUrl,
-        conversationMode: mode,
+        conversationMode: plan.conversationMode,
         executionMode,
         providerBackend,
         capabilityRoute: settledRoute?.capabilityRoute ?? null,
@@ -535,14 +551,6 @@ function assertAutoRequestScope(
       'tokenless',
     )
   }
-  if (config.apiProxy.conversationMode !== 'new-conversation') {
-    throw new ApiProxyError(
-      400,
-      'auto_conversation_mode_unsupported',
-      'tokenless/auto requires new-conversation mode so provider-local conversation state is never replayed across providers.',
-      'model',
-    )
-  }
 }
 
 function autoStructuredControlRoutes(
@@ -619,6 +627,7 @@ function newConversationPlan(request: NormalizedRequest) {
     taskId: `api-proxy:${randomUUID()}`,
     promptText: requestPrompt(request),
     targetUrl: null as string | null,
+    conversationMode: 'new-conversation' as const,
   }
 }
 
@@ -645,34 +654,44 @@ function providerMessages(request: NormalizedRequest): { role: 'system' | 'user'
   })
 }
 
-/**
- * Reuses one provider conversation per caller thread. The task identity covers
- * every message except the final user turn, so a caller that edits or truncates
- * its history starts a new conversation instead of silently appending to a
- * transcript the provider no longer shares.
- */
-function continuationPlan(request: NormalizedRequest, profileId: string, store: JobStore) {
-  if (request.toolProtocol) return newConversationPlan(request)
-  const trailing = request.messages.at(-1)
-  if (!trailing || trailing.role !== 'user') return newConversationPlan(request)
-  const history = request.messages.slice(0, -1)
-  if (history.length === 0) return newConversationPlan(request)
-  const taskId = `api-proxy:thread:${transcriptFingerprint(history)}`
-  const mapping = store.resolveProviderTaskConversation({
-    provider: request.provider,
-    profile_id: profileId,
-    task_id: taskId,
-  })
-  if (!mapping?.canonical_url) {
-    return { taskId, promptText: flattenTranscript(request.messages), targetUrl: null }
+function responseConversationPlan(
+  request: NormalizedRequest,
+  context: ResponseContinuationContext,
+  profileId: string,
+  store: JobStore,
+  executionMode: 'browser' | 'direct',
+): ConversationPlan {
+  const taskId = responseTaskId(context.responseId)
+  if (executionMode === 'browser' && context.previous) {
+    const mapping = store.resolveProviderTaskConversation({
+      provider: request.provider,
+      profile_id: profileId,
+      task_id: responseTaskId(context.previous.response_id),
+    })
+    if (mapping?.canonical_url) {
+      const deltaRequest = { ...request, messages: context.continuationMessages }
+      return {
+        taskId,
+        promptText: requestPrompt(deltaRequest),
+        targetUrl: mapping.canonical_url,
+        conversationMode: 'continue-conversation',
+      }
+    }
   }
-  return { taskId, promptText: messageText(trailing), targetUrl: mapping.canonical_url }
+  return {
+    taskId,
+    promptText: requestPrompt(request),
+    targetUrl: null,
+    conversationMode: 'new-conversation',
+  }
 }
 
-function transcriptFingerprint(messages: readonly OpenAiProtocolMessage[]) {
-  const hash = createHash('sha256')
-  for (const message of messages) hash.update(JSON.stringify([message.role, messageText(message)]))
-  return hash.digest('hex').slice(0, 32)
+function responseTaskId(responseId: string) {
+  return `api-proxy:response:${responseId}`
+}
+
+function createOpenAiResponseId() {
+  return `resp_${randomUUID().replaceAll('-', '')}`
 }
 
 function flattenTranscript(messages: readonly OpenAiProtocolMessage[]) {
@@ -737,6 +756,7 @@ export function normalizeOpenAiRequest(body: unknown): NormalizedRequest {
 function normalizeOpenAiResponsesRequest(
   body: Record<string, unknown>,
   previous: ApiResponseLedgerEntry | null,
+  responseId: string,
 ): PreparedOpenAiResponse {
   rejectUnsupportedResponsesFields(body)
   const model = providerFromModel(body.model)
@@ -761,7 +781,10 @@ function normalizeOpenAiResponsesRequest(
   const choice = normalizeResponsesToolChoice(body.tool_choice, tools)
   const parallelToolCalls = normalizeParallelToolCalls(body.parallel_tool_calls)
   const responseFormat = normalizeResponsesText(body.text)
+  const priorMessages = responsesItemsToMessages(priorInput)
   const messages = normalizeResponsesHistory(responsesItemsToMessages(transcript), tools)
+  const priorMessageCount = priorMessages.length
+  const continuationMessages = previous ? messages.slice(priorMessageCount) : messages
   const options = normalizeTokenlessOptions(body.tokenless)
   return {
     request: {
@@ -784,7 +807,9 @@ function normalizeOpenAiResponsesRequest(
       ...options,
     },
     transcript,
+    responseId,
     previousResponseId: previous?.response_id ?? null,
+    continuationMessages,
     publicTools,
     publicToolChoice: responsesPublicToolChoice(choice),
     publicText: { format: responseFormat.publicFormat },
@@ -1438,7 +1463,7 @@ export function openAiCompletionBody(completion: ApiProxyCompletion, requestedMo
 }
 
 function openAiResponseBody(completion: ApiProxyCompletion, prepared: PreparedOpenAiResponse): Record<string, unknown> {
-  const responseId = `resp_${randomUUID().replaceAll('-', '')}`
+  const responseId = prepared.responseId
   const createdAt = Math.floor(Date.now() / 1000)
   const output: Record<string, unknown>[] = []
   if (completion.text) output.push(responseMessageItem(completion.text))

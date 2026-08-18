@@ -3054,30 +3054,42 @@ async function cleanupVisibleAttachmentBundlesForRequest(homeDir: string, reques
 
 function visibleAttachmentBundleIdsForRequest(request: unknown) {
   const requestObject = jsonRecord(request)
-  if (!requestObject || !Object.hasOwn(requestObject, 'attachments')) return new Set<string>()
-  const attachments = requestObject.attachments
-  if (!Array.isArray(attachments) || attachments.length === 0 || attachments.length > MAX_VISIBLE_ATTACHMENTS) {
-    return null
+  if (!requestObject) return new Set<string>()
+  const attachmentGroups: unknown[] = []
+  if (Object.hasOwn(requestObject, 'attachments')) attachmentGroups.push(requestObject.attachments)
+  if (Array.isArray(requestObject.actions)) {
+    for (const action of requestObject.actions) {
+      const actionObject = jsonRecord(action)
+      const payload = jsonRecord(actionObject?.payload)
+      if (payload && Object.hasOwn(payload, 'attachments')) attachmentGroups.push(payload.attachments)
+    }
   }
+  if (attachmentGroups.length === 0) return new Set<string>()
   const bundleIds = new Set<string>()
   const attachmentIds = new Set<string>()
   let expectedBundleId: string | undefined
   let totalBytes = 0
-  for (const attachment of attachments) {
-    let descriptor
-    try {
-      descriptor = validateVisibleAttachmentDescriptor(attachment)
-    } catch {
-      return null
+  let attachmentCount = 0
+  for (const attachments of attachmentGroups) {
+    if (!Array.isArray(attachments) || attachments.length === 0) return null
+    attachmentCount += attachments.length
+    if (attachmentCount > MAX_VISIBLE_ATTACHMENTS) return null
+    for (const attachment of attachments) {
+      let descriptor
+      try {
+        descriptor = validateVisibleAttachmentDescriptor(attachment)
+      } catch {
+        return null
+      }
+      if (expectedBundleId !== undefined && descriptor.bundleId !== expectedBundleId) return null
+      expectedBundleId = descriptor.bundleId
+      if (attachmentIds.has(descriptor.attachmentId)) return null
+      attachmentIds.add(descriptor.attachmentId)
+      if (descriptor.size > MAX_VISIBLE_ATTACHMENT_REQUEST_BYTES) return null
+      totalBytes += descriptor.size
+      if (!Number.isSafeInteger(totalBytes) || totalBytes > MAX_VISIBLE_ATTACHMENT_REQUEST_BYTES) return null
+      bundleIds.add(descriptor.bundleId)
     }
-    if (expectedBundleId !== undefined && descriptor.bundleId !== expectedBundleId) return null
-    expectedBundleId = descriptor.bundleId
-    if (attachmentIds.has(descriptor.attachmentId)) return null
-    attachmentIds.add(descriptor.attachmentId)
-    if (descriptor.size > MAX_VISIBLE_ATTACHMENT_REQUEST_BYTES) return null
-    totalBytes += descriptor.size
-    if (!Number.isSafeInteger(totalBytes) || totalBytes > MAX_VISIBLE_ATTACHMENT_REQUEST_BYTES) return null
-    bundleIds.add(descriptor.bundleId)
   }
   return bundleIds
 }

@@ -53,6 +53,18 @@ Daemon 不暴露 public G4F namespace route。请在标准 API proxy endpoint �
 }
 ```
 
+Direct ChatGPT image generation 使用同一个 provider-neutral image endpoint：
+
+```json
+{
+  "model": "tokenless/chatgpt/gpt-image",
+  "prompt": "A simple green leaf icon on a white background.",
+  "tokenless": {"execution_mode": "direct"}
+}
+```
+
+Image response 只包含 Tokenless asset URL 与已验证 metadata。Direct ChatGPT image failure 使用中性的 image error contract，不会暴露 private adapter name。
+
 所有 route 都要求普通 Tokenless daemon bearer token。Provider guest mode 与 daemon authentication 相互独立；managed direct CLI execution 会在本地私下创建临时 provider auth context，并在 request 后删除。
 
 Auth source type 包括 `empty`、`manual`、`har`、`cookie-file`、`browser-cookie3`、`cookie-database` 与 loopback `cdp`。两种 Cookie DB source 都必须提供位于所选 managed profile 内的精确 database path；不允许无 scope 的 browser scanning。Manual value 仅限所选 provider domain。
@@ -79,6 +91,7 @@ Visible-browser execution 继续由 Tokenless 原生实现。ChatGPT G4F direct 
 - Guest：通过标准 API direct request 请求 `tokenless/zai/GLM-4.7`，不携带 provider credential，在隔离的 headless browser 中完成 Aliyun traceless verification，并要求返回精确随机 marker。
 - 已登录：ChatGPT direct 只从选中的 Cloak browser profile 读取 ChatGPT cookies、access token、user agent 与 language headers，写入一个 provider-scoped 临时 context。
 - 图片：真实 `tokenless/pollinations/sana` direct gate 通过统一 endpoint 生成了一张 768×768 JPEG，按请求提供的 task identity 落盘，并在不暴露 private backend 的前提下验证 digest 与 authenticated byte-for-byte readback。
+- ChatGPT image：direct binding 从选定的 managed browser session 创建一个 provider-scoped 临时 auth context，并且只按请求提供的 task identity 持久化已验证图片 bytes。
 
 ## Provider 错误
 
