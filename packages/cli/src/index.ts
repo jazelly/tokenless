@@ -26,6 +26,11 @@ export {
   resumeDaemonJob,
   shutdownDaemon,
   waitDaemonJobResult,
+  startAgentRun,
+  readAgentRun,
+  readAgentRunByAdmission,
+  resumeAgentRun,
+  cancelAgentRun,
 } from './daemon-client.js'
 
 export type {
@@ -53,6 +58,7 @@ export type {
   ShutdownDaemonOptions,
   ShutdownDaemonResponse,
   WaitDaemonJobResultOptions,
+  AgentRunClientOptions,
 } from './daemon-client.js'
 
 export type { ManagedProfileConfig, TokenlessConfig } from './job-store.js'

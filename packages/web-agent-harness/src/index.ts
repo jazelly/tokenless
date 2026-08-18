@@ -36,6 +36,8 @@ export {
 export {
   HARNESS_SKILL_MODULE_PROTOCOL,
   HARNESS_SKILL_STATE_PROTOCOL,
+  HARNESS_RUN_PROTOCOL,
+  PROVIDER_TURN_PROTOCOL,
   REQUIRED_HARNESS_PROVIDER_CAPABILITIES,
   WEB_AGENT_PROTOCOL,
   HarnessSkillError,
@@ -48,10 +50,14 @@ export type {
   HarnessBootstrapTurn,
   HarnessBootstrapTurnPreparation,
   CompleteHarnessLocalHttpBootstrapInput,
+  CompleteHarnessLocalHttpContinuationInput,
+  ContinueHarnessLocalHttpTurnInput,
   HarnessFinalOutputContract,
   HarnessFinalResponse,
   HarnessModelResponse,
   HarnessLocalHttpBootstrapCompletion,
+  HarnessLocalHttpContinuationCompletion,
+  HarnessLocalHttpContinuationStart,
   HarnessLocalHttpFinalizedBootstrap,
   HarnessMissionStatus,
   HarnessMissionView,
@@ -61,6 +67,21 @@ export type {
   HarnessSkillTurnPreparation,
   HarnessToolCall,
   HarnessToolDescriptor,
+  HarnessToolCatalogEntry,
+  HarnessToolExecution,
+  HarnessToolRegistry,
+  ProviderTurnClient,
+  ProviderTurnRequest,
+  ProviderTurnState,
+  AgentMcpServerSpec,
+  AgentRunSpec,
+  AgentRunStatus,
+  AgentRunView,
+  AgentRunIntervention,
+  HarnessActionBatchResult,
+  HarnessToolCallResult,
+  HarnessNeedResult,
+  WebAgentHarness,
   JsonPrimitive,
   JsonValue,
   EnqueueSequentialHarnessMissionInput,
@@ -95,10 +116,24 @@ export {
 export {
   cancelHarnessLocalHttpTurn,
   completeHarnessLocalHttpBootstrap,
+  completeHarnessLocalHttpContinuation,
+  continueHarnessLocalHttpTurn,
   readHarnessLocalHttpTurn,
   startHarnessLocalHttpBootstrap,
 } from './local-http-bootstrap.js'
 
 export {
+  createLocalHttpProviderTurnClient,
+} from './local-http-provider-client.js'
+
+export {
   openSequentialHarnessMissionQueue,
 } from './mission-queue.js'
+
+export {
+  openWebAgentHarness,
+} from './web-agent-harness.js'
+
+export {
+  createStdioMcpToolRegistry,
+} from './stdio-mcp.js'

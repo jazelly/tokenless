@@ -91,11 +91,20 @@ export function createLocalHttpClient(options: LocalHttpClientOptions) {
       if (start.providerBindingRef !== providerBindingRef) throw new TypeError('request providerBindingRef does not match the route.')
       return parseTurnEnvelope(await call(`/v1/web-ai/bindings/${encodeURIComponent(bindingRef(providerBindingRef, 'providerBindingRef'))}/turns`, jsonPost(start)))
     },
+    async continue(providerBindingRef: string, requestValue: unknown): Promise<TurnState> {
+      const start = parseStartTurnRequest(requestValue)
+      if (start.conversation.mode !== 'continue') throw new TypeError('request must be a continuation.')
+      if (start.providerBindingRef !== providerBindingRef) throw new TypeError('request providerBindingRef does not match the route.')
+      return parseTurnEnvelope(await call(`/v1/web-ai/bindings/${encodeURIComponent(bindingRef(providerBindingRef, 'providerBindingRef'))}/turns`, jsonPost(start)))
+    },
     async read(turnRef: string): Promise<TurnState> {
       return parseTurnEnvelope(await call(`/v1/web-ai/turns/${encodeURIComponent(turnRefValue(turnRef))}`))
     },
     async cancel(turnRef: string): Promise<TurnState> {
       return parseTurnEnvelope(await call(`/v1/web-ai/turns/${encodeURIComponent(turnRefValue(turnRef))}/cancel`, jsonPost({})))
+    },
+    async resume(turnRef: string): Promise<TurnState> {
+      return parseTurnEnvelope(await call(`/v1/web-ai/turns/${encodeURIComponent(turnRefValue(turnRef))}/resume`, jsonPost({})))
     },
     async cancelRequest(requestRef: string): Promise<LocalHttpRequestCancellation> {
       return parseRequestCancellation(await call(`/v1/web-ai/requests/${encodeURIComponent(requestRefValue(requestRef))}/cancel`, jsonPost({})))

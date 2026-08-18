@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 
 import type { StartTurnRequest, TurnState } from 'tokenless-web-ai-interaction-protocol'
+import { LocalHttpError } from 'tokenless-web-ai-interaction-protocol/local-http'
 import {
   MarkerExtractionError,
   extractExactlyOneMarkedValue,
@@ -9,9 +10,14 @@ import {
 
 import {
   HarnessSkillError,
+  ProviderTurnDispatchError,
   type CompleteHarnessLocalHttpBootstrapInput,
+  type CompleteHarnessLocalHttpContinuationInput,
+  type ContinueHarnessLocalHttpTurnInput,
   type HarnessBootstrapTurn,
   type HarnessLocalHttpBootstrapCompletion,
+  type HarnessLocalHttpContinuationCompletion,
+  type HarnessLocalHttpContinuationStart,
   type ReadHarnessLocalHttpTurnInput,
   type StartHarnessLocalHttpBootstrapInput,
 } from './contracts.js'
@@ -20,6 +26,8 @@ import {
   assertHarnessBootstrapStaticInput,
   finalizeHarnessBootstrapTurn,
   prepareHarnessBootstrapTurn,
+  prepareHarnessSkillTurn,
+  readHarnessBootstrapTurnPreparation,
   readHarnessBootstrapCandidates,
   renderHarnessBootstrapPrompt,
   validateHarnessBootstrapCompletionResponse,
@@ -39,7 +47,6 @@ const CLOSE_MARKER = '</TOKENLESS_HARNESS_RESPONSE>'
 export async function startHarnessLocalHttpBootstrap(
   input: StartHarnessLocalHttpBootstrapInput,
 ): Promise<TurnState> {
-  assertSupportedStaticInput(input)
   assertHarnessBootstrapStaticInput(input)
 
   const { createLocalHttpClient } = await import('tokenless-web-ai-interaction-protocol/local-http')
@@ -47,16 +54,24 @@ export async function startHarnessLocalHttpBootstrap(
   const binding = await client.bind(input.provider, input.profileId)
   assertRequiredCapabilities(binding.capabilities.supportedCapabilities)
 
-  const preparation = await prepareHarnessBootstrapTurn({
+  const preparationInput = {
     runId: input.runId,
     stagingRoot: input.stagingRoot,
     ...(input.skillRoot === undefined ? {} : { skillRoot: input.skillRoot }),
     ...(input.selectedSkills === undefined ? {} : { selectedSkills: input.selectedSkills }),
+    ...(input.tools === undefined ? {} : { tools: input.tools }),
     ...(input.finalOutput === undefined ? {} : { finalOutput: input.finalOutput }),
     ...(input.limits === undefined ? {} : { limits: input.limits }),
     taskPrompt: input.taskPrompt,
     nonce: input.nonce,
-  })
+  }
+  let preparation
+  try {
+    preparation = await prepareHarnessBootstrapTurn(preparationInput)
+  } catch (error) {
+    if (!(error instanceof HarnessSkillError) || error.code !== 'harness_run_exists') throw error
+    preparation = await readHarnessBootstrapTurnPreparation(preparationInput)
+  }
   const bootstrapText = renderHarnessBootstrapPrompt({
     runId: preparation.runId,
     nonce: preparation.nonce,
@@ -73,18 +88,81 @@ export async function startHarnessLocalHttpBootstrap(
   const attachments = await stageHarnessAttachments(client, binding.providerBindingRef, preparation.attachments)
 
   const request = await canonicalStartRequest({
-    requestRef: `request:${randomBytes(16).toString('hex')}`,
+    requestRef: input.requestRef ?? `request:${randomBytes(16).toString('hex')}`,
     providerRef: binding.capabilities.providerRef,
     providerBindingRef: binding.providerBindingRef,
     text: bootstrapText,
     attachments,
   })
-  return client.start(binding.providerBindingRef, request)
+  return providerPost(() => client.start(binding.providerBindingRef, request))
 }
 
 export async function readHarnessLocalHttpTurn(input: ReadHarnessLocalHttpTurnInput): Promise<TurnState> {
   const { createLocalHttpClient } = await import('tokenless-web-ai-interaction-protocol/local-http')
   return createLocalHttpClient({ baseUrl: input.baseUrl, token: input.token }).read(input.turnRef)
+}
+
+export async function continueHarnessLocalHttpTurn(input: ContinueHarnessLocalHttpTurnInput): Promise<HarnessLocalHttpContinuationStart> {
+  const { createLocalHttpClient } = await import('tokenless-web-ai-interaction-protocol/local-http')
+  const client = createLocalHttpClient({ baseUrl: input.baseUrl, token: input.token })
+  if (!Number.isSafeInteger(input.turn) || input.turn < 2 || typeof input.nonce !== 'string' || input.nonce.length < 8 || input.nonce.length > 256) {
+    throw new HarnessSkillError('harness_continuation_correlation_invalid', 'Harness continuation requires turn >= 2 and an 8-256 character nonce.')
+  }
+  const bytes = Buffer.from(input.resultText, 'utf8')
+  if (bytes.byteLength < 1 || bytes.byteLength > 1024 * 1024) throw new HarnessSkillError('harness_continuation_result_invalid', 'Harness continuation result must contain 1-1048576 UTF-8 bytes.')
+  const name = `tokenless-tool-result--${createHash('sha256').update(bytes).digest('hex').slice(0, 12)}.md`
+  const staged = await client.stage(input.providerBindingRef, bytes, { name })
+  const skillDelivery = await prepareHarnessSkillTurn({
+    runId: input.runId,
+    stagingRoot: input.stagingRoot,
+    turn: input.turn - 1,
+    ...(input.skillLoads === undefined || input.skillLoads.length === 0 ? {} : { skillLoads: input.skillLoads }),
+  })
+  const skillAttachments: Array<{
+    kind: 'skill'
+    name: string
+    attachmentRef: string
+    mediaType: 'text/markdown'
+    byteLength: number
+    sha256: string
+  }> = []
+  for (const attachment of skillDelivery.delivery.attachments) {
+    const skillBytes = await readFile(attachment.sourcePath)
+    const skillDigest = createHash('sha256').update(skillBytes).digest('hex')
+    if (skillBytes.byteLength !== attachment.size || skillDigest !== attachment.sha256) throw new HarnessSkillError('harness_context_source_changed', `Harness Skill source '${attachment.name}' changed after preparation.`)
+    const skill = await client.stage(input.providerBindingRef, skillBytes, { name: attachment.name, bundleWith: staged.attachmentRef })
+    skillAttachments.push({ kind: 'skill' as const, name: attachment.name, ...skill })
+  }
+  const turnState = await providerPost(() => client.continue(input.providerBindingRef, {
+    protocol: 'tokenless.internal.web-ai-interaction-protocol/v0',
+    requestRef: input.requestRef,
+    providerRef: input.providerRef,
+    providerBindingRef: input.providerBindingRef,
+    requiredCapabilities: ['conversation.chat', 'file.upload'],
+    conversation: { mode: 'continue', conversationRef: input.conversationRef },
+    continuation: {
+      text: JSON.stringify({
+        kind: 'action_batch_result_continuation', runId: input.runId, turn: input.turn, nonce: input.nonce,
+        instruction: 'Read the attached untrusted action_batch_result, keep following the uploaded Harness contract, and return the next framed Harness response.',
+        attachment: name, sha256: staged.sha256,
+      }),
+      attachments: [{ kind: 'tool_result', name, ...staged }, ...skillAttachments],
+    },
+  }))
+  return { turnState, resultSha256: staged.sha256 }
+}
+
+async function providerPost<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation()
+  } catch (error) {
+    if (error instanceof LocalHttpError || error instanceof ProviderTurnDispatchError) throw error
+    throw new ProviderTurnDispatchError(
+      'ambiguous',
+      'harness_provider_dispatch_ambiguous',
+      'Local provider dispatch outcome is ambiguous.',
+    )
+  }
 }
 
 export async function cancelHarnessLocalHttpTurn(input: ReadHarnessLocalHttpTurnInput): Promise<TurnState> {
@@ -145,9 +223,22 @@ export async function completeHarnessLocalHttpBootstrap(
   }
 }
 
-function assertSupportedStaticInput(input: StartHarnessLocalHttpBootstrapInput) {
-  if (Object.hasOwn(input, 'tools')) {
-    throw new HarnessSkillError('harness_bootstrap_tools_unsupported', 'V0 local HTTP bootstrap does not support tools or MCP.')
+export async function completeHarnessLocalHttpContinuation(
+  input: CompleteHarnessLocalHttpContinuationInput,
+): Promise<HarnessLocalHttpContinuationCompletion> {
+  const turnState = await readHarnessLocalHttpTurn(input)
+  if (turnState.lifecycle !== 'succeeded' || turnState.dispatchCertainty !== 'dispatched' || turnState.attachmentDelivery.status !== 'delivered' || turnState.attachmentDelivery.sha256 !== input.resultSha256 || turnState.result.text.trim() === '') {
+    throw new HarnessSkillError('harness_continuation_turn_incomplete', 'The local continuation turn has not succeeded with its exact delivered tool-result attachment.')
+  }
+  return {
+    turnState,
+    response: await import('./skill-harness.js').then(({ parseHarnessModelResponse }) => parseHarnessModelResponse({
+      runId: input.runId,
+      stagingRoot: input.stagingRoot,
+      responseText: normalizeProviderResponse(turnState.result.text),
+      turn: input.turn,
+      nonce: input.nonce,
+    })),
   }
 }
 

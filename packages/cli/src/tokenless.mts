@@ -39,6 +39,7 @@ import {
   buildTokenlessPrompt,
   browserRuntimeStatus,
   quiesceBrowserRuntime,
+  cancelAgentRun,
   cancelDaemonJob,
   createDaemonJob,
   daemonUrl,
@@ -62,14 +63,18 @@ import {
   probeDaemonReady,
   providerWakeUrl,
   readTokenlessConfig,
+  readAgentRun,
+  readAgentRunByAdmission,
   hasConfiguredTokenlessLanguage,
   removeStagedVisibleAttachmentBundle,
   resolveChromiumBrowser,
   resolveProviderConversation,
   resolveProviderMapping,
+  resumeAgentRun,
   resumeDaemonJob,
   semanticVersionMajor,
   stageVisibleAttachments,
+  startAgentRun,
   stopDaemon,
   tokenlessHome,
   upsertTokenlessProfileConfig,
@@ -121,9 +126,13 @@ import { featureBenchCommand } from './featurebench/cli.js'
 const CLI_ARG_FLAGS: unique symbol = Symbol('tokenless.cliArgFlags')
 
 type CliArgs = Record<string, any> & {
+  answers: string[]
+  approvals: string[]
   attachFiles: string[]
+  authenticationCompleted: string[]
   capabilities: string[]
   files: string[]
+  skills: string[]
   [CLI_ARG_FLAGS]?: Record<string, string[]>
 }
 type CliUsageDetails = {
@@ -259,6 +268,7 @@ const TOP_LEVEL_USAGE = [
   'tokenless <command> [options]',
   'tokenless setup [--install-codex [--codex-home <dir>]]',
   `tokenless run --provider ${VISIBLE_PROVIDER_USAGE} [--execution-mode browser|direct] --prompt <text> --json`,
+  `tokenless agent run --provider ${VISIBLE_PROVIDER_USAGE} [--profile <slug>] --prompt <text> --json`,
   'tokenless capabilities list --json',
   'tokenless limits inspect --profile <slug> --provider <provider> --json',
   'tokenless featurebench inspect --json',
@@ -271,9 +281,13 @@ const TOP_LEVEL_USAGE = [
   'tokenless help',
 ]
 let args: CliArgs = {
+  answers: [],
+  approvals: [],
   attachFiles: [],
+  authenticationCompleted: [],
   capabilities: [],
   files: [],
+  skills: [],
   json: process.argv.includes('--json'),
   verbose: process.argv.includes('--verbose') || process.argv.includes('-v'),
   color: process.argv.includes('--color'),
@@ -296,7 +310,7 @@ try {
   } else {
     command = argv[0]?.startsWith('-') ? 'prompt' : (argv.shift() ?? 'help')
   }
-  const subcommand = (command === 'profiles' || command === 'daemon' || command === 'capabilities' || command === 'limits' || command === 'savings' || command === 'api-proxy' || command === 'agents' || command === 'featurebench') && argv[0] && !argv[0].startsWith('-')
+  const subcommand = (command === 'profiles' || command === 'daemon' || command === 'capabilities' || command === 'limits' || command === 'savings' || command === 'api-proxy' || command === 'agents' || command === 'agent' || command === 'featurebench') && argv[0] && !argv[0].startsWith('-')
     ? argv.shift()
     : undefined
   const agentTarget = command === 'agents' && argv[0] && !argv[0].startsWith('-')
@@ -335,6 +349,8 @@ try {
     await daemonCommand(subcommand, args)
   } else if (command === 'agents') {
     await agentsCommand(subcommand, args)
+  } else if (command === 'agent') {
+    await agentCommand(subcommand, args)
   } else if (command === 'dashboard') {
     await dashboardCommand(args)
   } else if (command === 'run') {
@@ -2804,6 +2820,227 @@ async function daemonCommand(subcommand: string | undefined, args: CliArgs) {
   printPayload(result, args)
 }
 
+async function agentCommand(subcommand: string | undefined, args: CliArgs) {
+  const homeDir = tokenlessHome(args.home)
+  const config = await readTokenlessConfig(homeDir)
+  const ready = await ensureDaemonReady({
+    homeDir,
+    daemonUrl: daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined),
+    timeoutMs: args.daemonStartTimeoutMs === undefined
+      ? undefined
+      : strictPositiveInteger(args.daemonStartTimeoutMs, '--daemon-start-timeout-ms'),
+  })
+  const client = {
+    homeDir,
+    daemonUrl: ready.url,
+    requestTimeoutMs: args.timeoutMs === undefined ? undefined : strictPositiveInteger(args.timeoutMs, '--timeout-ms'),
+  }
+
+  if (subcommand === 'run') {
+    const provider = requiredAdminValue(args.provider, '--provider')
+    const profile = await new ManagedProfileRegistry(homeDir).resolveProfile(args.profile)
+    const taskPrompt = await agentTaskPrompt(args)
+    const mcpServers = args.mcpConfig === undefined ? undefined : await readAgentMcpServers(String(args.mcpConfig))
+    const admissionRef = agentAdmissionRef(args.admissionRef)
+    let view: Record<string, unknown>
+    try {
+      view = await startAgentRun({
+        ...client,
+        body: {
+          admissionRef,
+          provider,
+          profileId: profile.id,
+          taskPrompt,
+          ...(args.skills.length > 0
+            ? { selectedSkills: args.skills.map((name) => ({ name, selectedBy: 'explicit_user' })) }
+            : {}),
+          ...(mcpServers ? { mcpServers } : {}),
+          ...(args.maxTurns === undefined
+            ? {}
+            : { maxTurns: strictPositiveInteger(args.maxTurns, '--max-turns') }),
+        },
+      })
+    } catch (error) {
+      const failure = error as CliError
+      if (failure.retryable) {
+        failure.context = { ...(failure.context ?? {}), admissionRef, recoveryCommand: `tokenless agent read --admission-ref ${admissionRef} --json` }
+        failure.message = `${failure.message} ${t('agentAdmissionRetry', { admissionRef })}`
+      }
+      throw failure
+    }
+    printAgentRunView(view, args)
+    return
+  }
+
+  if (subcommand === 'read') {
+    if (args.runId !== undefined && args.admissionRef !== undefined) {
+      throw usageError('agent_run_selector_conflict', 'Use either --run-id or --admission-ref, not both.')
+    }
+    if (args.admissionRef !== undefined) {
+      printAgentRunView(await readAgentRunByAdmission({ ...client, admissionRef: agentAdmissionRef(args.admissionRef) }), args)
+    } else {
+      printAgentRunView(await readAgentRun({ ...client, runId: requiredAgentRunId(args.runId) }), args)
+    }
+    return
+  }
+  const runId = requiredAgentRunId(args.runId)
+  if (subcommand === 'cancel') {
+    printAgentRunView(await cancelAgentRun({ ...client, runId }), args)
+    return
+  }
+  if (subcommand === 'resume') {
+    const body = agentIntervention(args)
+    printAgentRunView(await resumeAgentRun({ ...client, runId, body }), args)
+    return
+  }
+  throw usageError('agent_command_invalid', 'Usage: tokenless agent <run|read|resume|cancel>.')
+}
+
+async function agentTaskPrompt(args: CliArgs) {
+  if (args.prompt !== undefined && args.promptFile !== undefined) {
+    throw usageError('duplicate_prompt', 'Use either --prompt or --prompt-file, not both.')
+  }
+  const value = args.promptFile === undefined ? args.prompt : await fs.readFile(String(args.promptFile), 'utf8')
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw usageError('missing_prompt', 'Agent run requires --prompt <text> or --prompt-file <path>.')
+  }
+  return value
+}
+
+async function readAgentMcpServers(file: string) {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(await fs.readFile(path.resolve(file), 'utf8'))
+  } catch {
+    throw usageError('agent_mcp_config_invalid', 'The MCP config must be a readable JSON file.')
+  }
+  const root = objectRecord(parsed)
+  if (Object.keys(root).length !== 1 || !Array.isArray(root.mcpServers)) {
+    throw usageError('agent_mcp_config_invalid', 'The MCP config must contain only an mcpServers array.')
+  }
+  const allowed = new Set(['name', 'command', 'args', 'envKeys', 'timeoutMs', 'enabledTools'])
+  for (const server of root.mcpServers) {
+    const record = objectRecord(server)
+    if (
+      Object.keys(record).length === 0 ||
+      Object.keys(record).some((key) => !allowed.has(key)) ||
+      typeof record.name !== 'string' || record.name.trim() === '' ||
+      typeof record.command !== 'string' || record.command.trim() === '' ||
+      !optionalStringArray(record.args) ||
+      !optionalStringArray(record.envKeys) ||
+      !optionalStringArray(record.enabledTools) ||
+      (record.timeoutMs !== undefined && (!Number.isInteger(record.timeoutMs) || record.timeoutMs <= 0))
+    ) {
+      throw usageError('agent_mcp_config_invalid', 'Each MCP server must use the bounded local stdio server shape.')
+    }
+  }
+  return root.mcpServers
+}
+
+function optionalStringArray(value: unknown) {
+  return value === undefined || (Array.isArray(value) && value.every((item) => typeof item === 'string' && item.length > 0))
+}
+
+function requiredAgentRunId(value: unknown) {
+  if (typeof value !== 'string' || !/^run_[a-f0-9]{32}$/u.test(value)) {
+    throw usageError('agent_run_id_required', '--run-id must be a Harness run ID returned by tokenless agent run.')
+  }
+  return value
+}
+
+function agentAdmissionRef(value: unknown) {
+  const admissionRef = value === undefined
+    ? `admission:${randomUUID().replaceAll('-', '')}`
+    : String(value)
+  if (!/^admission:[a-f0-9]{32,64}$/u.test(admissionRef)) {
+    throw usageError('agent_admission_ref_invalid', '--admission-ref must be admission:<32-64 lowercase hexadecimal characters>.')
+  }
+  return admissionRef
+}
+
+function agentIntervention(args: CliArgs) {
+  const approvals = args.approvals.map((value) => digestBoundIntervention(value, '--approve'))
+  const authenticationCompleted = args.authenticationCompleted.map((value) => digestBoundIntervention(value, '--auth-completed'))
+  const answers = Object.fromEntries(args.answers.map(answerIntervention))
+  if (approvals.length === 0 && authenticationCompleted.length === 0 && Object.keys(answers).length === 0 && args.providerReady !== true) {
+    throw usageError('agent_intervention_required', 'Agent resume requires an approval, authentication completion, answer, or --provider-ready.')
+  }
+  return {
+    ...(approvals.length > 0 ? { approvals } : {}),
+    ...(authenticationCompleted.length > 0 ? { authenticationCompleted } : {}),
+    ...(Object.keys(answers).length > 0 ? { answers } : {}),
+    ...(args.providerReady === true ? { providerReady: true } : {}),
+  }
+}
+
+function digestBoundIntervention(value: string, flag: string) {
+  const match = /^([^:\s]+):([a-f0-9]{64})$/u.exec(value)
+  if (!match) throw usageError('agent_intervention_invalid', `${flag} must be <call-id>:<64-character-arguments-digest>.`)
+  return { callId: match[1]!, argumentsDigest: match[2]! }
+}
+
+function answerIntervention(value: string): [string, unknown] {
+  const separator = value.indexOf('=')
+  if (separator <= 0) throw usageError('agent_intervention_invalid', '--answer must be <need-id>=<json>.')
+  try {
+    return [value.slice(0, separator), JSON.parse(value.slice(separator + 1))]
+  } catch {
+    throw usageError('agent_intervention_invalid', '--answer must contain valid JSON.')
+  }
+}
+
+function printAgentRunView(view: Record<string, any>, args: CliArgs) {
+  printPayload({ ok: view.status !== 'failed', ...view, compactOutput: formatAgentRunView(view) }, args)
+}
+
+function formatAgentRunView(view: Record<string, any>) {
+  const runId = String(view.runId ?? '')
+  const status = String(view.status ?? 'unknown')
+  const lines = [t('agentRunSummary', { runId, status })]
+  const waiting = objectRecord(view.waiting)
+  if (waiting.kind === 'approval' && Array.isArray(waiting.calls)) {
+    for (const callValue of waiting.calls) {
+      const call = objectRecord(callValue)
+      lines.push(t('agentApprovalCall', {
+        tool: String(call.tool ?? ''),
+        arguments: JSON.stringify(call.arguments ?? {}),
+        digest: String(call.argumentsDigest ?? ''),
+      }))
+      lines.push(t('agentApprovalResume', {
+        runId,
+        callId: String(call.id ?? ''),
+        digest: String(call.argumentsDigest ?? ''),
+      }))
+    }
+  } else if (waiting.kind === 'authentication' && Array.isArray(waiting.calls)) {
+    for (const callValue of waiting.calls) {
+      const call = objectRecord(callValue)
+      lines.push(t('agentAuthenticationCall', {
+        tool: String(call.tool ?? ''),
+        arguments: JSON.stringify(call.arguments ?? {}),
+      }))
+      lines.push(t('agentAuthenticationResume', {
+        runId,
+        callId: String(call.id ?? ''),
+        digest: String(call.argumentsDigest ?? ''),
+      }))
+    }
+  } else if (waiting.kind === 'user_input' && Array.isArray(waiting.needs)) {
+    for (const needValue of waiting.needs) {
+      const need = objectRecord(needValue)
+      lines.push(t('agentInputNeed', { needId: String(need.id ?? ''), prompt: String(need.prompt ?? '') }))
+      lines.push(t('agentInputResume', { runId, needId: String(need.id ?? '') }))
+    }
+  } else if (waiting.kind === 'provider') {
+    lines.push(t('agentProviderResume', { runId }))
+  }
+  const final = objectRecord(view.final)
+  if (typeof final.output === 'string') lines.push(final.output)
+  const error = objectRecord(view.error)
+  if (typeof error.message === 'string') lines.push(error.message)
+  return lines.join('\n')
+}
+
 async function agentsCommand(subcommand: string | undefined, args: CliArgs) {
   const agent = String(args.agent ?? '').trim().toLowerCase()
   if (agent !== 'codex') {
@@ -5130,6 +5367,10 @@ function createCommandContracts(): CommandContract[] {
     { command: 'help', usage: ['tokenless help'], options: [] },
     { command: 'version', usage: ['tokenless --version', 'tokenless -V', 'tokenless version'], options: [] },
     { command: 'run', usage: [`tokenless run [--capability <capability>] --provider ${VISIBLE_PROVIDER_USAGE} [--execution-mode browser|direct] --prompt <text> --json`], options: runOptions },
+    { command: 'agent', subcommand: 'run', usage: [`tokenless agent run --provider ${VISIBLE_PROVIDER_USAGE} [--profile <slug>] (--prompt <text>|--prompt-file <path>) [--admission-ref <ref>] [--skill <name>] [--mcp-config <path>] [--max-turns <count>] --json`], options: ['home', 'json', 'profile', 'provider', 'prompt', 'promptFile', 'admissionRef', 'skills', 'mcpConfig', 'maxTurns', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
+    { command: 'agent', subcommand: 'read', usage: ['tokenless agent read (--run-id <run-id>|--admission-ref <ref>) --json'], options: ['home', 'json', 'runId', 'admissionRef', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
+    { command: 'agent', subcommand: 'resume', usage: ['tokenless agent resume --run-id <run-id> (--approve <call-id:digest>|--auth-completed <call-id:digest>|--answer <need-id=json>|--provider-ready) --json'], options: ['home', 'json', 'runId', 'approvals', 'authenticationCompleted', 'answers', 'providerReady', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
+    { command: 'agent', subcommand: 'cancel', usage: ['tokenless agent cancel --run-id <run-id> --json'], options: ['home', 'json', 'runId', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
     { command: 'capabilities', subcommand: 'list', usage: ['tokenless capabilities list --json'], options: ['json'] },
     { command: 'limits', subcommand: 'inspect', usage: ['tokenless limits inspect --profile <slug> --provider <provider> --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'savings', subcommand: 'status', usage: ['tokenless savings status --json'], options: ['home', 'json'] },
@@ -5194,7 +5435,9 @@ function commandDisplayName(context: CommandContext) {
 }
 
 function parseArgs(argv: string[], context: CommandContext): CliArgs {
-  const parsed: CliArgs = { attachFiles: [], capabilities: [], files: [] }
+  const parsed: CliArgs = {
+    answers: [], approvals: [], attachFiles: [], authenticationCompleted: [], capabilities: [], files: [], skills: [],
+  }
   Object.defineProperty(parsed, CLI_ARG_FLAGS, {
     value: {},
     enumerable: false,
@@ -5226,6 +5469,8 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--conversation-key': 'idempotencyKey',
     '--task-id': 'taskId',
     '--job-id': 'jobId',
+    '--run-id': 'runId',
+    '--admission-ref': 'admissionRef',
     '--agent-kind': 'agentKind',
     '--agent-session-id': 'agentSessionId',
     '--limit': 'limit',
@@ -5277,6 +5522,8 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--workspace': 'workspace',
     '--events-file': 'eventsFile',
     '--max-steps': 'maxSteps',
+    '--max-turns': 'maxTurns',
+    '--mcp-config': 'mcpConfig',
     '--tool-timeout-ms': 'toolTimeoutMs',
     '--expires-in-ms': 'expiresInMs',
     '--provider-turn-timeout-ms': 'providerTurnTimeoutMs',
@@ -5304,6 +5551,13 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--confirm-delete': 'confirmDelete',
     '--defaults': 'setupDefaults',
     '--all': 'allProfiles',
+    '--provider-ready': 'providerReady',
+  }
+  const repeatedValueFlags: Record<string, keyof Pick<CliArgs, 'answers' | 'approvals' | 'authenticationCompleted' | 'skills'>> = {
+    '--answer': 'answers',
+    '--approve': 'approvals',
+    '--auth-completed': 'authenticationCompleted',
+    '--skill': 'skills',
   }
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index] as string
@@ -5325,6 +5579,13 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
       const value = requireFlagValue(argv, index, arg, context)
       parsed.capabilities.push(value)
       rememberArgFlag(parsed, 'capabilities', arg)
+      index += 1
+      continue
+    }
+    const repeatedKey = repeatedValueFlags[arg]
+    if (repeatedKey) {
+      parsed[repeatedKey].push(requireFlagValue(argv, index, arg, context))
+      rememberArgFlag(parsed, repeatedKey, arg)
       index += 1
       continue
     }
@@ -5491,12 +5752,13 @@ function providerSupportsChatSurface(providerId: string) {
 
 function unsupportedArgumentFlags(args: CliArgs, allowed: Set<string>) {
   const flags = args[CLI_ARG_FLAGS] ?? {}
+  const repeatable = ['answers', 'approvals', 'attachFiles', 'authenticationCompleted', 'capabilities', 'files', 'skills']
   const unsupported = Object.entries(args)
-    .filter(([key, value]) => !['attachFiles', 'capabilities', 'files'].includes(key) && value !== undefined && !allowed.has(key))
+    .filter(([key, value]) => !repeatable.includes(key) && value !== undefined && !allowed.has(key))
     .flatMap(([key]) => flags[key] ?? [optionUsageLabel(key)])
-  if (args.files.length > 0 && !allowed.has('files')) unsupported.push(...(flags.files ?? ['--file']))
-  if (args.attachFiles.length > 0 && !allowed.has('attachFiles')) unsupported.push(...(flags.attachFiles ?? ['--attach-file']))
-  if (args.capabilities.length > 0 && !allowed.has('capabilities')) unsupported.push(...(flags.capabilities ?? ['--capability']))
+  for (const key of repeatable) {
+    if (args[key].length > 0 && !allowed.has(key)) unsupported.push(...(flags[key] ?? [optionUsageLabel(key)]))
+  }
   return [...new Set(unsupported)]
 }
 
@@ -6479,7 +6741,7 @@ function formatIdentifier(value: string) {
 }
 
 function formatHumanLine(message: string, ok: boolean, args: CliArgs, status?: unknown) {
-  const waiting = status === 'waiting_for_user'
+  const waiting = typeof status === 'string' && status.startsWith('waiting_')
   const label = waiting ? 'Waiting for user' : ok ? 'Completed' : 'Failed'
   const color: CliColor = waiting ? 'yellow' : ok ? 'green' : 'red'
   return `${paintCliText(t(waiting ? 'cliWaitingLabel' : ok ? 'cliCompleted' : 'cliFailedLabel'), color, cliColorEnabled(args, process.stdout))}: ${message}`
@@ -6525,6 +6787,7 @@ function usage(args: CliArgs) {
       commands: [
         'tokenless capabilities list --json',
         `tokenless run --provider ${VISIBLE_PROVIDER_USAGE} --prompt <text> --json`,
+        `tokenless agent run --provider ${VISIBLE_PROVIDER_USAGE} --prompt <text> --json`,
         'tokenless run --capability <capability> --prompt <text> --json',
       ],
     },
@@ -6744,8 +7007,12 @@ function commonOptionsFor(options: readonly string[]) {
 function optionUsageLabel(option: string) {
   return ({
     action: '--action <action>',
+    admissionRef: '--admission-ref <ref>',
     allProfiles: '--all',
+    answers: '--answer <need-id=json>',
+    approvals: '--approve <call-id:digest>',
     attachFiles: '--attach-file <path>',
+    authenticationCompleted: '--auth-completed <call-id:digest>',
     browser: '--browser <browser>',
     browserExecutablePath: '--browser-executable-path <absolute-path>',
     browsers: '--browsers <list>',
@@ -6776,6 +7043,8 @@ function optionUsageLabel(option: string) {
     language: '--language <en|zh-CN>',
     limit: '--limit <n>',
     longRunning: '--long-running',
+    maxTurns: '--max-turns <count>',
+    mcpConfig: '--mcp-config <path>',
     model: '--model <label>',
     modelFallbacks: '--model-fallback <label>',
     noColor: '--no-color',
@@ -6790,6 +7059,7 @@ function optionUsageLabel(option: string) {
     clearProxy: '--clear-proxy',
     clearBrowserExecutablePath: '--clear-browser-executable-path',
     profile: '-P, --profile <slug>',
+    providerReady: '--provider-ready',
     projectInstructions: '--project-instructions <text>',
     projectInstructionsFile: '--project-instructions-file <path>',
     projectName: '--project-name <name>',
@@ -6800,8 +7070,10 @@ function optionUsageLabel(option: string) {
     quiet: '--quiet',
     repairBrowser: '--repair-browser',
     runnerHeartbeatTimeoutMs: '--runner-heartbeat-timeout-ms <ms>',
+    runId: '--run-id <run-id>',
     setDefault: '--set-default',
     setupDefaults: '--defaults',
+    skills: '--skill <name>',
     targetUrl: '--target-url <url>',
     taskId: '--task-id <task-id>',
     thinkingEffort: '--thinking-effort <label>',

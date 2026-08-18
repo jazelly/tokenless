@@ -6,6 +6,8 @@ import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
+import { execDeclaredNpmSync } from './helpers/declared-npm.mjs'
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const packageDirectory = path.join(root, 'packages', 'web-ai-interaction-protocol')
 const packageName = 'tokenless-web-ai-interaction-protocol'
@@ -16,12 +18,12 @@ test('packed protocol package validates committed V0 lifecycles through its root
     const packedDirectory = path.join(temporaryDirectory, 'packed')
     const installedDirectory = path.join(temporaryDirectory, 'installed')
     await fs.mkdir(packedDirectory)
-    const packed = JSON.parse(execFileSync('npm', ['pack', '--json', '--pack-destination', packedDirectory], {
+    const packed = JSON.parse(execDeclaredNpmSync(['pack', '--json', '--pack-destination', packedDirectory], {
       cwd: packageDirectory,
       encoding: 'utf8',
     }))[0]
     const tarball = path.join(packedDirectory, packed.filename)
-    execFileSync('npm', [
+    execDeclaredNpmSync([
       'install', tarball, '--prefix', installedDirectory, '--omit=dev', '--offline', '--no-audit', '--no-fund',
     ], { cwd: root, encoding: 'utf8' })
 

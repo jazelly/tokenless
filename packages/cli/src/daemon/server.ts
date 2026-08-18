@@ -1,5 +1,6 @@
 import http, { type IncomingMessage, type ServerResponse } from 'node:http'
 import net from 'node:net'
+import path from 'node:path'
 import { tokenlessPackageVersion } from '../platform-package.js'
 import { DAEMON_CONTROL_API_REVISION } from '../schema-ids.js'
 import { normalizeBrowserVisibility } from '../browser-visibility.js'
@@ -126,7 +127,7 @@ export async function serveHttp({
   const apiProxy = new ApiProxyAdapter(store, async () => await runtimeController?.wake(), g4fService?.client)
   const imageGeneration = new ImageGenerationAdapter(store, async () => await runtimeController?.wake(), g4fService?.client)
   server = http.createServer((request, response) => {
-    void handleRequest(store, close, () => active, deactivate, runtimeController, g4fService, uiServer, webAi, apiProxy, imageGeneration, featureBench, request, response)
+    void handleRequest(store, close, () => active, deactivate, runtimeController, g4fService, uiServer, webAi, apiProxy, imageGeneration, featureBench, origin(), request, response)
   })
   await new Promise<void>((resolve, reject) => {
     const onError = (error: Error) => {
@@ -196,6 +197,7 @@ async function handleRequest(
   apiProxy: ApiProxyAdapter,
   imageGeneration: ImageGenerationAdapter,
   featureBench: FeatureBenchChannelManager,
+  daemonOrigin: string,
   request: IncomingMessage,
   response: ServerResponse
 ) {
@@ -257,6 +259,12 @@ async function handleRequest(
     }
 
     requireControlAuth(store, request)
+
+    if (url.pathname.startsWith('/v1/agent/')) {
+      const handled = await handleHarnessRequest(store, daemonOrigin, request, response, method, url)
+      if (handled) return
+      throw invalidInput('Harness route is invalid')
+    }
 
     const imageAssetRoute = /^\/v1\/asset(?:\/.*)?$/u.test(url.pathname)
     if (method === 'GET' && imageAssetRoute) {
@@ -564,6 +572,117 @@ async function handleRequest(
   }
 }
 
+const activeHarnessRuns = new Map<string, Promise<void>>()
+
+async function driveHarnessRun<T>(runId: string, operation: () => Promise<T>) {
+  const previous = activeHarnessRuns.get(runId) ?? Promise.resolve()
+  const result = previous.then(operation, operation)
+  const active = result.then(() => undefined, () => undefined)
+  activeHarnessRuns.set(runId, active)
+  try {
+    return await result
+  } finally {
+    if (activeHarnessRuns.get(runId) === active) activeHarnessRuns.delete(runId)
+  }
+}
+
+async function handleHarnessRequest(
+  store: JobStore,
+  daemonOrigin: string,
+  request: IncomingMessage,
+  response: ServerResponse,
+  method: string,
+  url: URL,
+) {
+  const route = /^\/v1\/agent\/runs(?:\/([^/]+)(?:\/(resume|cancel))?)?$/.exec(url.pathname)
+  const admissionRoute = /^\/v1\/agent\/admissions\/([^/]+)$/.exec(url.pathname)
+  if (!route && !admissionRoute) return false
+  const modulePath = '../../web-agent-harness/src/index.js'
+  const harnessModule = await import(modulePath) as {
+    openWebAgentHarness(input: Record<string, unknown>): Promise<{
+      start(spec: Record<string, unknown>): Promise<unknown>
+      read(runId: string): Promise<unknown>
+      readAdmission(admissionRef: string): Promise<unknown>
+      resume(runId: string, intervention: Record<string, unknown>): Promise<unknown>
+      cancel(runId: string): Promise<unknown>
+      close(): void
+    }>
+    createLocalHttpProviderTurnClient(input: { baseUrl: string; token: string }): unknown
+    createStdioMcpToolRegistry(): unknown
+  }
+  const harness = await harnessModule.openWebAgentHarness({
+    tokenlessHome: store.homeDir,
+    providerClient: harnessModule.createLocalHttpProviderTurnClient({ baseUrl: daemonOrigin, token: store.controlToken() }),
+    toolRegistry: harnessModule.createStdioMcpToolRegistry(),
+  })
+  try {
+    if (method === 'GET' && admissionRoute) {
+      const admissionRef = decodeURIComponent(admissionRoute[1] ?? '')
+      const view = await harness.readAdmission(admissionRef)
+      if (!view) {
+        writeJson(response, 404, { error: { code: 'harness_admission_missing', message: 'Harness admission was not found.', retryable: false } })
+        return true
+      }
+      writeJson(response, 200, view)
+      return true
+    }
+    if (!route) return false
+    const encodedRunId = route[1]
+    const runId = encodedRunId ? decodeURIComponent(encodedRunId) : undefined
+    const action = route[2]
+    if (method === 'POST' && runId === undefined) {
+      const body = await readJsonObject(request)
+      const allowed = new Set(['admissionRef', 'provider', 'profileId', 'taskPrompt', 'selectedSkills', 'finalOutput', 'limits', 'maxTurns', 'mcpServers'])
+      if (Object.keys(body).some((key) => !allowed.has(key))) throw invalidInput('Harness run request contains an unknown field')
+      writeJson(response, 200, await harness.start({
+        ...body,
+        stagingRoot: path.join(store.homeDir, 'harness-staging'),
+      }))
+      return true
+    }
+    if (!runId) return false
+    if (method === 'GET' && action === undefined) {
+      const view = await driveHarnessRun(runId, () => harness.read(runId))
+      if (!view) throw invalidInput('Harness run was not found')
+      writeJson(response, 200, view)
+      return true
+    }
+    if (method === 'POST' && action === 'resume') {
+      const intervention = await readJsonObject(request)
+      writeJson(response, 200, await driveHarnessRun(runId, () => harness.resume(runId, intervention)))
+      return true
+    }
+    if (method === 'POST' && action === 'cancel') {
+      const body = await readJsonObject(request)
+      if (Object.keys(body).length > 0) throw invalidInput('Harness cancel body must be empty')
+      writeJson(response, 200, await driveHarnessRun(runId, () => harness.cancel(runId)))
+      return true
+    }
+    return false
+  } catch (error) {
+    const code = typeof error === 'object' && error !== null && typeof (error as { code?: unknown }).code === 'string'
+      ? (error as { code: string }).code
+      : ''
+    const status = code === 'harness_run_missing'
+      ? 404
+      : code === 'harness_run_conflict' || code === 'harness_admission_conflict'
+        ? 409
+        : code.startsWith('harness_')
+          ? 400
+          : 500
+    writeJson(response, status, {
+      error: {
+        code: code || 'harness_internal_error',
+        message: status === 500 ? 'Harness operation failed.' : error instanceof Error ? error.message : 'Harness operation failed.',
+        retryable: status >= 500 || code === 'harness_run_conflict',
+      },
+    })
+    return true
+  } finally {
+    harness.close()
+  }
+}
+
 async function handleWebAiRequest(
   webAi: WebAiInteractionV0Adapter,
   runtimeController: BrowserRuntimeController | undefined,
@@ -612,7 +731,7 @@ async function handleWebAiRequest(
     writeJson(response, 200, await webAi.cancelRequest(decodeURIComponent(requestRoute[1] ?? '')))
     return true
   }
-  const turnRoute = /^\/v1\/web-ai\/turns\/([^/]+)(?:\/(cancel))?$/.exec(url.pathname)
+  const turnRoute = /^\/v1\/web-ai\/turns\/([^/]+)(?:\/(cancel|resume))?$/.exec(url.pathname)
   if (turnRoute) {
     const turnRef = decodeURIComponent(turnRoute[1] ?? '')
     const action = turnRoute[2] ?? null
@@ -624,6 +743,14 @@ async function handleWebAiRequest(
       const rawBody = await readBody(request)
       if (rawBody && Object.keys(parseJsonObject(rawBody)).length > 0) throw invalidInput('web ai cancel body must be empty')
       writeJson(response, 200, { turn: await webAi.cancel(turnRef) })
+      return true
+    }
+    if (method === 'POST' && action === 'resume') {
+      const rawBody = await readBody(request)
+      if (rawBody && Object.keys(parseJsonObject(rawBody)).length > 0) throw invalidInput('web ai resume body must be empty')
+      const turn = webAi.resume(turnRef)
+      await runtimeController?.wake()
+      writeJson(response, 200, { turn })
       return true
     }
   }

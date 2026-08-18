@@ -31,11 +31,22 @@ Provider transport stays outside this package: the selected adapter must support
 
 ### Local HTTP V0 bootstrap
 
-`startHarnessLocalHttpBootstrap` is the intentionally narrow local-control-plane seam. It binds the configured provider/profile, compiles the required System Prompt, resolves caller-selected Skills, and stages the System Prompt plus every selected `SKILL.md` as independent named Markdown files in one bounded upload batch. It then starts one canonical V0 new-conversation request. It returns the protocol `TurnState`; `readHarnessLocalHttpTurn` and `cancelHarnessLocalHttpTurn` operate on its opaque `turnRef`.
+`startHarnessLocalHttpBootstrap` is the intentionally narrow local-control-plane seam. It binds the configured provider/profile, compiles the required System Prompt and frozen tool catalog, resolves caller-selected Skills, and stages the context as bounded named Markdown files. `continueHarnessLocalHttpTurn` keeps the proved provider conversation, while read, resume, and cancel operate on opaque turn references.
 
 `completeHarnessLocalHttpBootstrap` reads a succeeded turn, validates the delivered atomic attachment batch against the required System Prompt digest, validates the strict correlated Harness envelope, then finalizes the pending bootstrap with its selected Skills. It strips only bounded single-line provider chrome around one exact envelope; invalid output never finalizes the Harness state, and repeated completion is idempotent.
 
-The start operation accepts `selectedSkills` but still accepts no tools or MCP, and it does not finalize the bootstrap. Every attachment retains its own name and digest in the Harness state and prompt manifest. A queued V0 state proves only local staging and durable scheduling, not visible-provider acceptance. If staging or start fails after preparation, the existing Harness state remains pending and is not accepted or finalized; only successful completion may backfill that receipt.
+The durable `WebAgentHarness` owns MCP catalog discovery, approval-bound calls, action batches, provider continuation, and restart recovery in `<TOKENLESS_HOME>/harness.sqlite3`. MCP servers are explicit local stdio processes; environment values remain in the invoking process and every MCP call requires digest-bound approval.
+
+The normal CLI reaches this same module through authenticated daemon HTTP:
+
+```text
+tokenless agent run --provider chatgpt --prompt "Do the task" --json
+tokenless agent read --run-id <run-id> --json
+tokenless agent resume --run-id <run-id> --approve <call-id:digest> --json
+tokenless agent cancel --run-id <run-id> --json
+```
+
+A queued provider turn proves local staging and durable scheduling, not visible-provider acceptance. Provider authentication and verification stay external; resume continues the same durable turn after the user completes the handoff.
 
 Agent context is stored separately in `<TOKENLESS_HOME>/harness.sqlite3`. The ledger stores bounded IDs, canonical project identity, hashes, timestamps, provider mapping references, and job IDs. It does not store raw Codex prompts, transcripts, assistant messages, tool results, browser state, or credentials. The Web Provider API owns real provider Projects, conversations, and jobs; this package binds their returned opaque IDs to Harness conversations.
 

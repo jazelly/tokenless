@@ -59,12 +59,24 @@ export async function inspectProviderAccountSession(
         visibleProof: 'provider-sign-in-navigation',
       }
     }
-    const prioritizedAccountControl = provider.id === 'gemini'
-      ? await firstLocator(page, provider.authIndicators)
-      : null
-    const loginVisible = prioritizedAccountControl
-      ? false
-      : await anyVisible(page, provider.loginIndicators)
+    const accountControl = await firstLocator(page, provider.authIndicators)
+    if (accountControl) {
+      const account = await provider.account.inspector.inspect(page, provider, accountControl, signal)
+      const tier = providerAccountTier(provider, account.subscription)
+      return {
+        state: 'authenticated',
+        access: tier.class,
+        visibleProof: 'authenticated-account-control-visible',
+        account: {
+          ...account,
+          tier: {
+            class: tier.class,
+            label: tier.label,
+          },
+        },
+      }
+    }
+    const loginVisible = await anyVisible(page, provider.loginIndicators)
     if (loginVisible) {
       if (provider.id === 'gemini' && attempt < maximumAttempts) {
         await page.waitForTimeout(100)
@@ -87,25 +99,6 @@ export async function inspectProviderAccountSession(
             : composerVisible
               ? 'sign-in-required-despite-composer'
               : 'login-indicator-visible',
-      }
-    }
-    const accountControl = prioritizedAccountControl ?? (
-      provider.id === 'gemini' ? null : await firstLocator(page, provider.authIndicators)
-    )
-    if (accountControl) {
-      const account = await provider.account.inspector.inspect(page, provider, accountControl, signal)
-      const tier = providerAccountTier(provider, account.subscription)
-      return {
-        state: 'authenticated',
-        access: tier.class,
-        visibleProof: 'authenticated-account-control-visible',
-        account: {
-          ...account,
-          tier: {
-            class: tier.class,
-            label: tier.label,
-          },
-        },
       }
     }
     if (attempt < maximumAttempts) await page.waitForTimeout(100)

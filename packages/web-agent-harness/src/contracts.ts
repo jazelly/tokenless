@@ -3,6 +3,8 @@ import type { TurnState } from 'tokenless-web-ai-interaction-protocol'
 export const WEB_AGENT_PROTOCOL = 'tokenless.web-agent/v1' as const
 export const HARNESS_SKILL_MODULE_PROTOCOL = 'tokenless.web-agent.skills/v1' as const
 export const HARNESS_SKILL_STATE_PROTOCOL = 'tokenless.web-agent.skills-state/v1' as const
+export const HARNESS_RUN_PROTOCOL = 'tokenless.web-agent.run/v1' as const
+export const PROVIDER_TURN_PROTOCOL = 'tokenless.provider-turn/v1' as const
 export const REQUIRED_HARNESS_PROVIDER_CAPABILITIES = ['conversation.chat', 'file.upload'] as const
 
 export type JsonPrimitive = string | number | boolean | null
@@ -51,12 +53,13 @@ export type PrepareHarnessBootstrapTurnInput = PrepareHarnessSkillRunInput & {
   nonce: string
 }
 
-export type StartHarnessLocalHttpBootstrapInput = Omit<PrepareHarnessBootstrapTurnInput, 'selectedSkills' | 'tools'> & {
+export type StartHarnessLocalHttpBootstrapInput = Omit<PrepareHarnessBootstrapTurnInput, 'selectedSkills'> & {
   baseUrl: string
   token: string
   provider: string
   profileId: string
   selectedSkills?: readonly SkillSelection[] | undefined
+  requestRef?: string | undefined
 }
 
 export type ReadHarnessLocalHttpTurnInput = {
@@ -65,10 +68,43 @@ export type ReadHarnessLocalHttpTurnInput = {
   turnRef: string
 }
 
+export type ContinueHarnessLocalHttpTurnInput = {
+  baseUrl: string
+  token: string
+  providerBindingRef: string
+  providerRef: string
+  conversationRef: string
+  requestRef: string
+  runId: string
+  stagingRoot: string
+  turn: number
+  nonce: string
+  resultText: string
+  skillLoads?: readonly string[] | undefined
+}
+
+export type HarnessLocalHttpContinuationStart = {
+  turnState: TurnState
+  resultSha256: string
+}
+
 export type CompleteHarnessLocalHttpBootstrapInput = ReadHarnessLocalHttpTurnInput & {
   runId: string
   stagingRoot: string
   nonce: string
+}
+
+export type CompleteHarnessLocalHttpContinuationInput = ReadHarnessLocalHttpTurnInput & {
+  runId: string
+  stagingRoot: string
+  turn: number
+  nonce: string
+  resultSha256: string
+}
+
+export type HarnessLocalHttpContinuationCompletion = {
+  turnState: TurnState
+  response: HarnessModelResponse
 }
 
 export type HarnessLocalHttpFinalizedBootstrap = {
@@ -277,6 +313,191 @@ export type HarnessFinalResponse = {
 
 export type HarnessModelResponse = HarnessActionBatch | HarnessFinalResponse
 
+export type AgentMcpServerSpec = {
+  name: string
+  command: string
+  args?: readonly string[] | undefined
+  envKeys?: readonly string[] | undefined
+  timeoutMs?: number | undefined
+  enabledTools?: readonly string[] | undefined
+}
+
+export type AgentRunSpec = {
+  admissionRef: string
+  provider: string
+  profileId: string
+  taskPrompt: string
+  stagingRoot: string
+  selectedSkills?: readonly SkillSelection[] | undefined
+  finalOutput?: HarnessFinalOutputContract | undefined
+  limits?: HarnessSkillLimits | undefined
+  maxTurns?: number | undefined
+  mcpServers?: readonly AgentMcpServerSpec[] | undefined
+}
+
+export type ProviderTurnRequest = {
+  protocol: typeof PROVIDER_TURN_PROTOCOL
+  requestRef: string
+  runId: string
+  turn: number
+  nonce: string
+  provider: string
+  profileId: string
+  stagingRoot: string
+  taskPrompt?: string | undefined
+  selectedSkills?: readonly SkillSelection[] | undefined
+  tools?: readonly HarnessToolDescriptor[] | undefined
+  finalOutput?: HarnessFinalOutputContract | undefined
+  limits?: HarnessSkillLimits | undefined
+  continuation?: {
+    providerRef: string
+    providerBindingRef: string
+    conversationRef: string
+    result: HarnessActionBatchResult
+    skillLoads: readonly string[]
+  } | undefined
+}
+
+export type ProviderTurnState = {
+  protocol: typeof PROVIDER_TURN_PROTOCOL
+  requestRef: string
+  runId: string
+  turn: number
+  nonce: string
+  provider: string
+  profileId: string
+  turnRef: string
+  providerRef: string
+  providerBindingRef: string
+  conversationRef: string
+  deliverySha256?: string | undefined
+  lifecycle: 'queued' | 'running' | 'waiting_for_user' | 'succeeded' | 'failed' | 'cancelled'
+  waitingReason?: string | undefined
+  responseText?: string | undefined
+  modelResponse?: HarnessModelResponse | undefined
+  error?: { code: string; message: string } | undefined
+}
+
+export type ProviderTurnOperationRequest = Pick<
+  ProviderTurnRequest,
+  'requestRef' | 'runId' | 'turn' | 'nonce' | 'provider' | 'profileId' | 'stagingRoot'
+> & {
+  turnRef: string
+  providerRef: string
+  providerBindingRef: string
+  conversationRef: string
+  expectedDeliverySha256?: string | undefined
+}
+
+export type ProviderTurnClient = {
+  /** start and continue must return the original turn when requestRef is replayed. */
+  start(request: ProviderTurnRequest): Promise<ProviderTurnState>
+  read(request: ProviderTurnOperationRequest): Promise<ProviderTurnState>
+  continue(request: ProviderTurnRequest): Promise<ProviderTurnState>
+  resume(request: ProviderTurnOperationRequest): Promise<ProviderTurnState>
+  cancel(request: Pick<ProviderTurnRequest, 'requestRef' | 'runId' | 'turn' | 'nonce' | 'provider' | 'profileId'> & Partial<Pick<ProviderTurnOperationRequest, 'turnRef' | 'providerRef' | 'providerBindingRef' | 'conversationRef'>>): Promise<ProviderTurnCancellation>
+}
+
+export type ProviderTurnCancellation =
+  | { protocol: typeof PROVIDER_TURN_PROTOCOL; requestRef: string; kind: 'cancelled_before_start' }
+  | { protocol: typeof PROVIDER_TURN_PROTOCOL; requestRef: string; kind: 'turn'; turn: ProviderTurnState }
+
+export type HarnessToolCallResult = {
+  id: string
+  status: 'succeeded' | 'failed'
+  content: JsonValue
+}
+
+export type HarnessNeedResult = {
+  id: string
+  status: 'answered'
+  value: JsonValue
+}
+
+export type HarnessActionBatchResult = {
+  protocol: typeof WEB_AGENT_PROTOCOL
+  kind: 'action_batch_result'
+  batchId: string
+  callResults: readonly HarnessToolCallResult[]
+  needResults: readonly HarnessNeedResult[]
+}
+
+export type HarnessToolCatalogEntry = HarnessToolDescriptor & {
+  server: string
+  serverToolName: string
+  readOnly: boolean
+  approval: 'allow_read_only' | 'always'
+}
+
+export type HarnessToolExecution =
+  | { status: 'succeeded' | 'failed'; content: JsonValue }
+  | { status: 'authentication_required'; handoff: string }
+
+export type HarnessToolRegistry = {
+  catalog(servers: readonly AgentMcpServerSpec[]): Promise<readonly HarnessToolCatalogEntry[]>
+  execute(
+    entry: HarnessToolCatalogEntry,
+    argumentsValue: Record<string, JsonValue>,
+    servers: readonly AgentMcpServerSpec[],
+  ): Promise<HarnessToolExecution>
+}
+
+export type AgentRunStatus =
+  | 'discovering_tools'
+  | 'submitting_provider'
+  | 'running'
+  | 'waiting_for_approval'
+  | 'waiting_for_authentication'
+  | 'waiting_for_input'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled'
+  | 'reconciliation_required'
+
+export type HarnessRunPhase =
+  | 'discovering_tools'
+  | 'submitting_provider'
+  | 'awaiting_provider'
+  | 'resuming_provider'
+  | 'cancelling_provider'
+  | 'waiting_intervention'
+  | 'executing_batch'
+  | 'terminal'
+  | 'reconciliation_required'
+
+export type AgentRunView = {
+  protocol: typeof HARNESS_RUN_PROTOCOL
+  admissionRef: string
+  runId: string
+  status: AgentRunStatus
+  turn: number
+  providerTurnRef?: string | undefined
+  waiting?: {
+    kind: 'approval' | 'authentication' | 'user_input' | 'provider'
+    calls?: readonly { id: string; tool: string; arguments: Record<string, JsonValue>; argumentsDigest: string }[] | undefined
+    needs?: readonly HarnessRunNeed[] | undefined
+    handoff?: string | undefined
+  } | undefined
+  final?: { output: string; artifacts: readonly string[] } | undefined
+  error?: { code: string; message: string } | undefined
+}
+
+export type AgentRunIntervention = {
+  approvals?: readonly { callId: string; argumentsDigest: string }[] | undefined
+  answers?: Readonly<Record<string, JsonValue>> | undefined
+  authenticationCompleted?: readonly { callId: string; argumentsDigest: string }[] | undefined
+  providerReady?: true | undefined
+}
+
+export type WebAgentHarness = {
+  start(spec: AgentRunSpec): Promise<AgentRunView>
+  read(runId: string): Promise<AgentRunView | null>
+  readAdmission(admissionRef: string): Promise<AgentRunView | null>
+  resume(runId: string, intervention: AgentRunIntervention): Promise<AgentRunView>
+  cancel(runId: string): Promise<AgentRunView>
+  close(): void
+}
+
 /** Immutable admission input for one locally durable sequential Harness mission. */
 export type EnqueueSequentialHarnessMissionInput = {
   provider: string
@@ -323,5 +544,16 @@ export class HarnessSkillError extends Error {
     this.name = 'HarnessSkillError'
     this.code = code
     this.context = context
+  }
+}
+
+export class ProviderTurnDispatchError extends Error {
+  constructor(
+    readonly dispatch: 'deterministic' | 'ambiguous',
+    readonly code: string,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'ProviderTurnDispatchError'
   }
 }

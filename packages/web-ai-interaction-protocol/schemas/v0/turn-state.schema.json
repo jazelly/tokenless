@@ -3,9 +3,10 @@
   "$id": "urn:tokenless-internal:web-ai-interaction-protocol:v0:turn-state",
   "type": "object",
   "additionalProperties": false,
-  "required": ["protocol", "turnRef", "providerRef", "providerBindingRef", "conversationRef", "lifecycle", "dispatchCertainty", "attachmentDelivery"],
+  "required": ["protocol", "requestRef", "turnRef", "providerRef", "providerBindingRef", "conversationRef", "lifecycle", "dispatchCertainty", "attachmentDelivery"],
   "properties": {
     "protocol": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/protocol" },
+    "requestRef": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/requestRef" },
     "turnRef": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/turnRef" },
     "providerRef": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/providerRef" },
     "providerBindingRef": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/providerBindingRef" },

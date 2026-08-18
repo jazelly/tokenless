@@ -3,7 +3,7 @@
   "$id": "urn:tokenless-internal:web-ai-interaction-protocol:v0:start-turn-request",
   "type": "object",
   "additionalProperties": false,
-  "required": ["protocol", "requestRef", "providerRef", "providerBindingRef", "requiredCapabilities", "conversation", "bootstrap"],
+  "required": ["protocol", "requestRef", "providerRef", "providerBindingRef", "requiredCapabilities", "conversation"],
   "properties": {
     "protocol": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/protocol" },
     "requestRef": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/requestRef" },
@@ -17,12 +17,16 @@
       "maxItems": 2
     },
     "conversation": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["mode"],
-      "properties": { "mode": { "const": "new" } }
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["mode"], "properties": { "mode": { "const": "new" } } },
+        { "type": "object", "additionalProperties": false, "required": ["mode", "conversationRef"], "properties": { "mode": { "const": "continue" }, "conversationRef": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/conversationRef" } } }
+      ]
     },
-    "bootstrap": {
+    "bootstrap": { "$ref": "#/$defs/message" },
+    "continuation": { "$ref": "#/$defs/message" }
+  },
+  "$defs": {
+    "message": {
       "type": "object",
       "additionalProperties": false,
       "required": ["text", "attachments"],
@@ -37,7 +41,7 @@
             "additionalProperties": false,
             "required": ["kind", "name", "attachmentRef", "mediaType", "byteLength", "sha256"],
             "properties": {
-              "kind": { "enum": ["system_prompt", "skill"] },
+              "kind": { "enum": ["system_prompt", "tool_result", "skill"] },
               "name": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", "maxLength": 128, "x-tokenless-internal-maxUtf8Bytes": 128 },
               "attachmentRef": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/attachmentRef" },
               "mediaType": { "const": "text/markdown" },
@@ -48,5 +52,9 @@
         }
       }
     }
-  }
+  },
+  "oneOf": [
+    { "properties": { "conversation": { "type": "object", "properties": { "mode": { "const": "new" } } } }, "required": ["bootstrap"], "not": { "required": ["continuation"] } },
+    { "properties": { "conversation": { "type": "object", "properties": { "mode": { "const": "continue" } } } }, "required": ["continuation"], "not": { "required": ["bootstrap"] } }
+  ]
 }

@@ -1,5 +1,6 @@
 {
   "protocol": "tokenless.internal.web-ai-interaction-protocol/v0",
+  "requestRef": "request:00000000000000000000000000000000",
   "turnRef": "turn:44444444444444444444444444444444",
   "providerRef": "provider:11111111111111111111111111111111",
   "providerBindingRef": "binding:22222222222222222222222222222222",

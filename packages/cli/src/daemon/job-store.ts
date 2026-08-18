@@ -694,6 +694,16 @@ export class JobStore {
     return row ? rowToWebAiTurn(row) : null
   }
 
+  getLatestWebAiTurnForConversation(conversationRef: string) {
+    const row = this.get(
+      `SELECT turn_ref, binding_ref, provider_ref, conversation_ref, attachment_ref, job_id, cancelled,
+              cancel_dispatch_certainty, cancel_attachment_delivery, request_ref, request_sha256
+       FROM web_ai_v0_turns WHERE conversation_ref = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+      webAiRef(conversationRef, 'conversation_ref'),
+    )
+    return row ? rowToWebAiTurn(row) : null
+  }
+
   cancelWebAiTurn(turnRef: string) {
     return this.transaction(() => {
       const turn = this.getWebAiTurn(turnRef)
