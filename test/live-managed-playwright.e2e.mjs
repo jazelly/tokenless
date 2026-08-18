@@ -507,7 +507,7 @@ async function doubaoControls({ provider, journey }) {
       nativeLabel: '普通对话',
       visibleProof: 'doubao-default-composer-visible',
     })
-    assert.equal(await restored.page.locator('textarea.semi-input-textarea').filter({ visible: true }).count(), 1)
+    assert.equal(await restored.page.locator('textarea.semi-input-textarea, div[role="textbox"].tiptap.ProseMirror').filter({ visible: true }).count(), 1)
     await restored.close()
   }
 }

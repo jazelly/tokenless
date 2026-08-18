@@ -25,7 +25,7 @@ const CONTROL_TIMEOUT_MS = 5_000
 const CONTROL_SETTLE_TIMEOUT_MS = 10_000
 const MODE_TRIGGER_SELECTOR = 'button[aria-haspopup="menu"][aria-expanded]:has([data-valid-btn="mode-select-action-btn"])'
 const MODE_ITEM_SELECTOR = '[role="menuitem"]'
-const DEFAULT_COMPOSER_SELECTOR = 'textarea.semi-input-textarea'
+const DEFAULT_COMPOSER_SELECTOR = 'textarea.semi-input-textarea, div[role="textbox"].tiptap.ProseMirror'
 const ACTIVE_SKILL_SELECTOR = 'div[data-input-engine-action-source="actionbar"][data-value]'
 const MORE_SKILLS = new Set<DoubaoSkill>([
   'music-generation',
@@ -315,6 +315,15 @@ async function exitActiveSkill(page: Page, signal: AbortSignal | undefined) {
   const current = await activeSkillDefinition(page)
   if (!current?.nativeValue) return false
   const token = activeSkillToken(page, current)
+  if (current.skill === 'image-generation' && await token.count() === 0) {
+    const chat = page.locator('button[data-active="true"]')
+      .filter({ visible: true })
+      .filter({ hasText: /^对话$/u })
+      .last()
+    if (await chat.count() === 0) return false
+    await chat.click({ timeout: CONTROL_TIMEOUT_MS })
+    return await waitForDefaultComposer(page, signal) !== null
+  }
   const exit = token.locator('xpath=ancestor-or-self::div[contains(concat(" ", normalize-space(@class), " "), " cursor-pointer ")][1]')
   if (await exit.count() === 0) return false
   await exit.click({ timeout: CONTROL_TIMEOUT_MS })
@@ -330,6 +339,8 @@ async function activeSkillDefinition(page: Page) {
     if (!definition.nativeValue) continue
     if (await activeSkillToken(page, definition).count() > 0) return definition
   }
+  const imageGeneration = SKILL_DEFINITIONS.find((definition) => definition.skill === 'image-generation')
+  if (imageGeneration && await visibleDoubaoImageSurface(page)) return imageGeneration
   return null
 }
 
@@ -348,10 +359,16 @@ async function waitForSkill(
   const deadline = Date.now() + CONTROL_SETTLE_TIMEOUT_MS
   do {
     assertNotAborted(signal)
-    if (await activeSkillToken(page, definition).count() > 0) return true
+    if (await activeSkillToken(page, definition).count() > 0 || (
+      definition.skill === 'image-generation' && await visibleDoubaoImageSurface(page)
+    )) return true
     await page.waitForTimeout(100)
   } while (Date.now() < deadline)
   return false
+}
+
+async function visibleDoubaoImageSurface(page: Page) {
+  return await page.getByText('Seedream 4.5', { exact: true }).filter({ visible: true }).count() > 0
 }
 
 async function waitForActiveMode(page: Page, mode: DoubaoMode, signal: AbortSignal | undefined) {

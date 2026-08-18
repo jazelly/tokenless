@@ -58,7 +58,7 @@ export class DoubaoProvider extends BaseProvider<'doubao'> {
         'div[contenteditable="true"][role="textbox"]',
       ]),
       submitSelectors: Object.freeze([
-        'button.bg-dbx-text-highlight[aria-label=""]',
+        'button[aria-label=""][class*="bg-g-send-msg-btn-bg"]',
       ]),
       answerSelectors: Object.freeze([
         'div[data-message-id].grid',
@@ -357,10 +357,11 @@ async function visibleDoubaoBusyCount(page: Page) {
 }
 
 async function isDoubaoImageSkillSelected(page: Page) {
-  return await page.locator('div[data-input-engine-action-source="actionbar"][data-value="3"]')
+  const legacyTokenSelected = await page.locator('div[data-input-engine-action-source="actionbar"][data-value="3"]')
     .filter({ visible: true })
     .filter({ hasText: /^图像生成$/u })
     .count() > 0
+  return legacyTokenSelected || await page.getByText('Seedream 4.5', { exact: true }).filter({ visible: true }).count() > 0
 }
 
 function normalizeDoubaoText(value: string) {
