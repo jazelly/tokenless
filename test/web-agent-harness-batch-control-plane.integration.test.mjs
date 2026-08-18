@@ -25,6 +25,11 @@ const everythingServer = {
   timeoutMs: 30_000,
 }
 
+const longRunningServer = {
+  ...everythingServer,
+  enabledTools: ['trigger-long-running-operation'],
+}
+
 test('SQLite-seeded local control plane validates answers before approval and real MCP execution', async () => {
   const context = await seededBatch({
     suffix: '1',
@@ -121,6 +126,44 @@ test('an auth handoff or failed process does not block an independent ready MCP 
   }
 })
 
+test('authenticated daemon serializes concurrent drives while a real MCP call is running', async () => {
+  const context = await seededBatch({
+    suffix: '7',
+    servers: [longRunningServer],
+    catalogServers: [longRunningServer],
+    calls: [
+      { id: 'call_long', arguments: { duration: 2, steps: 2 }, approval: 'approved' },
+      { id: 'call_gate', arguments: { duration: 1, steps: 1 }, approval: 'pending' },
+    ],
+    needs: [],
+    status: 'running',
+    phase: 'executing_batch',
+  })
+  context.closeHarness()
+  const jobStore = await JobStore.open(context.home)
+  const daemon = await serveHttp({ store: jobStore, host: '127.0.0.1', port: 0 })
+  daemon.activate()
+  try {
+    const endpoint = `${daemon.origin}/v1/agent/runs/${context.runId}`
+    const headers = { authorization: `Bearer ${jobStore.controlToken()}` }
+    const first = readAgentRun(endpoint, headers)
+    await waitForExecutingCall(context.home, context.runId, 'call_long')
+    let secondSettled = false
+    const second = readAgentRun(endpoint, headers).finally(() => { secondSettled = true })
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    assert.equal(secondSettled, false)
+    const [firstView, secondView] = await Promise.all([first, second])
+    assert.equal(firstView.status, 'waiting_for_approval')
+    assert.equal(secondView.status, 'waiting_for_approval')
+    const record = await context.persisted()
+    assert.equal(record.calls.find((call) => call.id === 'call_long').status, 'succeeded')
+    assert.notEqual(record.calls.find((call) => call.id === 'call_long').outcome?.code, 'harness_tool_outcome_ambiguous')
+  } finally {
+    await daemon.close()
+    await context.close()
+  }
+})
+
 test('spec secrets are rejected before SQLite admission and deterministic HTTP dispatch clears its intent', async () => {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-harness-spec-')))
   const home = path.join(root, 'home')
@@ -191,11 +234,11 @@ test('spec secrets are rejected before SQLite admission and deterministic HTTP d
   }
 })
 
-async function seededBatch({ suffix, calls, needs, status, phase, servers = [everythingServer], catalogExtra = [] }) {
+async function seededBatch({ suffix, calls, needs, status, phase, servers = [everythingServer], catalogServers = [everythingServer], catalogExtra = [] }) {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), `tokenless-harness-batch-${suffix}-`)))
   const home = path.join(root, 'home')
   const registry = createStdioMcpToolRegistry()
-  const catalog = [...await registry.catalog([everythingServer]), ...catalogExtra]
+  const catalog = [...await registry.catalog(catalogServers), ...catalogExtra]
   const tool = catalog.find((entry) => entry.server === 'everything').name
   const runId = `run_${suffix.repeat(32)}`
   const nonce = `nonce:${suffix.repeat(32)}`
@@ -237,7 +280,12 @@ async function seededBatch({ suffix, calls, needs, status, phase, servers = [eve
   })
   return {
     runId,
+    home,
     get harness() { return harness },
+    closeHarness() {
+      harness?.close()
+      harness = undefined
+    },
     async persisted() { return readRecord(home, runId) },
     async close() {
       harness?.close()
@@ -245,6 +293,22 @@ async function seededBatch({ suffix, calls, needs, status, phase, servers = [eve
       await fs.rm(root, { recursive: true, force: true })
     },
   }
+}
+
+async function readAgentRun(endpoint, headers) {
+  const response = await fetch(endpoint, { headers })
+  assert.equal(response.status, 200)
+  return response.json()
+}
+
+async function waitForExecutingCall(home, runId, callId) {
+  const deadline = Date.now() + 5_000
+  while (Date.now() < deadline) {
+    const record = await readRecord(home, runId)
+    if (record.calls.find((call) => call.id === callId)?.status === 'executing') return
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  assert.fail(`Call '${callId}' did not enter executing state.`)
 }
 
 async function readRecord(home, runId) {

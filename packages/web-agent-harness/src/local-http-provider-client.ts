@@ -69,27 +69,28 @@ export function createLocalHttpProviderTurnClient(options: { baseUrl: string; to
     },
 
     async read(request) {
-      const raw = await readHarnessLocalHttpTurn({ baseUrl: options.baseUrl, token: options.token, turnRef: request.turnRef })
+      const raw = await dispatch(() => readHarnessLocalHttpTurn({ baseUrl: options.baseUrl, token: options.token, turnRef: request.turnRef }))
       if (raw.lifecycle !== 'succeeded') return project(request, raw, request.expectedDeliverySha256, request)
       if (request.turn === 1) {
-        const completed = await completeHarnessLocalHttpBootstrap({
+        const completed = await dispatch(() => completeHarnessLocalHttpBootstrap({
           baseUrl: options.baseUrl, token: options.token, turnRef: request.turnRef,
           runId: request.runId, stagingRoot: request.stagingRoot, nonce: request.nonce,
-        })
+        }))
         return { ...project(request, completed.turnState, undefined, request), modelResponse: completed.response }
       }
-      if (!request.expectedDeliverySha256) throw new HarnessSkillError('harness_provider_delivery_missing', 'Continuation delivery digest is missing.')
-      const completed = await completeHarnessLocalHttpContinuation({
+      const resultSha256 = request.expectedDeliverySha256
+      if (!resultSha256) throw new HarnessSkillError('harness_provider_delivery_missing', 'Continuation delivery digest is missing.')
+      const completed = await dispatch(() => completeHarnessLocalHttpContinuation({
         baseUrl: options.baseUrl, token: options.token, turnRef: request.turnRef,
         runId: request.runId, stagingRoot: request.stagingRoot, turn: request.turn,
-        nonce: request.nonce, resultSha256: request.expectedDeliverySha256,
-      })
-      return { ...project(request, completed.turnState, request.expectedDeliverySha256, request), modelResponse: completed.response }
+        nonce: request.nonce, resultSha256,
+      }))
+      return { ...project(request, completed.turnState, resultSha256, request), modelResponse: completed.response }
     },
 
     async resume(request) {
       const client = createLocalHttpClient(options)
-      const current = await client.read(request.turnRef)
+      const current = await dispatch(() => client.read(request.turnRef))
       if (current.lifecycle !== 'waiting_for_user') return project(request, current, request.expectedDeliverySha256, request)
       const turn = await dispatch(() => client.resume(request.turnRef))
       return project(request, turn, request.expectedDeliverySha256, request)
@@ -98,7 +99,7 @@ export function createLocalHttpProviderTurnClient(options: { baseUrl: string; to
     async cancel(request) {
       const client = createLocalHttpClient(options)
       if (request.turnRef) {
-        const current = await client.read(request.turnRef)
+        const current = await dispatch(() => client.read(request.turnRef!))
         if (current.lifecycle === 'cancelled' || current.lifecycle === 'failed' || current.lifecycle === 'succeeded') {
           return { protocol: PROVIDER_TURN_PROTOCOL, requestRef: request.requestRef, kind: 'turn', turn: project(request, current, undefined, request) }
         }
@@ -109,7 +110,7 @@ export function createLocalHttpProviderTurnClient(options: { baseUrl: string; to
       if (cancellation.kind === 'cancelled_before_start') {
         return { protocol: PROVIDER_TURN_PROTOCOL, requestRef: request.requestRef, kind: 'cancelled_before_start' }
       }
-      const turn = await client.read(cancellation.turn.turnRef)
+      const turn = await dispatch(() => client.read(cancellation.turn.turnRef))
       return { protocol: PROVIDER_TURN_PROTOCOL, requestRef: request.requestRef, kind: 'turn', turn: project(request, turn) }
     },
   }

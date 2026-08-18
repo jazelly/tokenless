@@ -84,6 +84,7 @@ class DurableWebAgentHarness implements WebAgentHarness {
       else if (record.phase === 'executing_batch') record = await this.executeAndContinue(record)
       return publicView(record)
     } catch (error) {
+      if (error instanceof ProviderTurnDispatchError && error.dispatch === 'ambiguous') return publicView(record)
       if (isRecoverableInterventionError(error)) throw error
       if (isConflict(error)) return publicView(this.required(runId))
       return publicView(this.fail(record, error))

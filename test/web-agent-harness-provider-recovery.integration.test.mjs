@@ -58,6 +58,17 @@ test('real local HTTP response loss reconciles accepted operations by immutable 
       assert.equal(store.webAiCounts().turns, 1)
     })
 
+    await t.test('one lost provider GET response leaves the run recoverable on the next read', async () => {
+      proxy.dropNextRead()
+      const lostRead = await harness.read(admitted.runId)
+      assert.equal(lostRead.status, 'running')
+      assert.equal(lostRead.error, undefined)
+      const recoveredRead = await harness.read(admitted.runId)
+      assert.equal(recoveredRead.status, 'running')
+      assert.equal(recoveredRead.providerTurnRef, turnRef)
+      assert.equal(proxy.dropped().read, 1)
+    })
+
     await t.test('resume and cancel response loss reconcile the already changed same job lifecycle', async () => {
       injectWaitingJob(home, mapping.job_id)
       assert.equal((await harness.read(admitted.runId)).waiting.kind, 'provider')
@@ -79,7 +90,7 @@ test('real local HTTP response loss reconciles accepted operations by immutable 
       assert.equal(reconciledCancel.status, 'cancelled')
       assert.equal(reconciledCancel.providerTurnRef, turnRef)
       assert.equal(store.webAiCounts().turns, 1)
-      assert.deepEqual(proxy.dropped(), { start: 1, resume: 1, cancel: 1 })
+      assert.deepEqual(proxy.dropped(), { start: 1, read: 1, resume: 1, cancel: 1 })
     })
 
     await t.test('a hostile raw JobStore request identity fails closed in core', async () => {
@@ -131,7 +142,8 @@ function corruptRawRequestRef(home, turnRef) {
 
 async function startResponseLossProxy(targetOrigin) {
   const target = new URL(targetOrigin)
-  const dropped = { start: 0, resume: 0, cancel: 0 }
+  const dropped = { start: 0, read: 0, resume: 0, cancel: 0 }
+  let dropRead = false
   const server = http.createServer((request, response) => {
     const upstream = http.request({
       hostname: target.hostname,
@@ -141,8 +153,9 @@ async function startResponseLossProxy(targetOrigin) {
       headers: request.headers,
     }, (upstreamResponse) => {
       const kind = responseLossKind(request.method, request.url)
-      if (kind && dropped[kind] === 0) {
+      if (kind && dropped[kind] === 0 && (kind !== 'read' || dropRead)) {
         dropped[kind] += 1
+        if (kind === 'read') dropRead = false
         upstreamResponse.resume()
         upstreamResponse.once('end', () => response.destroy())
         return
@@ -160,12 +173,14 @@ async function startResponseLossProxy(targetOrigin) {
   const address = server.address()
   return {
     origin: `http://127.0.0.1:${address.port}`,
+    dropNextRead() { dropRead = true },
     dropped: () => ({ ...dropped }),
     close: () => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())),
   }
 }
 
 function responseLossKind(method, url) {
+  if (method === 'GET' && /\/v1\/web-ai\/turns\/[^/]+$/u.test(url)) return 'read'
   if (method !== 'POST') return undefined
   if (/\/v1\/web-ai\/bindings\/[^/]+\/turns$/u.test(url)) return 'start'
   if (/\/v1\/web-ai\/turns\/[^/]+\/resume$/u.test(url)) return 'resume'

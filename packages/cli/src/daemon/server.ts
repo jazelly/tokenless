@@ -572,6 +572,20 @@ async function handleRequest(
   }
 }
 
+const activeHarnessRuns = new Map<string, Promise<void>>()
+
+async function driveHarnessRun<T>(runId: string, operation: () => Promise<T>) {
+  const previous = activeHarnessRuns.get(runId) ?? Promise.resolve()
+  const result = previous.then(operation, operation)
+  const active = result.then(() => undefined, () => undefined)
+  activeHarnessRuns.set(runId, active)
+  try {
+    return await result
+  } finally {
+    if (activeHarnessRuns.get(runId) === active) activeHarnessRuns.delete(runId)
+  }
+}
+
 async function handleHarnessRequest(
   store: JobStore,
   daemonOrigin: string,
@@ -628,19 +642,20 @@ async function handleHarnessRequest(
     }
     if (!runId) return false
     if (method === 'GET' && action === undefined) {
-      const view = await harness.read(runId)
+      const view = await driveHarnessRun(runId, () => harness.read(runId))
       if (!view) throw invalidInput('Harness run was not found')
       writeJson(response, 200, view)
       return true
     }
     if (method === 'POST' && action === 'resume') {
-      writeJson(response, 200, await harness.resume(runId, await readJsonObject(request)))
+      const intervention = await readJsonObject(request)
+      writeJson(response, 200, await driveHarnessRun(runId, () => harness.resume(runId, intervention)))
       return true
     }
     if (method === 'POST' && action === 'cancel') {
       const body = await readJsonObject(request)
       if (Object.keys(body).length > 0) throw invalidInput('Harness cancel body must be empty')
-      writeJson(response, 200, await harness.cancel(runId))
+      writeJson(response, 200, await driveHarnessRun(runId, () => harness.cancel(runId)))
       return true
     }
     return false
