@@ -1,5 +1,131 @@
 # tokenless
 
+## 0.6.0
+
+### Minor Changes
+
+- 500eeb4: Present API jobs as localized chat history with readable titles, provider identities, execution modes, token estimates, and conversation transcripts.
+
+  将 API jobs 以本地化 chat history 展示，提供可读标题、provider identity、执行模式、token estimates 与 conversation transcripts。
+
+- 2b30ad7: Add Arena browser-mode chat, exact Direct model choice, same-conversation continuation, grounded Direct Search with visible citations, complete Battle and Side-by-Side comparison results, Direct Image generation/editing, Direct Code website generation, Agent Mode execution, and Battle Video generation with structured visible results through the selected managed browser profile.
+
+  新增 Arena browser-mode chat、精确 Direct model 选择、同 conversation continuation、带可见 citations 的 grounded Direct Search、完整 Battle 与 Side-by-Side 对比结果、Direct Image generation/editing、Direct Code website generation、Agent Mode 执行，以及通过选定 managed browser profile 获取结构化可见结果的 Battle Video generation。
+
+- 371039f: Add ChatGPT, Grok, Arena, and Meta AI browser-mode image asset downloads plus G4F direct image persistence: generated PNG/JPEG/WebP bytes are verified and stored under task-, conversation-, request-, and time-scoped assets, while responses expose a relative asset reference, metadata, and SHA-256 digest. Add authenticated daemon readback at `/v1/asset/{taskId}/{conversationId}/{assetBatch}/{assetFile}`.
+
+  新增 ChatGPT、Grok、Arena 与 Meta AI browser mode 图片 asset 下载能力，并加入 G4F direct 图片持久化：生成得到的 PNG/JPEG/WebP bytes 会经过验证，并按 task、conversation、request 与时间保存；response 只暴露 relative asset reference、metadata 与 SHA-256 digest。新增 authenticated daemon 读取接口 `/v1/asset/{taskId}/{conversationId}/{assetBatch}/{assetFile}`。
+
+- 500eeb4: Accept one validated reference image on browser `/v1/images/generations` requests and route it through evidence-backed image editing.
+
+  允许 browser `/v1/images/generations` requests 接收一个经过验证的 reference image，并通过有证据支持的 image editing route 处理。
+
+- f0aa326: Add caller-controlled Page Refs so independent provider work owns independent tabs while multi-turn work can reuse one stable tab.
+  Remove the E2E-only provider-task isolation branch and recover cleanly when users close managed tabs.
+
+  新增由调用方控制的 Page Ref，让独立的 provider 工作使用独立 tab，同时让多轮工作稳定复用同一个 tab。
+  移除仅供 E2E 使用的 provider-task 隔离分支，并在用户关闭托管 tab 后安全恢复。
+
+- 0ebf5e6: Expose execution mode on task capability bindings and bump the catalog schema to v3 so Browser evidence is not confused with future direct bindings.
+
+  在 task capability bindings 中公开 execution mode，并将 catalog schema 升级到 v3，避免把 Browser evidence 与未来的 Direct bindings 混淆。
+
+- 500eeb4: Add direct ChatGPT image generation through the canonical image endpoint with mode-aware capability routes and scoped asset persistence.
+
+  通过 canonical image endpoint 新增 direct ChatGPT image generation，并提供按 execution mode 区分的 capability routes 与 scoped asset persistence。
+
+- 2b30ad7: Add a setup-managed, pinned private GPT4Free provider service behind the authenticated daemon API, with native or G4F backend selection, scoped HAR/Cookie/browser auth contexts, provider/media APIs, and retained native ChatGPT and Perplexity adapters for A/B rollout.
+
+  在 authenticated daemon API 后新增 setup-managed、pinned 的 private GPT4Free provider service，支持 native 或 G4F backend 选择、按范围隔离的 HAR/Cookie/browser auth contexts 与 provider/media APIs，并保留 native ChatGPT 与 Perplexity adapters 以支持 A/B rollout。
+
+- f5cc843: Route direct G4F traffic through the standard OpenAI Chat Completions and Responses endpoints with upstream streaming, and remove the public G4F-specific daemon routes.
+
+  让 direct G4F traffic 通过标准 OpenAI Chat Completions 与 Responses endpoints，并支持 upstream streaming；移除公开的 G4F-specific daemon routes。
+
+- 77edff2: Add the durable `tokenless agent run|read|resume|cancel` workflow with authenticated daemon routing, local stdio MCP catalogs, exact approval arguments, and restart-safe provider continuation.
+
+  新增 durable `tokenless agent run|read|resume|cancel` workflow，支持 authenticated daemon routing、local stdio MCP catalogs、精确 approval arguments，以及可安全跨 restart 继续的 provider continuation。
+
+- 610136f: Replace the ad hoc coding-prompt collection with a pinned FeatureBench agent runtime: task-scoped provider channels, container filesystem/shell/test tools, official `fb eval` verdicts, non-overwriting run reports, and real-provider wiring/full E2E entry points.
+
+  用 pinned FeatureBench agent runtime 替代临时 coding-prompt collection：提供 task-scoped provider channels、container filesystem/shell/test tools、官方 `fb eval` verdicts、不会覆盖旧结果的 run reports，以及真实 provider wiring 与完整 E2E entry points。
+
+- bb66332: Expose the consolidated G4F vendor catalog as Direct providers and show each provider's supported execution modes in the dashboard.
+
+  将 consolidated G4F vendor catalog 公开为 Direct providers，并在 dashboard 中展示每个 provider 支持的 execution modes。
+
+- dc9f8fd: Add a bilingual Experimental Router area to Providers with persisted provider routing roles, profile-aware eligibility, Chrome Prompt API testing and compatibility diagnostics, plus focused provider detail pages for routing and existing controls.
+
+  在 Providers 中新增双语 Experimental Router 区域，支持持久化 provider routing roles、profile-aware eligibility、Chrome Prompt API testing 与 compatibility diagnostics，并提供聚焦 routing 和现有 controls 的 provider detail pages。
+
+- abf8626: Add experimental Meta AI browser chat, file upload, and Instant/Thinking controls through the selected signed-in managed profile.
+
+  通过选定的 signed-in managed profile 新增 experimental Meta AI browser chat、file upload 与 Instant/Thinking controls。
+
+- 81709ce: Accept modern OpenAI function tools and structured final output on Chat Completions requests, including terminal SSE frames, complete multiple-call history, every `tool_choice` mode, `parallel_tool_calls`, `strict: true` arguments, `json_object`, and a published closed-object `json_schema` subset. Tokenless validates request-scoped catalogs, call/result history, tool arguments, and final JSON before returning model-ordered standard calls or exact schema-valid JSON text. Structured JSON numbers use one canonical finite spelling and safe integers so returned text cannot differ from the AJV value. Structured output also works without tools and after caller-owned tool execution; the API proxy never executes tools. Invalid requests fail before provider submission, while invalid provider framing, calls, arguments, or structured content fail with `provider_output_protocol_error`. Prompt-emulated calls use one strict whole-response JSON object, accepting only bare JSON or one complete `json`/`text` fence; marker wrappers, prose, and multiple fences fail closed. A nonce-correlated outer `kind: final` JSON string-escaping failure may receive one bounded same-provider correction before exposure; corrected inner structured content must still pass strict parsing and schema validation.
+
+  The Universal API and Standalone Web Agent Harness now share only strict JSON parsing and AJV 2020 setup. Their OpenAI choice/correction/structured-output and Harness `action_batch`/execution semantics remain separate.
+
+  Universal API 与 Standalone Web Agent Harness 现在只共享 strict JSON parsing 与 AJV 2020 setup；两者的 OpenAI choice/correction/structured-output 以及 Harness `action_batch`/execution semantics 仍然独立。
+
+  Add the Universal Responses API on `/v1/responses` and `/v1/openai/responses`. It supports current flat function tools, typed call/result items, structured `text.format`, non-streaming output, typed terminal streaming, full-input replay, and same-route `previous_response_id` continuation through a 24-hour, 1,000-entry local ledger. Missing, expired, mismatched, or unverifiable opaque replay state fails before provider submission; Tokenless stores no fabricated reasoning or provider session state.
+
+  在 `/v1/responses` 与 `/v1/openai/responses` 新增 Universal Responses API，支持当前 flat function tools、typed call/result items、structured `text.format`、non-streaming output、typed terminal streaming、full-input replay，以及通过 24 小时、1,000 条目的 local ledger 实现同 route 的 `previous_response_id` continuation。缺失、过期、不匹配或无法验证的 opaque replay state 会在 provider submission 前失败；Tokenless 不存储伪造 reasoning 或 provider session state。
+
+  Add explicit `tokenless/auto` for OpenAI browser-mode tool and structured-final requests. Auto filters enabled and currently usable providers by the complete evidence-backed requirement set, preserves canonical tool history and versioned public call ids across providers, prefers the prior auto call's settled provider when still eligible, and reuses the existing durable pre-submission fallback plan. Responses ledger continuation treats its settled provider as portable affinity. The response metadata reports the actual settled provider, prompt strategy, and redacted provider attempts; exact provider models never auto-switch, and post-submission outcomes never replay to another provider.
+
+  为 OpenAI browser-mode tool 与 structured-final requests 新增显式 `tokenless/auto`。Auto 会按完整的 evidence-backed requirement set 筛选已启用且当前可用的 providers，跨 provider 保留 canonical tool history 与 versioned public call ids；此前 auto call 的 settled provider 仍符合条件时会优先复用，并沿用现有 durable pre-submission fallback plan。Responses ledger continuation 将 settled provider 视为 portable affinity；response metadata 报告实际 settled provider、prompt strategy 与 redacted provider attempts，exact provider models 不会自动切换，post-submission outcomes 也不会重放到其他 provider。
+
+- e3ce67e: Show Browser and Direct capability badges for every provider and add profile-scoped execution-mode controls to provider details.
+
+  为每个 provider 展示 Browser 与 Direct capability badges，并在 provider details 中新增 profile-scoped execution-mode controls。
+
+- b5ac343: Add one authenticated `/v1/images/generations` endpoint for browser and direct image generation, route CLI image runs through it, remove the public G4F-namespaced image route, and close Gemini, Dola, and Doubao browser image routes.
+
+  为 browser 与 direct image generation 新增统一的 authenticated `/v1/images/generations` endpoint，让 CLI image runs 通过该 endpoint 路由；移除公开的 G4F-namespaced image route，并关闭 Gemini、Dola 与 Doubao browser image routes。
+
+### Patch Changes
+
+- 3553ec6: Make local API proxy failures distinguishable and serve the default OpenAI paths. Errors now carry a real HTTP status and a stable code — `404` for an unknown model, `413` for an oversized body, `499` on client disconnect, `502` for a visible-provider failure, `503` for a disabled proxy or unready profile, `504` for the completion deadline — so clients can decide whether to retry without matching message strings. `POST /v1/chat/completions` and `GET /v1/models` are accepted as aliases of the `/v1/openai` routes, letting an unmodified OpenAI client work with only a base-URL change, and every proxy route now requires the proxy to be enabled. `tokenless api-proxy status --json` reports the additional `openaiDefault` endpoint.
+
+  让 local API proxy 的失败可区分，并提供默认 OpenAI paths。错误现在带有真实 HTTP status 与稳定 code：未知 model 为 `404`、请求体过大为 `413`、client disconnect 为 `499`、visible-provider failure 为 `502`、proxy disabled 或 profile 未就绪为 `503`、completion deadline 超时为 `504`，客户端无需匹配错误文本即可决定是否重试。`POST /v1/chat/completions` 与 `GET /v1/models` 作为 `/v1/openai` routes 的 aliases 接受，未修改的 OpenAI client 只需更换 base URL；每个 proxy route 都要求 proxy 已启用，`tokenless api-proxy status --json` 也会报告新增的 `openaiDefault` endpoint。
+
+- 0b98b27: Keep Doubao capability inspection from opening the native file picker.
+
+  保持 Doubao capability inspection 不打开 native file picker。
+
+- 3e5e203: Restore Doubao image generation on the current Seedream surface and submit control.
+
+  在当前 Seedream surface 上恢复 Doubao image generation 与 submit control。
+
+- b5ac343: Detect Grok Free, SuperGrok Lite, and SuperGrok subscription access from the live model menu, and stop advertising Heavy or Build as selectable when the SuperGrok upgrade boundary is visible.
+
+  从真实 model menu 检测 Grok Free、SuperGrok Lite 与 SuperGrok 订阅权限，并在 SuperGrok upgrade 边界可见时不再将 Heavy 或 Build 报告为可选。
+
+- cf23603: Complete Linux x64 managed browser support: add the pinned Chrome for Testing 146 entry so `auto` resolves on Linux instead of failing with a missing catalog entry, discover system browsers from their Linux install paths instead of falling through to the Windows branch, and extract zip artifacts with unzip where GNU tar cannot read them.
+
+  完成 Linux x64 managed browser 支持：加入 pinned Chrome for Testing 146 entry，使 `auto` 在 Linux 上能正常解析；从 Linux 安装路径发现 system browsers，避免错误落入 Windows branch；在 GNU tar 无法读取 zip artifacts 时使用 unzip 解压。
+
+- cf23603: Add an opt-in local API proxy so existing OpenAI- and Anthropic-compatible clients can route Q&A traffic through visible provider sessions: new daemon routes `POST /v1/openai/chat/completions`, `GET /v1/openai/models`, and `POST /v1/anthropic/messages`, explicit `tokenless/<provider>` model naming, a `new-conversation` or `continue-conversation` mapping chosen during setup or with `tokenless api-proxy`, and fail-closed rejection of tool, function, and structured-output fields that visible pages cannot honour.
+
+  新增 opt-in local API proxy，让现有 OpenAI- 与 Anthropic-compatible clients 可以通过 visible provider sessions 路由问答流量：提供 `POST /v1/openai/chat/completions`、`GET /v1/openai/models` 与 `POST /v1/anthropic/messages` daemon routes，明确使用 `tokenless/<provider>` model naming，并支持在 setup 或 `tokenless api-proxy` 中选择 `new-conversation` 或 `continue-conversation` mapping；visible pages 无法兑现的 tool、function 与 structured-output fields 会 fail closed。
+
+- 1164999: Preserve fenced code and line breaks in visible-provider `response.read` results so generated programs can be evaluated without code-block toolbar text or whitespace loss.
+
+  在 visible-provider `response.read` results 中保留 fenced code 与换行，使生成的程序可以在不混入 code-block toolbar text、也不丢失 whitespace 的情况下被评估。
+
+- 500eeb4: Align the local API proxy with standard stateless Chat Completions and Responses continuation semantics: Chat Completions and Anthropic requests always start fresh provider chats, while a valid Responses `previous_response_id` resumes its mapped browser conversation and sends only the current input delta.
+
+  让 local API proxy 对齐标准 stateless Chat Completions 与 Responses continuation semantics：Chat Completions 和 Anthropic requests 始终启动新的 provider chats；有效的 Responses `previous_response_id` 会恢复映射的 browser conversation，并只发送当前 input delta。
+
+- 610136f: Prevent resident managed browsers from accumulating diagnostic `chrome://version` tabs and released provider `about:blank` pages across repeated test or worker detach cycles. Real provider, protected, borrowed, and control-plane pages remain open.
+
+  防止驻留的托管浏览器在重复测试或 worker detach 后不断累积诊断用 `chrome://version` tab 与已释放的 provider `about:blank` 页面。真实 provider、protected、borrowed 与 control-plane 页面仍保持打开。
+
+- a3c2d40: Harden the local dashboard's daemon connection with a shared typed contract, profile-scoped provider-readiness state, semantic dashboard operations, and immediate secure 404 responses for missing UI assets.
+
+  通过 shared typed contract、profile-scoped provider-readiness state、semantic dashboard operations，以及对缺失 UI assets 立即返回的 secure 404 responses，强化 local dashboard 的 daemon connection。
+
 ## 0.5.0
 
 ### Minor Changes
