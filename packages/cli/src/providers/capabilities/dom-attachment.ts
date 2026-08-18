@@ -73,8 +73,10 @@ async function uploadFiles(
 ): Promise<FileUploadResult> {
   const attachments = value.map((attachment) => validateAttachmentInput(attachment))
   const files = await Promise.all(attachments.map((attachment) => resolveAttachmentPayload(context.attachmentRoot, attachment)))
-  let fileInput: Locator | null = null
-  const chooser = await openProviderFileChooser(page, provider)
+  let fileInput = provider.id === 'doubao'
+    ? await firstFileInputLocator(page, provider.fileInputSelectors)
+    : null
+  const chooser = fileInput ? null : await openProviderFileChooser(page, provider)
   if (!chooser) {
     fileInput = await firstFileInputLocator(page, provider.fileInputSelectors)
   }

@@ -89,9 +89,7 @@ export class DoubaoAttachmentCapability implements ProviderActionCapability<type
     const strategy = this.provider.capabilities[this.capability]
     const trigger = await waitForVisibleUploadTrigger(page)
     if (!trigger) return capabilityInspection(strategy, this.actions, false, 'no-visible-doubao-upload-trigger', 'visible_upload_control_not_observed')
-    await trigger.click({ timeout: CONTROL_TIMEOUT_MS }).catch(() => undefined)
     const input = await waitForFileInput(page)
-    await page.keyboard.press('Escape').catch(() => undefined)
     return capabilityInspection(
       strategy,
       this.actions,
