@@ -222,15 +222,70 @@ test('retryable local HTTP read stays recoverable instead of becoming terminal',
   }
 })
 
-// The first test covers accepted response-loss replay through ambiguous reconciliation; this case covers retryable pre-dispatch only.
-test('delayed daemon activation retries one real provider start with one request identity', async () => {
+test('terminal run with stale waiting provider state remains terminal on resume', async () => {
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-provider-terminal-resume-')))
+  const home = path.join(root, 'home')
+  const store = await JobStore.open(home)
+  const daemon = await serveHttp({ store, host: '127.0.0.1', port: 0 })
+  daemon.activate()
+  const proxy = await startResponseLossProxy(daemon.origin, { dropResponses: false })
+  let harness
+  try {
+    const profile = await new ManagedProfileRegistry(home).addProfile({ slug: 'terminal-resume', lifecycle: 'ready' })
+    const token = (await fs.readFile(path.join(home, 'daemon.token'), 'utf8')).trim()
+    harness = await openWebAgentHarness({
+      tokenlessHome: home,
+      providerClient: createLocalHttpProviderTurnClient({ baseUrl: proxy.origin, token }),
+      toolRegistry: createStdioMcpToolRegistry(),
+    })
+    const admitted = await harness.start({
+      admissionRef: `admission:${'a'.repeat(32)}`, provider: 'chatgpt', profileId: profile.id,
+      taskPrompt: 'Preserve a terminal provider run.', stagingRoot: path.join(root, 'staging'),
+    })
+    assert.equal((await harness.read(admitted.runId)).status, 'submitting_provider')
+    assert.equal((await harness.read(admitted.runId)).status, 'running')
+    const beforeStore = await HarnessRunStore.open(home)
+    const before = beforeStore.read(admitted.runId)
+    const mapping = store.getWebAiTurn(before.providerTurn.turnRef)
+    assert.ok(mapping)
+    const beforeJob = store.getJob(mapping.job_id)
+    const beforeResumeRequests = proxy.requests().resume
+    const terminal = beforeStore.update(admitted.runId, before.revision, (current) => ({
+      ...current,
+      status: 'failed',
+      phase: 'terminal',
+      providerTurn: { ...current.providerTurn, lifecycle: 'waiting_for_user', waitingReason: 'provider_intervention' },
+      error: { code: 'seeded_terminal_failure', message: 'Seeded terminal state.' },
+    }))
+    beforeStore.close()
+
+    const view = await harness.resume(admitted.runId, { providerReady: true })
+    assert.equal(view.status, 'failed')
+    const afterStore = await HarnessRunStore.open(home)
+    const after = afterStore.read(admitted.runId)
+    afterStore.close()
+    assert.equal(after.status, 'failed')
+    assert.equal(after.phase, 'terminal')
+    assert.equal(after.revision, terminal.revision)
+    assert.deepEqual(store.getJob(mapping.job_id), beforeJob)
+    assert.equal(proxy.requests().resume, beforeResumeRequests)
+  } finally {
+    harness?.close()
+    await proxy.close()
+    await daemon.close()
+    await fs.rm(root, { recursive: true, force: true })
+  }
+})
+
+// The first test covers accepted response-loss replay through ambiguous reconciliation; this case covers explicit retryable pre-dispatch responses only.
+test('active local HTTP start retries two daemon_starting responses before one real turn', async () => {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-provider-retry-success-')))
   const home = path.join(root, 'home')
   const store = await JobStore.open(home)
   const daemon = await serveHttp({ store, host: '127.0.0.1', port: 0 })
-  const proxy = await startResponseLossProxy(daemon.origin, { dropResponses: false })
+  daemon.activate()
+  const proxy = await startResponseLossProxy(daemon.origin, { dropResponses: false, startFailureCount: 2 })
   let harness
-  let activationTimer
   try {
     const profile = await new ManagedProfileRegistry(home).addProfile({ slug: 'retry-success', lifecycle: 'ready' })
     const token = (await fs.readFile(path.join(home, 'daemon.token'), 'utf8')).trim()
@@ -248,16 +303,15 @@ test('delayed daemon activation retries one real provider start with one request
     const pending = pendingStore.read(admitted.runId).pendingProviderRequest
     pendingStore.close()
     assert.ok(pending)
-    const startedAt = performance.now()
-    activationTimer = setTimeout(() => daemon.activate(), 250)
     const running = await harness.read(admitted.runId)
-    clearTimeout(activationTimer)
-    activationTimer = undefined
-    const elapsed = performance.now() - startedAt
     assert.equal(running.status, 'running', JSON.stringify(running))
-    assert.ok(elapsed >= 250, `expected bounded backoff delay, got ${elapsed}ms`)
-    assert.equal(proxy.requests().bind, 4)
-    assert.equal(proxy.requests().start, 1)
+    const attempts = proxy.startAttempts()
+    assert.equal(attempts.length, 3, JSON.stringify(attempts))
+    assert.deepEqual(attempts.map((attempt) => attempt.requestRef), [pending.requestRef, pending.requestRef, pending.requestRef])
+    assert.equal(new Set(attempts.map((attempt) => attempt.providerBindingRef)).size, 1)
+    const gaps = [attempts[1].at - attempts[0].at, attempts[2].at - attempts[1].at]
+    assert.ok(gaps[0] >= 70 && gaps[0] < 1_500, `expected ~100ms bounded first retry gap, got ${gaps[0]}ms`)
+    assert.ok(gaps[1] >= 150 && gaps[1] < 2_500, `expected ~200ms bounded second retry gap, got ${gaps[1]}ms`)
     assert.equal(store.webAiCounts().turns, 1)
     const finalStore = await HarnessRunStore.open(home)
     const record = finalStore.read(admitted.runId)
@@ -265,8 +319,9 @@ test('delayed daemon activation retries one real provider start with one request
     assert.equal(record.providerTurn.requestRef, pending.requestRef)
     assert.equal(record.providerTurn.provider, pending.provider)
     assert.equal(record.providerTurn.profileId, pending.profileId)
+    assert.equal(record.providerTurn.providerBindingRef, attempts[0].providerBindingRef)
+    assert.equal(record.pendingProviderRequest, undefined)
   } finally {
-    if (activationTimer) clearTimeout(activationTimer)
     harness?.close()
     await proxy.close()
     await daemon.close()
@@ -358,41 +413,73 @@ function corruptRawRequestRef(home, turnRef) {
   }
 }
 
-async function startResponseLossProxy(targetOrigin, { dropResponses = true } = {}) {
+async function startResponseLossProxy(targetOrigin, { dropResponses = true, startFailureCount = 0 } = {}) {
   const target = new URL(targetOrigin)
   const dropped = { start: 0, read: 0, resume: 0, cancel: 0 }
   const requests = { bind: 0, start: 0, read: 0, resume: 0, cancel: 0 }
+  const startAttempts = []
   let dropRead = false
   let failNextStart = false
   const server = http.createServer((request, response) => {
     const kind = responseLossKind(request.method, request.url)
     if (kind) requests[kind] += 1
-    if (kind === 'start' && failNextStart) {
-      failNextStart = false
-      request.resume()
-      response.writeHead(502, { 'content-type': 'application/json' })
-      response.end(JSON.stringify({ error: { code: 'unexpected_gateway', message: 'Injected unknown gateway failure.', retryable: true } }))
+    const forward = (body) => {
+      const upstream = http.request({
+        hostname: target.hostname,
+        port: target.port,
+        method: request.method,
+        path: request.url,
+        headers: request.headers,
+      }, (upstreamResponse) => {
+        if (dropResponses && kind && dropped[kind] === 0 && (kind !== 'read' || dropRead)) {
+          dropped[kind] += 1
+          if (kind === 'read') dropRead = false
+          upstreamResponse.resume()
+          upstreamResponse.once('end', () => response.destroy())
+          return
+        }
+        response.writeHead(upstreamResponse.statusCode ?? 500, upstreamResponse.headers)
+        upstreamResponse.pipe(response)
+      })
+      upstream.on('error', (error) => response.destroy(error))
+      if (body === undefined) request.pipe(upstream)
+      else upstream.end(body)
+    }
+    if (kind === 'start') {
+      const chunks = []
+      request.on('data', (chunk) => chunks.push(chunk))
+      request.on('end', () => {
+        const body = Buffer.concat(chunks)
+        let parsed
+        try {
+          parsed = JSON.parse(body.toString('utf8'))
+        } catch {
+          response.writeHead(400, { 'content-type': 'application/json' })
+          response.end(JSON.stringify({ error: { code: 'proxy_invalid_json' } }))
+          return
+        }
+        startAttempts.push({
+          requestRef: parsed?.requestRef,
+          providerBindingRef: parsed?.providerBindingRef,
+          at: performance.now(),
+        })
+        if (failNextStart) {
+          failNextStart = false
+          response.writeHead(502, { 'content-type': 'application/json' })
+          response.end(JSON.stringify({ error: { code: 'unexpected_gateway', message: 'Injected unknown gateway failure.', retryable: true } }))
+          return
+        }
+        if (startFailureCount > 0) {
+          startFailureCount -= 1
+          response.writeHead(503, { 'content-type': 'application/json' })
+          response.end(JSON.stringify({ error: { code: 'daemon_starting', message: 'Injected daemon-starting response.', retryable: true } }))
+          return
+        }
+        forward(body)
+      })
       return
     }
-    const upstream = http.request({
-      hostname: target.hostname,
-      port: target.port,
-      method: request.method,
-      path: request.url,
-      headers: request.headers,
-    }, (upstreamResponse) => {
-      if (dropResponses && kind && dropped[kind] === 0 && (kind !== 'read' || dropRead)) {
-        dropped[kind] += 1
-        if (kind === 'read') dropRead = false
-        upstreamResponse.resume()
-        upstreamResponse.once('end', () => response.destroy())
-        return
-      }
-      response.writeHead(upstreamResponse.statusCode ?? 500, upstreamResponse.headers)
-      upstreamResponse.pipe(response)
-    })
-    upstream.on('error', (error) => response.destroy(error))
-    request.pipe(upstream)
+    forward(undefined)
   })
   await new Promise((resolve, reject) => {
     server.once('error', reject)
@@ -405,6 +492,7 @@ async function startResponseLossProxy(targetOrigin, { dropResponses = true } = {
     failNextStart() { failNextStart = true },
     dropped: () => ({ ...dropped }),
     requests: () => ({ ...requests }),
+    startAttempts: () => startAttempts.map((attempt) => ({ ...attempt })),
     close: () => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())),
   }
 }

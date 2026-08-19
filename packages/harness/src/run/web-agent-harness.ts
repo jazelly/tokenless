@@ -100,6 +100,7 @@ class DurableWebAgentHarness implements WebAgentHarness {
   async resume(runId: string, intervention: AgentRunIntervention): Promise<AgentRunView> {
     let record = this.required(runId)
     try {
+      if (isTerminal(record.status)) return publicView(record)
       if (record.providerTurn?.lifecycle === 'waiting_for_user') {
         if (record.providerTurn.waitingReason === 'ambiguous_submission') {
           if (record.phase === 'reconciliation_required') return publicView(record)
