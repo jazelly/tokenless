@@ -314,24 +314,24 @@ test('output savings defaults on without downloading its runtime during status c
 test('workspace packages keep standalone product names', () => {
   const cli = readJson('packages/cli/package.json')
   const harness = readJson('packages/harness/package.json')
-  const protocol = readJson('packages/protocol/package.json')
+  const contracts = readJson('packages/contracts/package.json')
   assert.equal(cli.name, 'tokenless')
   assert.deepEqual(cli.bin, { tokenless: 'dist/src/tokenless.mjs' })
   assert.ok(!cli.name.startsWith('@tokenless/'))
   assert.equal(harness.name, 'tokenless-web-agent-harness')
   assert.equal(harness.private, true)
   assert.deepEqual(harness.exports, { '.': './dist/src/index.js' })
-  assert.equal(protocol.name, 'tokenless-web-ai-interaction-protocol')
-  assert.equal(protocol.private, true)
-  assert.deepEqual(protocol.exports, {
-    '.': './dist/src/index.js',
-    './local-http': './dist/src/local-http.js',
+  assert.equal(contracts.name, 'tokenless-internal-contracts')
+  assert.equal(contracts.private, true)
+  assert.deepEqual(contracts.exports, {
+    './private/provider-turn': './dist/src/private/provider-turn/index.js',
+    './private/provider-turn-http': './dist/src/private/provider-turn/http-client.js',
     './localized-errors': './dist/src/localized-errors.js',
-    './structured-control': './dist/src/structured-control.js',
-    './ui-contract': './dist/src/ui-contract.js',
+    './structured-json': './dist/src/structured-json.js',
+    './ui': './dist/src/ui.js',
   })
-  assert.ok(protocol.files.includes('schemas/v0'))
-  assert.ok(protocol.files.includes('spec'))
+  assert.ok(contracts.files.includes('schemas/v0'))
+  assert.ok(contracts.files.includes('spec'))
   assert.equal(fs.existsSync(path.join(root, 'packages/extension')), false)
 })
 
@@ -783,7 +783,7 @@ test('pure JS CLI packs, installs, and exposes executable runtime artifacts', ()
       .map((entry) => entry.replaceAll(path.sep, '/'))
     assert.deepEqual(installedHarnessJavaScript, ['src/index.js'])
     assert.equal(
-      fs.readFileSync(installedHarness, 'utf8').includes('tokenless-web-ai-interaction-protocol'),
+      fs.readFileSync(installedHarness, 'utf8').includes('tokenless-internal-contracts'),
       false,
     )
     const harnessImport = spawnSync(process.execPath, [
@@ -796,7 +796,7 @@ test('pure JS CLI packs, installs, and exposes executable runtime artifacts', ()
     const installedOpenAiToolProtocol = path.join(installedCli, 'dist', 'server', 'src', 'universal-api', 'openai-tool-protocol.js')
     assert.equal(fs.existsSync(installedOpenAiToolProtocol), true)
     assert.equal(
-      fs.readFileSync(installedOpenAiToolProtocol, 'utf8').includes('tokenless-web-ai-interaction-protocol'),
+      fs.readFileSync(installedOpenAiToolProtocol, 'utf8').includes('tokenless-internal-contracts'),
       false,
     )
     assert.equal(

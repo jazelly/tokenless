@@ -1,4 +1,4 @@
-import type { TurnState } from 'tokenless-web-ai-interaction-protocol'
+import type { TurnState } from 'tokenless-internal-contracts/private/provider-turn'
 
 export const WEB_AGENT_PROTOCOL = 'tokenless.web-agent/v1' as const
 export const HARNESS_SKILL_MODULE_PROTOCOL = 'tokenless.web-agent.skills/v1' as const

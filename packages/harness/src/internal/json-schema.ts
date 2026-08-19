@@ -1,4 +1,4 @@
-import { createAjv2020 } from 'tokenless-web-ai-interaction-protocol/structured-control'
+import { createAjv2020 } from 'tokenless-internal-contracts/structured-json'
 
 import { HarnessSkillError, type JsonValue } from '../contracts.js'
 

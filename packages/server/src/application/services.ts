@@ -61,7 +61,7 @@ import type {
   UiRuntimeOpenResult,
   UiRuntimeStatus,
   UiSnapshot,
-} from 'tokenless-web-ai-interaction-protocol/ui-contract'
+} from 'tokenless-internal-contracts/ui'
 
 export type UiApplicationServicesOptions = {
   store: JobStore

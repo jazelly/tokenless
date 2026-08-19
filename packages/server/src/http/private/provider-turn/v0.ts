@@ -1,21 +1,21 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import type { IncomingMessage } from 'node:http'
 
-import { deriveTaskId, readTokenlessConfig } from '../../persistence/config.js'
-import { createManagedPlaywrightJobRequest, MANAGED_PLAYWRIGHT_JOB_ACTION } from '../../browser/job-contract.js'
-import { VISIBLE_ACTIONS, createVisibleActionRequest } from '../../browser/actions.js'
-import { ManagedProfileRegistry } from '../../browser/profiles/registry.js'
-import { checkpointIndicatesPromptSubmission } from '../../browser/submission-certainty.js'
-import { getProviderInstanceById, resolveTaskCapabilityRoute, type TaskCapabilityId } from '../../providers/registry.js'
-import { DEFAULT_MAX_VISIBLE_ATTACHMENT_BYTES, listMarkedWebAiStageBundles, removeStagedVisibleAttachmentBundle, stageVisibleAttachmentStream } from '../../persistence/attachments.js'
-import { invalidInput } from '../../errors.js'
+import { deriveTaskId, readTokenlessConfig } from '../../../persistence/config.js'
+import { createManagedPlaywrightJobRequest, MANAGED_PLAYWRIGHT_JOB_ACTION } from '../../../browser/job-contract.js'
+import { VISIBLE_ACTIONS, createVisibleActionRequest } from '../../../browser/actions.js'
+import { ManagedProfileRegistry } from '../../../browser/profiles/registry.js'
+import { checkpointIndicatesPromptSubmission } from '../../../browser/submission-certainty.js'
+import { getProviderInstanceById, resolveTaskCapabilityRoute, type TaskCapabilityId } from '../../../providers/registry.js'
+import { DEFAULT_MAX_VISIBLE_ATTACHMENT_BYTES, listMarkedWebAiStageBundles, removeStagedVisibleAttachmentBundle, stageVisibleAttachmentStream } from '../../../persistence/attachments.js'
+import { invalidInput } from '../../../errors.js'
 import {
   WebAiRequestRefConflictError,
   type Job,
   type JobStore,
   type WebAiBinding,
   type WebAiTurn,
-} from '../../jobs/store.js'
+} from '../../../jobs/store.js'
 
 const SYSTEM_PROMPT_LIMIT_BYTES = 1024 * 1024
 const REQUIRED_CAPABILITIES = ['conversation.chat', 'file.upload'] as const
@@ -44,7 +44,7 @@ type RequestCancellationTurn =
   | (RequestCancellationIdentity & { lifecycle: 'cancelled'; dispatchCertainty: 'not_dispatched'; attachmentDeliveryStatus: 'pending' })
   | (RequestCancellationIdentity & { lifecycle: 'cancelled'; dispatchCertainty: 'dispatched' | 'ambiguous'; attachmentDeliveryStatus: 'delivered' })
 
-export class WebAiInteractionV0Adapter {
+export class PrivateProviderTurnV0Adapter {
   private readonly profiles: ManagedProfileRegistry
 
   constructor(private readonly store: JobStore) {
@@ -511,7 +511,7 @@ function staticCapabilities(provider: string): CapabilityDocument['supportedCapa
   throw invalidInput('web ai provider has no static V0 capability route')
 }
 
-function attachmentPublicView(attachment: import('../../jobs/store.js').WebAiStagedAttachment) {
+function attachmentPublicView(attachment: import('../../../jobs/store.js').WebAiStagedAttachment) {
   return {
     attachmentRef: attachment.attachment_ref,
     mediaType: attachment.media_type,

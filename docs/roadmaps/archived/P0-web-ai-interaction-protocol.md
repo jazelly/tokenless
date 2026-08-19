@@ -1,12 +1,14 @@
 # Web AI Interaction Protocol
 
-Status: proposed | Priority: P0 | Working title: Web AI Interaction Protocol
+Status: superseded 2026-08-19 | Priority: P0 | Historical working title: Web AI Interaction Protocol
+
+Disposition: superseded by [OpenAI-compatible API 收敛](../P1-openai-compatible-api-convergence.md). The implemented provider-turn schema remains an internal Tokenless contract under `packages/contracts/private/provider-turn`; it is not the canonical public model API. This file is retained as decision history.
 
 Depends on: the typed visible-provider capability seam, durable daemon job and conversation identity, real-provider evidence rules, and the existing visible browser execution boundary
 
-Blocks: the stable cross-project seam required by [Web Agent Harness](P0-web-agent-harness.md); protocol discovery and specification precede the Harness package's dependency on a provider-turn client
+Blocks: the stable cross-project seam required by [Web Agent Harness](../P0-web-agent-harness.md); protocol discovery and specification precede the Harness package's dependency on a provider-turn client
 
-Related: [Real Provider Browser E2E and Native Projects](P0-real-provider-browser-e2e-and-native-projects.md) supplies provider-side evidence; [Agent Session Integrations](P1-agent-session-integrations.md) is a caller interface, not this protocol; [Codex Guided Delegation and Session Binding](P0-codex-guided-delegation-and-session-binding.md) supplies exact Codex identity to explicitly delegated Harness runs, not a replacement for this protocol; the visible model-control envelope remains owned by the Harness roadmap
+Related: [Real Provider Browser E2E and Native Projects](../P0-real-provider-browser-e2e-and-native-projects.md) supplies provider-side evidence; [Agent Session Integrations](../P1-agent-session-integrations.md) is a caller interface, not this protocol; [Codex Guided Delegation and Session Binding](../P0-codex-guided-delegation-and-session-binding.md) supplies exact Codex identity to explicitly delegated Harness runs, not a replacement for this protocol; the visible model-control envelope remains owned by the Harness roadmap
 
 Packaging direction: one independently buildable, language-neutral protocol package in this repository first; external repository, package scope, final name, and governance only after the contract is stable and namespace ownership is verified
 
@@ -30,9 +32,9 @@ The protocol covers capabilities, workspace and conversation identity, instructi
 | --- | --- | --- | --- |
 | This protocol | Normative contract and shared compatibility boundary | Semantics, wire schemas, lifecycle, capability negotiation, errors, versioning, conformance rules, and language bindings | Tokenless storage, daemon routes, Playwright, provider selectors, MCP, tools, approvals, or agent policy |
 | Tokenless Layer 1 / current repository | First Provider Runtime and reference Provider implementation | Visible browser execution, provider adapters, durable provider turns, exact provider-side resources, and evidence-backed outcomes | Harness prompts, action-batch parsing, MCP clients, approval policy, or agent-loop state |
-| [Web Agent Harness](P0-web-agent-harness.md) / Layer 2 | First Client implementation and primary design consumer | Agent adapters and identity, Harness context/run persistence, uploaded System Prompt Bundle, Skill registry and `SKILL.md` staging, attachment manifests, visible action-batch and final envelopes, tools, consolidated user input, approvals, MCP execution, aggregate results, and limits | Provider DOM, browser profiles, selectors, Provider database tables, or private daemon modules |
+| [Web Agent Harness](../P0-web-agent-harness.md) / Layer 2 | First Client implementation and primary design consumer | Agent adapters and identity, Harness context/run persistence, uploaded System Prompt Bundle, Skill registry and `SKILL.md` staging, attachment manifests, visible action-batch and final envelopes, tools, consolidated user input, approvals, MCP execution, aggregate results, and limits | Provider DOM, browser profiles, selectors, Provider database tables, or private daemon modules |
 | Visible Web-Agent Control Protocol | A separate Layer 2-to-model text contract carried inside protocol messages | Tool-request and final-result envelopes visible in model text | Provider runtime semantics or Layer 1 parsing |
-| [Agent Session Integrations](P1-agent-session-integrations.md) | Caller integration that may invoke Layer 1 or the Harness | Caller-session binding and local MCP exposure | Replacing the Client/Provider protocol or inheriting web-model tool-execution authority |
+| [Agent Session Integrations](../P1-agent-session-integrations.md) | Caller integration that may invoke Layer 1 or the Harness | Caller-session binding and local MCP exposure | Replacing the Client/Provider protocol or inheriting web-model tool-execution authority |
 | OpenAI-compatible mapping profile | Optional, explicitly lossy compatibility adapter | Simple stateless request/result mappings | Defining the canonical resource, lifecycle, identity, waiting, resume, or evidence model |
 
 The sequencing contract is explicit:
@@ -338,7 +340,7 @@ Exit: the built Tokenless CLI and packaged daemon complete the representative re
 - Prove a no-tool AgentRun and then the bounded visible tool loop without importing Provider, Playwright, daemon-storage, profile, DOM, or CLI implementation modules.
 - Add a compatibility matrix binding Harness releases to supported protocol versions rather than Tokenless implementation versions.
 
-Exit: the [Web Agent Harness](P0-web-agent-harness.md) completes its first real ChatGPT loop through the protocol Client, and replacing the Tokenless Provider with another conforming Provider requires configuration and transport wiring rather than Harness source reorganization.
+Exit: the [Web Agent Harness](../P0-web-agent-harness.md) completes its first real ChatGPT loop through the protocol Client, and replacing the Tokenless Provider with another conforming Provider requires configuration and transport wiring rather than Harness source reorganization.
 
 ### Phase 4: Independent Implementation and Externalization Decision
 
@@ -395,8 +397,8 @@ Exit: a second independent implementation passes conformance, or the protocol re
 
 ## Primary References
 
-- [Web Agent Harness](P0-web-agent-harness.md)
-- [Real Provider Browser E2E and Native Projects](P0-real-provider-browser-e2e-and-native-projects.md)
-- [Provider Architecture and Registry](archived/P0-provider-architecture-and-registry.md)
-- [Context Delivery and Workspace Alignment](P0-context-delivery-and-workspace-alignment.md)
-- [Concurrency and Session Scheduling](P0-concurrency-and-session-scheduling.md)
+- [Web Agent Harness](../P0-web-agent-harness.md)
+- [Real Provider Browser E2E and Native Projects](../P0-real-provider-browser-e2e-and-native-projects.md)
+- [Provider Architecture and Registry](P0-provider-architecture-and-registry.md)
+- [Context Delivery and Workspace Alignment](../P0-context-delivery-and-workspace-alignment.md)
+- [Concurrency and Session Scheduling](../P0-concurrency-and-session-scheduling.md)

@@ -180,10 +180,10 @@ async function startResponseLossProxy(targetOrigin) {
 }
 
 function responseLossKind(method, url) {
-  if (method === 'GET' && /\/v1\/web-ai\/turns\/[^/]+$/u.test(url)) return 'read'
+  if (method === 'GET' && /\/v1\/private\/provider-turn\/turns\/[^/]+$/u.test(url)) return 'read'
   if (method !== 'POST') return undefined
-  if (/\/v1\/web-ai\/bindings\/[^/]+\/turns$/u.test(url)) return 'start'
-  if (/\/v1\/web-ai\/turns\/[^/]+\/resume$/u.test(url)) return 'resume'
-  if (/\/v1\/web-ai\/turns\/[^/]+\/cancel$/u.test(url)) return 'cancel'
+  if (/\/v1\/private\/provider-turn\/bindings\/[^/]+\/turns$/u.test(url)) return 'start'
+  if (/\/v1\/private\/provider-turn\/turns\/[^/]+\/resume$/u.test(url)) return 'resume'
+  if (/\/v1\/private\/provider-turn\/turns\/[^/]+\/cancel$/u.test(url)) return 'cancel'
   return undefined
 }

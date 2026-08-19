@@ -20,7 +20,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
     "js-yaml": "^4.3.0",
-    "tokenless-web-ai-interaction-protocol": "0.0.0"
+    "tokenless-internal-contracts": "0.0.0"
   },
   "engines": {
     "node": ">=22.13.0"

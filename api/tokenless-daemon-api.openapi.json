@@ -53,7 +53,7 @@
         }
       }
     },
-    "/v1/asset/{taskId}/{conversationId}/{assetBatch}/{assetFile}": {
+    "/v1/private/assets/{taskId}/{conversationId}/{assetBatch}/{assetFile}": {
       "get": {
         "operationId": "getImageAsset",
         "summary": "Read a verified downloaded image asset",
@@ -327,7 +327,7 @@
         }
       }
     },
-    "/v1/featurebench/channels": {
+    "/v1/private/featurebench/channels": {
       "post": {
         "operationId": "issueFeatureBenchChannel",
         "summary": "Issue one task-scoped provider-turn channel for the pinned FeatureBench scaffold",
@@ -668,7 +668,7 @@
         }
       }
     },
-    "/v1/web-ai/bindings": {
+    "/v1/private/provider-turn/bindings": {
       "post": {
         "operationId": "bindWebAiInteractionV0",
         "summary": "Bind one configured provider and managed profile for Web AI Interaction Protocol V0",
@@ -705,7 +705,7 @@
         }
       }
     },
-    "/v1/web-ai/bindings/{bindingRef}/capabilities": {
+    "/v1/private/provider-turn/bindings/{bindingRef}/capabilities": {
       "get": {
         "operationId": "getWebAiInteractionV0Capabilities",
         "summary": "Read the binding's static Web AI capability projection",
@@ -737,7 +737,7 @@
         }
       }
     },
-    "/v1/web-ai/bindings/{bindingRef}/attachments": {
+    "/v1/private/provider-turn/bindings/{bindingRef}/attachments": {
       "post": {
         "operationId": "stageWebAiInteractionV0Attachment",
         "summary": "Stream one bounded markdown system prompt into an opaque staged attachment",
@@ -780,7 +780,7 @@
         }
       }
     },
-    "/v1/web-ai/bindings/{bindingRef}/turns": {
+    "/v1/private/provider-turn/bindings/{bindingRef}/turns": {
       "post": {
         "operationId": "startWebAiInteractionV0Turn",
         "summary": "Atomically consume a staged attachment and queue one V0 turn",
@@ -825,7 +825,7 @@
         }
       }
     },
-    "/v1/web-ai/turns/{turnRef}": {
+    "/v1/private/provider-turn/turns/{turnRef}": {
       "get": {
         "operationId": "getWebAiInteractionV0Turn",
         "summary": "Read one core V0 turn state without exposing a daemon job",
@@ -857,7 +857,7 @@
         }
       }
     },
-    "/v1/web-ai/turns/{turnRef}/cancel": {
+    "/v1/private/provider-turn/turns/{turnRef}/cancel": {
       "post": {
         "operationId": "cancelWebAiInteractionV0Turn",
         "summary": "Cancel one V0 turn by opaque turn reference",
@@ -889,7 +889,39 @@
         }
       }
     },
-    "/v1/web-ai/requests/{requestRef}/cancel": {
+    "/v1/private/provider-turn/turns/{turnRef}/resume": {
+      "post": {
+        "operationId": "resumeWebAiInteractionV0Turn",
+        "summary": "Resume one waiting V0 turn by opaque turn reference",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/web_ai_turn_ref"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Core V0 turn state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebAiTurnResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/v1/private/provider-turn/requests/{requestRef}/cancel": {
       "post": {
         "operationId": "cancelWebAiInteractionV0Request",
         "summary": "Durably cancel a V0 request intent before or after its opaque turn reference is known",
@@ -2266,7 +2298,7 @@
               "properties": {
                 "url": {
                   "type": "string",
-                  "pattern": "^/v1/asset/"
+                  "pattern": "^/v1/private/assets/"
                 },
                 "asset": {
                   "$ref": "#/components/schemas/PersistedImageAsset"

@@ -28,20 +28,20 @@ test('authenticated image asset endpoint reads verified local bytes and rejects 
   const authorization = { authorization: `Bearer ${store.controlToken()}` }
   const assetRoute = assetRef.slice('assets/'.length)
   try {
-    const unauthorized = await fetch(`${daemon.origin}/v1/asset/${assetRoute}`)
+    const unauthorized = await fetch(`${daemon.origin}/v1/private/assets/${assetRoute}`)
     assert.equal(unauthorized.status, 401)
 
-    const response = await fetch(`${daemon.origin}/v1/asset/${assetRoute}`, { headers: authorization })
+    const response = await fetch(`${daemon.origin}/v1/private/assets/${assetRoute}`, { headers: authorization })
     assert.equal(response.status, 200)
     assert.equal(response.headers.get('content-type'), 'image/png')
     assert.deepEqual(Buffer.from(await response.arrayBuffer()), ONE_PIXEL_PNG)
 
     fs.writeFileSync(assetPath, Buffer.from('not an image'), { mode: 0o600 })
-    const corrupt = await fetch(`${daemon.origin}/v1/asset/${assetRoute}`, { headers: authorization })
+    const corrupt = await fetch(`${daemon.origin}/v1/private/assets/${assetRoute}`, { headers: authorization })
     assert.equal(corrupt.status, 404)
 
     const traversal = await fetch(
-      `${daemon.origin}/v1/asset/${encodeURIComponent('assets/../tokenless.sqlite3')}`,
+      `${daemon.origin}/v1/private/assets/${encodeURIComponent('assets/../tokenless.sqlite3')}`,
       { headers: authorization },
     )
     assert.equal(traversal.status, 400)

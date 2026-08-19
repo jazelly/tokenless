@@ -1,4 +1,4 @@
-# Security Boundary
+# Private Provider-Turn Security Boundary
 
 Core protocol messages carry only bounded semantic identifiers, content digests, finalized visible text, citations, lifecycle, and stable errors. Each reference has a required kind prefix (`request:`, `provider:`, `binding:`, `conversation:`, `turn:`, or `attachment:`) and exactly 32 lowercase hexadecimal characters; bare values, slashes, and filesystem paths are invalid.
 

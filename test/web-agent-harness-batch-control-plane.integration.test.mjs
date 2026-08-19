@@ -145,7 +145,7 @@ test('authenticated daemon serializes concurrent drives while a real MCP call is
   const daemon = await serveHttp({ store: jobStore, host: '127.0.0.1', port: 0, agentRunHandlerFactory: createAgentRunHttpHandler })
   daemon.activate()
   try {
-    const endpoint = `${daemon.origin}/v1/agent/runs/${context.runId}`
+    const endpoint = `${daemon.origin}/v1/private/agent/runs/${context.runId}`
     const headers = { authorization: `Bearer ${jobStore.controlToken()}` }
     const first = readAgentRun(endpoint, headers)
     await waitForExecutingCall(context.home, context.runId, 'call_long')

@@ -6,21 +6,24 @@ Tokenless exposes visible AI websites through an HTTP-centered local server, a t
 
 ## Final shape
 
-Tokenless has four callers above one server-owned execution core:
+Tokenless has four entry surfaces above one server-owned execution core:
 
 ```mermaid
 flowchart TB
   Skill["Host Agent Skill<br/>skills/tokenless"] --> CLI
-  CLI["packages/cli<br/>commands, bootstrap, HTTP client"] --> Control["Authenticated CLI/control HTTP"]
+  CLI["packages/cli<br/>commands, bootstrap, HTTP client"] --> AgentAPI["/v1/private/agent/*"]
+  CLI --> Control["Authenticated CLI/control HTTP"]
   Dashboard["packages/dashboard<br/>full read + mutation control plane"] --> UIAPI["/ui-api/v1"]
   External["OpenAI SDK / external Harness"] --> API["OpenAI-compatible HTTP<br/>chat, responses, images"]
-  Harness["packages/harness<br/>AgentRun, Skills, tools, MCP"] --> Turn["Provider-turn HTTP"]
+  AgentAPI --> Harness["packages/harness<br/>AgentRun, Skills, tools, MCP"]
+  Harness --> API
+  Harness -. "only non-representable extensions" .-> PrivateTurn["/v1/private/provider-turn/*"]
 
   subgraph Server["packages/server"]
     Control --> Application["Application services"]
     UIAPI --> Application
     API --> Universal["Universal API conversion"]
-    Turn --> Application
+    PrivateTurn --> Application
     Universal --> Application
     Application --> Provider["Jobs, routing, providers, browser/direct runtime, persistence"]
   end
@@ -32,7 +35,7 @@ flowchart TB
   Provider --> Browser
 ```
 
-The callers use distinct HTTP contracts but share one server implementation. The Universal API and Web Agent Harness remain different product layers with different tool ownership.
+The callers use distinct HTTP interfaces but share one server implementation. OpenAI-compatible chat, Responses, and images are the default model/media interface for both external callers and the first-party Harness. Tokenless-only run control and non-representable provider-turn extensions stay under `/v1/private/*`.
 
 ## Layer 1: Universal API
 
@@ -67,7 +70,9 @@ It owns:
 - system prompts, prompt management, Skills, tool discovery, and the internal Tool Registry;
 - filesystem and local tools, MCP clients/servers, authorization, approvals, timeout, cancellation, and user intervention;
 - bounded `action_batch` loops, tool-result aggregation, continuation, and failure handling; and
-- the provider-turn client that consumes the Universal API without importing provider adapters or Playwright internals.
+- the OpenAI-compatible Client Adapter used for ordinary model turns;
+- the private provider-turn Client Adapter used only for current semantics that OpenAI requests cannot express; and
+- no imports from provider adapters or Playwright internals.
 
 Harness-owned tools are not external caller tools. The Harness may project its own authorized tools into a provider turn and execute the resulting actions under its own policy. That is a Layer 2 responsibility and must not be moved into the Universal API.
 
@@ -76,7 +81,7 @@ Harness-owned tools are not external caller tools. The Harness may project its o
 | Caller | Agent owner | Provider path | Tool executor |
 | --- | --- | --- | --- |
 | Pi, Mono, Codex, DeepSeek Harness, or another external Harness | External Harness | Universal API → Web Provider API / direct provider runtime | External Harness |
-| Tokenless CLI agent run | Tokenless Web Agent Harness | CLI HTTP → Harness → provider-turn HTTP → Web Provider API / direct provider runtime | Tokenless Web Agent Harness |
+| Tokenless CLI agent run | Tokenless Web Agent Harness | `/v1/private/agent/*` → Harness → OpenAI-compatible API, plus necessary `/v1/private/provider-turn/*` extensions | Tokenless Web Agent Harness |
 | Provider inspection or administration command | Tokenless CLI/control adapter | Daemon → managed provider runtime | The provider/control adapter, within its command boundary |
 
 ```text
@@ -115,7 +120,7 @@ The API adapter must not call the Harness mission queue, Tool Registry, or MCP r
 ## Runtime components
 
 1. The `tokenless` CLI handles command parsing, daemon bootstrap, authenticated HTTP calls, waiting, localization, and output formatting.
-2. The Web Agent Harness owns Tokenless's first-party agent-run coordination and provider-turn calls.
+2. The Web Agent Harness owns Tokenless's first-party agent-run coordination, OpenAI-compatible model calls, and only the necessary private provider-turn extension calls.
 3. The local TypeScript daemon stores durable jobs in SQLite and exposes an authenticated loopback control plane.
 4. The Playwright worker claims managed-web jobs, connects over CDP to independently launched resident Chromium processes, and uses Playwright browser, page, and locator APIs inside persistent managed profiles.
 5. The provider navigation catalog centrally declares each entry URL, automation home, owned origins, known page patterns, and trusted sign-in routes; the provider registry adds access, account-plan, selector, and capability policy.
@@ -126,11 +131,11 @@ The API adapter must not call the Harness mission queue, Tool Registry, or MCP r
 
 ## Provider runtime execution path
 
-Every normal cross-surface call enters through HTTP. The stable first-party agent path is `Tokenless CLI → authenticated HTTP → Web Agent Harness → provider-turn HTTP → provider runtime`. Provider inspection, setup, and administration commands use the authenticated CLI/control HTTP surface. OpenAI-compatible chat, Responses, and image generation use the Universal API HTTP surface.
+Every normal cross-surface call enters through HTTP. The target first-party agent path is `Tokenless CLI → /v1/private/agent/* → Web Agent Harness → OpenAI-compatible API → provider runtime`, with `/v1/private/provider-turn/*` used only for non-representable extensions. Provider inspection, setup, and administration commands use the authenticated CLI/control HTTP surface.
 
 | Interface | Execution path | Authentication | Status |
 | --- | --- | --- | --- |
-| CLI agent run | CLI → authenticated HTTP → Web Agent Harness → provider-turn HTTP → daemon/Playwright worker → managed profile → visible provider page | Provider sign-in stored inside the managed profile | First-party agent interface |
+| CLI agent run | CLI → `/v1/private/agent/*` → Web Agent Harness → OpenAI-compatible API/private extension → provider runtime | Provider sign-in stored inside the managed profile | First-party agent interface |
 | Provider/control command | CLI → authenticated control HTTP → daemon → Playwright worker → managed profile → visible provider page | Provider sign-in stored inside the managed profile | Control interface |
 | Local dashboard | Browser → `/ui-api/v1` → shared services/daemon → managed profile → visible provider page | Direct loopback opening plus a short-lived UI session; provider sign-in remains inside the managed profile | Local administration interface |
 | Machine API | Trusted local caller → bearer API → daemon → Playwright worker | Daemon bearer token plus provider sign-in inside the managed profile | Local scripting interface |
@@ -279,12 +284,12 @@ skills/              Host Agent instructions
 packages/cli/        commands, bootstrap, HTTP clients, localization, output
 packages/dashboard/  full Local Web Control Plane frontend
 packages/harness/    AgentRun, Skills, tools, MCP, approvals, agent loop
-packages/protocol/   provider-neutral contracts, schemas, validation, thin client
+packages/contracts/  cross-package contracts, validation, and thin Client Adapters
 packages/server/     HTTP, application, jobs, providers, browser/direct runtime, persistence
 ```
 
 The primary dependency direction is `CLI/Dashboard/Harness/external caller → HTTP → server`. The server does not import the Harness runtime, the Dashboard does not import backend source, and the Harness does not import provider, browser, or persistence internals. The existing single `tokenless` npm distribution continues to bundle the required private artifacts.
 
-The Web Agent Harness roadmap owns the first-party Harness implementation. The Universal API tool-calling roadmap owns the low-level external compatibility contract. The Web AI interaction protocol roadmap owns the provider-turn seam consumed by both.
+The Web Agent Harness roadmap owns the first-party Harness implementation. The Universal API tool-calling roadmap owns the OpenAI-compatible contract. The OpenAI-compatible API convergence roadmap owns migration of CLI and Harness model calls plus removal of unnecessary private provider-turn extensions.
 
-The runtime package boundary refactor is implemented: `packages/server/`, `packages/cli/`, `packages/dashboard/`, `packages/harness/`, and `packages/protocol/` own their respective source while the existing `tokenless` npm distribution bundles the required private artifacts. Later CLI Universal API convergence is separate product work because it changes execution ownership rather than source location.
+The runtime package boundary refactor and private namespace correction are implemented: `packages/server/`, `packages/cli/`, `packages/dashboard/`, `packages/harness/`, and `packages/contracts/` own their respective source while the existing `tokenless` npm distribution bundles the required private artifacts. OpenAI-compatible API convergence remains separate product work because it changes execution ownership rather than source location.

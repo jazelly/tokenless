@@ -9,16 +9,19 @@ Tokenless 在一个 server-owned execution core 之上有四类 caller：
 ```mermaid
 flowchart TB
   Skill["Host Agent Skill<br/>skills/tokenless"] --> CLI
-  CLI["packages/cli<br/>command、bootstrap、HTTP client"] --> Control["Authenticated CLI/control HTTP"]
+  CLI["packages/cli<br/>command、bootstrap、HTTP client"] --> AgentAPI["/v1/private/agent/*"]
+  CLI --> Control["Authenticated CLI/control HTTP"]
   Dashboard["packages/dashboard<br/>完整 read + mutation control plane"] --> UIAPI["/ui-api/v1"]
   External["OpenAI SDK / external Harness"] --> API["OpenAI-compatible HTTP<br/>chat、responses、images"]
-  Harness["packages/harness<br/>AgentRun、Skill、tool、MCP"] --> Turn["Provider-turn HTTP"]
+  AgentAPI --> Harness["packages/harness<br/>AgentRun、Skill、tool、MCP"]
+  Harness --> API
+  Harness -. "仅无法无损表达的扩展" .-> PrivateTurn["/v1/private/provider-turn/*"]
 
   subgraph Server["packages/server"]
     Control --> Application["Application services"]
     UIAPI --> Application
     API --> Universal["Universal API conversion"]
-    Turn --> Application
+    PrivateTurn --> Application
     Universal --> Application
     Application --> Provider["job、routing、provider、browser/direct runtime、persistence"]
   end
@@ -30,7 +33,7 @@ flowchart TB
   Provider --> Browser
 ```
 
-四类 caller 使用不同 HTTP contract，但共用一份 server implementation。Universal API 与 Web Agent Harness 仍是 tool ownership 不同的两个产品层。
+四类入口使用不同 HTTP Interface，但共用一份 server implementation。OpenAI-compatible chat、Responses 与 images 是 external caller 和 first-party Harness 的默认 model/media Interface；Tokenless-only run control 与无法无损表达的 provider-turn extension 位于 `/v1/private/*`。
 
 ## Layer 1：Universal API
 
@@ -73,14 +76,14 @@ Web Agent Harness 是 Tokenless 在 `packages/harness/` 中的 first-party agent
 - 完整 action-batch execution、dependency handling、loop limit、recovery 与 final-output validation；
 - 向 CLI 或 caller 呈现 waiting、approval、authentication 与 terminal state。
 
-Harness 不接收 Playwright `Page`、browser profile path、provider cookie、provider session token 或 provider adapter object。它通过 public provider-turn client 与 opaque provider reference 工作；provider execution 仍由 Web Provider API 及其 runtime 拥有。
+Harness 不接收 Playwright `Page`、browser profile path、provider cookie、provider session token 或 provider adapter object。普通 model turn 通过 OpenAI-compatible Client Adapter；只有 OpenAI contract 当前无法表达的 attachment、identity、waiting、resume 或 dispatch semantics 才使用 private provider-turn Client Adapter。
 
 ## 调用路径
 
 | Caller | 第一 ownership | Provider boundary | Tool executor |
 | --- | --- | --- | --- |
 | Pi、Mono、Codex、DeepSeek Harness 或其他外部 Harness | Universal API | Web Provider API / direct provider runtime | 外部 Harness |
-| Tokenless CLI agent run | Web Agent Harness | CLI HTTP → Harness → provider-turn HTTP → Web Provider API | Tokenless Web Agent Harness |
+| Tokenless CLI agent run | Web Agent Harness | `/v1/private/agent/*` → Harness → OpenAI-compatible API，必要时加 `/v1/private/provider-turn/*` extension | Tokenless Web Agent Harness |
 | Tokenless provider inspection 或 administration command | CLI control adapter | authenticated daemon control API | 按该 command 定义的 provider runtime 或 control plane |
 
 第三条路径只用于 inspection 与 administration，不是另一套 agent loop。Agent path 不得在 CLI command code 中重复 Harness 的 prompt compilation、Skill resolution、tool authorization 或 loop state。
@@ -125,7 +128,7 @@ API adapter 不得调用 Harness mission queue、Tool Registry 或 MCP runtime�
 ## Runtime components
 
 1. `tokenless` CLI 负责 command parsing、daemon bootstrap、authenticated HTTP call、wait、localization 与 output formatting。
-2. Web Agent Harness 负责 Tokenless 自有 agent run 的协调与 provider-turn 调用。
+2. Web Agent Harness 负责 Tokenless 自有 agent run、OpenAI-compatible model call 与必要的 private provider-turn extension call。
 3. 本地 TypeScript daemon 以 SQLite 持久化 job，并提供 authenticated loopback control plane。
 4. Playwright worker 认领 managed-web job，通过 CDP 连接独立启动的 resident Chromium，并在持久化 managed profile 中操作真实 provider 页面。
 5. provider navigation catalog 与 provider registry 负责 URL、origin、session、account、selector 与 capability policy。
@@ -136,16 +139,16 @@ API adapter 不得调用 Harness mission queue、Tool Registry 或 MCP runtime�
 
 ## Provider runtime execution path
 
-所有正常的跨产品调用都经过 HTTP。稳定的 first-party agent 路径是：`Tokenless CLI → authenticated HTTP → Web Agent Harness → provider-turn HTTP → provider runtime`。Provider inspection、setup 与 administration command 使用 authenticated CLI/control HTTP surface；OpenAI-compatible chat、Responses 与 image generation 使用 Universal API HTTP surface。
+所有正常的跨产品调用都经过 HTTP。目标 first-party agent 路径是：`Tokenless CLI → /v1/private/agent/* → Web Agent Harness → OpenAI-compatible API → provider runtime`；只有无法无损表达的 extension 才走 `/v1/private/provider-turn/*`。Provider inspection、setup 与 administration command 使用 authenticated CLI/control HTTP surface。
 
 | Interface | Execution path | Tool 或 provider owner |
 | --- | --- | --- |
-| CLI agent run | CLI → authenticated HTTP → Web Agent Harness → provider-turn HTTP → daemon/Playwright → managed profile → provider page | Web Agent Harness 负责 agent tools |
+| CLI agent run | CLI → `/v1/private/agent/*` → Web Agent Harness → OpenAI-compatible API/private extension → provider runtime | Web Agent Harness 负责 agent tools |
 | Provider/control command | CLI → authenticated control HTTP → daemon → Playwright worker → managed profile → provider page | 对应 control adapter 与 provider runtime |
 | Local dashboard | Browser → `/ui-api/v1` → daemon/shared services → managed profile → provider page | dashboard/control plane |
 | Machine API | Trusted local caller → bearer API → daemon → provider runtime | 调用方负责 API request contract |
 
-当前 package boundary 已落地；CLI Universal API convergence 是后续独立 roadmap，因为它会改变 execution ownership，而本次结构重构只改变 source ownership 与 dependency direction。
+当前 package boundary 与 private namespace 已落地；OpenAI-compatible API convergence 是后续独立 roadmap，因为它会改变 execution ownership，而本次结构重构只改变 source ownership、URL namespace 与 dependency direction。
 
 ## Managed Playwright flow
 
@@ -226,7 +229,7 @@ skills/              Host Agent instructions
 packages/cli/        commands, bootstrap, HTTP clients, localization, output
 packages/dashboard/  full Local Web Control Plane frontend
 packages/harness/    AgentRun, Skills, tools, MCP, approvals, agent loop
-packages/protocol/   provider-neutral contracts, schemas, validation, thin client
+packages/contracts/  cross-package contracts, validation, thin Client Adapters
 packages/server/     HTTP, application, jobs, providers, browser/direct runtime, persistence
 ```
 
@@ -236,4 +239,4 @@ packages/server/     HTTP, application, jobs, providers, browser/direct runtime,
 
 本文档是 architecture source of truth。`docs/roadmaps/` 只描述 sequencing、milestone、evidence 与未完成工作。Roadmap 可以延后或分阶段实现 MCP、CLI integration、persistence 或 provider coverage，但不能重新定义上面的两层 ownership。
 
-Web Agent Harness roadmap 负责 first-party Harness 实现；Universal API tool-calling roadmap 负责低层 external compatibility contract；Web AI interaction protocol roadmap 负责 Harness 消费的 provider-turn seam。Runtime package boundary refactor 已完成；后续 CLI Universal API convergence 不属于该零逻辑变化重构。
+Web Agent Harness roadmap 负责 first-party Harness 实现；Universal API tool-calling roadmap 负责 OpenAI-compatible contract；OpenAI-compatible API convergence roadmap 负责 CLI/Harness model call 的迁移，以及删除不再必要的 private provider-turn extension。Runtime package boundary refactor 与 private namespace correction 已完成；execution convergence 不属于该零逻辑变化重构。

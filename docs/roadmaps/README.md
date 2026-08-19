@@ -1,6 +1,6 @@
 # Tokenless Roadmaps
 
-Status: active product direction | Last reviewed: 2026-08-18
+Status: active product direction | Last reviewed: 2026-08-19
 
 This directory contains long-horizon product and engineering roadmaps. It is separate from `plans/`, which contains bounded implementation plans for individual pieces of work.
 
@@ -55,12 +55,11 @@ Every roadmap filename must begin with its product priority (`P0-`, `P1-`, `P2-`
 | [G4F Direct Provider Catalog](P0-g4f-direct-provider-catalog.md) | Consolidate the pinned G4F working inventory into 42 vendor-level Tokenless providers, reuse existing identities, and expose honest browser/direct modes in the local dashboard. | P0 |
 | [FeatureBench Agent Runtime Evaluation](P0-featurebench-agent-runtime-evaluation.md) | Run Tokenless as a FeatureBench scaffold across the pinned 200-task full split, using real provider turns, container tools, patches, and the official evaluator. | P0 |
 | [Context Delivery and Workspace Alignment](P0-context-delivery-and-workspace-alignment.md) | Carry authorized task, repository, instruction, and file context into the exact provider Project or conversation, including a new chat. | P0 |
-| [Web AI Interaction Protocol](P0-web-ai-interaction-protocol.md) | Define the versioned, provider-neutral turn interface through which the Web Agent Harness drives durable visible-provider work without importing browser or daemon internals. | P0 |
 | [Web Agent Harness](P0-web-agent-harness.md) | Own Agent adapters and context persistence, then build a ChatGPT-first file-based web Harness with a compiled System Prompt Bundle, Skill registry, validated model output, complete action batches, consolidated user input, rooted filesystem work, and resumable MCP tool execution. | P0 |
 | [Codex Guided Delegation and Session Binding](P0-codex-guided-delegation-and-session-binding.md) | Keep Codex's normal model provider and user launch flow while adding RTK-style guidance, native hooks for exact chat/turn/tool-call identity, bounded App Server enrichment, and provider conversation continuity. | P0 |
 | [Concurrency and Session Scheduling](P0-concurrency-and-session-scheduling.md) | Persist every invocation through the local daemon and schedule exact project, workspace, conversation, profile, and page lanes safely under concurrent load. | P0 |
 | [Local Web Control Plane](P0-local-web-control-plane.md) | Provide a secure localhost console for setup handoff, browser identities, provider configuration, capabilities, jobs, diagnostics, and user recovery. | P0 |
-| [CLI Universal API Convergence](P1-cli-universal-api-convergence.md) | Converge the losslessly representable CLI model-generation subset on the Universal API while keeping image generation in the shared media API and preserving jobs/control and Harness provider-turn as separate HTTP contracts. | P1 |
+| [OpenAI-compatible API Convergence](P1-openai-compatible-api-convergence.md) | Converge the losslessly representable CLI and first-party Harness model/media paths on the OpenAI-compatible API while retaining only necessary Tokenless behavior under `/v1/private/*`. | P1 |
 | [Agent Session Integrations](P1-agent-session-integrations.md) | Expose current Web Provider and later Harness operations through a caller-facing local MCP interface, then bind jobs to exact Agent projects, threads, and turns with Codex as the first exact identity integration. | P1 |
 | [Project Knowledge Graph and Provider Mirroring](P1-project-knowledge-graph-and-provider-mirroring.md) | Build a local project graph and maintain an approved, provider-ready project context mirror for web-based coding agents. | P1 |
 | [Optional Output Savings Measurement](P1-optional-output-savings-measurement.md) | Attribute versioned estimates of visible assistant output to durable jobs through a default-on, opt-out, lazily downloaded, low-duty-cycle local tokenizer. | P1 |
@@ -71,11 +70,11 @@ The highest-priority shared compatibility contract is listed first, followed by 
 ## Backlog and Archive
 
 - [Backlog](backlog/README.md): no roadmap is currently backlogged.
-- [Archive](archived/README.md): Runtime Package Boundary Refactor, Arena Full Capability Integration, Browser Connection Mode Capability Evaluation, and Provider Architecture and Registry were completed; the browser runtime/profile compatibility matrix and its Windows acceptance plan were superseded by native Chrome/Brave CDP connection; the Daemon Fastify HTTP API direction was cancelled.
+- [Archive](archived/README.md): Runtime Package Boundary Refactor, Arena Full Capability Integration, Browser Connection Mode Capability Evaluation, and Provider Architecture and Registry were completed; Web AI Interaction Protocol was superseded by OpenAI-compatible API Convergence; the browser runtime/profile compatibility matrix and its Windows acceptance plan were superseded by native Chrome/Brave CDP connection; the Daemon Fastify HTTP API direction was cancelled.
 
 ## How the Roadmaps Fit Together
 
-The completed [Runtime Package Boundary Refactor](archived/P0-runtime-package-boundary-refactor.md) separated CLI, server, Dashboard, Harness, and protocol source while preserving the existing product lines, HTTP contracts, package distribution, persistence, and real-provider behavior shown below. The later [CLI Universal API Convergence](P1-cli-universal-api-convergence.md) remains intentionally separate because it changes model-execution ownership after the zero-logic-change package move.
+The completed [Runtime Package Boundary Refactor](archived/P0-runtime-package-boundary-refactor.md) separated CLI, server, Dashboard, Harness, and shared-contract source while preserving product behavior. The active [OpenAI-compatible API Convergence](P1-openai-compatible-api-convergence.md) now owns the later execution change: CLI and Harness use OpenAI-compatible model/media interfaces wherever lossless, while Tokenless-only extensions live under `/v1/private/*`.
 
 ```mermaid
 flowchart LR
@@ -88,7 +87,7 @@ flowchart LR
   Scheduler["Durable scheduler<br/>identity + lanes + backpressure"]
   Context["Context envelope<br/>provenance + policy + limits"]
   Harness["Web agent harness<br/>instructions + durable tool loop"]
-  Protocol["Web AI Interaction Protocol<br/>provider turns + state + evidence"]
+  Private["Private provider-turn extensions<br/>/v1/private/provider-turn/*"]
   Tools["Tool runtime<br/>batched filesystem + MCP execution"]
   Graph["Project knowledge graph<br/>rules + architecture + symbols"]
   Browser["Browser connection<br/>native Chrome or Brave + explicit Cloak"]
@@ -112,8 +111,9 @@ flowchart LR
   API --> Harness
   Session --> Harness
   Context --> Harness
-  Harness --> Protocol
-  Protocol --> Scheduler
+  Harness --> API
+  Harness -. non-representable extensions .-> Private
+  Private --> Scheduler
   Harness --> Tools
   Tools --> Harness
   Context --> Provider
@@ -142,7 +142,7 @@ Shared substrate and later product work follow:
 5. Add the authenticated local web control plane over shared application services without exposing the daemon bearer token to browser JavaScript.
 6. Keep the daemon's small built-in HTTP server and make polling the explicit asynchronous caller and UI contract.
 7. Make the local daemon the durable authority for idempotency, admission, scheduling lanes, conversation identity, and recovery.
-8. Specify the minimal Web AI Interaction Protocol slice for capability negotiation, exact workspace and conversation identity, one durable provider turn, waiting, recovery, results, and evidence; adopt it on the current Provider side before treating the Harness dependency as stable.
+8. Use OpenAI-compatible chat, Responses, and images as the default Harness model/media interface; retain only current, non-representable waiting, attachment, identity, and lifecycle extensions under `/v1/private/provider-turn/*`.
 9. Build the ChatGPT-first web agent harness as one independently buildable deep module exposed through package, authenticated daemon HTTP, and CLI adapters; require existing `conversation.chat` plus `file.upload`, compile and upload one System Prompt Bundle containing the global Skill registry and event protocol, accept upstream Skill preselections and batched web-model `skillLoads`, deliver individual `SKILL.md` revisions on a best-effort basis, and add durable checkpoints, strict output validation, complete action batches, consolidated user interactions, rooted filesystem operations, resumable MCP tool execution, aggregate results, and finite loop limits; defer repository extraction until the interface is stable.
 10. Expand provider coverage using the same mode-specific real-session and evidence requirements as the existing providers; agent-harness eligibility closes independently from normal QA support.
 11. Add Codex guided delegation through a reversible inline `AGENTS.md` policy and native lifecycle hooks; bind exact project, thread, turn, and tool-call identity in normally launched Codex sessions, and use bounded App Server reads only to enrich session-tree and lineage while leaving ordinary Codex model traffic unchanged.

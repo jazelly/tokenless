@@ -19,7 +19,7 @@ import type {
   UiSession,
   UiSnapshot,
   UiJobSummary,
-} from 'tokenless-web-ai-interaction-protocol/ui-contract'
+} from 'tokenless-internal-contracts/ui'
 import type { SnapshotResult } from './types.js'
 
 export class DashboardRequestError extends Error {

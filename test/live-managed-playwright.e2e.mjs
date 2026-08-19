@@ -1881,7 +1881,7 @@ function imageGenerationResult(payload, provider) {
   assert.ok(Array.isArray(payload?.data) && payload.data.length > 0)
   assert.ok(payload.data.every((entry) => (
     typeof entry?.url === 'string' &&
-    entry.url.startsWith('/v1/asset/') &&
+    entry.url.startsWith('/v1/private/assets/') &&
     entry?.asset?.provider === provider
   )))
   return { artifacts: payload.data.map((entry) => entry.asset) }
@@ -2202,7 +2202,7 @@ async function assertArenaPersistedAssets(session, page, artifacts) {
     assert.equal(bytes.byteLength, artifact.byteSize)
     assert.equal(createHash('sha256').update(bytes).digest('hex'), artifact.sha256)
     const assetRoute = artifact.assetRef.slice('assets/'.length)
-    const response = await fetch(`${session.daemonUrl}/v1/asset/${assetRoute}`, {
+    const response = await fetch(`${session.daemonUrl}/v1/private/assets/${assetRoute}`, {
       headers: { authorization: `Bearer ${daemonToken}` },
     })
     assert.equal(response.status, 200)
@@ -2211,7 +2211,7 @@ async function assertArenaPersistedAssets(session, page, artifacts) {
     const decoded = await decodeImageBytesInBrowser(page, bytes, artifact.mediaType)
     assert.deepEqual([decoded.width, decoded.height], [artifact.width, artifact.height])
   }
-  const traversal = await fetch(`${session.daemonUrl}/v1/asset/${encodeURIComponent('../tokenless.sqlite3')}/unused/unused/0.png`, {
+  const traversal = await fetch(`${session.daemonUrl}/v1/private/assets/${encodeURIComponent('../tokenless.sqlite3')}/unused/unused/0.png`, {
     headers: { authorization: `Bearer ${daemonToken}` },
   })
   assert.equal(traversal.status, 400)
@@ -2225,7 +2225,7 @@ async function assertPersistedImageAssets(session, page, artifacts) {
     assert.equal(bytes.byteLength, artifact.byteSize)
     assert.equal(createHash('sha256').update(bytes).digest('hex'), artifact.sha256)
     const assetRoute = artifact.assetRef.slice('assets/'.length)
-    const response = await fetch(`${session.daemonUrl}/v1/asset/${assetRoute}`, {
+    const response = await fetch(`${session.daemonUrl}/v1/private/assets/${assetRoute}`, {
       headers: { authorization: `Bearer ${daemonToken}` },
     })
     assert.equal(response.status, 200)

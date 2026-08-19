@@ -1,7 +1,7 @@
 {
   "files": [],
   "references": [
-    { "path": "./packages/protocol" },
+    { "path": "./packages/contracts" },
     { "path": "./packages/server" },
     { "path": "./packages/cli" },
     { "path": "./packages/dashboard" },

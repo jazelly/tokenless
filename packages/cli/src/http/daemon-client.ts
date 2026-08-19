@@ -253,27 +253,27 @@ export async function readDaemonToken({ homeDir = tokenlessHome() }: DaemonClien
 
 export async function startAgentRun(options: AgentRunClientOptions) {
   try {
-    return await agentRunRequest(options, '/v1/agent/runs', 'POST')
+    return await agentRunRequest(options, '/v1/private/agent/runs', 'POST')
   } catch (error) {
     if (!(error as DaemonError)?.retryable) throw error
-    return agentRunRequest(options, '/v1/agent/runs', 'POST')
+    return agentRunRequest(options, '/v1/private/agent/runs', 'POST')
   }
 }
 
 export async function readAgentRun(options: AgentRunClientOptions & { runId: string }) {
-  return agentRunRequest(options, `/v1/agent/runs/${encodeURIComponent(options.runId)}`, 'GET')
+  return agentRunRequest(options, `/v1/private/agent/runs/${encodeURIComponent(options.runId)}`, 'GET')
 }
 
 export async function readAgentRunByAdmission(options: AgentRunClientOptions & { admissionRef: string }) {
-  return agentRunRequest(options, `/v1/agent/admissions/${encodeURIComponent(options.admissionRef)}`, 'GET')
+  return agentRunRequest(options, `/v1/private/agent/admissions/${encodeURIComponent(options.admissionRef)}`, 'GET')
 }
 
 export async function resumeAgentRun(options: AgentRunClientOptions & { runId: string }) {
-  return agentRunRequest(options, `/v1/agent/runs/${encodeURIComponent(options.runId)}/resume`, 'POST')
+  return agentRunRequest(options, `/v1/private/agent/runs/${encodeURIComponent(options.runId)}/resume`, 'POST')
 }
 
 export async function cancelAgentRun(options: AgentRunClientOptions & { runId: string }) {
-  return agentRunRequest({ ...options, body: {} }, `/v1/agent/runs/${encodeURIComponent(options.runId)}/cancel`, 'POST')
+  return agentRunRequest({ ...options, body: {} }, `/v1/private/agent/runs/${encodeURIComponent(options.runId)}/cancel`, 'POST')
 }
 
 async function agentRunRequest(options: AgentRunClientOptions, requestPath: string, method: 'GET' | 'POST') {
@@ -422,7 +422,7 @@ export async function issueFeatureBenchChannel({
     expiresAt: string
   }>({
     daemonUrl: daemon.daemonUrl,
-    path: '/v1/featurebench/channels',
+    path: '/v1/private/featurebench/channels',
     body: {
       instanceId,
       benchmarkRunId,

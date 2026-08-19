@@ -10,7 +10,7 @@ import type {
   UiProfileCreate,
   UiProfileUpdate,
   UiProviderSelection,
-} from 'tokenless-web-ai-interaction-protocol/ui-contract'
+} from 'tokenless-internal-contracts/ui'
 import { DaemonError, daemonErrorCodeRetryable, daemonErrorStatus } from '../../errors.js'
 import { UiSessionManager } from './session.js'
 import type { IncomingMessage, ServerResponse } from 'node:http'

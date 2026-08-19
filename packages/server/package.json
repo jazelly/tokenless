@@ -15,7 +15,7 @@
   "dependencies": {
     "impers": "0.1.0",
     "playwright-core": "1.61.1",
-    "tokenless-web-ai-interaction-protocol": "0.0.0"
+    "tokenless-internal-contracts": "0.0.0"
   },
   "engines": {
     "node": ">=22.13.0"

@@ -9,11 +9,11 @@ import { fileURLToPath } from 'node:url'
 import { execDeclaredNpmSync } from './helpers/declared-npm.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const packageDirectory = path.join(root, 'packages', 'protocol')
-const packageName = 'tokenless-web-ai-interaction-protocol'
+const packageDirectory = path.join(root, 'packages', 'contracts')
+const packageName = 'tokenless-internal-contracts'
 
-test('packed protocol package validates committed V0 lifecycles through its root export', async () => {
-  const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-web-ai-interaction-protocol-'))
+test('packed contracts package validates committed private provider-turn V0 lifecycles', async () => {
+  const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-internal-contracts-'))
   try {
     const packedDirectory = path.join(temporaryDirectory, 'packed')
     const installedDirectory = path.join(temporaryDirectory, 'installed')
@@ -44,8 +44,8 @@ function packedConsumerSource() {
 import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import * as protocol from '${packageName}'
-import { createLocalHttpClient } from '${packageName}/local-http'
+import * as protocol from '${packageName}/private/provider-turn'
+import { createLocalHttpClient } from '${packageName}/private/provider-turn-http'
 
 const packageRoot = path.join(process.cwd(), 'node_modules', '${packageName}')
 const examplesDirectory = path.join(packageRoot, 'examples', 'v0')

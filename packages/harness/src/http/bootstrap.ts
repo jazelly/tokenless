@@ -1,12 +1,12 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 
-import type { StartTurnRequest, TurnState } from 'tokenless-web-ai-interaction-protocol'
-import { LocalHttpError } from 'tokenless-web-ai-interaction-protocol/local-http'
+import type { StartTurnRequest, TurnState } from 'tokenless-internal-contracts/private/provider-turn'
+import { LocalHttpError } from 'tokenless-internal-contracts/private/provider-turn-http'
 import {
   MarkerExtractionError,
   extractExactlyOneMarkedValue,
-} from 'tokenless-web-ai-interaction-protocol/structured-control'
+} from 'tokenless-internal-contracts/structured-json'
 
 import {
   HarnessSkillError,
@@ -49,7 +49,7 @@ export async function startHarnessLocalHttpBootstrap(
 ): Promise<TurnState> {
   assertHarnessBootstrapStaticInput(input)
 
-  const { createLocalHttpClient } = await import('tokenless-web-ai-interaction-protocol/local-http')
+  const { createLocalHttpClient } = await import('tokenless-internal-contracts/private/provider-turn-http')
   const client = createLocalHttpClient({ baseUrl: input.baseUrl, token: input.token })
   const binding = await client.bind(input.provider, input.profileId)
   assertRequiredCapabilities(binding.capabilities.supportedCapabilities)
@@ -98,12 +98,12 @@ export async function startHarnessLocalHttpBootstrap(
 }
 
 export async function readHarnessLocalHttpTurn(input: ReadHarnessLocalHttpTurnInput): Promise<TurnState> {
-  const { createLocalHttpClient } = await import('tokenless-web-ai-interaction-protocol/local-http')
+  const { createLocalHttpClient } = await import('tokenless-internal-contracts/private/provider-turn-http')
   return createLocalHttpClient({ baseUrl: input.baseUrl, token: input.token }).read(input.turnRef)
 }
 
 export async function continueHarnessLocalHttpTurn(input: ContinueHarnessLocalHttpTurnInput): Promise<HarnessLocalHttpContinuationStart> {
-  const { createLocalHttpClient } = await import('tokenless-web-ai-interaction-protocol/local-http')
+  const { createLocalHttpClient } = await import('tokenless-internal-contracts/private/provider-turn-http')
   const client = createLocalHttpClient({ baseUrl: input.baseUrl, token: input.token })
   if (!Number.isSafeInteger(input.turn) || input.turn < 2 || typeof input.nonce !== 'string' || input.nonce.length < 8 || input.nonce.length > 256) {
     throw new HarnessSkillError('harness_continuation_correlation_invalid', 'Harness continuation requires turn >= 2 and an 8-256 character nonce.')
@@ -166,7 +166,7 @@ async function providerPost<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 export async function cancelHarnessLocalHttpTurn(input: ReadHarnessLocalHttpTurnInput): Promise<TurnState> {
-  const { createLocalHttpClient } = await import('tokenless-web-ai-interaction-protocol/local-http')
+  const { createLocalHttpClient } = await import('tokenless-internal-contracts/private/provider-turn-http')
   return createLocalHttpClient({ baseUrl: input.baseUrl, token: input.token }).cancel(input.turnRef)
 }
 
@@ -243,7 +243,7 @@ export async function completeHarnessLocalHttpContinuation(
 }
 
 async function stageHarnessAttachments(
-  client: ReturnType<typeof import('tokenless-web-ai-interaction-protocol/local-http')['createLocalHttpClient']>,
+  client: ReturnType<typeof import('tokenless-internal-contracts/private/provider-turn-http')['createLocalHttpClient']>,
   providerBindingRef: string,
   attachments: readonly {
   kind: 'system_prompt' | 'skill'
@@ -368,7 +368,7 @@ async function canonicalStartRequest({
   text: string
   attachments: readonly [{ kind: 'system_prompt'; name: string; attachmentRef: string; mediaType: 'text/markdown'; byteLength: number; sha256: string }, ...Array<{ kind: 'skill'; name: string; attachmentRef: string; mediaType: 'text/markdown'; byteLength: number; sha256: string }>]
 }): Promise<StartTurnRequest> {
-  const { WEB_AI_INTERACTION_PROTOCOL_V0, parseStartTurnRequest } = await import('tokenless-web-ai-interaction-protocol')
+  const { WEB_AI_INTERACTION_PROTOCOL_V0, parseStartTurnRequest } = await import('tokenless-internal-contracts/private/provider-turn')
   return parseStartTurnRequest({
     protocol: WEB_AI_INTERACTION_PROTOCOL_V0,
     requestRef,

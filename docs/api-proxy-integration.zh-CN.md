@@ -120,7 +120,7 @@ Browser 请求可带一个 `reference_image`，格式为 PNG、JPEG 或 WebP 的
 
 Direct V1 接受 `tokenless/auto`、`tokenless/pollinations` 或 `tokenless/pollinations/sana`；`size` 可以省略或设为 `768x768`。私有实现不属于 public schema 或 response。
 
-两种 mode 都返回 authenticated `/v1/asset/...` 下的 `data[].url` 与共用 `data[].asset` metadata。Browser auto 选择排名最高的 eligible route；由于图片 surface 需要 provider-specific action，目前不提供跨 provider fallback。
+两种 mode 都返回 authenticated `/v1/private/assets/...` 下的 `data[].url` 与共用 `data[].asset` metadata。Browser auto 选择排名最高的 eligible route；由于图片 surface 需要 provider-specific action，目前不提供跨 provider fallback。
 
 ## Model 命名
 

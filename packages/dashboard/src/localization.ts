@@ -1,4 +1,4 @@
-import { ERROR_SUMMARIES_ZH } from 'tokenless-web-ai-interaction-protocol/localized-errors'
+import { ERROR_SUMMARIES_ZH } from 'tokenless-internal-contracts/localized-errors'
 
 type JsonRecord = Record<string, any>
 type Language = 'en' | 'zh-CN'

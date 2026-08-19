@@ -7,7 +7,7 @@ import path from 'node:path'
 import test from 'node:test'
 import { promisify } from 'node:util'
 
-import { createLocalHttpClient } from 'tokenless-web-ai-interaction-protocol/local-http'
+import { createLocalHttpClient } from 'tokenless-internal-contracts/private/provider-turn-http'
 import {
   createLocalHttpProviderTurnClient,
   createAgentRunHttpHandler,

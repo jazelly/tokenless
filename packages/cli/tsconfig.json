@@ -6,10 +6,10 @@
     "outDir": "dist",
     "types": ["node"],
     "paths": {
-      "#tokenless-protocol/*": ["../protocol/dist/src/*"],
+      "#tokenless-contracts/*": ["../contracts/dist/src/*"],
       "#tokenless-server/*": ["../server/dist/src/*"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.mts"],
-  "references": [{ "path": "../protocol" }, { "path": "../server" }]
+  "references": [{ "path": "../contracts" }, { "path": "../server" }]
 }

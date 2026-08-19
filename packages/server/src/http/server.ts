@@ -29,7 +29,7 @@ import { TokenlessApplicationServices } from '../application/services.js'
 import { TokenlessUiServer } from './ui/server.js'
 import { UiSessionManager } from './ui/session.js'
 import { OutputSavingsProcessor } from '../output-savings/processor.js'
-import { WebAiInteractionV0Adapter } from './web-ai/v0.js'
+import { PrivateProviderTurnV0Adapter } from './private/provider-turn/v0.js'
 import {
   ApiProxyAdapter,
   ApiProxyError,
@@ -147,12 +147,12 @@ export async function serveHttp({
     sessions: new UiSessionManager(),
     origin,
   })
-  const webAi = new WebAiInteractionV0Adapter(store)
-  await webAi.initializeCleanup()
+  const privateProviderTurn = new PrivateProviderTurnV0Adapter(store)
+  await privateProviderTurn.initializeCleanup()
   const apiProxy = new ApiProxyAdapter(store, async () => await runtimeController?.wake(), g4fService?.client)
   const imageGeneration = new ImageGenerationAdapter(store, async () => await runtimeController?.wake(), g4fService?.client)
   server = http.createServer((request, response) => {
-    void handleRequest(store, close, () => active, deactivate, runtimeController, g4fService, uiServer, webAi, apiProxy, imageGeneration, featureBench, resolveAgentRunHandler, origin(), request, response)
+    void handleRequest(store, close, () => active, deactivate, runtimeController, g4fService, uiServer, privateProviderTurn, apiProxy, imageGeneration, featureBench, resolveAgentRunHandler, origin(), request, response)
   })
   await new Promise<void>((resolve, reject) => {
     const onError = (error: Error) => {
@@ -218,7 +218,7 @@ async function handleRequest(
   runtimeController: BrowserRuntimeController | undefined,
   g4fService: G4fServiceProcess | undefined,
   uiServer: TokenlessUiServer,
-  webAi: WebAiInteractionV0Adapter,
+  privateProviderTurn: PrivateProviderTurnV0Adapter,
   apiProxy: ApiProxyAdapter,
   imageGeneration: ImageGenerationAdapter,
   featureBench: FeatureBenchChannelManager,
@@ -286,18 +286,18 @@ async function handleRequest(
 
     requireControlAuth(store, request)
 
-    if (url.pathname.startsWith('/v1/agent/')) {
+    if (url.pathname.startsWith('/v1/private/agent/')) {
       const handler = await resolveAgentRunHandler?.(daemonOrigin)
       const handled = handler ? await handler(request, response, method, url) : false
       if (handled) return
       throw invalidInput('Harness route is invalid')
     }
 
-    const imageAssetRoute = /^\/v1\/asset(?:\/.*)?$/u.test(url.pathname)
+    const imageAssetRoute = /^\/v1\/private\/assets(?:\/.*)?$/u.test(url.pathname)
     if (method === 'GET' && imageAssetRoute) {
       let assetRef: string
       try {
-        const segments = url.pathname.split('/').slice(3).map((segment) => decodeURIComponent(segment))
+        const segments = url.pathname.split('/').slice(4).map((segment) => decodeURIComponent(segment))
         if (segments.length !== 4) throw new Error('invalid asset path')
         assetRef = ['assets', ...segments].join('/')
       } catch {
@@ -327,7 +327,7 @@ async function handleRequest(
       return
     }
 
-    if (method === 'POST' && url.pathname === '/v1/featurebench/channels') {
+    if (method === 'POST' && url.pathname === '/v1/private/featurebench/channels') {
       const body = await readJsonObject(request)
       const allowed = new Set([
         'instanceId',
@@ -356,13 +356,13 @@ async function handleRequest(
       return
     }
 
-    if (url.pathname.startsWith('/v1/web-ai/')) {
+    if (url.pathname.startsWith('/v1/private/provider-turn/')) {
       try {
-        const handled = await handleWebAiRequest(webAi, runtimeController, request, response, method, url)
+        const handled = await handlePrivateProviderTurnRequest(privateProviderTurn, runtimeController, request, response, method, url)
         if (handled) return
-        writeWebAiError(response, invalidInput('web ai route is invalid'))
+        writePrivateProviderTurnError(response, invalidInput('private provider-turn route is invalid'))
       } catch (error) {
-        writeWebAiError(response, error)
+        writePrivateProviderTurnError(response, error)
       }
       return
     }
@@ -599,29 +599,29 @@ async function handleRequest(
   }
 }
 
-async function handleWebAiRequest(
-  webAi: WebAiInteractionV0Adapter,
+async function handlePrivateProviderTurnRequest(
+  providerTurn: PrivateProviderTurnV0Adapter,
   runtimeController: BrowserRuntimeController | undefined,
   request: IncomingMessage,
   response: ServerResponse,
   method: string,
   url: URL,
 ) {
-  if (method === 'POST' && url.pathname === '/v1/web-ai/bindings') {
-    writeJson(response, 200, await webAi.bind(await readJsonObject(request)))
+  if (method === 'POST' && url.pathname === '/v1/private/provider-turn/bindings') {
+    writeJson(response, 200, await providerTurn.bind(await readJsonObject(request)))
     return true
   }
-  const bindingRoute = /^\/v1\/web-ai\/bindings\/([^/]+)(?:\/(capabilities|attachments|turns))?$/.exec(url.pathname)
+  const bindingRoute = /^\/v1\/private\/provider-turn\/bindings\/([^/]+)(?:\/(capabilities|attachments|turns))?$/.exec(url.pathname)
   if (bindingRoute) {
     const bindingRef = decodeURIComponent(bindingRoute[1] ?? '')
     const action = bindingRoute[2] ?? null
     if (method === 'GET' && action === 'capabilities') {
-      writeJson(response, 200, await webAi.capabilities(bindingRef))
+      writeJson(response, 200, await providerTurn.capabilities(bindingRef))
       return true
     }
     if (method === 'POST' && action === 'attachments') {
       try {
-        writeJson(response, 200, { attachment: await webAi.stage(
+        writeJson(response, 200, { attachment: await providerTurn.stage(
           bindingRef,
           request,
           request.headers['content-type'] as string | undefined,
@@ -634,37 +634,37 @@ async function handleWebAiRequest(
       return true
     }
     if (method === 'POST' && action === 'turns') {
-      const turn = await webAi.start(bindingRef, await readJsonObject(request))
+      const turn = await providerTurn.start(bindingRef, await readJsonObject(request))
       await runtimeController?.wake()
       writeJson(response, 200, { turn })
       return true
     }
   }
-  const requestRoute = /^\/v1\/web-ai\/requests\/([^/]+)\/cancel$/.exec(url.pathname)
+  const requestRoute = /^\/v1\/private\/provider-turn\/requests\/([^/]+)\/cancel$/.exec(url.pathname)
   if (requestRoute && method === 'POST') {
     const rawBody = await readBody(request)
     if (rawBody && Object.keys(parseJsonObject(rawBody)).length > 0) throw invalidInput('web ai request cancel body must be empty')
-    writeJson(response, 200, await webAi.cancelRequest(decodeURIComponent(requestRoute[1] ?? '')))
+    writeJson(response, 200, await providerTurn.cancelRequest(decodeURIComponent(requestRoute[1] ?? '')))
     return true
   }
-  const turnRoute = /^\/v1\/web-ai\/turns\/([^/]+)(?:\/(cancel|resume))?$/.exec(url.pathname)
+  const turnRoute = /^\/v1\/private\/provider-turn\/turns\/([^/]+)(?:\/(cancel|resume))?$/.exec(url.pathname)
   if (turnRoute) {
     const turnRef = decodeURIComponent(turnRoute[1] ?? '')
     const action = turnRoute[2] ?? null
     if (method === 'GET' && action === null) {
-      writeJson(response, 200, { turn: await webAi.read(turnRef) })
+      writeJson(response, 200, { turn: await providerTurn.read(turnRef) })
       return true
     }
     if (method === 'POST' && action === 'cancel') {
       const rawBody = await readBody(request)
       if (rawBody && Object.keys(parseJsonObject(rawBody)).length > 0) throw invalidInput('web ai cancel body must be empty')
-      writeJson(response, 200, { turn: await webAi.cancel(turnRef) })
+      writeJson(response, 200, { turn: await providerTurn.cancel(turnRef) })
       return true
     }
     if (method === 'POST' && action === 'resume') {
       const rawBody = await readBody(request)
       if (rawBody && Object.keys(parseJsonObject(rawBody)).length > 0) throw invalidInput('web ai resume body must be empty')
-      const turn = webAi.resume(turnRef)
+      const turn = providerTurn.resume(turnRef)
       await runtimeController?.wake()
       writeJson(response, 200, { turn })
       return true
@@ -673,7 +673,7 @@ async function handleWebAiRequest(
   return false
 }
 
-function writeWebAiError(response: ServerResponse, error: unknown) {
+function writePrivateProviderTurnError(response: ServerResponse, error: unknown) {
   const daemonError = toDaemonError(error)
   const requestRefConflict = error instanceof WebAiRequestRefConflictError
   const requestCancelled = error instanceof WebAiRequestCancelledError

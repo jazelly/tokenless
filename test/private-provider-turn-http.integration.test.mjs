@@ -7,14 +7,14 @@ import test from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import Ajv2020 from 'ajv/dist/2020.js'
 import addFormats from 'ajv-formats'
-import { parseStartTurnRequest, parseTurnState } from 'tokenless-web-ai-interaction-protocol'
-import { LocalHttpError, createLocalHttpClient } from 'tokenless-web-ai-interaction-protocol/local-http'
+import { parseStartTurnRequest, parseTurnState } from 'tokenless-internal-contracts/private/provider-turn'
+import { LocalHttpError, createLocalHttpClient } from 'tokenless-internal-contracts/private/provider-turn-http'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const daemonServer = pathToFileURL(path.join(root, 'packages/server/dist/src/http/server.js')).href
 const daemonStore = pathToFileURL(path.join(root, 'packages/server/dist/src/jobs/store.js')).href
 const profileRegistry = pathToFileURL(path.join(root, 'packages/server/dist/src/browser/profiles/registry.js')).href
-const startExample = JSON.parse(fs.readFileSync(path.join(root, 'packages/protocol/examples/v0/start-turn-request.json'), 'utf8'))
+const startExample = JSON.parse(fs.readFileSync(path.join(root, 'packages/contracts/examples/v0/start-turn-request.json'), 'utf8'))
 const markerName = '.tokenless-web-ai-v0-stage'
 const maxStageBytes = 1024 * 1024
 
@@ -72,7 +72,7 @@ test('oversize stage is bounded and sanitized', async () => {
       await assertLocalHttpError(client.stage(binding.providerBindingRef, bytes), 400, 'invalid_input')
       assert.deepEqual(markerBundles(homeDir), before)
       assert.equal(daemon.store.webAiCounts().stagedAttachments, 0)
-      const raw = await fetch(`${daemon.origin}/v1/web-ai/bindings/${encodeURIComponent(binding.providerBindingRef)}/attachments`, {
+      const raw = await fetch(`${daemon.origin}/v1/private/provider-turn/bindings/${encodeURIComponent(binding.providerBindingRef)}/attachments`, {
         method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'text/markdown' }, body: bytes,
       })
       assert.equal(raw.status, 400)
@@ -144,10 +144,12 @@ test('unsupported binding stages through local-http but fails closed before job 
       const token = fs.readFileSync(path.join(homeDir, 'daemon.token'), 'utf8').trim()
       const client = createLocalHttpClient({ baseUrl: daemon.origin, token })
       const body = JSON.stringify({ provider: 'perplexity', profileId: profile.id })
-      const missing = await fetch(`${daemon.origin}/v1/web-ai/bindings`, { method: 'POST', headers: { 'content-type': 'application/json' }, body })
+      const missing = await fetch(`${daemon.origin}/v1/private/provider-turn/bindings`, { method: 'POST', headers: { 'content-type': 'application/json' }, body })
       assert.equal(missing.status, 401)
-      const wrong = await fetch(`${daemon.origin}/v1/web-ai/bindings`, { method: 'POST', headers: { authorization: 'Bearer wrong', 'content-type': 'application/json' }, body })
+      const wrong = await fetch(`${daemon.origin}/v1/private/provider-turn/bindings`, { method: 'POST', headers: { authorization: 'Bearer wrong', 'content-type': 'application/json' }, body })
       assert.equal(wrong.status, 403)
+      const legacy = await fetch(`${daemon.origin}/v1/web-ai/bindings`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body })
+      assert.equal(legacy.status, 404)
       const binding = await client.bind('perplexity', profile.id)
       assert.deepEqual(binding.capabilities.supportedCapabilities, ['conversation.chat'])
       const attachment = await client.stage(binding.providerBindingRef, new TextEncoder().encode('# system prompt\n'))
@@ -224,14 +226,14 @@ test('authenticated V0 routes sanitize internal configuration failures', async (
       const poison = `broken config ${homeDir} ${token}`
       fs.writeFileSync(path.join(homeDir, 'config.json'), poison)
       const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' }
-      const bind = await fetch(`${daemon.origin}/v1/web-ai/bindings`, {
+      const bind = await fetch(`${daemon.origin}/v1/private/provider-turn/bindings`, {
         method: 'POST', headers, body: JSON.stringify({ provider: 'chatgpt', profileId: '00000000-0000-0000-0000-000000000000' }),
       })
       assert.equal(bind.status, 500)
       const bindBody = await bind.json()
       assert.deepEqual(bindBody.error, { code: 'local_http_error', message: 'The local Web AI service encountered an error.', retryable: true })
       assertSanitized(bindBody, token, poison)
-      const capabilities = await fetch(`${daemon.origin}/v1/web-ai/bindings/${encodeURIComponent(binding.providerBindingRef)}/capabilities`, { headers })
+      const capabilities = await fetch(`${daemon.origin}/v1/private/provider-turn/bindings/${encodeURIComponent(binding.providerBindingRef)}/capabilities`, { headers })
       assert.equal(capabilities.status, 500)
       const capabilitiesBody = await capabilities.json()
       assert.deepEqual(capabilitiesBody.error, { code: 'local_http_error', message: 'The local Web AI service encountered an error.', retryable: true })
@@ -262,7 +264,7 @@ test('canonical start conformance rejects the same adversarial corpus at core, c
       for (const invalid of corpus) {
         assert.throws(() => parseStartTurnRequest(invalid))
         await assert.rejects(client.start(binding.providerBindingRef, invalid))
-        const response = await fetch(`${daemon.origin}/v1/web-ai/bindings/${encodeURIComponent(binding.providerBindingRef)}/turns`, {
+        const response = await fetch(`${daemon.origin}/v1/private/provider-turn/bindings/${encodeURIComponent(binding.providerBindingRef)}/turns`, {
           method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify(invalid),
         })
         assert.equal(response.status, 400)
@@ -336,7 +338,7 @@ test('requestRef replays one durable turn across restart and rejects a conflicti
       const conflict = requestFor(binding, replayAttachment, '7')
       conflict.bootstrap.text = 'different text'
       await assertRequestRefConflict(restartedClient, binding.providerBindingRef, conflict)
-      const response = await fetch(`${daemon.origin}/v1/web-ai/bindings/${encodeURIComponent(binding.providerBindingRef)}/turns`, {
+      const response = await fetch(`${daemon.origin}/v1/private/provider-turn/bindings/${encodeURIComponent(binding.providerBindingRef)}/turns`, {
         method: 'POST',
         headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
         body: JSON.stringify(conflict),
@@ -363,7 +365,7 @@ test('requestRef cancellation durably fences starts and returns compact cancella
     try {
       const { client, binding, token } = await configuredClient(homeDir, daemon, 'chatgpt', 'request-cancel')
       const requestRef = `request:${'c'.repeat(32)}`
-      const endpoint = `${daemon.origin}/v1/web-ai/requests/${encodeURIComponent(requestRef)}/cancel`
+      const endpoint = `${daemon.origin}/v1/private/provider-turn/requests/${encodeURIComponent(requestRef)}/cancel`
       const unauthorized = await fetch(endpoint, {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
       })
@@ -415,7 +417,7 @@ test('requestRef cancellation durably fences starts and returns compact cancella
 
       const liveAttachment = await restartedClient.stage(binding.providerBindingRef, new TextEncoder().encode('# live system\n'))
       const live = await restartedClient.start(binding.providerBindingRef, requestFor(binding, liveAttachment, 'd'))
-      const raw = await fetch(`${daemon.origin}/v1/web-ai/requests/${encodeURIComponent(`request:${'d'.repeat(32)}`)}/cancel`, {
+      const raw = await fetch(`${daemon.origin}/v1/private/provider-turn/requests/${encodeURIComponent(`request:${'d'.repeat(32)}`)}/cancel`, {
         method: 'POST',
         headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
         body: '{}',
@@ -552,7 +554,7 @@ function requestFor(binding, attachment, digit) {
 }
 
 function readCanonicalExample(name) {
-  return JSON.parse(fs.readFileSync(path.join(root, 'packages/protocol/examples/v0', name), 'utf8'))
+  return JSON.parse(fs.readFileSync(path.join(root, 'packages/contracts/examples/v0', name), 'utf8'))
 }
 
 function openApiTurnValidator() {

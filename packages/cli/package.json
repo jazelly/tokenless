@@ -15,7 +15,7 @@
     ".": "./dist/src/index.js"
   },
   "imports": {
-    "#tokenless-protocol/*": "./dist/protocol/src/*",
+    "#tokenless-contracts/*": "./dist/contracts/src/*",
     "#tokenless-server/*": "./dist/server/src/*"
   },
   "files": [
@@ -23,7 +23,7 @@
     "dist/server",
     "dist/schemas",
     "dist/harness",
-    "dist/protocol",
+    "dist/contracts",
     "dist/runtime",
     "README.md",
     "README.zh-CN.md",

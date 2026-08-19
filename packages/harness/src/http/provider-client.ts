@@ -1,5 +1,5 @@
-import type { TurnState } from 'tokenless-web-ai-interaction-protocol'
-import { LocalHttpError, createLocalHttpClient } from 'tokenless-web-ai-interaction-protocol/local-http'
+import type { TurnState } from 'tokenless-internal-contracts/private/provider-turn'
+import { LocalHttpError, createLocalHttpClient } from 'tokenless-internal-contracts/private/provider-turn-http'
 
 import {
   PROVIDER_TURN_PROTOCOL,

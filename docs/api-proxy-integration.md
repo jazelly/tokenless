@@ -120,7 +120,7 @@ Browser requests may include one `reference_image` as a PNG, JPEG, or WebP base6
 
 Direct V1 accepts `tokenless/auto`, `tokenless/pollinations`, or `tokenless/pollinations/sana`; `size` may be omitted or set to `768x768`. The private implementation is not part of the public schema or response.
 
-Both modes return `data[].url` under the authenticated `/v1/asset/...` route and common `data[].asset` metadata. Browser auto selects the highest-ranked eligible route; cross-provider fallback remains unavailable because image surfaces require provider-specific actions.
+Both modes return `data[].url` under the authenticated `/v1/private/assets/...` route and common `data[].asset` metadata. Browser auto selects the highest-ranked eligible route; cross-provider fallback remains unavailable because image surfaces require provider-specific actions.
 
 ## Model naming
 

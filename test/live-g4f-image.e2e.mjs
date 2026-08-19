@@ -57,7 +57,7 @@ test('real G4F image generation persists a task and conversation scoped Tokenles
   assert.equal(JSON.stringify(payload).includes('PollinationsImage'), false)
   const result = payload.data[0]
   const asset = result.asset
-  assert.equal(result.url, `/${asset.assetRef}`.replace('/assets/', '/v1/asset/'))
+  assert.equal(result.url, `/${asset.assetRef}`.replace('/assets/', '/v1/private/assets/'))
   assert.equal(asset.provider, 'pollinations')
   assert.equal(asset.taskId, taskId)
   assert.match(asset.conversationId, /^pollinations-sana-/)

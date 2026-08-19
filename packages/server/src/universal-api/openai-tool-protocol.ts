@@ -1,4 +1,4 @@
-import { createAjv2020, parseStrictJson } from 'tokenless-web-ai-interaction-protocol/structured-control'
+import { createAjv2020, parseStrictJson } from 'tokenless-internal-contracts/structured-json'
 
 type SchemaIssue = {
   instancePath: string

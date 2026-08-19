@@ -1,16 +1,16 @@
 {
-  "name": "tokenless-web-ai-interaction-protocol",
+  "name": "tokenless-internal-contracts",
   "version": "0.0.0",
   "private": true,
-  "description": "Provisional internal Web AI interaction protocol bindings and canonical schemas.",
+  "description": "Private Tokenless cross-package contracts and transport adapters.",
   "type": "module",
   "license": "MIT",
   "exports": {
-    ".": "./dist/src/index.js",
-    "./local-http": "./dist/src/local-http.js",
+    "./private/provider-turn": "./dist/src/private/provider-turn/index.js",
+    "./private/provider-turn-http": "./dist/src/private/provider-turn/http-client.js",
     "./localized-errors": "./dist/src/localized-errors.js",
-    "./structured-control": "./dist/src/structured-control.js",
-    "./ui-contract": "./dist/src/ui-contract.js"
+    "./structured-json": "./dist/src/structured-json.js",
+    "./ui": "./dist/src/ui.js"
   },
   "files": [
     "dist/src",

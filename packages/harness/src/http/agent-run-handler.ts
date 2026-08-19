@@ -29,8 +29,8 @@ export function createAgentRunHttpHandler({
   const activeRuns = new Map<string, Promise<void>>()
 
   return async (request, response, method, url) => {
-    const route = /^\/v1\/agent\/runs(?:\/([^/]+)(?:\/(resume|cancel))?)?$/.exec(url.pathname)
-    const admissionRoute = /^\/v1\/agent\/admissions\/([^/]+)$/.exec(url.pathname)
+    const route = /^\/v1\/private\/agent\/runs(?:\/([^/]+)(?:\/(resume|cancel))?)?$/.exec(url.pathname)
+    const admissionRoute = /^\/v1\/private\/agent\/admissions\/([^/]+)$/.exec(url.pathname)
     if (!route && !admissionRoute) return false
 
     const harness = await openWebAgentHarness({

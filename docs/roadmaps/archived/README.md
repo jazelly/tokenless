@@ -24,6 +24,7 @@ Archived roadmap filenames retain the `P0-` through `P3-` product-priority prefi
 
 | Roadmap | Disposition |
 | --- | --- |
+| [Web AI Interaction Protocol](P0-web-ai-interaction-protocol.md) | Superseded 2026-08-19 by [OpenAI-compatible API Convergence](../P1-openai-compatible-api-convergence.md); implemented provider-turn contracts remain private Tokenless extensions rather than a second canonical model API. |
 | [Runtime Package Boundary Refactor](P0-runtime-package-boundary-refactor.md) | Completed 2026-08-18 after server, CLI, Dashboard, Harness, and protocol ownership moved behind the existing HTTP boundaries and local, packed-install, persistent-browser, and representative real-provider gates passed without functional regression. |
 | [Arena Full Capability Integration](P0-arena-full-capability-integration.md) | Completed 2026-08-11 after Direct, Search, comparison, Image, Code, Agent, Video, task routes, and OpenAI-compatible chat passed real-provider or authenticated local-HTTP boundaries and independent review. |
 | [Browser Runtime Selection and Cloak Integration](P0-browser-runtime-selection-and-cloak.md) | Superseded 2026-08-09 by setup-time native Chrome/Brave selection and browser-managed CDP connection; the source-profile compatibility matrix is retired. |

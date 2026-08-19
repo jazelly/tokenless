@@ -199,12 +199,12 @@ export class FeatureBenchChannelManager {
       const method = request.method ?? 'GET'
       const pathname = new URL(request.url ?? '/', 'http://featurebench.local').pathname
       const channel = this.authorize(request)
-      if (method === 'POST' && pathname === '/v1/featurebench/turn') {
+      if (method === 'POST' && pathname === '/v1/private/featurebench/turn') {
         const body = await readJsonObject(request)
         writeJson(response, 200, await this.turn(channel, body))
         return
       }
-      if (method === 'POST' && pathname === '/v1/featurebench/turn/complete') {
+      if (method === 'POST' && pathname === '/v1/private/featurebench/turn/complete') {
         this.channels.delete(channel.tokenHash.toString('hex'))
         writeJson(response, 200, { protocol: FEATUREBENCH_PROTOCOL, completed: true })
         return

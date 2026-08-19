@@ -5,6 +5,8 @@ import {
 } from './validation.js'
 import type { CapabilityDocument, StartTurnRequest, TurnState } from './contracts.js'
 
+const PRIVATE_PROVIDER_TURN_PATH = '/v1/private/provider-turn'
+
 export type LocalHttpClientOptions = {
   baseUrl: string
   token: string
@@ -61,10 +63,10 @@ export function createLocalHttpClient(options: LocalHttpClientOptions) {
   }
   return {
     async bind(provider: string, profileId: string): Promise<LocalHttpBinding> {
-      return parseBinding(await call('/v1/web-ai/bindings', jsonPost({ provider, profileId })))
+      return parseBinding(await call(`${PRIVATE_PROVIDER_TURN_PATH}/bindings`, jsonPost({ provider, profileId })))
     },
     async capabilities(providerBindingRef: string): Promise<LocalHttpBinding> {
-      return parseBinding(await call(`/v1/web-ai/bindings/${encodeURIComponent(bindingRef(providerBindingRef, 'providerBindingRef'))}/capabilities`))
+      return parseBinding(await call(`${PRIVATE_PROVIDER_TURN_PATH}/bindings/${encodeURIComponent(bindingRef(providerBindingRef, 'providerBindingRef'))}/capabilities`))
     },
     async stage(
       providerBindingRef: string,
@@ -75,7 +77,7 @@ export function createLocalHttpClient(options: LocalHttpClientOptions) {
       const name = options?.name ?? 'system-prompt.md'
       if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(name)) throw new TypeError('attachment name is invalid.')
       const bundleWith = options?.bundleWith === undefined ? undefined : attachmentRefValue(options.bundleWith)
-      const value = await call(`/v1/web-ai/bindings/${encodeURIComponent(bindingRef(providerBindingRef, 'providerBindingRef'))}/attachments`, {
+      const value = await call(`${PRIVATE_PROVIDER_TURN_PATH}/bindings/${encodeURIComponent(bindingRef(providerBindingRef, 'providerBindingRef'))}/attachments`, {
         method: 'POST',
         body: bytes as unknown as BodyInit,
         headers: {
@@ -89,25 +91,25 @@ export function createLocalHttpClient(options: LocalHttpClientOptions) {
     async start(providerBindingRef: string, requestValue: unknown): Promise<TurnState> {
       const start = parseStartTurnRequest(requestValue)
       if (start.providerBindingRef !== providerBindingRef) throw new TypeError('request providerBindingRef does not match the route.')
-      return parseTurnEnvelope(await call(`/v1/web-ai/bindings/${encodeURIComponent(bindingRef(providerBindingRef, 'providerBindingRef'))}/turns`, jsonPost(start)))
+      return parseTurnEnvelope(await call(`${PRIVATE_PROVIDER_TURN_PATH}/bindings/${encodeURIComponent(bindingRef(providerBindingRef, 'providerBindingRef'))}/turns`, jsonPost(start)))
     },
     async continue(providerBindingRef: string, requestValue: unknown): Promise<TurnState> {
       const start = parseStartTurnRequest(requestValue)
       if (start.conversation.mode !== 'continue') throw new TypeError('request must be a continuation.')
       if (start.providerBindingRef !== providerBindingRef) throw new TypeError('request providerBindingRef does not match the route.')
-      return parseTurnEnvelope(await call(`/v1/web-ai/bindings/${encodeURIComponent(bindingRef(providerBindingRef, 'providerBindingRef'))}/turns`, jsonPost(start)))
+      return parseTurnEnvelope(await call(`${PRIVATE_PROVIDER_TURN_PATH}/bindings/${encodeURIComponent(bindingRef(providerBindingRef, 'providerBindingRef'))}/turns`, jsonPost(start)))
     },
     async read(turnRef: string): Promise<TurnState> {
-      return parseTurnEnvelope(await call(`/v1/web-ai/turns/${encodeURIComponent(turnRefValue(turnRef))}`))
+      return parseTurnEnvelope(await call(`${PRIVATE_PROVIDER_TURN_PATH}/turns/${encodeURIComponent(turnRefValue(turnRef))}`))
     },
     async cancel(turnRef: string): Promise<TurnState> {
-      return parseTurnEnvelope(await call(`/v1/web-ai/turns/${encodeURIComponent(turnRefValue(turnRef))}/cancel`, jsonPost({})))
+      return parseTurnEnvelope(await call(`${PRIVATE_PROVIDER_TURN_PATH}/turns/${encodeURIComponent(turnRefValue(turnRef))}/cancel`, jsonPost({})))
     },
     async resume(turnRef: string): Promise<TurnState> {
-      return parseTurnEnvelope(await call(`/v1/web-ai/turns/${encodeURIComponent(turnRefValue(turnRef))}/resume`, jsonPost({})))
+      return parseTurnEnvelope(await call(`${PRIVATE_PROVIDER_TURN_PATH}/turns/${encodeURIComponent(turnRefValue(turnRef))}/resume`, jsonPost({})))
     },
     async cancelRequest(requestRef: string): Promise<LocalHttpRequestCancellation> {
-      return parseRequestCancellation(await call(`/v1/web-ai/requests/${encodeURIComponent(requestRefValue(requestRef))}/cancel`, jsonPost({})))
+      return parseRequestCancellation(await call(`${PRIVATE_PROVIDER_TURN_PATH}/requests/${encodeURIComponent(requestRefValue(requestRef))}/cancel`, jsonPost({})))
     },
   }
 }

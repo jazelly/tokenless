@@ -7,5 +7,5 @@
     "types": ["node"]
   },
   "include": ["src/**/*.ts", "src/**/*.mts"],
-  "references": [{ "path": "../protocol" }]
+  "references": [{ "path": "../contracts" }]
 }

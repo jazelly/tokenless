@@ -62,7 +62,7 @@ tokenless --version
             raise RuntimeError("TOKENLESS_FEATUREBENCH_CHANNEL_HOST is invalid")
         channel["endpoint"] = (
             f"http://{channel_host}:{int(channel['bridgePort'])}"
-            "/v1/featurebench/turn"
+            "/v1/private/featurebench/turn"
         )
         channel.pop("bridgePort", None)
         channel.pop("daemonUrl", None)

@@ -4,7 +4,7 @@ Status: completed 2026-08-18 | Priority: P0
 
 Disposition: completed after the package boundaries, dependency direction, packaging, documentation, and zero-regression gates were implemented and verified.
 
-Related: [Tokenless Architecture](../../architecture.zh-CN.md)、[Web Agent Harness](../P0-web-agent-harness.md)、[Web AI Interaction Protocol](../P0-web-ai-interaction-protocol.md)、[OpenAI Tool Calling、Structured Output 与可移植 Provider Context](../P0-openai-tool-calling-structured-output-and-portable-context.md)、[Local Web Control Plane](../P0-local-web-control-plane.md)
+Related: [Tokenless Architecture](../../architecture.zh-CN.md)、[Web Agent Harness](../P0-web-agent-harness.md)、[historical Web AI Interaction Protocol](P0-web-ai-interaction-protocol.md)、[OpenAI-compatible API 收敛](../P1-openai-compatible-api-convergence.md)、[OpenAI Tool Calling、Structured Output 与可移植 Provider Context](../P0-openai-tool-calling-structured-output-and-portable-context.md)、[Local Web Control Plane](../P0-local-web-control-plane.md)
 
 Depends on: 当前 built CLI、authenticated daemon HTTP API、完整 `/ui-api/v1` control-plane contract、Web Agent Harness local-HTTP client、现有 npm 打包流程与真实边界测试
 

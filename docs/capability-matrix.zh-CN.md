@@ -71,7 +71,7 @@ Provider selection 前会展开所有 implication。同一家 provider 必须满
 
 Route 会按完整 requirement set 评估。例如 image attachment 同时要求 `file.upload` 与 `image.input`；仅有 `file.upload` 这一行并不代表图片上传已经 routeable。
 
-ChatGPT、Gemini、Grok、豆包、Dola、Arena 与 Meta AI Image artifact 会通过选定的 Playwright browser session 下载到按 task、conversation、job 与时间划分的 `assets` 目录。公开 response 只包含 relative asset reference、media type、尺寸、byte size 与 SHA-256 digest；带签名的 provider URL 仅在内存中使用。authenticated daemon 的 `GET /v1/asset/{taskId}/{conversationId}/{assetBatch}/{assetFile}` endpoint 会以实际图片 media type 返回已验证 bytes；路径越界、损坏或缺失 asset 会 fail closed。
+ChatGPT、Gemini、Grok、豆包、Dola、Arena 与 Meta AI Image artifact 会通过选定的 Playwright browser session 下载到按 task、conversation、job 与时间划分的 `assets` 目录。公开 response 只包含 relative asset reference、media type、尺寸、byte size 与 SHA-256 digest；带签名的 provider URL 仅在内存中使用。authenticated daemon 的 `GET /v1/private/assets/{taskId}/{conversationId}/{assetBatch}/{assetFile}` endpoint 会以实际图片 media type 返回已验证 bytes；路径越界、损坏或缺失 asset 会 fail closed。
 
 ChatGPT 的 `image.generation` 与 `artifact.download` 已作为 experimental routes 实现。Image reader 只读取最新可见的 `section[data-turn="assistant"]`，按 canonical URL 对重复的 `[id^="image-"] img` 去重，等待 stop control 消失，通过选定 browser session 下载 provider/CDN HTTPS bytes，使用 browser decoder 校验尺寸，并且不会把带签名 URL 放进 response。真实 asset run 生成了一张去重后的 1254×1254 PNG，并验证 DOM bytes、本地 digest、browser decode 与 authenticated daemon readback。
 

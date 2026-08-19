@@ -1,6 +1,6 @@
-# Web AI Interaction Protocol V0
+# Private Provider-Turn Contract V0
 
-`tokenless.internal.web-ai-interaction-protocol/v0` is a provisional internal protocol name. It is not an external package, namespace, domain, organization, or industry-standard claim.
+`tokenless.internal.web-ai-interaction-protocol/v0` is the retained V0 wire discriminator for Tokenless's private provider-turn contract. It is not the OpenAI-compatible API, an external package, or an industry-standard claim.
 
 V0 defines serialized messages for capability discovery, one new-conversation bootstrap start, and durable turn state. The canonical JSON Schemas under `schemas/v0/` are normative; TypeScript types and parsers are bindings to those schemas.
 
@@ -18,8 +18,10 @@ The System Prompt attachment must be delivered before a state may report `dispat
 
 Every protocol reference is kind-specific and opaque: `request:`, `provider:`, `binding:`, `conversation:`, `turn:`, or `attachment:` followed by exactly 32 lowercase hexadecimal characters. Bare identifiers, paths, and implementation identifiers are invalid.
 
-## Local HTTP profile (not implemented)
+## Private local HTTP adapter
 
-A later authenticated local HTTP profile may expose capability discovery, start, read, and cancel operations. Paths, status codes, and authentication are profile concerns; they are not core fields and no network client or server is part of this package.
+The authenticated loopback Client Adapter is exported as `tokenless-internal-contracts/private/provider-turn-http`. It calls `/v1/private/provider-turn/*` for binding, capability discovery, attachment staging, start/read/resume/cancel, and request cancellation.
+
+The HTTP server implementation belongs to `packages/server/src/http/private/provider-turn/`, not this contract package. OpenAI-compatible model requests remain owned by `/v1/chat/completions`, `/v1/responses`, and `/v1/images/generations`; this private contract is retained only for current semantics those interfaces do not yet express losslessly.
 
 An ambiguous dispatch must remain ambiguous across transport boundaries. A client must obtain provider-specific evidence before considering any new submission.

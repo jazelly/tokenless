@@ -40,11 +40,3 @@ export {
   parseStartTurnRequest,
   parseTurnState,
 } from './validation.js'
-
-export {
-  MarkerExtractionError,
-  StrictJsonError,
-  createAjv2020,
-  extractExactlyOneMarkedValue,
-  parseStrictJson,
-} from './structured-control.js'

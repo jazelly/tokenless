@@ -2,7 +2,7 @@
 
 Status: active product direction; parity not complete | Priority: P0
 
-Related: [Provider Expansion and Parity](P0-provider-expansion.md), [Real Provider Browser E2E and Native Projects](P0-real-provider-browser-e2e-and-native-projects.md), and [Web AI Interaction Protocol](P0-web-ai-interaction-protocol.md)
+Related: [Provider Expansion and Parity](P0-provider-expansion.md), [Real Provider Browser E2E and Native Projects](P0-real-provider-browser-e2e-and-native-projects.md), and [OpenAI-compatible API 收敛](P1-openai-compatible-api-convergence.md)
 
 ## Outcome
 

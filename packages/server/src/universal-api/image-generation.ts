@@ -632,7 +632,7 @@ function imageResponse(options: {
   return Object.freeze({
     created: Math.floor(Date.now() / 1000),
     data: Object.freeze(options.artifacts.map((asset) => Object.freeze({
-      url: `/v1/asset/${asset.assetRef.slice('assets/'.length)}`,
+      url: `/v1/private/assets/${asset.assetRef.slice('assets/'.length)}`,
       asset,
     }))),
     tokenless: Object.freeze({

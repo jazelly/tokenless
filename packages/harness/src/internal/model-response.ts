@@ -2,7 +2,7 @@ import {
   MarkerExtractionError,
   extractExactlyOneMarkedValue,
   parseStrictJson,
-} from 'tokenless-web-ai-interaction-protocol/structured-control'
+} from 'tokenless-internal-contracts/structured-json'
 import {
   WEB_AGENT_PROTOCOL,
   HarnessSkillError,
