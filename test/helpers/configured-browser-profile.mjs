@@ -22,17 +22,14 @@ export async function resolveTestConfig() {
     repositoryEnvironment = parseEnv(await fs.readFile(repositoryEnvironmentFile, 'utf8'))
   } catch (error) {
     if (error?.code === 'ENOENT') {
-      throw new Error('Browser tests require repository .env with TOKENLESS_TEST_CONFIG.')
+      throw new Error('Browser tests require repository .env with TOKENLESS_TEST_HOME.')
     }
     throw error
   }
-  const configuredPath = nonempty(repositoryEnvironment.TOKENLESS_TEST_CONFIG)
-  if (!configuredPath) throw new Error('Browser tests require TOKENLESS_TEST_CONFIG in the repository .env file.')
-  const configPath = await fs.realpath(path.resolve(repositoryRoot, configuredPath))
-  if (path.basename(configPath) !== 'config.json') {
-    throw new Error('TOKENLESS_TEST_CONFIG must point to a Tokenless config.json file.')
-  }
-  const homeDir = path.dirname(configPath)
+  const configuredHome = nonempty(repositoryEnvironment.TOKENLESS_TEST_HOME)
+  if (!configuredHome) throw new Error('Browser tests require TOKENLESS_TEST_HOME in the repository .env file.')
+  const homeDir = await fs.realpath(path.resolve(repositoryRoot, configuredHome))
+  const configPath = path.join(homeDir, 'config.json')
   assertOutsideRepository(homeDir)
   const config = await readTokenlessConfig(homeDir)
   const registry = new ManagedProfileRegistry(homeDir)
@@ -120,7 +117,7 @@ async function resolveNativeRuntime(runtimeManager, config) {
 
 function assertOutsideRepository(homeDir) {
   if (isWithin(repositoryRoot, homeDir)) {
-    throw new Error('TOKENLESS_TEST_CONFIG must point outside the repository and its worktrees.')
+    throw new Error('TOKENLESS_TEST_HOME must point outside the repository and its worktrees.')
   }
 }
 

@@ -6,13 +6,13 @@ Every live provider suite writes a private JSON report under `test-results/live-
 
 ## Real Web UI Provider E2E
 
-The representative Web UI provider test loads the complete Tokenless config named by `TOKENLESS_TEST_CONFIG` in `.env` and uses only its registry default profile. Authenticate that profile manually before running:
+The representative Web UI provider test loads the complete Tokenless home named by `TOKENLESS_TEST_HOME` in `.env`, derives its root `config.json`, and uses only the adjacent registry's default profile. Authenticate that profile manually before running:
 
 ```bash
 npm run test:e2e:web-provider
 ```
 
-The test submits one real ChatGPT job through that profile, then verifies the completed job in the local Web UI through the same managed browser context. `test/live-web-ui-matrix.json` describes only representative navigation states; home and profile always come from `TOKENLESS_TEST_CONFIG`.
+The test submits one real ChatGPT job through that profile, then verifies the completed job in the local Web UI through the same managed browser context. `test/live-web-ui-matrix.json` describes only representative navigation states; home and profile always come from `TOKENLESS_TEST_HOME`.
 
 ## Real Provider Website Boundary
 

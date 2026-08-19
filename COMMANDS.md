@@ -788,12 +788,12 @@ Commands that may open or operate a provider page are `setup`, `profiles status`
 
 ## Manual Real-Browser Acceptance
 
-The authenticated provider capability harness reads the complete config named by `TOKENLESS_TEST_CONFIG` and uses only the adjacent production registry's default profile. Profile slugs remain developer-owned because each developer chooses that default outside the harness. The config must remain outside every repository/worktree; before browser automation, the harness validates the profile directory, private permissions, lifecycle, executable, and exact runtime binding.
+The authenticated provider capability harness reads the complete home named by `TOKENLESS_TEST_HOME`, derives its root `config.json`, and uses only the adjacent production registry's default profile. Profile slugs remain developer-owned because each developer chooses that default outside the harness. The home must remain outside every repository/worktree; before browser automation, the harness validates the profile directory, private permissions, lifecycle, executable, and exact runtime binding.
 
 Create a repository-local `.env`, then manually authenticate the config's default profile:
 
 ```dotenv
-TOKENLESS_TEST_CONFIG=/absolute/path/to/tokenless-home/config.json
+TOKENLESS_TEST_HOME=/absolute/path/to/tokenless-home
 ```
 
 ```bash

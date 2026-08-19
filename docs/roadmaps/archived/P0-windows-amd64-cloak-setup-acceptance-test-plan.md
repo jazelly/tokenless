@@ -47,7 +47,7 @@ Get-ComputerInfo | Select-Object WindowsProductName, WindowsVersion, OsBuildNumb
 
 ## Safety and Isolation Rules
 
-- Load `TOKENLESS_TEST_CONFIG` and use only its registry default profile for every browser test. The developer prepares and authenticates that persistent profile before the run.
+- Load `TOKENLESS_TEST_HOME`, derive its root `config.json`, and use only its registry default profile for every browser test. The developer prepares and authenticates that persistent profile before the run.
 - Setup/importability cases that require a different profile are metadata-only; they must not launch a browser.
 - Never inspect, export, copy, log, or compare cookies, tokens, passwords, browser storage, account details, or source profile contents.
 - Record only safe browser identity/version metadata, result codes, managed-runtime metadata, requested surface URLs, final URLs, HTTP outcomes, detected challenge categories, and process outcomes.
@@ -82,7 +82,7 @@ node $TokenlessCli setup --home $CaseHome --fresh
 node $TokenlessCli doctor --home $CaseHome --json
 ```
 
-Keep these setup checks separate from browser automation. Release browser acceptance always uses the profile selected by `TOKENLESS_TEST_CONFIG`.
+Keep these setup checks separate from browser automation. Release browser acceptance always uses the profile selected by `TOKENLESS_TEST_HOME`.
 
 Every setup case must prove:
 
@@ -97,11 +97,11 @@ Every setup case must prove:
 
 ## Runtime and Public-Surface Gate
 
-Run one row on the AMD host: the registry default profile selected by `TOKENLESS_TEST_CONFIG`, using its bound executable and configured visibility. Runtime, profile, and visibility are observations, not test parameters.
+Run one row on the AMD host: the registry default profile selected by `TOKENLESS_TEST_HOME`, using its bound executable and configured visibility. Runtime, profile, and visibility are observations, not test parameters.
 
 | Source | Requirement |
 | --- | --- |
-| Config | Repository `.env` → `TOKENLESS_TEST_CONFIG` |
+| Config | Repository `.env` → `TOKENLESS_TEST_HOME/config.json` |
 | Profile | Adjacent registry's default ready profile only |
 | Browser | Existing profile runtime binding |
 | Visibility | Existing profile/config value through `auto` |

@@ -20,7 +20,7 @@
 ## Production configuration boundary
 
 - Production behavior controls must be read from the persisted Tokenless `config.json`, not from `.env` or process-environment overrides.
-- `.env` is reserved for test/bootstrap selectors such as `TOKENLESS_TEST_CONFIG`; it may locate the complete test config but must not override production behavior defined inside that config.
+- `.env` is reserved for test/bootstrap selectors such as `TOKENLESS_TEST_HOME`; it may locate the complete test home but must not override production behavior defined inside that home.
 - When a production setting needs to change, update the selected Tokenless config through the supported configuration path. Do not add an environment-variable escape hatch.
 
 ## Tokenless skill
@@ -56,9 +56,10 @@
 
 ### Test Browser Policy
 
-- Every repository browser test must load `TOKENLESS_TEST_CONFIG` from the repository-local `.env`. It points to one complete Tokenless `config.json`; its adjacent production profile registry is the only source of the test profile name, directory, and runtime binding.
+- Every repository browser test must load `TOKENLESS_TEST_HOME` from the repository-local `.env`. It points to one complete Tokenless home; tests derive its root `config.json` and adjacent production profile registry, with the registry as the only source of the test profile name, directory, and runtime binding.
 - Different developers may use different profile slugs. The adjacent registry's default profile is the only browser-test profile; tests must never select, hard-code, derive, or separately configure another name.
-- Never launch Playwright's bundled Chromium (`chromium.executablePath()`) or resolve a browser outside `TOKENLESS_TEST_CONFIG`. Browser selection and executable resolution come from that default profile's production runtime binding.
+- Never launch Playwright's bundled Chromium (`chromium.executablePath()`) or resolve a browser outside `TOKENLESS_TEST_HOME`. Browser selection and executable resolution come from that default profile's production runtime binding.
+- The selected test home is canonical external state: tests must not replace, delete, or rewrite its root `config.json`, profile registry, profile directories, or runtime binding. Normal runtime state and provider-side artifacts may be written by the real run.
 - Playwright browser tests must use `test/helpers/configured-browser-profile.mjs` and Tokenless's production CDP path.
 - Browser tests must not create disposable user-data directories or delete a browser profile or config home during teardown. Reuse the configured profile across runs; profile deletion requires an explicit user request naming that profile.
 - Direct `chromium.launch()`, `chromium.launchPersistentContext()`, and ad hoc browser process launches are forbidden in test files. Tests must not resize browser windows or emulate a viewport.

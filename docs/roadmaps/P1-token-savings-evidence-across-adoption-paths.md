@@ -33,7 +33,7 @@ The same approved task intent is used across all cells. Each path uses its real 
 
 ## One Configured Provider Set
 
-All browser and provider runs load the repository-local `.env`, follow `TOKENLESS_TEST_CONFIG` to one complete Tokenless `config.json`, and use only the adjacent registry's default production profile. The provider set is exactly that profile's `enabledProviders`.
+All browser and provider runs load the repository-local `.env`, follow `TOKENLESS_TEST_HOME` to one complete Tokenless home, derive its root `config.json`, and use only the adjacent registry's default production profile. The provider set is exactly that profile's `enabledProviders`.
 
 The release test profile should enable every registered provider the user intends to test and has authorized. Before prompt submission, the coordinator reports:
 
@@ -95,7 +95,7 @@ Each provider worker must:
 
 ### Round 0: Freeze Input and Coverage
 
-- Resolve `TOKENLESS_TEST_CONFIG`, the default production profile, and its `enabledProviders`.
+- Resolve `TOKENLESS_TEST_HOME`, the default production profile, and its `enabledProviders`.
 - Generate the real-project prompt package and stop for user review.
 - Freeze the approved prompt and context hashes.
 - Assign one provider worker per enabled provider.
@@ -257,7 +257,7 @@ Reports contain no screenshots, full DOM, browser storage, credentials, hidden h
 ## Acceptance Criteria
 
 - One user-approved real-project prompt revision drives the complete `3 × enabledProviders` savings matrix.
-- The provider set comes only from the default production profile resolved through `TOKENLESS_TEST_CONFIG`, and the report shows disabled providers explicitly.
+- The provider set comes only from the default production profile resolved through `TOKENLESS_TEST_HOME`, and the report shows disabled providers explicitly.
 - One provider worker owns each enabled provider, uses an explicit provider constraint, and cannot silently fall through to another provider.
 - Every enabled provider is attempted in every adoption path without internal retry or silent skip.
 - Every real response uses the existing output-savings event and `o200k_base` estimator; the current savings mechanism is not replaced.

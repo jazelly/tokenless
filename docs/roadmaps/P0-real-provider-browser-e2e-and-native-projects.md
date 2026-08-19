@@ -29,7 +29,7 @@ The repository no longer stores or tests against provider DOM captures. Selector
 
 **Historical model.** Provider E2E previously ran through a dedicated live-provider profile harness and a separate `prepare` command. That model and its evidence remain historical only; it does not describe the current test entry point.
 
-Browser E2E now loads repository `.env` → `TOKENLESS_TEST_CONFIG`, selects only the adjacent production registry's default profile, and derives its directory, runtime binding, and executable from that production state. Tests never provision or choose a separate E2E home, profile, browser, or runtime; they fail clearly when the selected default profile is not ready, private, or compatible. Operators manually authenticate that existing profile through normal Tokenless workflows before running the applicable suite. Provider-side mutations, retained test artifacts, and usage cost remain acceptable, and every artifact uses a recognizable Tokenless E2E prefix, run ID, and timestamp.
+Browser E2E now loads repository `.env` → `TOKENLESS_TEST_HOME`, derives the root `config.json`, selects only the adjacent production registry's default profile, and derives its directory, runtime binding, and executable from that production state. Tests never provision or choose a separate E2E home, profile, browser, or runtime; they fail clearly when the selected default profile is not ready, private, or compatible. Operators manually authenticate that existing profile through normal Tokenless workflows before running the applicable suite. Provider-side mutations, retained test artifacts, and usage cost remain acceptable, and every artifact uses a recognizable Tokenless E2E prefix, run ID, and timestamp.
 
 The live E2E suite enters browser automation only through the selected default profile's production CDP path. Each observer attaches to the profile's resident browser and then detaches without closing pages, contexts, or the browser, changing its window size, or relaunching it. The suite has no separate Playwright browser lifecycle, macOS-specific `open` launcher, or foreground-application manipulation.
 
@@ -288,7 +288,7 @@ Exit: retries and later CLI invocations recover the exact Project and conversati
 
 ### Phase 5: Native Project Live Acceptance
 
-For both Claude and Grok, using the default profile from `TOKENLESS_TEST_CONFIG`:
+For both Claude and Grok, using the default profile from `TOKENLESS_TEST_HOME`:
 
 1. generate a run-scoped unique Project identity;
 2. run `workspace.ensure --workspace-mode native` and require `created`;

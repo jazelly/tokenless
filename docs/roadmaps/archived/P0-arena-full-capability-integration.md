@@ -78,7 +78,7 @@ Depends on: [Provider Expansion and Parity](../P0-provider-expansion.md), [Real 
 
 ## 约束
 
-- 所有 browser E2E 从 repository `.env` 读取 `TOKENLESS_TEST_CONFIG`，只使用 registry default profile 和 production CDP path。
+- 所有 browser E2E 从 repository `.env` 读取 `TOKENLESS_TEST_HOME`，从 home 根目录派生 `config.json`，只使用 registry default profile 和 production CDP path。
 - 不自动登录、不创建测试账户、不关闭或删除 browser/profile；测试 teardown 只 detach CDP client。
 - 不截取 screenshot、完整 DOM、storage、凭据或无关账号内容。
 - provider 产生真实 conversation、附件、图片、网站、workspace 文件和视频是本任务明确允许的副作用。

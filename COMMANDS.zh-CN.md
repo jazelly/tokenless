@@ -788,12 +788,12 @@ provider-status
 
 ## 手动真实浏览器验收
 
-已认证 provider capability harness 会读取 `TOKENLESS_TEST_CONFIG` 指向的完整 config，并且只使用相邻 production registry 的 default profile。每位开发者在 harness 之外选择自己的 default，因此 profile slug 仍是开发者变量。该 config 必须位于所有 repository/worktree 之外；启动 browser automation 前，harness 会验证 profile directory、私有权限、lifecycle、executable 和精确的 runtime binding。
+已认证 provider capability harness 会读取 `TOKENLESS_TEST_HOME` 指向的完整 home，并从根目录派生 `config.json`，只使用相邻 production registry 的 default profile。每位开发者在 harness 之外选择自己的 default，因此 profile slug 仍是开发者变量。该 home 必须位于所有 repository/worktree 之外；启动 browser automation 前，harness 会验证 profile directory、私有权限、lifecycle、executable 和精确的 runtime binding。
 
 先创建 repository-local `.env`，然后手动登录该 config 的 default profile：
 
 ```dotenv
-TOKENLESS_TEST_CONFIG=/absolute/path/to/tokenless-home/config.json
+TOKENLESS_TEST_HOME=/absolute/path/to/tokenless-home
 ```
 
 ```bash

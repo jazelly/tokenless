@@ -386,7 +386,7 @@ Follow the repository's real-boundary testing policy:
 
 - test the packaged SPA through the real built daemon and a real local Chromium/Playwright page;
 - exercise configuration and profile mutations against real temporary Tokenless homes and real filesystems;
-- enter browser automation through repository `.env` → `TOKENLESS_TEST_CONFIG` and the adjacent registry's default profile;
+- enter browser automation through repository `.env` → `TOKENLESS_TEST_HOME`, deriving the root `config.json` and adjacent registry's default profile;
 - use that profile's production runtime binding and credential-storage behavior without test-only browser flags;
 - verify the control-plane page cannot be selected by provider page acquisition or replacement;
 - let the ignored local Web UI fixture select only provider and startup behavior, never a browser, home, profile, runtime, or viewport;
