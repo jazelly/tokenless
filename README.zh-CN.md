@@ -28,10 +28,14 @@
 
 ## Agent → browser → agent
 
-本地 OpenAI 兼容的 `POST /v1/chat/completions` 路由可以把 `tokenless/deepseek` 请求送进可见的 DeepSeek 网站。如果 harness 不知道如何声明 mode，只需设置一次进程默认值：
+本地 OpenAI 兼容的 `POST /v1/chat/completions` 路由可以把 `tokenless/deepseek` 请求送进可见的 DeepSeek 网站。如果 harness 不知道如何声明 mode，请在选定的 Tokenless 配置中把持久化的 `apiProxy.executionMode` 设置为 `browser`：
 
-```bash
-TOKENLESS_API_PROXY_EXECUTION_MODE=browser tokenless dashboard --no-open --json
+```json
+{
+  "apiProxy": {
+    "executionMode": "browser"
+  }
+}
 ```
 
 请求可以省略 `tokenless.execution_mode`：`Agent 请求 → Tokenless daemon → headful DeepSeek 页面 → response 返回 Agent`。显式请求 mode 仍然优先。[观看 7 秒 browser-mode demo](assets/tokenless-deepseek-browser-demo.mp4)。

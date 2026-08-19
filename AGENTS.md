@@ -17,6 +17,12 @@
 - Prefer one clear sentence over a section, and a few concrete bullets over a paragraph that merely enumerates features or steps.
 - Label illustrative or staged screenshots and metrics so they cannot be mistaken for benchmarks or production telemetry.
 
+## Production configuration boundary
+
+- Production behavior controls must be read from the persisted Tokenless `config.json`, not from `.env` or process-environment overrides.
+- `.env` is reserved for test/bootstrap selectors such as `TOKENLESS_TEST_CONFIG`; it may locate the complete test config but must not override production behavior defined inside that config.
+- When a production setting needs to change, update the selected Tokenless config through the supported configuration path. Do not add an environment-variable escape hatch.
+
 ## Tokenless skill
 
 - Do not read or invoke the external `tokenless` skill during repository work. Use this file, source, and tests.

@@ -71,7 +71,6 @@ const JOB_POLL_INTERVAL_MS = 250
 
 /** Visible provider work is browser-paced, so the ceiling is minutes rather than seconds. */
 const DEFAULT_JOB_TIMEOUT_MS = 10 * 60_000
-const API_PROXY_EXECUTION_MODE_ENV = 'TOKENLESS_API_PROXY_EXECUTION_MODE'
 
 export type ApiProxyDialect = 'openai' | 'anthropic'
 
@@ -183,7 +182,7 @@ export class ApiProxyAdapter {
     if (!config.apiProxy.enabled) throw apiProxyDisabled()
     const requestBody = plainRecord(body)
     const options = normalizeTokenlessOptions(requestBody.tokenless)
-    const executionMode = options.executionMode ?? apiProxyExecutionMode(config)
+    const executionMode = options.executionMode ?? config.apiProxy.executionMode
     const model = providerFromModel(requestBody.model)
     const previous = previousResponse(requestBody.previous_response_id, this.store)
     if (previous) assertPreviousResponseRoute(previous, model.provider, String(requestBody.model), executionMode)
@@ -210,7 +209,7 @@ export class ApiProxyAdapter {
     const requestBody = plainRecord(body)
     const options = normalizeTokenlessOptions(requestBody.tokenless)
     const model = providerFromModel(requestBody.model)
-    const executionMode = options.executionMode ?? apiProxyExecutionMode(config)
+    const executionMode = options.executionMode ?? config.apiProxy.executionMode
     const configuredBackend = options.providerBackend
       ?? config.directProvider.providerBackends[model.provider]
       ?? config.directProvider.defaultBackend
@@ -268,7 +267,7 @@ export class ApiProxyAdapter {
       )
     }
 
-    const executionMode = request.executionMode ?? apiProxyExecutionMode(config)
+    const executionMode = request.executionMode ?? config.apiProxy.executionMode
     const modeEnabledProviders = enabledProviders.filter((provider) => (
       config.profiles[profile.slug]?.providerModes[provider]?.includes(executionMode)
     ))
@@ -370,7 +369,7 @@ export class ApiProxyAdapter {
     endpoint: 'chat' | 'responses',
     signal?: AbortSignal,
   ): Promise<Response | null> {
-    const executionMode = request.executionMode ?? apiProxyExecutionMode(config)
+    const executionMode = request.executionMode ?? config.apiProxy.executionMode
     if (executionMode !== 'direct') return null
     if (request.auto) {
       assertAutoRequestScope(config, request)
@@ -543,7 +542,7 @@ function assertAutoRequestScope(
       'model',
     )
   }
-  const executionMode = request.executionMode ?? apiProxyExecutionMode(config)
+  const executionMode = request.executionMode ?? config.apiProxy.executionMode
   if (executionMode !== 'browser' || request.providerBackend !== null || request.authContextId !== null) {
     throw new ApiProxyError(
       400,
@@ -616,17 +615,6 @@ export function apiProxyDisabled() {
     503,
     'api_proxy_disabled',
     'The local API proxy is disabled; enable it with tokenless config --api-proxy enabled.',
-  )
-}
-
-function apiProxyExecutionMode(config: Awaited<ReturnType<typeof readTokenlessConfig>>) {
-  const configured = process.env[API_PROXY_EXECUTION_MODE_ENV]?.trim().toLowerCase()
-  if (!configured) return config.apiProxy.executionMode
-  if (configured === 'browser' || configured === 'direct') return configured
-  throw new ApiProxyError(
-    500,
-    'api_proxy_execution_mode_invalid',
-    `${API_PROXY_EXECUTION_MODE_ENV} must be browser or direct.`,
   )
 }
 

@@ -1120,49 +1120,6 @@ test('api proxy conversation mode round-trips through the persisted config', asy
   })
 })
 
-test('api proxy uses the process environment mode when the request omits tokenless mode', async () => {
-  await withDaemon(async (daemon) => {
-    const { ManagedProfileRegistry } = await import(profileRegistryModule)
-    const registry = new ManagedProfileRegistry(daemon.homeDir)
-    await registry.addProfile({ slug: 'web-ai', setDefault: true, lifecycle: 'ready' })
-    await registry.updateProviderStatus('web-ai', {
-      provider: 'deepseek',
-      auth: 'authenticated',
-      access: 'signed_in_free',
-      checkedAt: new Date().toISOString(),
-    })
-    const { writeTokenlessConfig } = await import(runtimeModule)
-    await writeTokenlessConfig({
-      homeDir: daemon.homeDir,
-      apiProxy: { enabled: true, conversationMode: 'new-conversation', executionMode: 'direct' },
-      profiles: {
-        'web-ai': {
-          roleLabel: '',
-          enabledProviders: ['deepseek'],
-          browserVisibility: 'headed',
-          proxy: null,
-        },
-      },
-    })
-
-    const previousMode = process.env.TOKENLESS_API_PROXY_EXECUTION_MODE
-    process.env.TOKENLESS_API_PROXY_EXECUTION_MODE = 'browser'
-    try {
-      const pending = call(daemon, 'POST', '/v1/chat/completions', {
-        model: 'tokenless/deepseek',
-        messages: [{ role: 'user', content: 'Show the browser workflow.' }],
-      })
-      const job = await waitForQueuedApiProxyJob(daemon, 'api-proxy:')
-      assert.equal(job.request_json.executionMode, 'browser')
-      daemon.store.cancelJob(job.job_id, 'focused environment mode test completed')
-      assert.equal((await pending).status, 502)
-    } finally {
-      if (previousMode === undefined) delete process.env.TOKENLESS_API_PROXY_EXECUTION_MODE
-      else process.env.TOKENLESS_API_PROXY_EXECUTION_MODE = previousMode
-    }
-  })
-})
-
 test('api proxy keeps Chat Completions fresh and Responses continuation on the mapped provider chat', async () => {
   await withDaemon(async (daemon) => {
     const { ManagedProfileRegistry } = await import(profileRegistryModule)

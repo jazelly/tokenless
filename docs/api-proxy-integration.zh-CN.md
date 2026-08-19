@@ -43,13 +43,17 @@ tokenless api-proxy status --json
 
 ### 给无法声明 mode 的 client 设置默认 execution mode
 
-请求体中的 `tokenless.execution_mode` 是可选的。如果 harness 无法发送它，可以改为设置 daemon 进程默认值：
+请求体中的 `tokenless.execution_mode` 是可选的。如果 harness 无法发送它，可以在选定的 Tokenless 配置中设置持久化的 `apiProxy.executionMode`：
 
-```bash
-TOKENLESS_API_PROXY_EXECUTION_MODE=browser tokenless dashboard --no-open --json
+```json
+{
+  "apiProxy": {
+    "executionMode": "browser"
+  }
+}
 ```
 
-有效值为 `browser` 与 `direct`。环境变量只在请求省略 mode 时生效；请求显式字段仍然优先。当前 DeepSeek Completion API demo 使用的就是这条路径。
+有效值为 `browser` 与 `direct`。配置值只在请求省略 mode 时生效；请求显式字段仍然优先。当前 DeepSeek Completion API demo 使用的就是这条路径。
 
 ## 认证
 

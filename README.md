@@ -28,10 +28,14 @@
 
 ## Agent → browser → agent
 
-The local OpenAI-compatible `POST /v1/chat/completions` route can send `tokenless/deepseek` through the visible DeepSeek website. If the harness does not know how to declare a mode, set the process default once:
+The local OpenAI-compatible `POST /v1/chat/completions` route can send `tokenless/deepseek` through the visible DeepSeek website. If the harness does not know how to declare a mode, set the persisted `apiProxy.executionMode` to `browser` in the selected Tokenless config:
 
-```bash
-TOKENLESS_API_PROXY_EXECUTION_MODE=browser tokenless dashboard --no-open --json
+```json
+{
+  "apiProxy": {
+    "executionMode": "browser"
+  }
+}
 ```
 
 The request can omit `tokenless.execution_mode`: `agent request → Tokenless daemon → headed DeepSeek page → response back to agent`. An explicit request mode still wins. [Watch the 7-second browser-mode demo](assets/tokenless-deepseek-browser-demo.mp4).

@@ -43,13 +43,17 @@ The bare `/v1` base exists so clients that use `/v1/chat/completions` or `/v1/re
 
 ### Default execution mode for mode-agnostic clients
 
-The request field `tokenless.execution_mode` is optional. If a harness cannot send it, set the daemon process default instead:
+The request field `tokenless.execution_mode` is optional. If a harness cannot send it, set the persisted `apiProxy.executionMode` in the selected Tokenless config instead:
 
-```bash
-TOKENLESS_API_PROXY_EXECUTION_MODE=browser tokenless dashboard --no-open --json
+```json
+{
+  "apiProxy": {
+    "executionMode": "browser"
+  }
+}
 ```
 
-Valid values are `browser` and `direct`. The environment value applies only when the request omits a mode; an explicit request field still wins. This is the path used by the local DeepSeek Completion API demo.
+Valid values are `browser` and `direct`. The config value applies only when the request omits a mode; an explicit request field still wins. This is the path used by the local DeepSeek Completion API demo.
 
 ## Authentication
 

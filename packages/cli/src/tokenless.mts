@@ -4864,19 +4864,26 @@ async function savingsCommand(subcommand: string | undefined, args: CliArgs) {
 async function apiProxyCommand(subcommand: string | undefined, args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
   if (subcommand === 'enable') {
+    const current = await readTokenlessConfig(homeDir)
     await writeTokenlessConfig({
       homeDir,
       apiProxy: {
         enabled: true,
         conversationMode: args.conversationMode === undefined
-          ? (await readTokenlessConfig(homeDir)).apiProxy.conversationMode
+          ? current.apiProxy.conversationMode
           : requiredApiProxyConversationMode(args.conversationMode),
+        executionMode: current.apiProxy.executionMode,
       },
     })
   } else if (subcommand === 'disable') {
+    const current = await readTokenlessConfig(homeDir)
     await writeTokenlessConfig({
       homeDir,
-      apiProxy: { enabled: false, conversationMode: (await readTokenlessConfig(homeDir)).apiProxy.conversationMode },
+      apiProxy: {
+        enabled: false,
+        conversationMode: current.apiProxy.conversationMode,
+        executionMode: current.apiProxy.executionMode,
+      },
     })
   } else if (subcommand !== 'status') {
     throw usageError(
