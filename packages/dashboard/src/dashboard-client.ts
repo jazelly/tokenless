@@ -16,6 +16,7 @@ import type {
   UiProviderSelection,
   UiRuntimeOpenResult,
   UiRuntimeStatus,
+  UiSetupInput,
   UiSession,
   UiSnapshot,
   UiJobSummary,
@@ -59,6 +60,13 @@ export class DashboardClient {
   async updateConfig(input: UiConfigUpdate): Promise<UiConfig> {
     return await this.requireResult(this.request<UiConfig>('/config', {
       method: 'PATCH',
+      body: JSON.stringify(input),
+    }))
+  }
+
+  async setup(input: UiSetupInput): Promise<UiProfile> {
+    return await this.requireResult(this.request<UiProfile>('/setup', {
+      method: 'POST',
       body: JSON.stringify(input),
     }))
   }

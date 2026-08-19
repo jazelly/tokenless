@@ -97,6 +97,36 @@ export type UiConfigUpdate = {
   router?: UiRouterConfig
 }
 
+export type UiSetupBrowserId = 'chrome' | 'brave' | 'cloak'
+
+export type UiBrowserCandidate = {
+  browserId: UiSetupBrowserId
+  runtimeId: string
+  family: 'system' | 'cloak'
+  label: string
+  version: string
+  source: 'system' | 'tokenless-cache'
+  executablePath: string
+  managed: boolean
+}
+
+export type UiSetupSnapshot = {
+  browserCandidates: UiBrowserCandidate[]
+  defaultProfileSlug: string | null
+  configuredProfileSlugs: string[]
+}
+
+export type UiSetupInput = {
+  slug: string
+  roleLabel?: string
+  enabledProviders?: string[]
+  browser: UiSetupBrowserId
+  browserExecutablePath?: string | null
+  language?: UiLanguage
+  browserVisibility?: UiBrowserVisibility
+  setDefault?: boolean
+}
+
 export type UiProfileCreate = {
   slug: string
   roleLabel?: string
@@ -297,6 +327,7 @@ export type UiSnapshot = {
   daemon: UiDaemonStatus
   runtime: UiRuntimeStatus
   config: UiConfig
+  setup: UiSetupSnapshot
   outputSavings: UiOutputSavingsState
   profiles: UiProfile[]
   providers: UiProvider[]

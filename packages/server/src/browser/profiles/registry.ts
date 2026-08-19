@@ -353,9 +353,7 @@ function validateRuntimeBinding(value: unknown): BrowserRuntimeBinding {
   if (
     typeof value.runtimeId !== 'string' || !value.runtimeId || value.runtimeId.length > 160 ||
     typeof value.browserId !== 'string' || !value.browserId || value.browserId.length > 64 ||
-    (value.executablePath !== undefined && (
-      typeof value.executablePath !== 'string' || !isAbsolute(value.executablePath) || value.executablePath.length > 4096
-    )) ||
+    typeof value.executablePath !== 'string' || !isAbsolute(value.executablePath) || value.executablePath.length > 4096 ||
     typeof value.createdWithVersion !== 'string' || !/^\d+\.\d+\.\d+\.\d+(?:\.\d+)?$/.test(value.createdWithVersion) ||
     value.profileFormat !== 1
   ) {
@@ -365,7 +363,7 @@ function validateRuntimeBinding(value: unknown): BrowserRuntimeBinding {
     runtimeId: value.runtimeId,
     family,
     browserId: value.browserId,
-    ...(value.executablePath === undefined ? {} : { executablePath: value.executablePath }),
+    executablePath: value.executablePath,
     createdWithVersion: value.createdWithVersion,
     profileFormat: 1,
   }

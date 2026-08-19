@@ -64,6 +64,8 @@ import type {
   UiProviderSelection,
   UiRuntimeOpenResult,
   UiRuntimeStatus,
+  UiSetupInput,
+  UiSetupSnapshot,
   UiSnapshot,
 } from 'tokenless-internal-shared/ui'
 
@@ -125,7 +127,10 @@ export class TokenlessApplicationServices {
     const capabilityRoutes = listProviderTaskCapabilityRoutes()
     this.store.reconcileOutputSavings()
     const outputSavings = await this.outputSavingsState(config)
-    const nativeBrowser = await this.inspectConfiguredBrowser(config)
+    const [nativeBrowser, setup] = await Promise.all([
+      this.inspectConfiguredBrowser(config),
+      this.setupSnapshot(config, profileData.defaultProfile),
+    ])
     const body = {
       schema: 'tokenless.ui-snapshot.v1' as const,
       generatedAt: new Date().toISOString(),
@@ -137,6 +142,7 @@ export class TokenlessApplicationServices {
       },
       runtime,
       config: publicConfig(config),
+      setup,
       outputSavings,
       profiles: profiles.map((profile) => publicProfile(
         profile,
@@ -607,6 +613,121 @@ export class TokenlessApplicationServices {
     return publicConfig(saved)
   }
 
+  async setup(input: UiSetupInput): Promise<UiProfile> {
+    requireKnownFields(input, [
+      'slug',
+      'roleLabel',
+      'enabledProviders',
+      'browser',
+      'browserExecutablePath',
+      'language',
+      'browserVisibility',
+      'setDefault',
+    ])
+    const slug = requiredSlug(input.slug)
+    const browserVisibility = input.browserVisibility === undefined
+      ? 'headed'
+      : requiredVisibility(input.browserVisibility)
+    requireNativeChromeVisibility(browserVisibility)
+    const currentConfig = await this.migratedConfig()
+    const language = input.language === undefined ? currentConfig.language : input.language
+    if (language !== 'en' && language !== 'zh-CN') {
+      throw applicationError('invalid_language', 'Language must be en or zh-CN.')
+    }
+    const requestedRoleLabel = input.roleLabel === undefined
+      ? undefined
+      : optionalRoleLabel(input.roleLabel) ?? ''
+    const requestedProviders = input.enabledProviders === undefined
+      ? configurableProviderIds()
+      : providerList(input.enabledProviders)
+    const browser = input.browser === 'cloak' || input.browser === 'chrome' || input.browser === 'brave'
+      ? input.browser
+      : null
+    if (!browser) throw applicationError('invalid_browser', 'Setup browser must be chrome, brave, or cloak.')
+
+    const configuredPath = input.browserExecutablePath === undefined || input.browserExecutablePath === null
+      ? null
+      : String(input.browserExecutablePath).trim()
+    if (configuredPath === '') {
+      throw applicationError('browser_executable_path_invalid', 'Browser executable path must be empty or an absolute path.')
+    }
+    const runtime = await this.runtimeManager.ensure(browser, {
+      allowDownload: false,
+      ...(browser === 'cloak' || configuredPath === null
+        ? {}
+        : { browserExecutablePath: configuredPath }),
+    })
+    const runtimeBinding = {
+      runtimeId: runtime.runtimeId,
+      family: runtime.family,
+      browserId: runtime.browserId,
+      executablePath: runtime.executablePath,
+      createdWithVersion: runtime.actualVersion,
+      profileFormat: 1 as const,
+    }
+
+    const registry = await this.profiles.read()
+    const existing = registry.profiles[slug]
+    if (existing?.runtimeBinding && !sameRuntimeIdentity(existing.runtimeBinding, runtimeBinding)) {
+      throw applicationError(
+        'profile_runtime_rebind_blocked',
+        `Managed profile '${slug}' is already bound to ${existing.runtimeBinding.runtimeId}; create a clean profile for ${runtimeBinding.runtimeId}.`,
+      )
+    }
+
+    const configuredProfile = currentConfig.profiles[slug]
+    const profileConfiguration: ManagedProfileConfig = configuredProfile
+      ? {
+          roleLabel: requestedRoleLabel ?? configuredProfile.roleLabel,
+          enabledProviders: input.enabledProviders === undefined
+            ? configuredProfile.enabledProviders
+            : requestedProviders,
+          providerModes: configuredProfile.providerModes,
+          browserVisibility: 'headed',
+          proxy: configuredProfile.proxy,
+        }
+      : {
+          roleLabel: requestedRoleLabel ?? '',
+          enabledProviders: requestedProviders,
+          providerModes: defaultProviderModes(),
+          browserVisibility: 'headed',
+          proxy: null,
+        }
+    const bindingForProfile = existing?.runtimeBinding ?? runtimeBinding
+
+    if (browser !== 'cloak') {
+      await this.updateConfig({
+        browser,
+        browserExecutablePath: runtime.executablePath,
+        language,
+      })
+    } else if (language !== currentConfig.language) {
+      await this.updateConfig({ language })
+    }
+    let profile = existing
+    if (!profile) {
+      profile = await this.profiles.addProfile({
+        slug,
+        lifecycle: 'ready',
+        runtimeBinding: bindingForProfile,
+        setDefault: input.setDefault === true,
+      })
+    } else if (existing && !existing.runtimeBinding) {
+      profile = await this.profiles.bindRuntime(slug, runtimeBinding)
+    }
+    if (input.setDefault === true) profile = await this.profiles.setDefault(slug)
+    await this.updateProfileConfig(profile, profileConfiguration)
+    const savedConfig = await this.migratedConfig()
+    const configured = profileConfig(savedConfig, profile.slug)
+    return publicProfile(
+      profile,
+      (await this.profiles.read()).defaultProfile,
+      configured,
+      savedConfig.browser,
+      runtime.actualVersion,
+    )
+  }
+
   async createProfile(input: UiProfileCreate): Promise<UiProfile> {
     requireKnownFields(input, ['slug', 'roleLabel', 'enabledProviders', 'providerModes', 'browserVisibility', 'setDefault'])
     const slug = requiredSlug(input.slug)
@@ -818,6 +939,37 @@ export class TokenlessApplicationServices {
     return await this.runtimeManager.inspect(config.browser, {
       browserExecutablePath: config.browserExecutablePath,
     })
+  }
+
+  private async setupSnapshot(
+    config: TokenlessConfig,
+    defaultProfileSlug: string | null,
+  ): Promise<UiSetupSnapshot> {
+    const candidates = await Promise.all((['chrome', 'brave', 'cloak'] as const).map(async (selection) => {
+      const inspection = await this.runtimeManager.inspect(selection, {
+        allowDownload: false,
+        ...(selection === config.browser && config.browserExecutablePath
+          ? { browserExecutablePath: config.browserExecutablePath }
+          : {}),
+      })
+      if (!inspection.ok || !inspection.runtime) return null
+      const runtime = inspection.runtime
+      return {
+        browserId: selection,
+        runtimeId: runtime.runtimeId,
+        family: selection === 'cloak' ? 'cloak' as const : 'system' as const,
+        label: runtime.displayName,
+        version: runtime.actualVersion,
+        source: runtime.source,
+        executablePath: runtime.executablePath,
+        managed: runtime.managed,
+      }
+    }))
+    return {
+      browserCandidates: candidates.filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== null),
+      defaultProfileSlug,
+      configuredProfileSlugs: Object.keys(config.profiles),
+    }
   }
 
   private async updateProfileConfig(
@@ -1256,6 +1408,17 @@ function profileConfig(config: TokenlessConfig, slug: string): ManagedProfileCon
   return configured
 }
 
+function sameRuntimeIdentity(
+  left: ManagedProfileRecord['runtimeBinding'],
+  right: NonNullable<ManagedProfileRecord['runtimeBinding']>,
+) {
+  if (!left) return false
+  return left.runtimeId === right.runtimeId &&
+    left.family === right.family &&
+    left.browserId === right.browserId &&
+    left.executablePath === right.executablePath
+}
+
 function configurableProviderIds(): ProviderId[] {
   return listProviderDescriptors()
     .filter((provider) => provider.stage !== 'disabled')
@@ -1288,9 +1451,11 @@ function assertProviderModeEnabled(configured: ManagedProfileConfig, provider: P
 
 function providerList(value: unknown): string[] {
   if (!Array.isArray(value)) throw applicationError('invalid_provider_list', 'Enabled providers must be an array.')
+  if (value.some((entry) => typeof entry !== 'string')) {
+    throw applicationError('invalid_provider_list', 'Enabled providers must contain provider ids.')
+  }
   const supported = new Set(supportedProviderIds())
-  const providers = [...new Set(value.filter((entry): entry is string => typeof entry === 'string')
-    .map((entry) => entry.trim().toLowerCase()))]
+  const providers = [...new Set(value.map((entry) => entry.trim().toLowerCase()))]
   if (providers.some((provider) => !supported.has(provider as ProviderId))) {
     throw applicationError('invalid_provider_list', 'Enabled providers include an unsupported provider.')
   }

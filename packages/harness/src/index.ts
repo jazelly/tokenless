@@ -127,6 +127,27 @@ export {
 } from './http/provider-client.js'
 
 export {
+  createHarnessExitDoorSidecar,
+  createHarnessFrontDoorSidecar,
+} from './sidecar/index.js'
+
+export type {
+  HarnessAiCompletionInput,
+  HarnessAiEngine,
+  HarnessExitDoorInput,
+  HarnessExitDoorResult,
+  HarnessExitDoorSidecar,
+  HarnessFrontDoorInput,
+  HarnessFrontDoorProviderCandidate,
+  HarnessFrontDoorResult,
+  HarnessFrontDoorRoute,
+  HarnessFrontDoorSidecar,
+  HarnessSidecarBrowserBinding,
+  HarnessSidecarJsonPrimitive,
+  HarnessSidecarJsonValue,
+} from 'tokenless-internal-shared/harness-sidecar'
+
+export {
   openSequentialHarnessMissionQueue,
 } from './run/mission-queue.js'
 

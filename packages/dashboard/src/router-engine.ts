@@ -1,3 +1,8 @@
+import type {
+  HarnessAiEngine,
+  HarnessSidecarJsonValue,
+} from 'tokenless-internal-shared/harness-sidecar'
+
 export type RouterEngineId = 'chrome-prompt-api'
 
 export const CHROME_PROMPT_API_MIN_MAJOR = 148
@@ -52,6 +57,36 @@ export class RouterEngineError extends Error {
     readonly observation: RouterEngineObservation | null = null,
   ) {
     super(code)
+  }
+}
+
+/** Browser-side adapter for the Harness sidecar seam. */
+export function createGeminiNanoAiEngine(): HarnessAiEngine {
+  return {
+    id: 'gemini-nano',
+    async complete(input) {
+      const binding = input.browserBinding
+      if (!binding) throw new RouterEngineError('unsupported-browser-mode')
+      const observation = await inspectChromePromptApi(binding)
+      requireSupportedObservation(observation)
+      const api = languageModelApi()
+      if (!api) throw new RouterEngineError('api-missing', observation)
+      if (await api.availability() === 'unavailable') throw new RouterEngineError('unavailable', observation)
+
+      const session = await api.create({ monitor() {} })
+      try {
+        const response = await session.prompt(`${input.instruction}\n${JSON.stringify(input.input)}`, {
+          responseConstraint: input.responseSchema as Record<string, unknown>,
+        })
+        try {
+          return JSON.parse(response) as HarnessSidecarJsonValue
+        } catch {
+          throw new RouterEngineError('invalid-result')
+        }
+      } finally {
+        session.destroy?.()
+      }
+    },
   }
 }
 

@@ -2,7 +2,7 @@
   import { Check, ChevronRight, Globe2, Monitor, UserRound } from '@lucide/svelte'
   import { tick, untrack } from 'svelte'
   import type { MessageKey } from '../localization.js'
-  import type { Language, UiConfigUpdate, UiProfileCreate, UiSnapshot } from '../types.js'
+  import type { Language, UiSetupBrowserId, UiSetupInput, UiSnapshot } from '../types.js'
 
   let {
     snapshot,
@@ -15,19 +15,78 @@
     language: Language
     t: (key: MessageKey) => string
     busy: boolean
-    onsetup: (config: UiConfigUpdate, profile: UiProfileCreate) => Promise<void>
+    onsetup: (input: UiSetupInput) => Promise<void>
   } = $props()
+
+  const setupSnapshot = untrack(() => snapshot.setup)
+  const candidates = setupSnapshot?.browserCandidates ?? []
+  const defaultProfile = untrack(() => snapshot.profiles.find((profile) => profile.isDefault)
+    ?? snapshot.profiles[0]
+    ?? null)
+  const configuredSlug = setupSnapshot?.configuredProfileSlugs[0]
+  const bindingBrowser = defaultProfile?.browserBinding.browserId
+  const initialBrowser = (bindingBrowser === 'chrome' || bindingBrowser === 'brave' || bindingBrowser === 'cloak')
+    && candidates.some((candidate) => candidate.browserId === bindingBrowser)
+    ? bindingBrowser
+    : candidates[0]?.browserId ?? (untrack(() => snapshot.config.browser) === 'brave' ? 'brave' : 'chrome')
 
   let selectedLanguage = $state<Language>(untrack(() => language))
   let setupError = $state('')
   let errorElement = $state<HTMLDivElement>()
-  let slug = $state('default')
-  let roleLabel = $state('')
-  let selectedBrowser = $state<'chrome' | 'brave'>(untrack(() => snapshot.config.browser === 'brave' ? 'brave' : 'chrome'))
-  let browserExecutablePath = $state('')
-  let enabledProviders = $state<string[]>(untrack(() => snapshot.providers
-    .filter((provider) => provider.stage !== 'disabled' && provider.id !== 'gemini')
-    .map((provider) => provider.id)))
+  let slug = $state(setupSnapshot?.defaultProfileSlug ?? configuredSlug ?? 'default')
+  let roleLabel = $state(defaultProfile?.roleLabel ?? '')
+  let selectedBrowser = $state<UiSetupBrowserId>(initialBrowser)
+  let manualBrowser = $state<'chrome' | 'brave'>(untrack(() => selectedBrowser === 'brave' ? 'brave' : 'chrome'))
+  let manualMode = $state(candidates.length === 0)
+  let browserExecutablePath = $state(candidates.find((candidate) => candidate.browserId === initialBrowser)?.executablePath ?? '')
+  let detectedBrowserBeforeManual = $state<UiSetupBrowserId | null>(
+    candidates.some((candidate) => candidate.browserId === initialBrowser) ? initialBrowser : null,
+  )
+  let enabledProviders = $state<string[]>(untrack(() => defaultProfile?.enabledProviders
+    ?? snapshot.providers
+      .filter((provider) => provider.stage !== 'disabled' && provider.id !== 'gemini')
+      .map((provider) => provider.id)))
+
+  function candidateFor(browserId: UiSetupBrowserId) {
+    return candidates.find((candidate) => candidate.browserId === browserId) ?? null
+  }
+
+  function selectDetectedBrowser(browserId: UiSetupBrowserId) {
+    detectedBrowserBeforeManual = browserId
+    selectedBrowser = browserId
+    manualMode = false
+    browserExecutablePath = candidateFor(browserId)?.executablePath ?? ''
+  }
+
+  function showManualBrowser() {
+    const detected = candidateFor(selectedBrowser)
+    if (detected) detectedBrowserBeforeManual = selectedBrowser
+    manualMode = true
+    selectedBrowser = manualBrowser
+    browserExecutablePath = ''
+  }
+
+  function toggleManualBrowser() {
+    if (!manualMode) {
+      showManualBrowser()
+      return
+    }
+    if (candidates.length === 0) return
+    const detected = (detectedBrowserBeforeManual
+      ? candidateFor(detectedBrowserBeforeManual)
+      : null) ?? candidates[0] ?? null
+    manualMode = false
+    if (detected) {
+      selectedBrowser = detected.browserId
+      browserExecutablePath = detected.executablePath
+    }
+  }
+
+  function changeManualBrowser(browserId: 'chrome' | 'brave') {
+    manualBrowser = browserId
+    selectedBrowser = browserId
+    browserExecutablePath = ''
+  }
 
   function toggleProvider(provider: string, checked: boolean) {
     enabledProviders = checked
@@ -39,21 +98,16 @@
     event.preventDefault()
     setupError = ''
     try {
-      await onsetup(
-        {
-          language: selectedLanguage,
-          browser: selectedBrowser,
-          ...(browserExecutablePath.trim() ? { browserExecutablePath: browserExecutablePath.trim() } : {}),
-          browserVisibility: 'headed',
-        },
-        {
-          slug,
-          roleLabel,
-          enabledProviders,
-          browserVisibility: 'headed',
-          setDefault: true,
-        },
-      )
+      await onsetup({
+        slug,
+        roleLabel,
+        enabledProviders,
+        browser: selectedBrowser,
+        browserExecutablePath: browserExecutablePath.trim() || null,
+        language: selectedLanguage,
+        browserVisibility: 'headed',
+        setDefault: true,
+      })
     } catch (caught) {
       setupError = caught instanceof Error ? caught.message : t('requestFailed')
       await tick()
@@ -86,12 +140,49 @@
         </label>
       </div>
 
-      <div class="setup-row">
+      <div class="setup-row align-start">
         <div class="setup-icon"><Monitor size={19} /></div>
         <div class="setup-fields browser-setup-fields">
-          <label class="field"><span>{t('profileBrowser')}</span><select name="browser" bind:value={selectedBrowser} data-testid="setup-browser"><option value="chrome">{t('googleChrome')}</option><option value="brave">{t('braveBrowser')}</option></select></label>
-          <label class="field"><span>{t('browserExecutablePath')} <small>{t('optional')}</small></span><input name="browserExecutablePath" bind:value={browserExecutablePath} placeholder={t('browserExecutablePathPlaceholder')} autocomplete="off" spellcheck="false" data-testid="setup-browser-executable-path" /></label>
-          <p class="form-note">{selectedBrowser === 'brave' ? 'brave' : 'chrome'}://inspect/#remote-debugging · {t('nativeChromeConnectionHelp')}</p>
+          <label class="field">
+            <span>{t('profileBrowser')}</span>
+            {#if candidates.length > 0}
+              <select name="browser" value={selectedBrowser} onchange={(event) => selectDetectedBrowser(event.currentTarget.value as UiSetupBrowserId)} data-testid="setup-browser">
+                {#each candidates as candidate (candidate.runtimeId)}
+                  <option value={candidate.browserId}>{candidate.label} · {candidate.version}</option>
+                {/each}
+              </select>
+            {:else}
+              <div class="setup-empty-browser" data-testid="setup-no-browser">{t('noBrowsersDetected')}</div>
+            {/if}
+          </label>
+
+          {#if !manualMode && candidateFor(selectedBrowser)}
+            {@const candidate = candidateFor(selectedBrowser)}
+            <label class="field">
+              <span>{t('browserExecutablePath')} <small>{t('detected')}</small></span>
+              <input name="browserExecutablePath" value={candidate?.executablePath ?? ''} readonly autocomplete="off" spellcheck="false" data-testid="setup-browser-executable-path" />
+              <small class="field-help">{candidate?.label} · v{candidate?.version} · {candidate?.source === 'tokenless-cache' ? t('managedByTokenless') : t('detectedOnComputer')}</small>
+            </label>
+          {:else}
+            <div class="setup-manual-browser" data-testid="setup-manual-browser">
+              <label class="field">
+                <span>{t('addBrowser')}</span>
+                <select name="manualBrowser" value={manualBrowser} onchange={(event) => changeManualBrowser(event.currentTarget.value as 'chrome' | 'brave')}>
+                  <option value="chrome">{t('googleChrome')}</option>
+                  <option value="brave">{t('braveBrowser')}</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>{t('browserExecutablePath')} <small>{t('required')}</small></span>
+                <input name="browserExecutablePath" bind:value={browserExecutablePath} placeholder={t('browserExecutablePathPlaceholder')} required autocomplete="off" spellcheck="false" data-testid="setup-browser-executable-path" />
+              </label>
+            </div>
+          {/if}
+
+          <div class="setup-browser-actions">
+            <button class="text-button" type="button" onclick={toggleManualBrowser} data-testid="setup-add-browser">{manualMode ? t('hideAddBrowser') : t('addBrowser')}</button>
+          </div>
+          <p class="form-note">{selectedBrowser === 'cloak' ? t('cloakBrowserHelp') : t('nativeChromeConnectionHelp')}</p>
         </div>
       </div>
 

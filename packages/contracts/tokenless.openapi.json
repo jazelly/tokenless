@@ -84,6 +84,34 @@
         ]
       }
     },
+    "/ui-api/v1/setup": {
+      "post": {
+        "operationId": "completeUiSetup",
+        "security": [
+          {
+            "uiSession": [],
+            "csrf": []
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/Setup"
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Profile"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "tags": [
+          "Dashboard"
+        ]
+      }
+    },
     "/ui-api/v1/jobs/{jobId}": {
       "get": {
         "operationId": "getUiJob",
@@ -3902,6 +3930,16 @@
           }
         }
       },
+      "Setup": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/UiSetupInput"
+            }
+          }
+        }
+      },
       "BrowserRuntimeInspect": {
         "required": true,
         "content": {
@@ -5558,6 +5596,58 @@
             "$ref": "#/components/schemas/RouterConfig"
           }
         },
+        "additionalProperties": false
+      },
+      "UiSetupInput": {
+        "type": "object",
+        "properties": {
+          "slug": {
+            "$ref": "#/components/schemas/ProfileId"
+          },
+          "roleLabel": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "enabledProviders": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/components/schemas/ProviderId"
+            }
+          },
+          "browser": {
+            "type": "string",
+            "enum": [
+              "chrome",
+              "brave",
+              "cloak"
+            ]
+          },
+          "browserExecutablePath": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          },
+          "language": {
+            "type": "string",
+            "enum": [
+              "en",
+              "zh-CN"
+            ]
+          },
+          "browserVisibility": {
+            "$ref": "#/components/schemas/UiBrowserVisibility"
+          },
+          "setDefault": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "slug",
+          "browser"
+        ],
         "additionalProperties": false
       },
       "ConfirmedDeletion": {
@@ -9038,6 +9128,92 @@
         ],
         "additionalProperties": false
       },
+      "UiBrowserCandidate": {
+        "type": "object",
+        "properties": {
+          "browserId": {
+            "type": "string",
+            "enum": [
+              "chrome",
+              "brave",
+              "cloak"
+            ]
+          },
+          "runtimeId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "family": {
+            "type": "string",
+            "enum": [
+              "system",
+              "cloak"
+            ]
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "system",
+              "tokenless-cache"
+            ]
+          },
+          "executablePath": {
+            "type": "string",
+            "minLength": 1
+          },
+          "managed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "browserId",
+          "runtimeId",
+          "family",
+          "label",
+          "version",
+          "source",
+          "executablePath",
+          "managed"
+        ],
+        "additionalProperties": false
+      },
+      "UiSetupSnapshot": {
+        "type": "object",
+        "properties": {
+          "browserCandidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UiBrowserCandidate"
+            }
+          },
+          "defaultProfileSlug": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "configuredProfileSlugs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProfileId"
+            }
+          }
+        },
+        "required": [
+          "browserCandidates",
+          "defaultProfileSlug",
+          "configuredProfileSlugs"
+        ],
+        "additionalProperties": false
+      },
       "UiSnapshot": {
         "type": "object",
         "properties": {
@@ -9060,6 +9236,9 @@
           },
           "config": {
             "$ref": "#/components/schemas/UiConfig"
+          },
+          "setup": {
+            "$ref": "#/components/schemas/UiSetupSnapshot"
           },
           "outputSavings": {
             "$ref": "#/components/schemas/OutputSavingsState"
@@ -9102,6 +9281,7 @@
           "daemon",
           "runtime",
           "config",
+          "setup",
           "outputSavings",
           "profiles",
           "providers",

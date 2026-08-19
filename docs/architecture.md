@@ -177,7 +177,7 @@ Each routed job carries `tokenless.context-envelope.v1`. It records the task ide
 
 Browser selection is system-first. `auto` uses an installed supported browser and lazily installs catalog-pinned Chrome for Testing only when none exists. `managed-chromium` forces that cache-managed runtime; `cloak` explicitly opts into the platform-specific Cloak release. Managed downloads happen only during setup or install and are never performed by npm postinstall, daemon startup, or a job.
 
-New managed profiles store a runtime binding containing the exact runtime identity, canonical browser executable path, family, browser ID, and creation version. The daemon resolves from this binding and always passes the same executable instance to Playwright; two installations of the same browser family are different runtimes. Legacy bindings without an executable path remain readable but do not provide instance-level pinning; rerun setup to create a new exact binding. A family or executable-instance change provisions a clean profile.
+Every managed profile stores a runtime binding containing the exact runtime identity, canonical browser executable path, family, browser ID, and creation version. The daemon resolves from this binding and always passes the same executable instance to Playwright; two installations of the same browser family are different runtimes. A family or executable-instance change provisions a clean profile.
 
 Managed profiles live under the Tokenless home and use unique directories. Jobs reuse them but never import, reset, clear, or replace them automatically. New profiles always start clean; deletion requires an explicit command and confirmation.
 

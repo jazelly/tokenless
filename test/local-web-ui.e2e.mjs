@@ -56,10 +56,18 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       assert.equal(await page.locator('main').count(), 1)
       assert.equal(await page.locator('.skip-link').getAttribute('href'), '#main')
       assert.equal(await page.getByTestId('setup-view').getAttribute('id'), 'main')
-      assert.deepEqual(
-        await page.getByTestId('setup-browser').locator('option').evaluateAll((options) => options.map((option) => option.value)),
-        ['chrome', 'brave'],
-      )
+      const browserOptions = await page.getByTestId('setup-browser').locator('option').evaluateAll((options) => options.map((option) => option.value))
+      assert.equal(browserOptions.includes('chrome'), true)
+      assert.equal(browserOptions.includes('brave'), true)
+      const browserBeforeManual = browserOptions.includes('cloak') ? 'cloak' : 'brave'
+      await page.getByTestId('setup-browser').selectOption(browserBeforeManual)
+      const detectedPathBeforeManual = await page.getByTestId('setup-browser-executable-path').inputValue()
+      await page.getByTestId('setup-add-browser').click()
+      assert.equal(await page.getByTestId('setup-manual-browser').count(), 1)
+      await page.getByTestId('setup-add-browser').click()
+      assert.equal(await page.getByTestId('setup-manual-browser').count(), 0)
+      assert.equal(await page.getByTestId('setup-browser').inputValue(), browserBeforeManual)
+      assert.equal(await page.getByTestId('setup-browser-executable-path').inputValue(), detectedPathBeforeManual)
       await page.getByTestId('setup-browser').selectOption('chrome')
       await page.getByTestId('setup-slug').fill('work')
       await page.getByTestId('setup-role').fill('Research')

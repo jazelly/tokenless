@@ -176,7 +176,7 @@ Job 必须携带明确的 provider/profile identity。Unsupported control、ambi
 
 `tokenless setup` 通过 `BrowserRuntimeManager` 选择并验证一个 runtime，再创建或选择兼容的 clean managed profile。Tokenless 不复制现有 Chrome、Brave 或 Cloak profile，也不导入它们的 authentication state；用户在可见的 managed profile 中完成登录。
 
-新建 Profile 保存明确的 runtime binding，包括 canonical browser executable path；job 只能复用同一个 browser executable instance，不能因为 browser family 相同就跨安装复用。没有 executable path 的 legacy binding 仍可读取，但不具备 instance-level pinning；请重新执行 setup 创建新的 exact binding。Profile 不会自动 import、reset、clear 或 replace；Provider authentication 只根据可见页面 observation 判断，login、CAPTCHA、MFA、consent 与 confirmation 仍然是用户动作。
+每个 Profile 都保存明确的 runtime binding，包括 canonical browser executable path；job 只能复用同一个 browser executable instance，不能因为 browser family 相同就跨安装复用。Profile 不会自动 import、reset、clear 或 replace；Provider authentication 只根据可见页面 observation 判断，login、CAPTCHA、MFA、consent 与 confirmation 仍然是用户动作。
 
 ## Provider architecture and session state machine
 

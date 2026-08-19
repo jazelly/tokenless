@@ -188,8 +188,6 @@ export class BrowserRuntimeController {
         const runtime = await runtimeManager.resolveForProfile({
           slug: profile.id,
           runtimeBinding: profile.runtimeBinding,
-        }, {
-          browserExecutablePath: config.browserExecutablePath,
         })
         return {
           id: runtime.browserId,

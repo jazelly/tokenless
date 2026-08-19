@@ -8,7 +8,8 @@
   "exports": {
     "./localized-errors": "./dist/src/localized-errors.js",
     "./structured-json": "./dist/src/structured-json.js",
-    "./ui": "./dist/src/ui.js"
+    "./ui": "./dist/src/ui.js",
+    "./harness-sidecar": "./dist/src/harness-sidecar.js"
   },
   "files": [
     "dist/src",

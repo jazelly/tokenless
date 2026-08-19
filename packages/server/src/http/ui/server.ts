@@ -10,6 +10,7 @@ import type {
   UiProfileCreate,
   UiProfileUpdate,
   UiProviderSelection,
+  UiSetupInput,
 } from 'tokenless-internal-shared/ui'
 import { DaemonError, daemonErrorCodeRetryable, daemonErrorStatus } from '../../errors.js'
 import { UiSessionManager } from './session.js'
@@ -35,7 +36,7 @@ export class TokenlessUiServer {
   }
 
   consoleUrl(profileId?: string | null) {
-    const url = new URL('/ui/', this.origin())
+    const url = new URL(profileId ? '/ui/' : '/ui/setup/', this.origin())
     if (profileId) url.searchParams.set('profile', profileId)
     return url.toString()
   }
@@ -51,7 +52,7 @@ export class TokenlessUiServer {
   async handle(request: IncomingMessage, response: ServerResponse, url: URL) {
     const requestOrigin = this.requireOrigin(request)
     const method = request.method ?? 'GET'
-    if (method === 'GET' && (url.pathname === '/ui' || url.pathname === '/ui/')) {
+    if (method === 'GET' && (url.pathname === '/ui' || url.pathname === '/ui/' || url.pathname === '/ui/setup' || url.pathname === '/ui/setup/')) {
       this.sessions.ensureSession(request, response)
       const language = await this.initialLanguage(request)
       const shellMessages = DASHBOARD_SHELL_MESSAGES[language]
@@ -127,6 +128,10 @@ export class TokenlessUiServer {
     }
     if (method === 'PATCH' && url.pathname === '/ui-api/v1/config') {
       this.writeJson(response, 200, await this.services.updateConfig(await readJson<UiConfigUpdate>(request)))
+      return true
+    }
+    if (method === 'POST' && url.pathname === '/ui-api/v1/setup') {
+      this.writeJson(response, 200, await this.services.setup(await readJson<UiSetupInput>(request)))
       return true
     }
     if (method === 'POST' && url.pathname === '/ui-api/v1/output-savings/enable') {

@@ -130,9 +130,147 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     assert.deepEqual(snapshotBody.providers.find((provider) => provider.id === 'ai-badgr')?.executionModes, ['direct'])
     assert.deepEqual(snapshotBody.providers.find((provider) => provider.id === 'chatgpt')?.executionModes, ['browser', 'direct'])
     assert.deepEqual(snapshotBody.providers.find((provider) => provider.id === 'doubao')?.executionModes, ['browser'])
+    const registry = new ManagedProfileRegistry(homeDir)
+
+    const setupHtml = await fetch(`${daemon.origin}/ui/setup/`, { headers: { cookie } })
+    assert.equal(setupHtml.status, 200)
+    assert.match(await setupHtml.text(), /<script type="module"/)
+    assert.equal(snapshotBody.setup.defaultProfileSlug, null)
+    assert.deepEqual(snapshotBody.setup.configuredProfileSlugs, [])
+    assert.ok(snapshotBody.setup.browserCandidates.length > 0)
+    for (const candidate of snapshotBody.setup.browserCandidates) {
+      assert.ok(path.isAbsolute(candidate.executablePath))
+      assert.match(candidate.label, /Chrome|Brave|Cloak/i)
+      assert.match(candidate.version, /^\d+\.\d+\.\d+\.\d+/)
+    }
+    const chromeCandidate = snapshotBody.setup.browserCandidates.find((candidate) => candidate.browserId === 'chrome')
+    const braveCandidate = snapshotBody.setup.browserCandidates.find((candidate) => candidate.browserId === 'brave')
+    assert.ok(chromeCandidate, 'real setup discovery must expose Google Chrome in this environment')
+    assert.ok(braveCandidate, 'real setup discovery must expose Brave Browser in this environment')
+
+    const configBeforeSetupValidation = fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8')
+    const invalidPathSetup = await fetch(`${daemon.origin}/ui-api/v1/setup`, {
+      method: 'POST',
+      headers: {
+        cookie,
+        origin: daemon.origin,
+        'x-tokenless-csrf': sessionBody.csrf,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        slug: 'invalid-path',
+        browser: 'chrome',
+        browserExecutablePath: path.join(homeDir, 'missing', 'Google Chrome'),
+        enabledProviders: ['chatgpt'],
+      }),
+    })
+    assert.equal(invalidPathSetup.status, 400)
+    assert.equal((await invalidPathSetup.json()).error.code, 'browser_runtime_executable_missing')
+    assert.equal(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8'), configBeforeSetupValidation)
+    assert.deepEqual(await registry.listProfiles(), [])
+
+    const invalidProviderSetup = await fetch(`${daemon.origin}/ui-api/v1/setup`, {
+      method: 'POST',
+      headers: {
+        cookie,
+        origin: daemon.origin,
+        'x-tokenless-csrf': sessionBody.csrf,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        slug: 'invalid-provider',
+        browser: 'chrome',
+        browserExecutablePath: chromeCandidate.executablePath,
+        enabledProviders: ['not-a-provider'],
+      }),
+    })
+    assert.equal(invalidProviderSetup.status, 400)
+    assert.equal((await invalidProviderSetup.json()).error.code, 'invalid_provider_list')
+    assert.equal(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8'), configBeforeSetupValidation)
+    assert.deepEqual(await registry.listProfiles(), [])
+
+    const browserMismatchSetup = await fetch(`${daemon.origin}/ui-api/v1/setup`, {
+      method: 'POST',
+      headers: {
+        cookie,
+        origin: daemon.origin,
+        'x-tokenless-csrf': sessionBody.csrf,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        slug: 'mismatched-browser',
+        browser: 'brave',
+        browserExecutablePath: chromeCandidate.executablePath,
+        enabledProviders: ['chatgpt'],
+      }),
+    })
+    assert.equal(browserMismatchSetup.status, 400)
+    assert.equal((await browserMismatchSetup.json()).error.code, 'browser_executable_identity_mismatch')
+    assert.equal(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8'), configBeforeSetupValidation)
+    assert.deepEqual(await registry.listProfiles(), [])
+
+    const setupProfile = await fetch(`${daemon.origin}/ui-api/v1/setup`, {
+      method: 'POST',
+      headers: {
+        cookie,
+        origin: daemon.origin,
+        'x-tokenless-csrf': sessionBody.csrf,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        slug: 'setup-work',
+        roleLabel: 'Setup',
+        browser: 'chrome',
+        browserExecutablePath: chromeCandidate.executablePath,
+        enabledProviders: ['chatgpt'],
+        setDefault: true,
+      }),
+    })
+    assert.equal(setupProfile.status, 200)
+    const setupProfileBody = await setupProfile.json()
+    assert.equal(setupProfileBody.slug, 'setup-work')
+    const setupProfileId = setupProfileBody.id
+
+    const repeatedSetupProfile = await fetch(`${daemon.origin}/ui-api/v1/setup`, {
+      method: 'POST',
+      headers: {
+        cookie,
+        origin: daemon.origin,
+        'x-tokenless-csrf': sessionBody.csrf,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        slug: 'setup-work',
+        browser: 'chrome',
+        browserExecutablePath: chromeCandidate.executablePath,
+        setDefault: true,
+      }),
+    })
+    assert.equal(repeatedSetupProfile.status, 200)
+    const repeatedSetupProfileBody = await repeatedSetupProfile.json()
+    assert.equal(repeatedSetupProfileBody.id, setupProfileId)
+    assert.equal(repeatedSetupProfileBody.roleLabel, 'Setup')
+    assert.deepEqual(repeatedSetupProfileBody.enabledProviders, ['chatgpt'])
+    assert.deepEqual(repeatedSetupProfileBody.providerModes, setupProfileBody.providerModes)
+    assert.deepEqual(repeatedSetupProfileBody.proxy, setupProfileBody.proxy)
+    assert.equal((await registry.listProfiles()).length, 1)
+    const setupSnapshot = await fetch(`${daemon.origin}/ui-api/v1/snapshot`, { headers: { cookie } }).then((response) => response.json())
+    assert.equal(setupSnapshot.setup.defaultProfileSlug, 'setup-work')
+    assert.deepEqual(setupSnapshot.setup.configuredProfileSlugs, ['setup-work'])
+    const deleteSetupProfile = await fetch(`${daemon.origin}/ui-api/v1/profiles/setup-work`, {
+      method: 'DELETE',
+      headers: {
+        cookie,
+        origin: daemon.origin,
+        'x-tokenless-csrf': sessionBody.csrf,
+      },
+    })
+    assert.equal(deleteSetupProfile.status, 200)
+    assert.deepEqual(await registry.listProfiles(), [])
+    const setupCleanupSnapshot = await fetch(`${daemon.origin}/ui-api/v1/snapshot`, { headers: { cookie } }).then((response) => response.json())
 
     const unchanged = await fetch(`${daemon.origin}/ui-api/v1/snapshot`, {
-      headers: { cookie, 'if-none-match': `"${snapshotBody.revision}"` },
+      headers: { cookie, 'if-none-match': `"${setupCleanupSnapshot.revision}"` },
     })
     assert.equal(unchanged.status, 304)
 
@@ -224,7 +362,6 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     assert.equal(clearSavings.status, 200)
     assert.equal((await clearSavings.json()).summary.estimatedOutputTokens, 0)
 
-    const registry = new ManagedProfileRegistry(homeDir)
     const invalidProfile = await fetch(`${daemon.origin}/ui-api/v1/profiles`, {
       method: 'POST',
       headers: {

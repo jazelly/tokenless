@@ -139,17 +139,17 @@ export class BrowserRuntimeManager {
     const runtime = await this.ensure(selection, {
       ...options,
       allowDownload: false,
-      ...(binding.executablePath === undefined ? {} : { browserExecutablePath: binding.executablePath }),
+      browserExecutablePath: binding.executablePath,
     })
     if (
       runtime.runtimeId !== binding.runtimeId ||
       runtime.family !== binding.family ||
       runtime.browserId !== binding.browserId ||
-      (binding.executablePath !== undefined && runtime.executablePath !== binding.executablePath)
+      runtime.executablePath !== binding.executablePath
     ) {
       throw tokenlessError(
         'profile_runtime_mismatch',
-        `Managed profile '${profile.slug}' is bound to browser runtime ${binding.runtimeId}${binding.executablePath ? ` at ${binding.executablePath}` : ''}, but Tokenless resolved ${runtime.runtimeId} at ${runtime.executablePath}.`,
+        `Managed profile '${profile.slug}' is bound to browser runtime ${binding.runtimeId} at ${binding.executablePath}, but Tokenless resolved ${runtime.runtimeId} at ${runtime.executablePath}.`,
       )
     }
     if (compareBrowserVersions(runtime.actualVersion, binding.createdWithVersion) < 0) {
@@ -374,12 +374,11 @@ export class BrowserRuntimeManager {
     browserExecutablePath: string | null | undefined,
   ) {
     if (browserExecutablePath) {
-      const cached = await this.resolveSystemBrowserAtPath(
+      return await this.resolveSystemBrowserAtPath(
         browserId,
         platform,
         browserExecutablePath,
-      ).catch(() => null)
-      if (cached) return cached
+      )
     }
     const runtime = await this.resolveSystemBrowser(browserId, platform)
     if (runtime) return runtime
@@ -411,7 +410,8 @@ export class BrowserRuntimeManager {
     }
     const canonicalExecutablePath = await fs.realpath(executablePath).catch(() => executablePath)
     await assertExecutable(canonicalExecutablePath)
-    const actualVersion = await browserExecutableVersion(canonicalExecutablePath)
+    assertSystemBrowserIdentity(browserId, canonicalExecutablePath)
+    const actualVersion = await browserExecutableVersion(canonicalExecutablePath, browserId)
     return {
       selection: browserId,
       runtimeId: `system:${browserId}`,
@@ -482,6 +482,20 @@ export class BrowserRuntimeManager {
         [manifest.runtimeId]: manifest,
       },
     })
+  }
+}
+
+function assertSystemBrowserIdentity(browserId: SystemBrowserId, executablePath: string) {
+  if (browserId !== 'chrome' && browserId !== 'brave') return
+  const normalized = executablePath.replaceAll('\\', '/').toLowerCase()
+  const looksLikeChrome = /(?:google chrome|google-chrome|chrome\.exe(?:$|\/)|\/chrome(?:$|\/))/.test(normalized)
+  const looksLikeBrave = /(?:brave browser|brave-browser|brave\.com|brave\.exe(?:$|\/)|\/brave(?:$|\/))/.test(normalized)
+  const mismatch = browserId === 'chrome' ? looksLikeBrave : looksLikeChrome
+  if (mismatch) {
+    throw tokenlessError(
+      'browser_executable_identity_mismatch',
+      `The selected ${systemBrowserDisplayName(browserId)} executable does not match the requested browser.`,
+    )
   }
 }
 
@@ -659,7 +673,7 @@ function systemBrowserDisplayName(browserId: SystemBrowserId) {
   return names[browserId]
 }
 
-async function browserExecutableVersion(executablePath: string) {
+async function browserExecutableVersion(executablePath: string, expectedBrowserId?: SystemBrowserId) {
   let output: string
   if (process.platform === 'win32') {
     const result = await runCommand('powershell', [
@@ -679,6 +693,9 @@ async function browserExecutableVersion(executablePath: string) {
       maxOutputBytes: 256 * 1024,
     })).stdout
   }
+  if (expectedBrowserId && process.platform !== 'win32') {
+    assertSystemBrowserProduct(expectedBrowserId, output)
+  }
   const match = output.match(/\d+\.\d+\.\d+\.\d+(?:\.\d+)?/)
   if (!match) {
     throw tokenlessError(
@@ -687,6 +704,20 @@ async function browserExecutableVersion(executablePath: string) {
     )
   }
   return match[0]
+}
+
+function assertSystemBrowserProduct(browserId: SystemBrowserId, output: string) {
+  if (browserId !== 'chrome' && browserId !== 'brave') return
+  const normalized = output.toLowerCase()
+  const looksLikeChrome = /(?:google chrome|google-chrome|chromium|chrome)/.test(normalized)
+  const looksLikeBrave = /brave/.test(normalized)
+  const mismatch = browserId === 'chrome' ? looksLikeBrave : looksLikeChrome
+  if (mismatch) {
+    throw tokenlessError(
+      'browser_executable_identity_mismatch',
+      `The selected ${systemBrowserDisplayName(browserId)} executable does not match the requested browser.`,
+    )
+  }
 }
 
 async function downloadArtifact(url: string, destination: string, signal: AbortSignal | undefined) {

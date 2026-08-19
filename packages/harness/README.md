@@ -37,6 +37,28 @@ Provider transport stays outside this package: the selected adapter must support
 
 The durable `WebAgentHarness` owns MCP catalog discovery, approval-bound calls, action batches, provider continuation, and restart recovery in `<TOKENLESS_HOME>/harness.sqlite3`. MCP servers are explicit local stdio processes; environment values remain in the invoking process and every MCP call requires digest-bound approval.
 
+### AI sidecars
+
+Front Door and Exit Door are sidecars around the durable Harness loop. They do not add phases to provider execution: Front Door prepares metadata and a concrete provider route before `WebAgentHarness.start`, while Exit Door reviews the terminal result after the Harness run completes.
+
+The sidecars depend on the small `HarnessAiEngine` contract. The first adapter is the browser-side Chrome Prompt API implementation backed by Gemini Nano; local and remote engines can implement the same contract later without changing Front Door or Exit Door.
+
+```ts
+import {
+  createHarnessExitDoorSidecar,
+  createHarnessFrontDoorSidecar,
+} from 'tokenless-web-agent-harness'
+
+const frontDoor = createHarnessFrontDoorSidecar(geminiNanoEngine)
+const exitDoor = createHarnessExitDoorSidecar(geminiNanoEngine)
+const prepared = await frontDoor.prepare({ taskPrompt, providers, browserBinding })
+const run = await harness.start({ ...spec, provider: prepared.route.providerId })
+// Read the durable run through the normal Harness interface.
+const postprocessed = run.final
+  ? await exitDoor.finalize({ taskPrompt, output: run.final.output, artifacts: run.final.artifacts, browserBinding })
+  : undefined
+```
+
 The normal CLI reaches this same module through authenticated daemon HTTP:
 
 ```text

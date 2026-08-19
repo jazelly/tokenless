@@ -16,8 +16,7 @@
     DashboardOperation,
     Language,
     Section,
-    UiConfigUpdate,
-    UiProfileCreate,
+    UiSetupInput,
     UiSnapshot,
   } from './types.js'
 
@@ -35,6 +34,7 @@
   let busy = $state(false)
   let fatal = $state('')
   let toast = $state('')
+  let setupRoute = $state(isSetupPath(location.pathname))
   let selectedProfile = $state(new URL(location.href).searchParams.get('profile') ?? '')
   let section = $state<Section>(parseSection(location.hash))
   let toastTimer = 0
@@ -99,13 +99,16 @@
       section = parseSection(location.hash)
       queueMicrotask(() => document.querySelector<HTMLElement>('#main')?.focus())
     }
+    const popState = () => { setupRoute = isSetupPath(location.pathname) }
     const visibilityChange = () => { if (!document.hidden) void refresh() }
     window.addEventListener('hashchange', hashChange)
+    window.addEventListener('popstate', popState)
     document.addEventListener('visibilitychange', visibilityChange)
     skipLink?.addEventListener('click', skipToContent)
     void initialize()
     return () => {
       window.removeEventListener('hashchange', hashChange)
+      window.removeEventListener('popstate', popState)
       document.removeEventListener('visibilitychange', visibilityChange)
       skipLink?.removeEventListener('click', skipToContent)
       window.clearTimeout(pollTimer)
@@ -150,6 +153,13 @@
 
   function synchronizeSnapshot() {
     if (!snapshot) return
+    if (snapshot.profiles.length === 0 && !setupRoute && isConsolePath(location.pathname)) {
+      const url = new URL(location.href)
+      url.pathname = '/ui/setup/'
+      url.hash = ''
+      history.replaceState(history.state, '', url)
+      setupRoute = true
+    }
     if (snapshot.config?.language === 'en' || snapshot.config?.language === 'zh-CN') language = snapshot.config.language
     const requestedProfile = snapshot.profiles.find((profile) => profile.slug === selectedProfile || profile.id === selectedProfile)
     if (requestedProfile && requestedProfile.slug !== selectedProfile) {
@@ -194,11 +204,18 @@
     }
   }
 
-  async function setup(config: UiConfigUpdate, profile: UiProfileCreate) {
-    await actions.updateConfig(config, false)
-    await actions.createProfile(profile, false)
-    showToast(t('profileCreated'))
-    navigate('profiles')
+  async function setup(input: UiSetupInput) {
+    const profile = await perform(() => client.setup(input), false)
+    selectedProfile = profile.slug
+    readiness.reset(profile.slug)
+    setupRoute = false
+    section = 'profiles'
+    const url = new URL(location.href)
+    url.pathname = '/ui/'
+    url.searchParams.set('profile', profile.slug)
+    url.hash = '#profiles'
+    history.replaceState(history.state, '', url)
+    showToast(t('updateSaved'))
   }
 
   function showToast(message: string) {
@@ -209,6 +226,14 @@
 
   function t(key: Parameters<typeof translate>[1]) {
     return translate(language, key)
+  }
+
+  function isSetupPath(pathname: string) {
+    return pathname === '/ui/setup' || pathname === '/ui/setup/'
+  }
+
+  function isConsolePath(pathname: string) {
+    return pathname === '/ui' || pathname === '/ui/'
   }
 </script>
 
@@ -225,7 +250,7 @@
     <span class="spinner"></span>
     <p>{t('loading')}</p>
   </main>
-{:else if snapshot.profiles.length === 0}
+{:else if setupRoute || snapshot.profiles.length === 0}
   <SetupView
     {snapshot}
     {language}

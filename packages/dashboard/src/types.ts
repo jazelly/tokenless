@@ -14,6 +14,8 @@ import type {
   UiProviderSelection,
   UiRuntimeOpenResult,
   UiRuntimeStatus,
+  UiSetupInput,
+  UiSetupSnapshot,
   UiSnapshot,
 } from 'tokenless-internal-shared/ui'
 
@@ -58,6 +60,9 @@ export type {
   UiRouterProviderRule,
   UiRuntimeOpenResult,
   UiRuntimeStatus,
+  UiSetupBrowserId,
+  UiSetupInput,
+  UiSetupSnapshot,
   UiSession,
   UiSnapshot,
 } from 'tokenless-internal-shared/ui'
