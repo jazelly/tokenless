@@ -57,6 +57,7 @@ test(`Web UI displays one completed real-provider job from ${profile}`, { timeou
     '--home', homeDir,
     '--profile', profile,
     '--no-open',
+    '--json',
   ], 60_000)
   assert.equal(dashboard.ok, true)
   assert.equal(dashboard.profile.slug, profile)
@@ -108,11 +109,14 @@ async function openJobs(page) {
 
 function observePage(page, failures) {
   page.on('console', (message) => {
-    if (message.type() === 'error' || message.type() === 'warning') failures.push(message.text())
+    if (message.type() === 'error' || message.type() === 'warning') {
+      const location = message.location()
+      failures.push(`${message.text()}${location.url ? ` (${location.url})` : ''}`)
+    }
   })
   page.on('pageerror', (error) => failures.push(error.message))
   page.on('response', (response) => {
-    if (response.url().includes('/ui-api/') && response.status() >= 500) failures.push(`${response.status()} ${response.url()}`)
+    if (response.url().includes('/ui-api/') && response.status() >= 400) failures.push(`${response.status()} ${response.url()}`)
   })
 }
 

@@ -63,7 +63,7 @@
   </div>
 
   <h2>5. Apply it to this repository / 套回当前仓库</h2>
-  <p><code>packages/web-agent-harness/src/internal/system-prompt.ts</code> already serializes a tool catalog into the prompt and asks the web model for an <code>action_batch</code> envelope. That is the text-envelope version of the same abstract control loop.</p>
+  <p><code>packages/harness/src/internal/system-prompt.ts</code> already serializes a tool catalog into the prompt and asks the web model for an <code>action_batch</code> envelope. That is the text-envelope version of the same abstract control loop.</p>
   <p>Meanwhile, the OpenAI-compatible API proxy currently rejects <code>tools</code>. Bridging those two boundaries does not automatically require copying DeepSeek Harness's execution runtime into Tokenless.</p>
 
   <h2>Retrieval check / 回忆检验</h2>

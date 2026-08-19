@@ -1,0 +1,20 @@
+{
+  "name": "tokenless-internal-dashboard",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Private Tokenless Local Web Control Plane frontend.",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "build": "vite build --config vite.config.ts --logLevel error",
+    "lint": "svelte-check --tsconfig ./tsconfig.json"
+  },
+  "devDependencies": {
+    "@lucide/svelte": "1.28.0",
+    "@sveltejs/vite-plugin-svelte": "7.2.0",
+    "svelte": "5.56.8",
+    "svelte-check": "4.7.4",
+    "vite": "8.2.0",
+    "tokenless-web-ai-interaction-protocol": "0.0.0"
+  }
+}

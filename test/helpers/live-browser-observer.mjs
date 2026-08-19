@@ -7,11 +7,11 @@ import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
 
 import { chromium } from 'playwright'
-import { getProviderInstanceForUrl } from '../../packages/cli/dist/src/playwright/index.js'
+import { getProviderInstanceForUrl } from '../../packages/server/dist/src/browser/index.js'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const cliEntry = path.join(root, 'packages/cli/dist/src/tokenless.mjs')
-const daemonEntry = path.join(root, 'packages/cli/dist/src/daemon/daemon-entry.mjs')
+const daemonEntry = path.join(root, 'packages/server/dist/src/entry.mjs')
 const protocol = 'tokenless.e2e-browser-inspection.v3'
 const pollMs = 50
 const daemonStopTimeoutMs = 60_000

@@ -2,6 +2,13 @@
 
 本文定义 Tokenless 与 AI provider Web surface 交互时使用的标准术语。它描述的是 execution boundary，不代表 provider support 声明。
 
+## Product layer
+
+| 术语 | 定义 | 不要作为同义词使用 |
+|---|---|---|
+| **Tokenless API** | Tokenless 面向 provider 的 HTTP/API 层，包括 Universal API。它接收 API request，并负责 provider-turn routing 与 lifecycle；它与 Tokenless Harness 分开。 | Tokenless Harness、provider 官方 API |
+| **Tokenless Harness** | Tokenless 在 `packages/harness/` 中独立维护的 first-party agent runtime。它负责 AgentRun state、Skills、tool discovery 与 execution、MCP、approval、continuation 和 final output，并通过 HTTP 使用 Tokenless API。 | Tokenless API、external Harness |
+
 ## Execution mode
 
 | 术语 | 定义 | 不要作为同义词使用 |

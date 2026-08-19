@@ -1,18 +1,14 @@
 import { CLI_ERROR_MESSAGES, CLI_MESSAGES, ERROR_SUMMARIES_ZH, type CliErrorMessageKey, type CliMessageKey } from './i18n/catalog.js'
+import {
+  TOKENLESS_LANGUAGES,
+  normalizeTokenlessLanguage,
+  type TokenlessLanguage,
+} from '#tokenless-server/language.js'
 
-export const TOKENLESS_LANGUAGES = Object.freeze(['en', 'zh-CN'] as const)
-
-export type TokenlessLanguage = (typeof TOKENLESS_LANGUAGES)[number]
+export { TOKENLESS_LANGUAGES, normalizeTokenlessLanguage }
+export type { TokenlessLanguage }
 
 let activeLanguage: TokenlessLanguage = 'en'
-
-export function normalizeTokenlessLanguage(value: unknown): TokenlessLanguage | null {
-  if (typeof value !== 'string') return null
-  const normalized = value.trim().replace(/_/g, '-').toLowerCase()
-  if (normalized === 'en' || normalized.startsWith('en-')) return 'en'
-  if (normalized === 'zh' || normalized.startsWith('zh-')) return 'zh-CN'
-  return null
-}
 
 export function detectSystemLanguage({
   env = process.env,

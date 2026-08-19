@@ -17,10 +17,10 @@ let packedFixture
 
 before(async () => {
   packedFixture = await createPackedCliFixture()
-  daemonServer = pathToFileURL(path.join(packedFixture.cliDirectory, 'dist/src/daemon/server.js')).href
-  daemonStore = pathToFileURL(path.join(packedFixture.cliDirectory, 'dist/src/daemon/job-store.js')).href
-  profileRegistry = pathToFileURL(path.join(packedFixture.cliDirectory, 'dist/src/playwright/profiles/registry.js')).href
-  harnessModule = pathToFileURL(path.join(packedFixture.cliDirectory, 'dist/web-agent-harness/src/index.js')).href
+  daemonServer = pathToFileURL(path.join(packedFixture.cliDirectory, 'dist/server/src/http/server.js')).href
+  daemonStore = pathToFileURL(path.join(packedFixture.cliDirectory, 'dist/server/src/jobs/store.js')).href
+  profileRegistry = pathToFileURL(path.join(packedFixture.cliDirectory, 'dist/server/src/browser/profiles/registry.js')).href
+  harnessModule = pathToFileURL(path.join(packedFixture.cliDirectory, 'dist/harness/src/index.js')).href
 })
 
 after(async () => {

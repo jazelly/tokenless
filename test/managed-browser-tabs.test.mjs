@@ -4,7 +4,7 @@ import test from 'node:test'
 
 import {
   PersistentContextManager,
-} from '../packages/cli/dist/src/playwright/index.js'
+} from '../packages/server/dist/src/browser/index.js'
 import { resolveConfiguredBrowserTarget } from './helpers/configured-browser-profile.mjs'
 
 test('CDP production launch allows configured Chromium executables to use native credential storage', async () => {

@@ -7,15 +7,16 @@ import { DatabaseSync } from 'node:sqlite'
 import test from 'node:test'
 
 import {
+  createAgentRunHttpHandler,
   createLocalHttpProviderTurnClient,
   createStdioMcpToolRegistry,
   openWebAgentHarness,
-} from '../packages/web-agent-harness/dist/src/index.js'
-import { canonicalJson } from '../packages/web-agent-harness/dist/src/internal/filesystem.js'
-import { HarnessRunStore } from '../packages/web-agent-harness/dist/src/internal/run-store.js'
-import { serveHttp } from '../packages/cli/dist/src/daemon/server.js'
-import { JobStore } from '../packages/cli/dist/src/daemon/job-store.js'
-import { ManagedProfileRegistry } from '../packages/cli/dist/src/playwright/profiles/registry.js'
+} from '../packages/harness/dist/src/index.js'
+import { canonicalJson } from '../packages/harness/dist/src/internal/filesystem.js'
+import { HarnessRunStore } from '../packages/harness/dist/src/internal/run-store.js'
+import { serveHttp } from '../packages/server/dist/src/http/server.js'
+import { JobStore } from '../packages/server/dist/src/jobs/store.js'
+import { ManagedProfileRegistry } from '../packages/server/dist/src/browser/profiles/registry.js'
 
 const everythingServer = {
   name: 'everything',
@@ -141,7 +142,7 @@ test('authenticated daemon serializes concurrent drives while a real MCP call is
   })
   context.closeHarness()
   const jobStore = await JobStore.open(context.home)
-  const daemon = await serveHttp({ store: jobStore, host: '127.0.0.1', port: 0 })
+  const daemon = await serveHttp({ store: jobStore, host: '127.0.0.1', port: 0, agentRunHandlerFactory: createAgentRunHttpHandler })
   daemon.activate()
   try {
     const endpoint = `${daemon.origin}/v1/agent/runs/${context.runId}`
@@ -168,7 +169,7 @@ test('spec secrets are rejected before SQLite admission and deterministic HTTP d
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-harness-spec-')))
   const home = path.join(root, 'home')
   const jobStore = await JobStore.open(home)
-  const daemon = await serveHttp({ store: jobStore, host: '127.0.0.1', port: 0 })
+  const daemon = await serveHttp({ store: jobStore, host: '127.0.0.1', port: 0, agentRunHandlerFactory: createAgentRunHttpHandler })
   daemon.activate()
   const profile = await new ManagedProfileRegistry(home).addProfile({ slug: 'deterministic', lifecycle: 'ready' })
   const token = (await fs.readFile(path.join(home, 'daemon.token'), 'utf8')).trim()

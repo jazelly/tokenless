@@ -41,6 +41,16 @@ tokenless api-proxy status --json
 
 裸 `/v1` base 的存在，是为了让使用 `/v1/chat/completions` 或 `/v1/responses` 的客户端无需改动即可工作。它们只是 alias：dialect 与行为完全一致。Anthropic 没有裸 alias，因为两种 dialect 会在同一路径上冲突。
 
+### 给无法声明 mode 的 client 设置默认 execution mode
+
+请求体中的 `tokenless.execution_mode` 是可选的。如果 harness 无法发送它，可以改为设置 daemon 进程默认值：
+
+```bash
+TOKENLESS_API_PROXY_EXECUTION_MODE=browser tokenless dashboard --no-open --json
+```
+
+有效值为 `browser` 与 `direct`。环境变量只在请求省略 mode 时生效；请求显式字段仍然优先。当前 DeepSeek Completion API demo 使用的就是这条路径。
+
 ## 认证
 
 把 daemon control token 作为 bearer token 发送。标准 SDK 在你设置 API key 后就已经这么做了。

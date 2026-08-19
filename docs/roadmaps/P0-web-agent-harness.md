@@ -140,7 +140,7 @@ The intended end state contains two independently useful projects:
 The repository is not split while both interfaces are still moving. The delivery sequence is:
 
 1. keep the existing Web Provider API implementation in this repository;
-2. add the harness as an independently buildable workspace package, provisionally `packages/web-agent-harness/`;
+2. maintain the harness as the independently buildable `packages/harness/` workspace;
 3. make that package depend only on a versioned provider-turn client and shared wire schemas;
 4. prove required System Prompt Bundle delivery, registry-driven `SKILL.md` loading, then the first external-tool loop, and stabilize the cross-package interface; and
 5. extract the harness package into its own project only when doing so is a mechanical repository move rather than an architectural rewrite.
@@ -167,10 +167,10 @@ The harness owns its AgentRun persistence schema and migrations behind its own m
 
 ### Initial Package Shape
 
-The first implementation belongs at `packages/web-agent-harness/`. That location makes the dependency rule mechanically enforceable while both sides of the Provider interface are still changing. It is not a claim on an external package name or a commitment to keep the Harness in this repository permanently.
+The implementation belongs at `packages/harness/`. That location makes the dependency rule mechanically enforceable while both sides of the Provider interface are still changing. It is not a claim on an external package name or a commitment to keep the Harness in this repository permanently.
 
 ```text
-packages/web-agent-harness/
+packages/harness/
   package.json
   src/
     index.ts                  # the only public package surface

@@ -4,7 +4,7 @@ import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-import { listProviderDescriptors } from '../packages/cli/dist/src/providers/registry.js'
+import { listProviderDescriptors } from '../packages/server/dist/src/providers/registry.js'
 import {
   createConfiguredBrowserContextManager,
   resolveConfiguredBrowserTarget,

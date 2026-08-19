@@ -398,7 +398,7 @@ test('Codex CLI rebinds root Hook provenance to the concrete thread and PostTool
     assert.equal(pending.invocations[0].hookSessionId, 'thr_tree_root')
     assert.equal(pending.invocations[0].status, 'pending')
 
-    const { completeBoundAgentInvocation } = await import('../packages/web-agent-harness/dist/src/index.js')
+    const { completeBoundAgentInvocation } = await import('../packages/harness/dist/src/index.js')
     await completeBoundAgentInvocation({
       tokenlessHome: fixture.tokenlessHome,
       bindingId,

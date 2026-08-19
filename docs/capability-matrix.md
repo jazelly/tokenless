@@ -207,7 +207,7 @@ Add a canonical capability when the product needs a new provider-neutral outcome
 
 1. **Define the semantics.** State the user outcome, parameters, outputs, lifecycle, side effects, implications, conflicts, and terminal conditions.
 2. **Check for composition first.** Prefer an existing capability or a combination of existing capabilities when it expresses the result without losing meaning.
-3. **Add the catalog definition.** Update `packages/cli/src/providers/task-capabilities.ts` and keep the identifier independent of provider names.
+3. **Add the catalog definition.** Update `packages/server/src/providers/task-capabilities.ts` and keep the identifier independent of provider names.
 4. **Implement provider strategies.** Keep selectors and provider-specific controls inside provider adapters and typed capability classes.
 5. **Implement against the real site.** Observe and exercise every materially distinct selector, parser state, blocker, and transition in the configured persistent browser profile. Do not capture or substitute provider DOM fixtures.
 6. **Declare live acceptance.** Add the real case to `test/live-provider-capability-matrix.json` and implement its journey in `test/live-managed-playwright.e2e.mjs`.
@@ -244,9 +244,9 @@ Persisted jobs record their normalized capability route and evidence identifiers
 
 | Concern | Source |
 | --- | --- |
-| Catalog definitions and provider routes | `packages/cli/src/providers/task-capabilities.ts` |
-| Provider-specific actions and payload contracts | `packages/cli/src/providers/contracts.ts` and `action-catalog.ts` |
-| Provider implementations | `packages/cli/src/providers/` |
+| Catalog definitions and provider routes | `packages/server/src/providers/task-capabilities.ts` |
+| Provider-specific actions and payload contracts | `packages/server/src/providers/contracts.ts` and `action-catalog.ts` |
+| Provider implementations | `packages/server/src/providers/` |
 | Real-provider required cases | `test/live-provider-capability-matrix.json` |
 | Real-provider journeys | `test/live-managed-playwright.e2e.mjs` |
 | Provider website test boundary | `AGENTS.md` and `test/live-provider-capability-matrix.json` |

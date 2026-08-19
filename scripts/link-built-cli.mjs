@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -23,3 +24,11 @@ try {
 
 fs.symlinkSync(target, linkPath, 'file')
 console.log(`Created development launcher / 已创建开发启动入口: tokenless-beta -> ${target}`)
+
+// With npm 11, running `npm link` from the package directory creates the
+// global link; passing `--global` is rejected for this form.
+execFileSync('npm', ['link'], {
+  cwd: path.join(repositoryRoot, 'packages', 'cli'),
+  stdio: 'inherit',
+})
+console.log('Linked the local CLI globally / 已将本地 CLI 链接到全局: tokenless')

@@ -207,7 +207,7 @@ Provider route 会另外声明 strategy、evidence identifiers，以及 `experim
 
 1. **定义语义。** 写清 user outcome、parameters、outputs、lifecycle、side effects、implications、conflicts 与 terminal conditions。
 2. **先检查 composition。** 如果现有 capability 或其组合能够完整表达结果，应优先复用。
-3. **新增 catalog definition。** 更新 `packages/cli/src/providers/task-capabilities.ts`，identifier 不得包含 provider 名称。
+3. **新增 catalog definition。** 更新 `packages/server/src/providers/task-capabilities.ts`，identifier 不得包含 provider 名称。
 4. **实现 provider strategies。** Selector 与 provider-specific control 保留在 provider adapter 和 typed capability class 中。
 5. **基于真实网站实现。** 在配置好的持久浏览器 profile 中观察并操作每个 materially distinct selector、parser state、blocker 与 transition；不得捕获或替代为 provider DOM fixture。
 6. **声明 live acceptance。** 在 `test/live-provider-capability-matrix.json` 增加真实 case，并在 `test/live-managed-playwright.e2e.mjs` 实现 journey。
@@ -244,9 +244,9 @@ Provider-only concept 保留为 `deepseek.mode`、`kimi.skill`、`dola.translate
 
 | Concern | Source |
 | --- | --- |
-| Catalog definitions 与 provider routes | `packages/cli/src/providers/task-capabilities.ts` |
-| Provider-specific actions 与 payload contracts | `packages/cli/src/providers/contracts.ts`、`action-catalog.ts` |
-| Provider implementations | `packages/cli/src/providers/` |
+| Catalog definitions 与 provider routes | `packages/server/src/providers/task-capabilities.ts` |
+| Provider-specific actions 与 payload contracts | `packages/server/src/providers/contracts.ts`、`action-catalog.ts` |
+| Provider implementations | `packages/server/src/providers/` |
 | 真实 provider required cases | `test/live-provider-capability-matrix.json` |
 | 真实 provider journeys | `test/live-managed-playwright.e2e.mjs` |
 | Provider website 测试边界 | `AGENTS.md`、`test/live-provider-capability-matrix.json` |

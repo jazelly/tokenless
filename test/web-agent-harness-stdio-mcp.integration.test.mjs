@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import path from 'node:path'
 import test from 'node:test'
 
-import { createStdioMcpToolRegistry } from '../packages/web-agent-harness/dist/src/index.js'
+import { createStdioMcpToolRegistry } from '../packages/harness/dist/src/index.js'
 
 test('Harness discovers and calls the official MCP everything server over real stdio', async () => {
   const registry = createStdioMcpToolRegistry()

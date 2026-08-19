@@ -4,7 +4,7 @@ Last reviewed: 2026-08-17
 
 This is a product reconnaissance record, not a Tokenless support declaration. Official provider documentation establishes that a product feature exists. Tokenless advertises a route only after the provider adapter implements the complete visible lifecycle and real-provider browser E2E closes the required evidence. The normative naming, mapping, support, and extension rules live in the [Capability Matrix](capability-matrix.md).
 
-The checked-in runtime catalog and provider routing matrix live in `packages/cli/src/providers/task-capabilities.ts`. `tokenless capabilities list --json` exposes that versioned catalog without opening a browser. The current V3 routeable outcomes are:
+The checked-in runtime catalog and provider routing matrix live in `packages/server/src/providers/task-capabilities.ts`. `tokenless capabilities list --json` exposes that versioned catalog without opening a browser. The current V3 routeable outcomes are:
 
 - `conversation.chat`: ChatGPT, Claude, Gemini, Grok, Arena, experimental Perplexity, experimental Z.ai, experimental Doubao, experimental Kimi, and experimental Meta AI;
 - `image.generation` and `artifact.download`: experimental ChatGPT, Gemini, Grok, Doubao, Dola, Arena, and Meta AI;

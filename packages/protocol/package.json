@@ -1,0 +1,34 @@
+{
+  "name": "tokenless-web-ai-interaction-protocol",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Provisional internal Web AI interaction protocol bindings and canonical schemas.",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./dist/src/index.js",
+    "./local-http": "./dist/src/local-http.js",
+    "./localized-errors": "./dist/src/localized-errors.js",
+    "./structured-control": "./dist/src/structured-control.js",
+    "./ui-contract": "./dist/src/ui-contract.js"
+  },
+  "files": [
+    "dist/src",
+    "schemas/v0",
+    "spec",
+    "examples/v0",
+    "README.md",
+    "package.json"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  }
+}

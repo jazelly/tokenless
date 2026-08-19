@@ -6,7 +6,7 @@ import path from 'node:path'
 import test from 'node:test'
 import { gzipSync } from 'node:zlib'
 
-import { verifyAndExtractManagedBrowserArtifact } from '../packages/cli/dist/src/browser-runtime/manager.js'
+import { verifyAndExtractManagedBrowserArtifact } from '../packages/server/dist/src/browser/runtime/manager.js'
 
 test('managed browser artifact verification fails closed across real archive and executable boundaries', async () => {
   const temporaryRoot = await fs.realpath(os.tmpdir())

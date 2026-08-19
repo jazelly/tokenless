@@ -28,7 +28,7 @@ test('built Browser provider navigation catalog owns every entry point and known
   const {
     PROVIDER_NAVIGATION_CATALOG,
     listProviderDescriptors,
-  } = await import('../packages/cli/dist/src/playwright/index.js')
+  } = await import('../packages/server/dist/src/browser/index.js')
   const descriptors = listProviderDescriptors()
     .filter((descriptor) => descriptor.executionModes.includes('browser'))
   assert.deepEqual(
@@ -185,7 +185,7 @@ test('new profiles are logical native Chrome profiles and do not provision a bro
 test('concurrent single-profile config updates preserve both memberships', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-profile-config-concurrency-')))
   const runtime = await import('../packages/cli/dist/src/index.js')
-  const { ManagedProfileRegistry } = await import('../packages/cli/dist/src/playwright/profiles/registry.js')
+  const { ManagedProfileRegistry } = await import('../packages/server/dist/src/browser/profiles/registry.js')
   try {
     const registry = new ManagedProfileRegistry(homeDir)
     await registry.addProfile({ slug: 'alpha', lifecycle: 'ready', setDefault: true })
@@ -212,7 +212,7 @@ test('concurrent single-profile config updates preserve both memberships', async
 })
 
 test('managed Chrome for Testing catalog follows the platform Cloak major', async () => {
-  const { managedBrowserCatalogEntry } = await import('../packages/cli/dist/src/browser-runtime/catalog.js')
+  const { managedBrowserCatalogEntry } = await import('../packages/server/dist/src/browser/runtime/catalog.js')
   const mac = managedBrowserCatalogEntry('managed-chromium', 'darwin-arm64')
   const windows = managedBrowserCatalogEntry('managed-chromium', 'win32-x64')
   assert.equal(mac.browserVersion, '145.0.7632.6')
@@ -235,7 +235,7 @@ test('persistent config migrates every registered legacy profile into config.pro
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-profile-config-migration-')))
   const configPath = path.join(homeDir, 'config.json')
   const runtime = await import('../packages/cli/dist/src/index.js')
-  const { ManagedProfileRegistry } = await import('../packages/cli/dist/src/playwright/profiles/registry.js')
+  const { ManagedProfileRegistry } = await import('../packages/server/dist/src/browser/profiles/registry.js')
   try {
     const registry = new ManagedProfileRegistry(homeDir)
     await registry.addProfile({ slug: 'default', lifecycle: 'ready', setDefault: true })
@@ -313,8 +313,8 @@ test('output savings defaults on without downloading its runtime during status c
 
 test('workspace packages keep standalone product names', () => {
   const cli = readJson('packages/cli/package.json')
-  const harness = readJson('packages/web-agent-harness/package.json')
-  const protocol = readJson('packages/web-ai-interaction-protocol/package.json')
+  const harness = readJson('packages/harness/package.json')
+  const protocol = readJson('packages/protocol/package.json')
   assert.equal(cli.name, 'tokenless')
   assert.deepEqual(cli.bin, { tokenless: 'dist/src/tokenless.mjs' })
   assert.ok(!cli.name.startsWith('@tokenless/'))
@@ -326,7 +326,9 @@ test('workspace packages keep standalone product names', () => {
   assert.deepEqual(protocol.exports, {
     '.': './dist/src/index.js',
     './local-http': './dist/src/local-http.js',
+    './localized-errors': './dist/src/localized-errors.js',
     './structured-control': './dist/src/structured-control.js',
+    './ui-contract': './dist/src/ui-contract.js',
   })
   assert.ok(protocol.files.includes('schemas/v0'))
   assert.ok(protocol.files.includes('spec'))
@@ -728,20 +730,21 @@ test('pure JS CLI packs, installs, and exposes executable runtime artifacts', ()
     impersTarball = path.join(packDir, impersPack.filename)
     koffiTarball = path.join(packDir, koffiPack.filename)
     koffiPlatformTarball = path.join(packDir, koffiPlatformPack.filename)
-    assert.ok(universalPack.files.some((file) => file.path === 'dist/src/playwright/index.js'))
-    assert.ok(universalPack.files.some((file) => file.path === 'dist/src/playwright/index.d.ts'))
-    assert.ok(universalPack.files.some((file) => file.path === 'dist/src/daemon/daemon-entry.mjs'))
+    assert.ok(universalPack.files.some((file) => file.path === 'dist/server/src/browser/index.js'))
+    assert.ok(universalPack.files.some((file) => file.path === 'dist/server/src/browser/index.d.ts'))
+    assert.ok(universalPack.files.some((file) => file.path === 'dist/server/src/entry.mjs'))
+    assert.ok(universalPack.files.some((file) => file.path === 'dist/src/bootstrap/daemon-entry.mjs'))
     assert.ok(universalPack.files.some((file) => file.path === 'dist/src/tokenless.mjs'))
-    assert.ok(universalPack.files.some((file) => file.path === 'dist/web-agent-harness/src/index.js'))
-    assert.ok(universalPack.files.some((file) => file.path === 'dist/web-agent-harness/src/index.d.ts'))
-    assert.ok(universalPack.files.some((file) => file.path === 'dist/src/daemon/ui/index.html'))
-    assert.ok(universalPack.files.some((file) => file.path === 'dist/src/daemon/ui/app.js'))
-    assert.ok(universalPack.files.some((file) => file.path === 'dist/src/daemon/ui/styles.css'))
-    assert.ok(universalPack.files.some((file) => file.path === 'dist/src/daemon/ui/mark.png'))
-    assert.equal(universalPack.files.some((file) => file.path === 'dist/src/daemon/ui/dashboard.js'), false)
-    assert.equal(universalPack.files.some((file) => file.path.startsWith('dist/src/daemon/ui/pages/')), false)
+    assert.ok(universalPack.files.some((file) => file.path === 'dist/harness/src/index.js'))
+    assert.ok(universalPack.files.some((file) => file.path === 'dist/harness/src/index.d.ts'))
+    assert.ok(universalPack.files.some((file) => file.path === 'dist/server/dashboard/index.html'))
+    assert.ok(universalPack.files.some((file) => file.path === 'dist/server/dashboard/app.js'))
+    assert.ok(universalPack.files.some((file) => file.path === 'dist/server/dashboard/styles.css'))
+    assert.ok(universalPack.files.some((file) => file.path === 'dist/server/dashboard/mark.png'))
+    assert.equal(universalPack.files.some((file) => file.path === 'dist/server/dashboard/dashboard.js'), false)
+    assert.equal(universalPack.files.some((file) => file.path.startsWith('dist/server/dashboard/pages/')), false)
     assert.ok(universalPack.files.some((file) => file.path === 'README.md'))
-    assert.equal(universalPack.files.some((file) => file.path === 'dist/src/playwright/runner-entry.mjs'), false)
+    assert.equal(universalPack.files.some((file) => file.path === 'dist/server/src/browser/runner-entry.mjs'), false)
     assert.equal(universalPack.files.some((file) => file.path.startsWith('dist/bin/')), false)
     assert.equal(universalPack.files.some((file) => file.path.startsWith('npm/')), false)
     assert.equal(universalPack.files.some((file) => /native-host\.mjs$/.test(file.path)), false)
@@ -765,16 +768,16 @@ test('pure JS CLI packs, installs, and exposes executable runtime artifacts', ()
     ])
 
     const installedCli = path.join(installDir, 'node_modules', 'tokenless')
-    const installedDaemonEntry = path.join(installedCli, 'dist', 'src', 'daemon', 'daemon-entry.mjs')
+    const installedDaemonEntry = path.join(installedCli, 'dist', 'src', 'bootstrap', 'daemon-entry.mjs')
     assert.equal(fs.existsSync(path.join(installedCli, 'dist', 'bin')), false)
-    assert.equal(fs.existsSync(path.join(installedCli, 'dist', 'src', 'playwright', 'index.js')), true)
-    assert.equal(fs.existsSync(path.join(installedCli, 'dist', 'src', 'playwright', 'runner-entry.mjs')), false)
+    assert.equal(fs.existsSync(path.join(installedCli, 'dist', 'server', 'src', 'browser', 'index.js')), true)
+    assert.equal(fs.existsSync(path.join(installedCli, 'dist', 'server', 'src', 'browser', 'runner-entry.mjs')), false)
     assert.equal(fs.existsSync(path.join(installDir, 'node_modules', '@tokenless', 'playwright')), false)
     assert.equal(fs.existsSync(path.join(installDir, 'node_modules', 'tokenless-native-darwin-arm64')), false)
     assert.equal(fs.existsSync(installedDaemonEntry), true)
-    const installedHarness = path.join(installedCli, 'dist', 'web-agent-harness', 'src', 'index.js')
+    const installedHarness = path.join(installedCli, 'dist', 'harness', 'src', 'index.js')
     assert.equal(fs.existsSync(installedHarness), true)
-    const installedHarnessRoot = path.join(installedCli, 'dist', 'web-agent-harness')
+    const installedHarnessRoot = path.join(installedCli, 'dist', 'harness')
     const installedHarnessJavaScript = fs.readdirSync(installedHarnessRoot, { recursive: true })
       .filter((entry) => typeof entry === 'string' && entry.endsWith('.js'))
       .map((entry) => entry.replaceAll(path.sep, '/'))
@@ -790,14 +793,14 @@ test('pure JS CLI packs, installs, and exposes executable runtime artifacts', ()
     ], { cwd: installDir, encoding: 'utf8' })
     assert.equal(harnessImport.status, 0, harnessImport.stderr || harnessImport.stdout)
     assert.equal(harnessImport.stdout, 'function')
-    const installedOpenAiToolProtocol = path.join(installedCli, 'dist', 'src', 'daemon', 'openai-tool-protocol.js')
+    const installedOpenAiToolProtocol = path.join(installedCli, 'dist', 'server', 'src', 'universal-api', 'openai-tool-protocol.js')
     assert.equal(fs.existsSync(installedOpenAiToolProtocol), true)
     assert.equal(
       fs.readFileSync(installedOpenAiToolProtocol, 'utf8').includes('tokenless-web-ai-interaction-protocol'),
       false,
     )
     assert.equal(
-      fs.readFileSync(path.join(installedCli, 'dist', 'src', 'daemon', 'openai-tool-protocol.d.ts'), 'utf8').includes("from 'ajv'"),
+      fs.readFileSync(path.join(installedCli, 'dist', 'server', 'src', 'universal-api', 'openai-tool-protocol.d.ts'), 'utf8').includes("from 'ajv'"),
       false,
     )
     const protocolImport = spawnSync(process.execPath, [
@@ -919,7 +922,7 @@ test('built CLI reads managed profile registries without enforcing POSIX mode bi
   const temporaryRoot = fs.realpathSync(os.tmpdir())
   const homeDir = fs.mkdtempSync(path.join(temporaryRoot, 'tokenless-profile-registry-mode-'))
   try {
-    const { ManagedProfileRegistry } = await import('../packages/cli/dist/src/playwright/profiles/registry.js')
+    const { ManagedProfileRegistry } = await import('../packages/server/dist/src/browser/profiles/registry.js')
     const registry = new ManagedProfileRegistry(homeDir)
     await registry.addProfile({ slug: 'mode-visible', lifecycle: 'ready' })
     fs.chmodSync(registry.paths.registryFile, 0o644)

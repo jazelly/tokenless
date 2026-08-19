@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import {
   VISIBLE_ACTIONS,
   listProviderDescriptors,
-} from '../../packages/cli/dist/src/playwright/index.js'
+} from '../../packages/server/dist/src/browser/index.js'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 export const liveProviderCapabilityMatrixPath = path.join(root, 'test/live-provider-capability-matrix.json')

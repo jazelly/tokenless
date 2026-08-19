@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 
-const harnessModule = '../packages/web-agent-harness/dist/src/index.js'
+const harnessModule = '../packages/harness/dist/src/index.js'
 
 test('built Harness package prepares the required System Prompt and preselected Skill files through the filesystem', async () => {
   const fixture = await createFixture()

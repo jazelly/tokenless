@@ -6,8 +6,8 @@ import test from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const daemonServer = pathToFileURL(path.join(root, 'packages/cli/dist/src/daemon/server.js')).href
-const daemonStore = pathToFileURL(path.join(root, 'packages/cli/dist/src/daemon/job-store.js')).href
+const daemonServer = pathToFileURL(path.join(root, 'packages/server/dist/src/http/server.js')).href
+const daemonStore = pathToFileURL(path.join(root, 'packages/server/dist/src/jobs/store.js')).href
 
 const ONE_PIXEL_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',

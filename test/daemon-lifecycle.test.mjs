@@ -14,8 +14,9 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliDir = path.join(root, 'packages/cli')
 const cliEntry = path.join(cliDir, 'dist/src/tokenless.mjs')
 const cliIndex = path.join(cliDir, 'dist/src/index.js')
-const cliPlaywrightIndex = path.join(cliDir, 'dist/src/playwright/index.js')
-const tsDaemonEntry = path.join(cliDir, 'dist/src/daemon/daemon-entry.mjs')
+const cliPlaywrightIndex = path.join(cliDir, 'dist/src/http/managed-playwright.js')
+const serverBrowserIndex = path.join(cliDir, 'dist/server/src/browser/index.js')
+const tsDaemonEntry = path.join(cliDir, 'dist/src/bootstrap/daemon-entry.mjs')
 const packageVersion = JSON.parse(fs.readFileSync(path.join(cliDir, 'package.json'), 'utf8')).version
 
 test('ensureDaemonReady installs the packaged daemon and reports OpenAPI v1 readiness', async () => {
@@ -627,7 +628,12 @@ async function importCli() {
 }
 
 async function importPlaywright() {
-  return await import(`${pathToFileURL(cliPlaywrightIndex).href}?daemon_lifecycle=${Date.now()}_${Math.random()}`)
+  const cacheKey = `daemon_lifecycle=${Date.now()}_${Math.random()}`
+  const [client, browser] = await Promise.all([
+    import(`${pathToFileURL(cliPlaywrightIndex).href}?${cacheKey}`),
+    import(`${pathToFileURL(serverBrowserIndex).href}?${cacheKey}`),
+  ])
+  return { ...browser, ...client }
 }
 
 async function freePort() {

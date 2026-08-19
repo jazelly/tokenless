@@ -7,10 +7,10 @@ import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const daemonServer = path.join(root, 'packages/cli/dist/src/daemon/server.js')
-const daemonStore = path.join(root, 'packages/cli/dist/src/daemon/job-store.js')
+const daemonServer = path.join(root, 'packages/server/dist/src/http/server.js')
+const daemonStore = path.join(root, 'packages/server/dist/src/jobs/store.js')
 const runtimeModule = path.join(root, 'packages/cli/dist/src/index.js')
-const profileRegistryModule = path.join(root, 'packages/cli/dist/src/playwright/profiles/registry.js')
+const profileRegistryModule = path.join(root, 'packages/server/dist/src/browser/profiles/registry.js')
 const REFERENCE_IMAGE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
 const UNPADDED_REFERENCE_IMAGE = REFERENCE_IMAGE.replace(/=+$/u, '')
 
@@ -1117,6 +1117,49 @@ test('api proxy conversation mode round-trips through the persisted config', asy
       }),
       /API proxy configuration/,
     )
+  })
+})
+
+test('api proxy uses the process environment mode when the request omits tokenless mode', async () => {
+  await withDaemon(async (daemon) => {
+    const { ManagedProfileRegistry } = await import(profileRegistryModule)
+    const registry = new ManagedProfileRegistry(daemon.homeDir)
+    await registry.addProfile({ slug: 'web-ai', setDefault: true, lifecycle: 'ready' })
+    await registry.updateProviderStatus('web-ai', {
+      provider: 'deepseek',
+      auth: 'authenticated',
+      access: 'signed_in_free',
+      checkedAt: new Date().toISOString(),
+    })
+    const { writeTokenlessConfig } = await import(runtimeModule)
+    await writeTokenlessConfig({
+      homeDir: daemon.homeDir,
+      apiProxy: { enabled: true, conversationMode: 'new-conversation', executionMode: 'direct' },
+      profiles: {
+        'web-ai': {
+          roleLabel: '',
+          enabledProviders: ['deepseek'],
+          browserVisibility: 'headed',
+          proxy: null,
+        },
+      },
+    })
+
+    const previousMode = process.env.TOKENLESS_API_PROXY_EXECUTION_MODE
+    process.env.TOKENLESS_API_PROXY_EXECUTION_MODE = 'browser'
+    try {
+      const pending = call(daemon, 'POST', '/v1/chat/completions', {
+        model: 'tokenless/deepseek',
+        messages: [{ role: 'user', content: 'Show the browser workflow.' }],
+      })
+      const job = await waitForQueuedApiProxyJob(daemon, 'api-proxy:')
+      assert.equal(job.request_json.executionMode, 'browser')
+      daemon.store.cancelJob(job.job_id, 'focused environment mode test completed')
+      assert.equal((await pending).status, 502)
+    } finally {
+      if (previousMode === undefined) delete process.env.TOKENLESS_API_PROXY_EXECUTION_MODE
+      else process.env.TOKENLESS_API_PROXY_EXECUTION_MODE = previousMode
+    }
   })
 })
 

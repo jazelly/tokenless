@@ -41,6 +41,16 @@ Do not hardcode it. Read `apiProxy.endpoints` from `tokenless api-proxy status -
 
 The bare `/v1` base exists so clients that use `/v1/chat/completions` or `/v1/responses` work without modification. These are aliases: same dialect, same behavior. Anthropic has no bare alias, because the two dialects would collide on one path.
 
+### Default execution mode for mode-agnostic clients
+
+The request field `tokenless.execution_mode` is optional. If a harness cannot send it, set the daemon process default instead:
+
+```bash
+TOKENLESS_API_PROXY_EXECUTION_MODE=browser tokenless dashboard --no-open --json
+```
+
+Valid values are `browser` and `direct`. The environment value applies only when the request omits a mode; an explicit request field still wins. This is the path used by the local DeepSeek Completion API demo.
+
 ## Authentication
 
 Send the daemon control token as a bearer token. Standard SDKs already do this when you set their API key.

@@ -13,7 +13,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliDir = path.join(root, 'packages/cli')
 const cliEntry = path.join(cliDir, 'dist/src/tokenless.mjs')
 const cliIndex = path.join(cliDir, 'dist/src/index.js')
-const tsDaemonEntry = path.join(cliDir, 'dist/src/daemon/daemon-entry.mjs')
+const tsDaemonEntry = path.join(cliDir, 'dist/src/bootstrap/daemon-entry.mjs')
 const managedPlaywrightJobAction = 'visible_provider_actions'
 const createdChildren = new Set()
 
@@ -66,7 +66,7 @@ test('JobStore normalizes a legacy WAL database for direct read compatibility', 
     legacyDatabase.close()
   }
 
-  const moduleUrl = pathToFileURL(path.join(cliDir, 'dist/src/daemon/job-store.js')).href + '?test=' + randomUUID()
+  const moduleUrl = pathToFileURL(path.join(cliDir, 'dist/server/src/jobs/store.js')).href + '?test=' + randomUUID()
   const { JobStore } = await import(moduleUrl)
   let store
   try {
@@ -857,7 +857,7 @@ test('SQLite preserves exact provider Project and conversation mappings across s
 }, async () => {
   requireBuiltArtifacts()
   const homeDir = tempHome('tokenless-provider-mappings-')
-  const { JobStore } = await import(`${pathToFileURL(path.join(cliDir, 'dist/src/daemon/job-store.js')).href}?test=${randomUUID()}`)
+  const { JobStore } = await import(`${pathToFileURL(path.join(cliDir, 'dist/server/src/jobs/store.js')).href}?test=${randomUUID()}`)
   let store = await JobStore.open(homeDir)
   try {
     const job = store.createJob({
@@ -1245,7 +1245,7 @@ test('built Playwright validators enforce the current internal schema IDs', {
 test('SQLite atomically preserves provider fallback attempts under one durable job id', async () => {
   requireBuiltArtifacts()
   const homeDir = tempHome('tokenless-provider-fallback-store-')
-  const { JobStore } = await import(`${pathToFileURL(path.join(cliDir, 'dist/src/daemon/job-store.js')).href}?test=${randomUUID()}`)
+  const { JobStore } = await import(`${pathToFileURL(path.join(cliDir, 'dist/server/src/jobs/store.js')).href}?test=${randomUUID()}`)
   const playwright = await importPlaywright()
   let store = await JobStore.open(homeDir)
   try {
@@ -1448,7 +1448,7 @@ test('TS daemon browser runtime control is authenticated, quiesces queued work, 
 test('SQLite durably and idempotently attributes measured visible output to its triggering job', async () => {
   requireBuiltArtifacts()
   const homeDir = tempHome('tokenless-output-savings-store-')
-  const { JobStore } = await import(`${pathToFileURL(path.join(cliDir, 'dist/src/daemon/job-store.js')).href}?test=${randomUUID()}`)
+  const { JobStore } = await import(`${pathToFileURL(path.join(cliDir, 'dist/server/src/jobs/store.js')).href}?test=${randomUUID()}`)
   let store = await JobStore.open(homeDir)
   try {
     const created = store.createJob({
@@ -1535,7 +1535,7 @@ test('SQLite durably and idempotently attributes measured visible output to its 
 test('SQLite completes the provider job before durable output savings work is processed', async () => {
   requireBuiltArtifacts()
   const homeDir = tempHome('tokenless-output-savings-handoff-')
-  const { JobStore } = await import(`${pathToFileURL(path.join(cliDir, 'dist/src/daemon/job-store.js')).href}?test=${randomUUID()}`)
+  const { JobStore } = await import(`${pathToFileURL(path.join(cliDir, 'dist/server/src/jobs/store.js')).href}?test=${randomUUID()}`)
   let store = await JobStore.open(homeDir)
   try {
     const created = store.createJob({
@@ -1738,7 +1738,7 @@ async function importCli() {
 }
 
 async function importPlaywright() {
-  return await import(`${pathToFileURL(path.join(cliDir, 'dist/src/playwright/index.js')).href}?test=${Date.now()}-${Math.random()}`)
+  return await import(`${pathToFileURL(path.join(cliDir, 'dist/server/src/browser/index.js')).href}?test=${Date.now()}-${Math.random()}`)
 }
 
 function runCli(args) {

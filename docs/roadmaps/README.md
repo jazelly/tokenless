@@ -1,6 +1,6 @@
 # Tokenless Roadmaps
 
-Status: active product direction | Last reviewed: 2026-08-16
+Status: active product direction | Last reviewed: 2026-08-18
 
 This directory contains long-horizon product and engineering roadmaps. It is separate from `plans/`, which contains bounded implementation plans for individual pieces of work.
 
@@ -60,6 +60,7 @@ Every roadmap filename must begin with its product priority (`P0-`, `P1-`, `P2-`
 | [Codex Guided Delegation and Session Binding](P0-codex-guided-delegation-and-session-binding.md) | Keep Codex's normal model provider and user launch flow while adding RTK-style guidance, native hooks for exact chat/turn/tool-call identity, bounded App Server enrichment, and provider conversation continuity. | P0 |
 | [Concurrency and Session Scheduling](P0-concurrency-and-session-scheduling.md) | Persist every invocation through the local daemon and schedule exact project, workspace, conversation, profile, and page lanes safely under concurrent load. | P0 |
 | [Local Web Control Plane](P0-local-web-control-plane.md) | Provide a secure localhost console for setup handoff, browser identities, provider configuration, capabilities, jobs, diagnostics, and user recovery. | P0 |
+| [CLI Universal API Convergence](P1-cli-universal-api-convergence.md) | Converge the losslessly representable CLI model-generation subset on the Universal API while keeping image generation in the shared media API and preserving jobs/control and Harness provider-turn as separate HTTP contracts. | P1 |
 | [Agent Session Integrations](P1-agent-session-integrations.md) | Expose current Web Provider and later Harness operations through a caller-facing local MCP interface, then bind jobs to exact Agent projects, threads, and turns with Codex as the first exact identity integration. | P1 |
 | [Project Knowledge Graph and Provider Mirroring](P1-project-knowledge-graph-and-provider-mirroring.md) | Build a local project graph and maintain an approved, provider-ready project context mirror for web-based coding agents. | P1 |
 | [Optional Output Savings Measurement](P1-optional-output-savings-measurement.md) | Attribute versioned estimates of visible assistant output to durable jobs through a default-on, opt-out, lazily downloaded, low-duty-cycle local tokenizer. | P1 |
@@ -70,9 +71,11 @@ The highest-priority shared compatibility contract is listed first, followed by 
 ## Backlog and Archive
 
 - [Backlog](backlog/README.md): no roadmap is currently backlogged.
-- [Archive](archived/README.md): Arena Full Capability Integration, Browser Connection Mode Capability Evaluation, and Provider Architecture and Registry were completed; the browser runtime/profile compatibility matrix and its Windows acceptance plan were superseded by native Chrome/Brave CDP connection; the Daemon Fastify HTTP API direction was cancelled.
+- [Archive](archived/README.md): Runtime Package Boundary Refactor, Arena Full Capability Integration, Browser Connection Mode Capability Evaluation, and Provider Architecture and Registry were completed; the browser runtime/profile compatibility matrix and its Windows acceptance plan were superseded by native Chrome/Brave CDP connection; the Daemon Fastify HTTP API direction was cancelled.
 
 ## How the Roadmaps Fit Together
+
+The completed [Runtime Package Boundary Refactor](archived/P0-runtime-package-boundary-refactor.md) separated CLI, server, Dashboard, Harness, and protocol source while preserving the existing product lines, HTTP contracts, package distribution, persistence, and real-provider behavior shown below. The later [CLI Universal API Convergence](P1-cli-universal-api-convergence.md) remains intentionally separate because it changes model-execution ownership after the zero-logic-change package move.
 
 ```mermaid
 flowchart LR

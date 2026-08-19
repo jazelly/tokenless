@@ -16,7 +16,7 @@ let packedFixture
 
 before(async () => {
   packedFixture = await createPackedCliFixture()
-  harnessModule = pathToFileURL(path.join(packedFixture.cliDirectory, 'dist/web-agent-harness/src/index.js')).href
+  harnessModule = pathToFileURL(path.join(packedFixture.cliDirectory, 'dist/harness/src/index.js')).href
 })
 
 after(async () => {

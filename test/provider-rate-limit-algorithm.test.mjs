@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliEntry = path.join(root, 'packages/cli/dist/src/tokenless.mjs')
-const daemonEntry = path.join(root, 'packages/cli/dist/src/daemon/daemon-entry.mjs')
+const daemonEntry = path.join(root, 'packages/server/dist/src/entry.mjs')
 const children = new Set()
 
 test.after(async () => {

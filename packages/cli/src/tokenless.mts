@@ -23,7 +23,6 @@ import {
   normalizeTaskCapabilityRequirements,
   readManagedProfileRegistryReadOnly,
   resolveTaskCapabilityRoutes,
-  submitManagedPlaywrightJob,
   type ManagedProfileRecord,
   type ProviderAccessClass,
   type ProviderAccountTier,
@@ -31,7 +30,8 @@ import {
   type TaskCapabilityId,
   type TaskCapabilityRoute,
   type VisibleAction,
-} from './playwright/index.js'
+} from '#tokenless-server/browser/index.js'
+import { submitManagedPlaywrightJob } from './http/managed-playwright.js'
 
 import {
   DEFAULT_DAEMON_URL,
@@ -83,13 +83,13 @@ import {
   API_PROXY_CONVERSATION_MODES,
   type ApiProxyConversationMode,
 } from './index.js'
-import type { TokenlessConfig } from './job-store.js'
-import { G4fRuntimeManager } from './g4f/runtime-manager.js'
-import { g4fProviderName, nativeDirectProviderAvailable } from './providers/direct/g4f-map.js'
+import type { TokenlessConfig } from '#tokenless-server/persistence/config.js'
+import { G4fRuntimeManager } from '#tokenless-server/providers/direct/g4f/runtime-manager.js'
+import { g4fProviderName, nativeDirectProviderAvailable } from '#tokenless-server/providers/direct/g4f-map.js'
 import {
   OUTPUT_SAVINGS_ESTIMATOR,
   OutputSavingsRuntimeManager,
-} from './output-savings/index.js'
+} from '#tokenless-server/output-savings/index.js'
 import {
   activeTokenlessLanguage,
   detectSystemLanguage,
@@ -99,29 +99,29 @@ import {
   tError,
 } from './localization.js'
 import type { CliErrorMessageKey, LocalizedErrorCode } from './i18n/catalog.js'
-import { paintCliText, resolveCliColorEnabled, type CliColor } from './cli-output.js'
-import { DAEMON_CONTROL_API_REVISION, DAEMON_TASK_STATE_SCHEMA_ID } from './schema-ids.js'
+import { paintCliText, resolveCliColorEnabled, type CliColor } from './output/cli-output.js'
+import { DAEMON_CONTROL_API_REVISION, DAEMON_TASK_STATE_SCHEMA_ID } from '#tokenless-server/schema-ids.js'
 import {
   inspectTokenlessSkills,
-} from './setup-workflow.js'
-import { reconcileTokenlessMaintenance } from './maintenance.js'
-import { DaemonRuntimeState } from './daemon/runtime-state.js'
-import { JobStore } from './daemon/job-store.js'
-import { fetchTokenlessLatestVersion } from './npm-registry.js'
+} from './bootstrap/setup-workflow.js'
+import { reconcileTokenlessMaintenance } from './bootstrap/maintenance.js'
+import { DaemonRuntimeState } from '#tokenless-server/runtime/state.js'
+import { JobStore } from '#tokenless-server/jobs/store.js'
+import { fetchTokenlessLatestVersion } from './http/npm-registry.js'
 import {
   SETUP_READINESS_DISCLOSURE,
   createSetupPresenter,
   resolveSetupTerminalCapabilities,
   type SetupPresenter,
-} from './setup-presenter.js'
-import { tokenlessPackageVersion } from './platform-package.js'
-import { formatUpgradeProgress, formatUpgradeSummary, runUpgradeCommand, type UpgradeProgressEvent } from './upgrade.js'
+} from './output/setup-presenter.js'
+import { tokenlessPackageVersion } from '#tokenless-server/platform-package.js'
+import { formatUpgradeProgress, formatUpgradeSummary, runUpgradeCommand, type UpgradeProgressEvent } from './commands/upgrade.js'
 import {
   BrowserRuntimeManager,
   normalizeBrowserSelection,
   type ResolvedBrowserRuntime,
-} from './browser-runtime/index.js'
-import { featureBenchCommand } from './featurebench/cli.js'
+} from '#tokenless-server/browser/runtime/index.js'
+import { featureBenchCommand } from './commands/featurebench/cli.js'
 
 const CLI_ARG_FLAGS: unique symbol = Symbol('tokenless.cliArgFlags')
 
@@ -3253,7 +3253,7 @@ async function loadWebAgentHarness(): Promise<{
   installCodexIntegration(input: Record<string, unknown>): Promise<Record<string, unknown>>
   uninstallCodexIntegration(input: Record<string, unknown>): Promise<Record<string, unknown>>
 }> {
-  const moduleUrl = new URL('../web-agent-harness/src/index.js', import.meta.url)
+  const moduleUrl = new URL('../harness/src/index.js', import.meta.url)
   return await import(moduleUrl.href)
 }
 

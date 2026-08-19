@@ -20,9 +20,9 @@ test('built daemon completes the job before its durable background tokenizer wor
     assert.equal(fs.existsSync(path.join(homeDir, 'tokenizers')), false)
 
     const [{ startDaemon }, { OutputSavingsRuntimeManager }, { JobStore }] = await Promise.all([
-      import('../packages/cli/dist/src/daemon/lifecycle.js'),
+      import('../packages/server/dist/src/runtime/lifecycle.js'),
       import('../packages/cli/dist/src/index.js'),
-      import('../packages/cli/dist/src/daemon/job-store.js'),
+      import('../packages/server/dist/src/jobs/store.js'),
     ])
     const runtimeManager = new OutputSavingsRuntimeManager(homeDir)
     const handoffStore = await JobStore.open(homeDir)
@@ -103,7 +103,7 @@ test('disabling output savings discards durable work without installing the toke
   const tempRoot = fs.realpathSync.native(os.tmpdir())
   const homeDir = fs.realpathSync.native(fs.mkdtempSync(path.join(tempRoot, 'tokenless-output-savings-disabled-')))
   try {
-    const { JobStore } = await import('../packages/cli/dist/src/daemon/job-store.js')
+    const { JobStore } = await import('../packages/server/dist/src/jobs/store.js')
     const store = await JobStore.open(homeDir)
     try {
       const created = store.createJob({

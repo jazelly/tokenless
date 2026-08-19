@@ -10,16 +10,17 @@ import { promisify } from 'node:util'
 import { createLocalHttpClient } from 'tokenless-web-ai-interaction-protocol/local-http'
 import {
   createLocalHttpProviderTurnClient,
+  createAgentRunHttpHandler,
   createStdioMcpToolRegistry,
   finalizeHarnessBootstrapTurn,
   openWebAgentHarness,
   prepareHarnessBootstrapTurn,
-} from '../packages/web-agent-harness/dist/src/index.js'
-import { canonicalJson } from '../packages/web-agent-harness/dist/src/internal/filesystem.js'
-import { HarnessRunStore } from '../packages/web-agent-harness/dist/src/internal/run-store.js'
-import { serveHttp } from '../packages/cli/dist/src/daemon/server.js'
-import { JobStore } from '../packages/cli/dist/src/daemon/job-store.js'
-import { ManagedProfileRegistry } from '../packages/cli/dist/src/playwright/profiles/registry.js'
+} from '../packages/harness/dist/src/index.js'
+import { canonicalJson } from '../packages/harness/dist/src/internal/filesystem.js'
+import { HarnessRunStore } from '../packages/harness/dist/src/internal/run-store.js'
+import { serveHttp } from '../packages/server/dist/src/http/server.js'
+import { JobStore } from '../packages/server/dist/src/jobs/store.js'
+import { ManagedProfileRegistry } from '../packages/server/dist/src/browser/profiles/registry.js'
 import { writeTokenlessConfig } from '../packages/cli/dist/src/index.js'
 
 const execFileAsync = promisify(execFile)
@@ -30,7 +31,12 @@ test('an incorrect approval digest preserves the run and the exact approved call
   const homeDir = path.join(root, 'home')
   const stagingRoot = path.join(root, 'staging')
   const store = await JobStore.open(homeDir)
-  const daemon = await serveHttp({ store, host: '127.0.0.1', port: 0 })
+  const daemon = await serveHttp({
+    store,
+    host: '127.0.0.1',
+    port: 0,
+    agentRunHandlerFactory: createAgentRunHttpHandler,
+  })
   daemon.activate()
   let harness
   try {

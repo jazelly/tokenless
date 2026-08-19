@@ -21,10 +21,20 @@
 </p>
 
 <p align="center">
-  <img src="assets/dashboard-hero.png" alt="真实 Tokenless 控制台显示已节省 2,475 个估算输出 token，并有一项 Kimi 任务正在运行" width="1600">
+  <img src="assets/deepseek-browser-workflow.png" alt="Tokenless 从 Agent 请求进入 DeepSeek 浏览器再返回的工作流" width="1600">
 </p>
 
-<p align="center"><sub>截图来自真实本地浏览器 session；token 总量与任务状态均为真实本地数据，不是 benchmark。</sub></p>
+<p align="center"><sub>右侧是真实本地运行中的 DeepSeek headful 浏览器 UI；整张流程卡是说明图，不是 benchmark。</sub></p>
+
+## Agent → browser → agent
+
+本地 OpenAI 兼容的 `POST /v1/chat/completions` 路由可以把 `tokenless/deepseek` 请求送进可见的 DeepSeek 网站。如果 harness 不知道如何声明 mode，只需设置一次进程默认值：
+
+```bash
+TOKENLESS_API_PROXY_EXECUTION_MODE=browser tokenless dashboard --no-open --json
+```
+
+请求可以省略 `tokenless.execution_mode`：`Agent 请求 → Tokenless daemon → headful DeepSeek 页面 → response 返回 Agent`。显式请求 mode 仍然优先。[观看 7 秒 browser-mode demo](assets/tokenless-deepseek-browser-demo.mp4)。
 
 ## 13 家 provider，一个本地接口
 
@@ -69,6 +79,7 @@ Setup 会自动打开本地控制台，之后可随时用 `tokenless dashboard` 
 ## Agent 可以获得什么
 
 - 通过真实 provider 网站发送 prompt，并读取可见 response。
+- 使用本地 OpenAI 与 Anthropic 兼容 API proxy，包括 Chat Completions 与 Responses 路由。
 - 在所选 provider 支持时使用 upload、citation 和 provider control。
 - 保留稳定的 provider tab，并为受支持的任务维持连续性。
 - Provider 登录保留在所选 browser profile 中；job history 与 token 节省估算留在本机。

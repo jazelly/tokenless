@@ -21,10 +21,20 @@
 </p>
 
 <p align="center">
-  <img src="assets/dashboard-hero.png" alt="Real Tokenless dashboard showing 2,475 estimated output tokens saved and one running Kimi job" width="1600">
+  <img src="assets/deepseek-browser-workflow.png" alt="Tokenless workflow from an agent request through the DeepSeek browser and back" width="1600">
 </p>
 
-<p align="center"><sub>Captured from a real local browser session; token totals and job states are actual local dashboard data, not a benchmark.</sub></p>
+<p align="center"><sub>Real DeepSeek headful browser UI from a local run; the workflow card is an illustration, not a benchmark.</sub></p>
+
+## Agent → browser → agent
+
+The local OpenAI-compatible `POST /v1/chat/completions` route can send `tokenless/deepseek` through the visible DeepSeek website. If the harness does not know how to declare a mode, set the process default once:
+
+```bash
+TOKENLESS_API_PROXY_EXECUTION_MODE=browser tokenless dashboard --no-open --json
+```
+
+The request can omit `tokenless.execution_mode`: `agent request → Tokenless daemon → headed DeepSeek page → response back to agent`. An explicit request mode still wins. [Watch the 7-second browser-mode demo](assets/tokenless-deepseek-browser-demo.mp4).
 
 ## 13 providers. One local interface.
 
@@ -69,6 +79,7 @@ Setup opens the local dashboard. Reopen it anytime with `tokenless dashboard`.
 ## What agents get
 
 - Send prompts and read visible responses through real provider websites.
+- Use the local OpenAI- and Anthropic-compatible API proxy, including Chat Completions and Responses routes.
 - Use uploads, citations, and provider controls where the selected provider supports them.
 - Stable provider tabs and continuity for supported tasks.
 - Provider sign-in stays in the selected browser profile; job history and token-savings estimates remain local.

@@ -4,9 +4,9 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 
-import { startDaemon } from '../packages/cli/dist/src/daemon/lifecycle.js'
-import { writeTokenlessConfig } from '../packages/cli/dist/src/job-store.js'
-import { ManagedProfileRegistry } from '../packages/cli/dist/src/playwright/profiles/registry.js'
+import { startDaemon } from '../packages/server/dist/src/runtime/lifecycle.js'
+import { writeTokenlessConfig } from '../packages/server/dist/src/persistence/config.js'
+import { ManagedProfileRegistry } from '../packages/server/dist/src/browser/profiles/registry.js'
 import {
   createConfiguredBrowserContextManager,
   resolveConfiguredBrowserTarget,

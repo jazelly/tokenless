@@ -31,7 +31,7 @@ export {
   readAgentRunByAdmission,
   resumeAgentRun,
   cancelAgentRun,
-} from './daemon-client.js'
+} from './http/daemon-client.js'
 
 export type {
   CancelDaemonJobOptions,
@@ -59,23 +59,23 @@ export type {
   ShutdownDaemonResponse,
   WaitDaemonJobResultOptions,
   AgentRunClientOptions,
-} from './daemon-client.js'
+} from './http/daemon-client.js'
 
-export type { ManagedProfileConfig, TokenlessConfig } from './job-store.js'
-export type { OutputSavingsConfig } from './job-store.js'
-export { API_PROXY_CONVERSATION_MODES } from './job-store.js'
-export type { ApiProxyConfig, ApiProxyConversationMode } from './job-store.js'
-export type { DirectProviderConfig, G4fConfig, ProviderBackend } from './job-store.js'
-export * from './g4f/index.js'
-export * from './providers/direct/g4f-map.js'
-export * from './providers/direct/protocol-router.js'
-export type { BrowserVisibility, EffectiveBrowserVisibility } from './browser-visibility.js'
+export type { ManagedProfileConfig, TokenlessConfig } from '#tokenless-server/persistence/config.js'
+export type { OutputSavingsConfig } from '#tokenless-server/persistence/config.js'
+export { API_PROXY_CONVERSATION_MODES } from '#tokenless-server/persistence/config.js'
+export type { ApiProxyConfig, ApiProxyConversationMode } from '#tokenless-server/persistence/config.js'
+export type { DirectProviderConfig, G4fConfig, ProviderBackend } from '#tokenless-server/persistence/config.js'
+export * from '#tokenless-server/providers/direct/g4f/index.js'
+export * from '#tokenless-server/providers/direct/g4f-map.js'
+export * from '#tokenless-server/providers/direct/protocol-router.js'
+export type { BrowserVisibility, EffectiveBrowserVisibility } from '#tokenless-server/browser-visibility.js'
 
 export {
   BROWSER_VISIBILITIES,
   normalizeBrowserVisibility,
   resolveEffectiveBrowserVisibility,
-} from './browser-visibility.js'
+} from '#tokenless-server/browser-visibility.js'
 
 export {
   configPath,
@@ -89,7 +89,7 @@ export {
   upsertTokenlessProfileConfig,
   writeTokenlessConfig,
   hasConfiguredTokenlessLanguage,
-} from './job-store.js'
+} from '#tokenless-server/persistence/config.js'
 
 export {
   TOKENLESS_LANGUAGES,
@@ -107,7 +107,7 @@ export {
   currentBrowserRuntimePlatform,
   managedBrowserCatalogEntry,
   normalizeBrowserSelection,
-} from './browser-runtime/index.js'
+} from '#tokenless-server/browser/runtime/index.js'
 
 export type {
   BrowserCandidate,
@@ -118,7 +118,7 @@ export type {
   BrowserRuntimePlatform,
   BrowserSelection,
   ResolvedBrowserRuntime,
-} from './browser-runtime/index.js'
+} from '#tokenless-server/browser/runtime/index.js'
 
 export {
   OUTPUT_SAVINGS_ESTIMATOR,
@@ -128,15 +128,15 @@ export {
   OUTPUT_SAVINGS_RUNTIME_INSTALLED_BYTES,
   OUTPUT_SAVINGS_RUNTIME_VERSION,
   OutputSavingsRuntimeManager,
-} from './output-savings/index.js'
+} from '#tokenless-server/output-savings/index.js'
 
-export type { OutputSavingsRuntimeInspection } from './output-savings/index.js'
+export type { OutputSavingsRuntimeInspection } from '#tokenless-server/output-savings/index.js'
 export type {
   MeasureVisibleOutput,
   OutputSavingsMeasurement,
   OutputSavingsResult,
   OutputSavingsUnavailable,
-} from './output-savings/index.js'
+} from '#tokenless-server/output-savings/index.js'
 
 export {
   DAEMON_CONTROL_API_REVISION,
@@ -158,7 +158,7 @@ export {
   resolveChromiumBrowser,
   semanticVersionMajor,
   stopDaemon,
-} from './runtime.js'
+} from './bootstrap/runtime.js'
 
 export {
   DEFAULT_MAX_VISIBLE_ATTACHMENT_BYTES,
@@ -174,13 +174,13 @@ export {
   visibleAttachmentBundlePath,
   visibleAttachmentPath,
   visibleAttachmentRoot,
-} from './visible-attachments.js'
+} from '#tokenless-server/persistence/attachments.js'
 
 export type {
   StageVisibleAttachmentOptions,
   StageVisibleAttachmentsOptions,
   VisibleAttachmentDescriptor,
-} from './visible-attachments.js'
+} from '#tokenless-server/persistence/attachments.js'
 
 export type {
   ChromiumBrowser,
@@ -188,7 +188,7 @@ export type {
   EnsureDaemonOptions,
   ManagedRuntimeInspection,
   StopDaemonResult,
-} from './runtime.js'
+} from './bootstrap/runtime.js'
 
 const DEFAULT_MAX_FILE_BYTES = 24_000
 const DEFAULT_MAX_TOTAL_BYTES = 80_000

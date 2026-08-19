@@ -25,7 +25,7 @@ This index separates user guidance, stable product contracts, implementation arc
 - Develop and verify provider behavior only against the real provider website through the configured browser profile.
 - Declare required real-provider cases in [`live-provider-capability-matrix.json`](../test/live-provider-capability-matrix.json).
 - Implement real journeys in [`live-managed-playwright.e2e.mjs`](../test/live-managed-playwright.e2e.mjs).
-- Keep provider-specific behavior under [`packages/cli/src/providers/`](../packages/cli/src/providers/).
+- Keep provider-specific behavior under [`packages/server/src/providers/`](../packages/server/src/providers/).
 
 ## Adding Documentation
 

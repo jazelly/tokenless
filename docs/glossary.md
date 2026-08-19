@@ -2,6 +2,13 @@
 
 Canonical terms for how Tokenless interacts with AI provider web surfaces. This glossary describes execution boundaries; it is not a provider support declaration.
 
+## Product layers
+
+| Term | Definition | Do not use as a synonym |
+|---|---|---|
+| **Tokenless API** | The provider-facing HTTP/API layer of Tokenless, including the Universal API. It accepts API requests and owns provider-turn routing and lifecycle; it is separate from the Tokenless Harness. | Tokenless Harness, provider's official API |
+| **Tokenless Harness** | Tokenless's independent first-party agent runtime in `packages/harness/`. It owns AgentRun state, Skills, tool discovery and execution, MCP, approvals, continuation, and final output, and uses the Tokenless API over HTTP. | Tokenless API, external Harness |
+
 ## Execution modes
 
 | Term | Definition | Do not use as a synonym |

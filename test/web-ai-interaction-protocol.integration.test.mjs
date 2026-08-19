@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { execDeclaredNpmSync } from './helpers/declared-npm.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const packageDirectory = path.join(root, 'packages', 'web-ai-interaction-protocol')
+const packageDirectory = path.join(root, 'packages', 'protocol')
 const packageName = 'tokenless-web-ai-interaction-protocol'
 
 test('packed protocol package validates committed V0 lifecycles through its root export', async () => {

@@ -2,31 +2,37 @@
 
 This document defines the stable product architecture. It is not a roadmap and does not define delivery order. Roadmaps may describe how a capability is delivered, but they must preserve the ownership and dependency boundaries defined here.
 
-Tokenless exposes visible AI websites through a provider-neutral local CLI, a first-party Web Agent Harness, a Universal API, and a browser-based local control plane. Managed Playwright through the authenticated local daemon remains the primary visible-provider execution path; approved direct provider strategies remain behind the provider runtime boundary.
+Tokenless exposes visible AI websites through an HTTP-centered local server, a thin local CLI, a full browser-based Dashboard, a first-party Web Agent Harness, and a Universal API. Managed Playwright through the authenticated local daemon remains the primary visible-provider execution path; approved direct provider strategies remain behind the provider runtime boundary.
 
 ## Final shape
 
-Tokenless has two product layers above the real provider runtime:
+Tokenless has four callers above one server-owned execution core:
 
 ```mermaid
 flowchart TB
-  External["Existing external Harness<br/>Pi / Mono / Codex / DeepSeek Harness"]
-  CLI["Tokenless CLI<br/>first-party agent entry point"]
-  Harness["Layer 2: Tokenless Web Agent Harness<br/>AgentRun, prompts, Skills, Tool Registry, MCP, approvals, loop"]
-  API["Layer 1: Universal API<br/>canonical provider-turn compatibility boundary"]
-  Provider["Web Provider API and direct provider runtime<br/>routing, jobs, Playwright, provider adapters"]
+  Skill["Host Agent Skill<br/>skills/tokenless"] --> CLI
+  CLI["packages/cli<br/>commands, bootstrap, HTTP client"] --> Control["Authenticated CLI/control HTTP"]
+  Dashboard["packages/dashboard<br/>full read + mutation control plane"] --> UIAPI["/ui-api/v1"]
+  External["OpenAI SDK / external Harness"] --> API["OpenAI-compatible HTTP<br/>chat, responses, images"]
+  Harness["packages/harness<br/>AgentRun, Skills, tools, MCP"] --> Turn["Provider-turn HTTP"]
+
+  subgraph Server["packages/server"]
+    Control --> Application["Application services"]
+    UIAPI --> Application
+    API --> Universal["Universal API conversion"]
+    Turn --> Application
+    Universal --> Application
+    Application --> Provider["Jobs, routing, providers, browser/direct runtime, persistence"]
+  end
+
   Browser["Real provider website or approved direct provider endpoint"]
   Tools["Harness-owned tools<br/>filesystem / local / MCP"]
 
-  External --> API
-  CLI --> Harness
-  Harness --> API
   Harness --> Tools
-  API --> Provider
   Provider --> Browser
 ```
 
-The two layers may use the same provider strategy and low-level protocol primitives, but they are different product surfaces with different tool ownership.
+The callers use distinct HTTP contracts but share one server implementation. The Universal API and Web Agent Harness remain different product layers with different tool ownership.
 
 ## Layer 1: Universal API
 
@@ -35,6 +41,7 @@ The Universal API is the low-level, provider-facing compatibility boundary. It t
 It owns:
 
 - OpenAI-compatible Chat Completions and Responses request/response contracts;
+- OpenAI-compatible image-generation request/response contracts and media result handling;
 - canonical provider-turn history, tool-call/result validation, structured output, streaming, and errors;
 - provider routing and the provider-turn lifecycle behind the API boundary; and
 - low-level correlation, dispatch certainty, attachment identity, and opaque continuation references.
@@ -52,7 +59,7 @@ This makes the API directly deployable to an existing Harness. Pi, Mono, Codex, 
 
 ## Layer 2: Web Agent Harness
 
-The Web Agent Harness is Tokenless's first-party agent runtime in `packages/web-agent-harness/`. It is the path used by Tokenless CLI agent runs and Tokenless-owned agent integrations.
+The Web Agent Harness is Tokenless's first-party agent runtime in `packages/harness/`. It is used by Tokenless-owned agent runs and integrations while remaining above the server HTTP boundary.
 
 It owns:
 
@@ -69,7 +76,7 @@ Harness-owned tools are not external caller tools. The Harness may project its o
 | Caller | Agent owner | Provider path | Tool executor |
 | --- | --- | --- | --- |
 | Pi, Mono, Codex, DeepSeek Harness, or another external Harness | External Harness | Universal API → Web Provider API / direct provider runtime | External Harness |
-| Tokenless CLI agent run | Tokenless Web Agent Harness | Provider-turn client → Universal API → Web Provider API / direct provider runtime | Tokenless Web Agent Harness |
+| Tokenless CLI agent run | Tokenless Web Agent Harness | CLI HTTP → Harness → provider-turn HTTP → Web Provider API / direct provider runtime | Tokenless Web Agent Harness |
 | Provider inspection or administration command | Tokenless CLI/control adapter | Daemon → managed provider runtime | The provider/control adapter, within its command boundary |
 
 ```text
@@ -107,24 +114,24 @@ The API adapter must not call the Harness mission queue, Tool Registry, or MCP r
 
 ## Runtime components
 
-1. The `tokenless` CLI handles setup, profile management, agent-run submission, state, cancellation, and diagnostics.
+1. The `tokenless` CLI handles command parsing, daemon bootstrap, authenticated HTTP calls, waiting, localization, and output formatting.
 2. The Web Agent Harness owns Tokenless's first-party agent-run coordination and provider-turn calls.
 3. The local TypeScript daemon stores durable jobs in SQLite and exposes an authenticated loopback control plane.
 4. The Playwright worker claims managed-web jobs, connects over CDP to independently launched resident Chromium processes, and uses Playwright browser, page, and locator APIs inside persistent managed profiles.
 5. The provider navigation catalog centrally declares each entry URL, automation home, owned origins, known page patterns, and trusted sign-in routes; the provider registry adds access, account-plan, selector, and capability policy.
 6. The provider-session state machine turns visible page observations and catalog policy into ready, guest-continuation, handoff, wait, or terminal decisions.
 7. Provider adapters translate shared actions into visible provider page operations after the session decision allows them.
-8. Shared application services expose redacted config, profile, provider, capability, job, runtime, and diagnostic operations to the local control plane.
-9. The bundled TypeScript SPA is served from `/ui/`; its authenticated `/ui-api/v1` surface never exposes the daemon control bearer token to browser JavaScript.
+8. Shared server application services expose redacted config, profile, provider, capability, job, runtime, and diagnostic operations to every HTTP surface without duplicating business logic.
+9. The full Dashboard SPA in `packages/dashboard/` is served from `/ui/`; its authenticated `/ui-api/v1` surface retains all read and mutation behavior and never exposes the daemon control bearer token to browser JavaScript.
 
 ## Provider runtime execution path
 
-The stable agent path is `Tokenless CLI → Web Agent Harness → provider-turn client → Universal API → provider runtime`. Provider inspection, setup, and administration commands may use their direct CLI/control adapter path because they are not agent runs.
+Every normal cross-surface call enters through HTTP. The stable first-party agent path is `Tokenless CLI → authenticated HTTP → Web Agent Harness → provider-turn HTTP → provider runtime`. Provider inspection, setup, and administration commands use the authenticated CLI/control HTTP surface. OpenAI-compatible chat, Responses, and image generation use the Universal API HTTP surface.
 
 | Interface | Execution path | Authentication | Status |
 | --- | --- | --- | --- |
-| CLI agent run | CLI → Web Agent Harness → provider-turn client → Universal API → daemon/Playwright worker → managed profile → visible provider page | Provider sign-in stored inside the managed profile | First-party agent interface |
-| Provider/control command | CLI → daemon → Playwright worker → managed profile → visible provider page | Provider sign-in stored inside the managed profile | Control interface |
+| CLI agent run | CLI → authenticated HTTP → Web Agent Harness → provider-turn HTTP → daemon/Playwright worker → managed profile → visible provider page | Provider sign-in stored inside the managed profile | First-party agent interface |
+| Provider/control command | CLI → authenticated control HTTP → daemon → Playwright worker → managed profile → visible provider page | Provider sign-in stored inside the managed profile | Control interface |
 | Local dashboard | Browser → `/ui-api/v1` → shared services/daemon → managed profile → visible provider page | Direct loopback opening plus a short-lived UI session; provider sign-in remains inside the managed profile | Local administration interface |
 | Machine API | Trusted local caller → bearer API → daemon → Playwright worker | Daemon bearer token plus provider sign-in inside the managed profile | Local scripting interface |
 
@@ -171,7 +178,7 @@ Successful account observations retain only the visible account display name, su
 
 ## Provider architecture and session state machine
 
-`packages/cli/src/providers/registry.ts` is the single production registration point for providers. Each entry is a concrete `BaseProvider` subclass with one provider-owned definition. Shared CLI, daemon, setup, profile, and Playwright code resolves providers through that registry instead of maintaining provider allowlists or branching on concrete provider IDs.
+`packages/server/src/providers/registry.ts` is the single production registration point for providers. Each entry is a concrete `BaseProvider` subclass with one provider-owned definition. Shared server, setup, profile, and browser code resolves providers through that registry instead of maintaining provider allowlists or branching on concrete provider IDs.
 
 `BaseProvider` owns the public execution template and the invariant ordering for navigation validation, authentication, blocker checks, prompt operations, response observation, and normalized failures. Its protected TypeScript hooks provide the shared DOM implementation and use normal dynamic dispatch, so a provider subclass overrides only behavior that differs.
 
@@ -184,7 +191,7 @@ Adding a provider therefore normally requires:
 3. typed optional capability overrides only when the provider differs from the shared defaults; and
 4. one registry entry.
 
-Observation, account classification, decisions, and resolution live under `packages/cli/src/playwright/provider-session/`. The runner consumes normalized decisions; provider-owned code remains the only place for provider-specific visible-page behavior.
+Observation, account classification, decisions, and resolution live under `packages/server/src/browser/provider-session/`. The runner consumes normalized decisions; provider-owned code remains the only place for provider-specific visible-page behavior.
 
 The provider-session machine is intentionally separate from the daemon job state machine:
 
@@ -265,6 +272,19 @@ Managed jobs transition through daemon states such as `queued`, `claimed`, `runn
 
 This document is the architecture source of truth. `docs/roadmaps/` documents sequencing, milestones, evidence, and incomplete work. A roadmap may defer or stage MCP, CLI integration, persistence, or provider coverage, but it must not redefine the two-layer ownership above.
 
+The repository boundaries are:
+
+```text
+skills/              Host Agent instructions
+packages/cli/        commands, bootstrap, HTTP clients, localization, output
+packages/dashboard/  full Local Web Control Plane frontend
+packages/harness/    AgentRun, Skills, tools, MCP, approvals, agent loop
+packages/protocol/   provider-neutral contracts, schemas, validation, thin client
+packages/server/     HTTP, application, jobs, providers, browser/direct runtime, persistence
+```
+
+The primary dependency direction is `CLI/Dashboard/Harness/external caller → HTTP → server`. The server does not import the Harness runtime, the Dashboard does not import backend source, and the Harness does not import provider, browser, or persistence internals. The existing single `tokenless` npm distribution continues to bundle the required private artifacts.
+
 The Web Agent Harness roadmap owns the first-party Harness implementation. The Universal API tool-calling roadmap owns the low-level external compatibility contract. The Web AI interaction protocol roadmap owns the provider-turn seam consumed by both.
 
-The managed profile lifecycle, local daemon, Playwright worker, CLI setup flow, readiness reporting, job APIs, and browser-based local control plane are implemented. Provider parity and first-party CLI agent integration remain delivery work and are tracked in the relevant roadmap documents; this architecture document describes the target ownership, not a claim that every path is already complete.
+The runtime package boundary refactor is implemented: `packages/server/`, `packages/cli/`, `packages/dashboard/`, `packages/harness/`, and `packages/protocol/` own their respective source while the existing `tokenless` npm distribution bundles the required private artifacts. Later CLI Universal API convergence is separate product work because it changes execution ownership rather than source location.

@@ -10,10 +10,10 @@ import {
   createLocalHttpProviderTurnClient,
   createStdioMcpToolRegistry,
   openWebAgentHarness,
-} from '../packages/web-agent-harness/dist/src/index.js'
-import { serveHttp } from '../packages/cli/dist/src/daemon/server.js'
-import { JobStore } from '../packages/cli/dist/src/daemon/job-store.js'
-import { ManagedProfileRegistry } from '../packages/cli/dist/src/playwright/profiles/registry.js'
+} from '../packages/harness/dist/src/index.js'
+import { serveHttp } from '../packages/server/dist/src/http/server.js'
+import { JobStore } from '../packages/server/dist/src/jobs/store.js'
+import { ManagedProfileRegistry } from '../packages/server/dist/src/browser/profiles/registry.js'
 
 const everythingServer = {
   name: 'everything',

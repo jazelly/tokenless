@@ -11,7 +11,7 @@ import {
 import {
   ManagedProfileRegistry,
   PersistentContextManager,
-} from '../../packages/cli/dist/src/playwright/index.js'
+} from '../../packages/server/dist/src/browser/index.js'
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const repositoryEnvironmentFile = path.join(repositoryRoot, '.env')

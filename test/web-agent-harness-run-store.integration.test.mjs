@@ -8,8 +8,8 @@ import {
   createLocalHttpProviderTurnClient,
   createStdioMcpToolRegistry,
   openWebAgentHarness,
-} from '../packages/web-agent-harness/dist/src/index.js'
-import { HarnessRunStore } from '../packages/web-agent-harness/dist/src/internal/run-store.js'
+} from '../packages/harness/dist/src/index.js'
+import { HarnessRunStore } from '../packages/harness/dist/src/internal/run-store.js'
 
 test('Harness run state survives reopening the real SQLite database with exact call arguments', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-harness-store-'))

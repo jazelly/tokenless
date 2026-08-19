@@ -10,7 +10,7 @@
   Local primary source for the distinction between model-visible `ToolSchema` data and internal execution, timeout, and presentation behavior.
 - `/Users/jazelly/Desktop/github/deepseek-harness/packages/core/agent-loop/src/agent.ts`
   Local primary source for the outer loop that requests a model response, detects calls, executes them, and continues.
-- `packages/web-agent-harness/src/internal/system-prompt.ts`
+- `packages/harness/src/internal/system-prompt.ts`
   Local primary source for Tokenless's current text-envelope approach to advertising tools to a visible web model.
 
 ## Wisdom (Communities)

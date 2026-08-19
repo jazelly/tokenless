@@ -7,9 +7,10 @@ import { DatabaseSync } from 'node:sqlite'
 import test from 'node:test'
 import { promisify } from 'node:util'
 
-import { serveHttp } from '../packages/cli/dist/src/daemon/server.js'
-import { JobStore } from '../packages/cli/dist/src/daemon/job-store.js'
-import { ManagedProfileRegistry } from '../packages/cli/dist/src/playwright/profiles/registry.js'
+import { serveHttp } from '../packages/server/dist/src/http/server.js'
+import { JobStore } from '../packages/server/dist/src/jobs/store.js'
+import { ManagedProfileRegistry } from '../packages/server/dist/src/browser/profiles/registry.js'
+import { createAgentRunHttpHandler } from '../packages/harness/dist/src/index.js'
 
 const execFileAsync = promisify(execFile)
 const cliEntry = path.resolve('packages/cli/dist/src/tokenless.mjs')
@@ -18,7 +19,7 @@ test('built singular agent CLI keeps one local control-plane turn across run, re
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-agent-cli-')))
   const homeDir = path.join(root, 'home')
   const store = await JobStore.open(homeDir)
-  const daemon = await serveHttp({ store, host: '127.0.0.1', port: 0 })
+  const daemon = await serveHttp({ store, host: '127.0.0.1', port: 0, agentRunHandlerFactory: createAgentRunHttpHandler })
   daemon.activate()
   try {
     const profile = await new ManagedProfileRegistry(homeDir).addProfile({ slug: 'agent-cli', lifecycle: 'ready' })

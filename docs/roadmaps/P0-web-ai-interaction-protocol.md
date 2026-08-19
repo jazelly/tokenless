@@ -209,7 +209,7 @@ Errors include stable machine codes, retry and intervention guidance, dispatch c
 The initial repository shape is provisional:
 
 ```text
-packages/web-ai-interaction-protocol/
+packages/protocol/
   package.json
   src/
     version.ts

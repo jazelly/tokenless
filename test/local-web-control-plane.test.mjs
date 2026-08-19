@@ -9,8 +9,8 @@ import { promisify } from 'node:util'
 
 import Ajv2020 from 'ajv/dist/2020.js'
 import addFormats from 'ajv-formats'
-import { startDaemon } from '../packages/cli/dist/src/daemon/lifecycle.js'
-import { ManagedProfileRegistry } from '../packages/cli/dist/src/playwright/profiles/registry.js'
+import { startDaemon } from '../packages/server/dist/src/runtime/lifecycle.js'
+import { ManagedProfileRegistry } from '../packages/server/dist/src/browser/profiles/registry.js'
 
 const execFileAsync = promisify(execFile)
 const cliEntry = path.resolve('packages/cli/dist/src/tokenless.mjs')
