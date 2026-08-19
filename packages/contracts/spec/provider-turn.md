@@ -2,7 +2,7 @@
 
 `tokenless.internal.web-ai-interaction-protocol/v0` is the retained V0 wire discriminator for Tokenless's private provider-turn contract. It is not the OpenAI-compatible API, an external package, or an industry-standard claim.
 
-V0 defines serialized messages for capability discovery, one new-conversation bootstrap start, and durable turn state. The canonical JSON Schemas under `schemas/v0/` are normative; TypeScript types and parsers are bindings to those schemas.
+V0 defines serialized messages for capability discovery, one new-conversation bootstrap start, and durable turn state. The canonical HTTP paths and serialized schemas live in [`../tokenless.openapi.json`](../tokenless.openapi.json); this file is supporting narrative documentation.
 
 ## Core messages
 
@@ -18,10 +18,10 @@ The System Prompt attachment must be delivered before a state may report `dispat
 
 Every protocol reference is kind-specific and opaque: `request:`, `provider:`, `binding:`, `conversation:`, `turn:`, or `attachment:` followed by exactly 32 lowercase hexadecimal characters. Bare identifiers, paths, and implementation identifiers are invalid.
 
-## Private local HTTP adapter
+## Runtime ownership
 
-The authenticated loopback Client Adapter is exported as `tokenless-internal-contracts/private/provider-turn-http`. It calls `/v1/private/provider-turn/*` for binding, capability discovery, attachment staging, start/read/resume/cancel, and request cancellation.
+The authenticated loopback Client Adapter belongs to `packages/harness/src/http/provider-turn/`. It calls `/v1/private/provider-turn/*` for binding, capability discovery, attachment staging, start/read/resume/cancel, and request cancellation.
 
-The HTTP server implementation belongs to `packages/server/src/http/private/provider-turn/`, not this contract package. OpenAI-compatible model requests remain owned by `/v1/chat/completions`, `/v1/responses`, and `/v1/images/generations`; this private contract is retained only for current semantics those interfaces do not yet express losslessly.
+The HTTP Server Adapter and request validation belong to `packages/server/src/http/private/provider-turn/`. Neither Adapter is exported from this documentation package. OpenAI-compatible model requests remain owned by `/v1/chat/completions`, `/v1/responses`, and `/v1/images/generations`; this private Interface is retained only for current semantics those Interfaces do not yet express losslessly.
 
 An ambiguous dispatch must remain ambiguous across transport boundaries. A client must obtain provider-specific evidence before considering any new submission.

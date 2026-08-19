@@ -10,16 +10,16 @@ const distRoot = path.join(packageRoot, 'dist')
 
 fs.rmSync(distRoot, { recursive: true, force: true })
 
-const contractsRoot = path.join(packageRoot, '..', 'contracts')
+const sharedRoot = path.join(packageRoot, '..', 'shared')
 const harnessRoot = path.join(packageRoot, '..', 'harness')
 const serverRoot = path.join(packageRoot, '..', 'server')
 const dashboardRoot = path.join(packageRoot, '..', 'dashboard')
 
-for (const workspaceRoot of [contractsRoot, harnessRoot, serverRoot, dashboardRoot]) {
+for (const workspaceRoot of [sharedRoot, harnessRoot, serverRoot, dashboardRoot]) {
   fs.rmSync(path.join(workspaceRoot, 'dist'), { recursive: true, force: true })
 }
 
-run('tsc', ['-p', path.join(contractsRoot, 'tsconfig.json')])
+run('tsc', ['-p', path.join(sharedRoot, 'tsconfig.json')])
 run('tsc', ['-p', path.join(harnessRoot, 'tsconfig.json')])
 run(process.execPath, [path.join(serverRoot, 'scripts', 'build.mjs')])
 run('vite', ['build', '--config', path.join(dashboardRoot, 'vite.config.ts'), '--logLevel', 'error'])
@@ -29,7 +29,7 @@ fs.copyFileSync(
   path.join(packageRoot, '..', '..', 'assets', 'tokenless-mark.png'),
   path.join(serverDashboardRoot, 'mark.png'),
 )
-fs.cpSync(path.join(contractsRoot, 'dist'), path.join(distRoot, 'contracts'), { recursive: true })
+fs.cpSync(path.join(sharedRoot, 'dist'), path.join(distRoot, 'shared'), { recursive: true })
 fs.cpSync(path.join(serverRoot, 'dist'), path.join(distRoot, 'server'), { recursive: true })
 run('tsc', ['-p', 'tsconfig.json'])
 
@@ -42,8 +42,8 @@ fs.cpSync(
   },
 )
 fs.cpSync(
-  path.join(contractsRoot, 'schemas', 'v0'),
-  path.join(distRoot, 'schemas', 'v0'),
+  path.join(harnessRoot, 'schemas', 'provider-turn', 'v0'),
+  path.join(distRoot, 'schemas', 'provider-turn', 'v0'),
   { recursive: true },
 )
 run('vite', ['build', '--config', path.join(harnessRoot, 'vite.bundle.config.mjs'), '--logLevel', 'error'])

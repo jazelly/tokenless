@@ -663,6 +663,6 @@ Two things a client should still not rely on:
 ## Reference
 
 - [CLI commands](../COMMANDS.md#tokenless-api-proxy) — `tokenless api-proxy`
-- [OpenAPI contract](../api/tokenless-daemon-api.openapi.json) — request and response schemas
+- [Unified OpenAPI contract](../packages/contracts/tokenless.openapi.json) — compatibility, private machine, Dashboard, and readiness request/response schemas
 - [Architecture](architecture.md) — execution path and trust boundaries
 - [Privacy boundaries](../PRIVACY.md) — what stays local

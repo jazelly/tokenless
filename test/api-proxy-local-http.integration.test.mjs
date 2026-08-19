@@ -281,7 +281,7 @@ test('explicit auto rejects plain, direct, and unevidenced provider-only request
     assert.equal(unsupported.status, 503)
     assert.equal(unsupported.body.error.code, 'auto_route_unavailable')
 
-    const jobs = await call(daemon, 'GET', '/jobs')
+    const jobs = await call(daemon, 'GET', '/v1/private/jobs')
     assert.equal(jobs.body.length, 0)
   })
 })
@@ -408,7 +408,7 @@ test('api proxy accepts streaming function tools and complete tool history befor
     })
     assert.equal(continuation.status, 409)
     assert.equal(continuation.body.error.code, 'profile_not_configured')
-    const jobs = await call(daemon, 'GET', '/jobs')
+    const jobs = await call(daemon, 'GET', '/v1/private/jobs')
     assert.equal(jobs.body.length, 0)
   })
 })
@@ -460,7 +460,7 @@ test('Responses aliases accept flat tools, developer input, and complete call ou
     })
     assert.equal(malformed.status, 400)
     assert.equal(malformed.body.error.param, 'input')
-    const jobs = await call(daemon, 'GET', '/jobs')
+    const jobs = await call(daemon, 'GET', '/v1/private/jobs')
     assert.equal(jobs.body.length, 0)
   })
 })
@@ -538,7 +538,7 @@ test('Responses rejects missing, expired, mismatched, and opaque replay state be
     })
     assert.equal(opaque.status, 400)
     assert.equal(opaque.body.error.code, 'unverifiable_replay_item')
-    const jobs = await call(daemon, 'GET', '/jobs')
+    const jobs = await call(daemon, 'GET', '/v1/private/jobs')
     assert.equal(jobs.body.length, 0)
   })
 })
@@ -570,7 +570,7 @@ test('api proxy accepts complete multiple-call history regardless of the current
       assert.equal(response.status, 409, String(parallelToolCalls))
       assert.equal(response.body.error.code, 'profile_not_configured', String(parallelToolCalls))
     }
-    const jobs = await call(daemon, 'GET', '/jobs')
+    const jobs = await call(daemon, 'GET', '/v1/private/jobs')
     assert.equal(jobs.body.length, 0)
   })
 })
@@ -612,7 +612,7 @@ test('api proxy accepts every single-call tool choice and recursive strict schem
       assert.equal(response.status, 409, JSON.stringify(toolChoice))
       assert.equal(response.body.error.code, 'profile_not_configured', JSON.stringify(toolChoice))
     }
-    const jobs = await call(daemon, 'GET', '/jobs')
+    const jobs = await call(daemon, 'GET', '/v1/private/jobs')
     assert.equal(jobs.body.length, 0)
   })
 })
@@ -680,7 +680,7 @@ test('api proxy accepts text and structured final formats with or without comple
         assert.equal(response.body.error.code, 'profile_not_configured', JSON.stringify(responseFormat))
       }
     }
-    const jobs = await call(daemon, 'GET', '/jobs')
+    const jobs = await call(daemon, 'GET', '/v1/private/jobs')
     assert.equal(jobs.body.length, 0)
   })
 })
@@ -860,7 +860,7 @@ test('api proxy rejects malformed tool catalogs and history before creating a jo
       assert.equal(response.body.error.code, 'invalid_request_error', entry.name)
       assert.equal(response.body.error.param, entry.param, entry.name)
     }
-    const jobs = await call(daemon, 'GET', '/jobs')
+    const jobs = await call(daemon, 'GET', '/v1/private/jobs')
     assert.equal(jobs.body.length, 0)
   })
 })
@@ -989,7 +989,7 @@ test('api proxy rejects malformed and unsupported structured output schemas befo
       assert.equal(response.body.error.code, 'invalid_request_error', entry.name)
       assert.equal(response.body.error.param, 'response_format', entry.name)
     }
-    const jobs = await call(daemon, 'GET', '/jobs')
+    const jobs = await call(daemon, 'GET', '/v1/private/jobs')
     assert.equal(jobs.body.length, 0)
   })
 })
@@ -1029,7 +1029,7 @@ test('api proxy reports an unregistered provider as an unknown model before crea
     assert.equal(response.status, 404)
     assert.equal(response.body.error.type, 'not_found_error')
     assert.match(response.body.error.message, /does not exist/)
-    const jobs = await call(daemon, 'GET', '/jobs')
+    const jobs = await call(daemon, 'GET', '/v1/private/jobs')
     assert.equal(jobs.body.length, 0)
   })
 })
@@ -1090,7 +1090,7 @@ test('api proxy distinguishes each caller mistake by status so clients can decid
       const { error } = await response.json()
       assert.equal(error.code, entry.code, entry.name)
     }
-    const jobs = await call(daemon, 'GET', '/jobs')
+    const jobs = await call(daemon, 'GET', '/v1/private/jobs')
     assert.equal(jobs.body.length, 0)
   })
 })

@@ -213,7 +213,7 @@ test('superseded daemon child never becomes ready or accepts jobs before claim-b
     if (probe.exited !== true) {
       assert.notEqual(probe.status, 200)
       const token = fs.readFileSync(path.join(homeDir, 'daemon.token'), 'utf8').trim()
-      const response = await fetch(`${daemonUrl}/jobs`, {
+      const response = await fetch(`${daemonUrl}/v1/private/jobs`, {
         method: 'POST',
         headers: {
           accept: 'application/json',
@@ -501,13 +501,13 @@ test('daemon shutdown endpoint uses bearer authentication', async () => {
     pid = ready.pid
     const controlToken = await runtime.readDaemonToken({ homeDir })
 
-    const missing = await fetch(`${daemonUrl}/control/shutdown`, { method: 'POST' })
+    const missing = await fetch(`${daemonUrl}/v1/private/control/shutdown`, { method: 'POST' })
     assert.equal(missing.status, 401)
     const missingBody = await missing.json()
     assert.equal(Object.hasOwn(missingBody.error, 'protocol'), false)
     assert.equal(missingBody.error.code, 'control_auth_missing')
 
-    const rejected = await fetch(`${daemonUrl}/control/shutdown`, {
+    const rejected = await fetch(`${daemonUrl}/v1/private/control/shutdown`, {
       method: 'POST',
       headers: { authorization: 'Bearer wrong-token' },
     })
@@ -518,7 +518,7 @@ test('daemon shutdown endpoint uses bearer authentication', async () => {
     assert.equal(JSON.stringify(rejectedBody).includes(controlToken), false)
     assert.equal((await runtime.probeDaemonReady({ homeDir, daemonUrl })).ok, true)
 
-    const accepted = await fetch(`${daemonUrl}/control/shutdown`, {
+    const accepted = await fetch(`${daemonUrl}/v1/private/control/shutdown`, {
       method: 'POST',
       headers: { authorization: `Bearer ${controlToken}` },
     })
@@ -668,12 +668,12 @@ async function startReadyOnlyDaemon({ homeDir, daemonUrl, token, version }) {
       })
       return
     }
-    if (request.method === 'POST' && requestUrl.pathname === '/jobs') {
+    if (request.method === 'POST' && requestUrl.pathname === '/v1/private/jobs') {
       jobAuthorizationHeaders.push(request.headers.authorization)
       writeJson(response, 200, { ok: true })
       return
     }
-    if (request.method === 'POST' && requestUrl.pathname === '/control/shutdown') {
+    if (request.method === 'POST' && requestUrl.pathname === '/v1/private/control/shutdown') {
       if (request.headers.authorization !== `Bearer ${token}`) {
         writeJson(response, 403, { error: { message: 'forbidden' } })
         return

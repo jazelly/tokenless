@@ -1,5 +1,5 @@
 {
-  "openapi": "api/tokenless-daemon-api.openapi.json",
+  "openapi": "packages/contracts/tokenless.openapi.json",
   "cases": [
     {
       "name": "ready",

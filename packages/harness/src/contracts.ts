@@ -1,4 +1,4 @@
-import type { TurnState } from 'tokenless-internal-contracts/private/provider-turn'
+import type { TurnState } from './http/provider-turn/index.js'
 
 export const WEB_AGENT_PROTOCOL = 'tokenless.web-agent/v1' as const
 export const HARNESS_SKILL_MODULE_PROTOCOL = 'tokenless.web-agent.skills/v1' as const
@@ -279,8 +279,16 @@ export type HarnessSkillTurnPreparation = {
 export type HarnessToolCall = {
   id: string
   tool: string
-  arguments: Record<string, JsonValue>
+  arguments: JsonValue
   dependsOn?: readonly string[] | undefined
+  /** Internal parser outcome; model responses never provide this field. */
+  validationError?: HarnessToolCallValidationError | undefined
+}
+
+export type HarnessToolCallValidationError = {
+  code: 'harness_tool_unknown' | 'harness_tool_arguments_invalid'
+  message: string
+  details?: JsonValue | undefined
 }
 
 export type HarnessRunNeed = {
@@ -549,7 +557,7 @@ export class HarnessSkillError extends Error {
 
 export class ProviderTurnDispatchError extends Error {
   constructor(
-    readonly dispatch: 'deterministic' | 'ambiguous',
+    readonly dispatch: 'deterministic' | 'retryable' | 'ambiguous',
     readonly code: string,
     message: string,
   ) {

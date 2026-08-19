@@ -6,8 +6,8 @@
   "type": "module",
   "license": "MIT",
   "scripts": {
-    "build": "vite build --config vite.config.ts --logLevel error",
-    "lint": "svelte-check --tsconfig ./tsconfig.json"
+    "build": "tsc -b ../shared && vite build --config vite.config.ts --logLevel error",
+    "lint": "tsc -b ../shared && svelte-check --tsconfig ./tsconfig.json"
   },
   "devDependencies": {
     "@lucide/svelte": "1.28.0",
@@ -15,6 +15,6 @@
     "svelte": "5.56.8",
     "svelte-check": "4.7.4",
     "vite": "8.2.0",
-    "tokenless-internal-contracts": "0.0.0"
+    "tokenless-internal-shared": "0.0.0"
   }
 }

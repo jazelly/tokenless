@@ -15,7 +15,7 @@ import type {
   UiRuntimeOpenResult,
   UiRuntimeStatus,
   UiSnapshot,
-} from 'tokenless-internal-contracts/ui'
+} from 'tokenless-internal-shared/ui'
 
 export type {
   UiBrowserBinding,
@@ -60,7 +60,7 @@ export type {
   UiRuntimeStatus,
   UiSession,
   UiSnapshot,
-} from 'tokenless-internal-contracts/ui'
+} from 'tokenless-internal-shared/ui'
 
 export type Language = UiLanguage
 

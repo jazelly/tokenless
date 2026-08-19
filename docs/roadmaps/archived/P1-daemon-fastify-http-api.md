@@ -142,7 +142,7 @@ into the existing status codes and documented error envelope. Fastify default er
 
 ### API Source of Truth
 
-`api/tokenless-daemon-api.openapi.json` remains the implemented HTTP contract. Fastify route schemas and serializers must stay aligned with it.
+Lifecycle note (2026-08-19): the implemented daemon and Dashboard descriptions now live in the unified `packages/contracts/tokenless.openapi.json`; the route names below preserve this roadmap's historical state.
 
 This archived roadmap predates the clean-break OpenAPI simplification. Any later caller-specific API or richer progress resource requires an explicit Tokenless Daemon API revision.
 

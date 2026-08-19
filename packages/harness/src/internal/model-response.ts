@@ -2,7 +2,7 @@ import {
   MarkerExtractionError,
   extractExactlyOneMarkedValue,
   parseStrictJson,
-} from 'tokenless-internal-contracts/structured-json'
+} from 'tokenless-internal-shared/structured-json'
 import {
   WEB_AGENT_PROTOCOL,
   HarnessSkillError,
@@ -11,6 +11,7 @@ import {
   type HarnessModelResponse,
   type HarnessRunNeed,
   type HarnessToolCall,
+  type HarnessToolCallValidationError,
   type JsonValue,
 } from '../contracts.js'
 import type { HarnessSkillState } from './state.js'
@@ -98,15 +99,44 @@ function actionBatch(value: Record<string, unknown>, state: HarnessSkillState): 
   const allIds = [...calls.map((call) => call.id), ...needs.map((need) => need.id)]
   requireUnique(allIds, 'call and need ids')
 
-  const toolNames = new Set(state.tools.map((tool) => tool.name))
-  const tools = new Map(state.tools.map((tool) => [tool.name, tool]))
-  for (const call of calls) {
-    if (!toolNames.has(call.tool)) {
-      throw new HarnessSkillError('harness_tool_unknown', `Tool '${call.tool}' is not present in the frozen catalog.`)
-    }
-    validateJsonSchemaValue(tools.get(call.tool)!.inputSchema, call.arguments, `Arguments for tool '${call.tool}'`)
-  }
+  // Structural checks, including dependency graph validation, happen before
+  // semantic tool checks so malformed batches still fail closed atomically.
   validateDependencies(calls)
+
+  const tools = new Map(state.tools.map((tool) => [tool.name, tool]))
+  const validatedCalls = calls.map((call) => {
+    const tool = tools.get(call.tool)
+    if (!tool) {
+      return {
+        ...call,
+        validationError: {
+          code: 'harness_tool_unknown' as const,
+          message: `Tool '${call.tool}' is not present in the frozen catalog.`,
+          details: { tool: call.tool },
+        },
+      }
+    }
+    if (!isJsonObject(call.arguments)) {
+      return {
+        ...call,
+        validationError: {
+          code: 'harness_tool_arguments_invalid' as const,
+          message: `Arguments for tool '${call.tool}' must be a JSON object.`,
+          details: { expectedType: 'object' },
+        },
+      }
+    }
+    try {
+      validateJsonSchemaValue(tool.inputSchema, call.arguments, `Arguments for tool '${call.tool}'`)
+      return call
+    } catch (error) {
+      if (!(error instanceof HarnessSkillError) || error.code !== 'harness_json_schema_validation_failed') throw error
+      return {
+        ...call,
+        validationError: validationError(error),
+      }
+    }
+  })
   return {
     protocol: WEB_AGENT_PROTOCOL,
     kind: 'action_batch',
@@ -114,9 +144,21 @@ function actionBatch(value: Record<string, unknown>, state: HarnessSkillState): 
     turn: value.turn as number,
     nonce: value.nonce as string,
     skillLoads,
-    calls,
+    calls: validatedCalls,
     needs,
   }
+}
+
+function validationError(error: HarnessSkillError): HarnessToolCallValidationError {
+  return {
+    code: 'harness_tool_arguments_invalid',
+    message: error.message,
+    ...(error.context?.issues === undefined ? {} : { details: { issues: error.context.issues } }),
+  }
+}
+
+function isJsonObject(value: JsonValue): value is Record<string, JsonValue> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
 function finalResponse(value: Record<string, unknown>, state: HarnessSkillState): HarnessFinalResponse {
@@ -160,7 +202,8 @@ function toolCall(value: unknown): HarnessToolCall {
   if (typeof call.tool !== 'string' || call.tool.length < 1 || call.tool.length > 128) {
     throw new HarnessSkillError('harness_tool_call_invalid', 'tool call tool must be a bounded string.')
   }
-  const argumentsValue = record(call.arguments, 'tool call arguments') as Record<string, JsonValue>
+  assertJsonValue(call.arguments, 'tool call arguments')
+  const argumentsValue = call.arguments as JsonValue
   const dependsOn = call.dependsOn === undefined
     ? undefined
     : array(call.dependsOn, 'dependsOn', 128).map((dependency) => itemId(dependency, 'dependency id'))

@@ -60,6 +60,7 @@ class DurableWebAgentHarness implements WebAgentHarness {
       turn: 1,
       nonce: opaqueRef('nonce'),
       requestRef: opaqueRef('request'),
+      providerRetryCount: 0,
       catalog: [],
       calls: [],
       needs: [],
@@ -100,6 +101,19 @@ class DurableWebAgentHarness implements WebAgentHarness {
     let record = this.required(runId)
     try {
       if (record.providerTurn?.lifecycle === 'waiting_for_user') {
+        if (record.providerTurn.waitingReason === 'ambiguous_submission') {
+          if (record.phase === 'reconciliation_required') return publicView(record)
+          record = this.store.update(runId, record.revision, (current) => ({
+            ...current,
+            status: 'reconciliation_required',
+            phase: 'reconciliation_required',
+            error: {
+              code: 'harness_provider_submission_ambiguous',
+              message: 'Provider submission certainty is ambiguous; reconcile the same turn before resuming.',
+            },
+          }))
+          return publicView(record)
+        }
         if (intervention.providerReady !== true) throw new HarnessSkillError('harness_provider_resume_invalid', 'Provider intervention must be explicitly confirmed.')
         record = this.store.update(runId, record.revision, (current) => ({
           ...current,
@@ -111,6 +125,7 @@ class DurableWebAgentHarness implements WebAgentHarness {
         const approvals = new Map((intervention.approvals ?? []).map((item) => [item.callId, item.argumentsDigest]))
         const calls = record.calls.map((call) => {
           if (call.approval !== 'pending') return call
+          if (hasFailedDependency(record, call)) return { ...call, approval: 'not_required' as const }
           if (approvals.get(call.id) !== call.argumentsDigest) {
             throw new HarnessSkillError('harness_approval_invalid', `Approval for call '${call.id}' does not match its frozen arguments.`)
           }
@@ -314,11 +329,13 @@ class DurableWebAgentHarness implements WebAgentHarness {
       }))
     }
     const batchId = sha256({ runId: record.runId, turn: record.turn, nonce: record.nonce, batch: response })
-    const calls = response.calls.map((call) => durableCall(record, batchId, call))
+    const resolved = resolveKnownDependencyFailures(response.calls.map((call) => durableCall(record, batchId, call)))
+    const calls = resolved.calls
+    const callResults = resolved.callResults
     const needs = response.needs.map((need) => ({ id: need.id, prompt: need.prompt, inputSchema: need.inputSchema }))
     const status = needs.length > 0
       ? 'waiting_for_input'
-      : calls.some((call) => call.approval === 'pending')
+      : calls.some((call) => call.approval === 'pending' && !hasFailedDependencyInResults(call, callResults))
         ? 'waiting_for_approval'
         : 'running'
     return this.store.update(record.runId, record.revision, (current) => ({
@@ -328,7 +345,7 @@ class DurableWebAgentHarness implements WebAgentHarness {
       batchId,
       calls,
       needs,
-      callResults: [],
+      callResults,
       needResults: [],
       status,
       phase: status === 'running' ? 'executing_batch' : 'waiting_intervention',
@@ -354,10 +371,7 @@ class DurableWebAgentHarness implements WebAgentHarness {
     do {
       progressed = false
       for (const durable of record.calls) {
-        if (durable.status !== 'pending' || durable.approval === 'pending') continue
-        if (durable.approval !== 'approved' && durable.approval !== 'not_required') {
-          throw new HarnessSkillError('harness_approval_state_invalid', `Call '${durable.id}' is not authorized for execution.`)
-        }
+        if (durable.status !== 'pending') continue
         const dependencies = durable.dependsOn.map((id) => record.callResults.find((result) => result.id === id))
         if (dependencies.some((result) => result?.status === 'failed')) {
           record = this.recordCallOutcome(record, durable.id, 'failed', { code: 'harness_tool_dependency_failed' })
@@ -365,9 +379,20 @@ class DurableWebAgentHarness implements WebAgentHarness {
           continue
         }
         if (dependencies.some((result) => result === undefined)) continue
+        if (durable.approval === 'pending') continue
+        if (durable.approval !== 'approved' && durable.approval !== 'not_required') {
+          throw new HarnessSkillError('harness_approval_state_invalid', `Call '${durable.id}' is not authorized for execution.`)
+        }
         const entry = record.catalog.find((tool) => tool.name === durable.tool)
         if (!entry) {
           record = this.recordCallOutcome(record, durable.id, 'failed', { code: 'harness_tool_not_in_frozen_catalog' })
+          progressed = true
+          continue
+        }
+        try {
+          validateDurableArguments(entry, durable.arguments)
+        } catch (error) {
+          record = this.recordCallOutcome(record, durable.id, 'failed', durableArgumentFailure(error, durable.tool))
           progressed = true
           continue
         }
@@ -376,7 +401,7 @@ class DurableWebAgentHarness implements WebAgentHarness {
           calls: current.calls.map((call) => call.id === durable.id ? { ...call, status: 'executing' } : call),
         }))
         try {
-          const outcome = await this.tools.execute(entry, durable.arguments, record.spec.mcpServers ?? [])
+          const outcome = await this.tools.execute(entry, durable.arguments as Record<string, JsonValue>, record.spec.mcpServers ?? [])
           if (outcome.status === 'authentication_required') {
             record = this.store.update(record.runId, record.revision, (current) => ({
               ...current,
@@ -415,6 +440,7 @@ class DurableWebAgentHarness implements WebAgentHarness {
       turn: record.turn + 1,
       nonce: opaqueRef('nonce'),
       requestRef: opaqueRef('request'),
+      providerRetryCount: 0,
       needResults,
       history: [...record.history, {
         batchId: record.batchId!, batch, calls: record.calls, needs: record.needs,
@@ -427,6 +453,7 @@ class DurableWebAgentHarness implements WebAgentHarness {
       turn: next.turn,
       nonce: next.nonce,
       requestRef: next.requestRef,
+      providerRetryCount: 0,
       history: next.history,
       status: 'submitting_provider',
       phase: 'submitting_provider',
@@ -448,7 +475,7 @@ class DurableWebAgentHarness implements WebAgentHarness {
     }))
   }
 
-  private async submitPending(record: HarnessRunRecord) {
+  private async submitPending(record: HarnessRunRecord): Promise<HarnessRunRecord> {
     const request = record.pendingProviderRequest
     if (!request) throw new HarnessSkillError('harness_provider_intent_missing', 'Harness provider submission intent is missing.')
     try {
@@ -458,6 +485,7 @@ class DurableWebAgentHarness implements WebAgentHarness {
       assertProviderTurnIdentity(record, providerTurn)
       return this.store.update(record.runId, record.revision, (current) => ({
         ...current,
+        providerRetryCount: 0,
         status: providerStatus(providerTurn.lifecycle),
         phase: providerTurn.lifecycle === 'failed' || providerTurn.lifecycle === 'cancelled' ? 'terminal' : 'awaiting_provider',
         providerTurn,
@@ -468,6 +496,17 @@ class DurableWebAgentHarness implements WebAgentHarness {
       }))
     } catch (error) {
       if (error instanceof ProviderTurnDispatchError && error.dispatch === 'ambiguous') return record
+      if (error instanceof ProviderTurnDispatchError && error.dispatch === 'retryable') {
+        const retryCount = record.providerRetryCount ?? 0
+        if (retryCount < MAX_PROVIDER_REQUEST_RETRIES) {
+          const retried = this.store.update(record.runId, record.revision, (current) => ({
+            ...current,
+            providerRetryCount: retryCount + 1,
+          }))
+          await delay(providerRetryDelay(retryCount))
+          return this.submitPending(retried)
+        }
+      }
       return this.fail(record, error)
     }
   }
@@ -539,6 +578,33 @@ function providerRequest(record: HarnessRunRecord, result?: HarnessActionBatchRe
 
 function durableCall(record: HarnessRunRecord, batchId: string, call: HarnessActionBatch['calls'][number]): DurableCall {
   const entry = record.catalog.find((tool) => tool.name === call.tool)
+  if (!entry && call.validationError === undefined) {
+    throw new HarnessSkillError('harness_tool_unknown', `Tool '${call.tool}' is absent from the frozen catalog.`)
+  }
+  if (call.validationError) {
+    return {
+      id: call.id,
+      tool: call.tool,
+      arguments: call.arguments,
+      argumentsDigest: sha256({
+        runId: record.runId,
+        turn: record.turn,
+        nonce: record.nonce,
+        batchId,
+        callId: call.id,
+        tool: call.tool,
+        arguments: call.arguments,
+      }),
+      dependsOn: call.dependsOn ?? [],
+      approval: 'not_required',
+      status: 'failed',
+      outcome: {
+        code: call.validationError.code,
+        message: call.validationError.message,
+        ...(call.validationError.details === undefined ? {} : { details: call.validationError.details }),
+      },
+    }
+  }
   if (!entry) throw new HarnessSkillError('harness_tool_unknown', `Tool '${call.tool}' is absent from the frozen catalog.`)
   const requiresApproval = entry.approval === 'always' || !entry.readOnly
   return {
@@ -560,9 +626,59 @@ function durableCall(record: HarnessRunRecord, batchId: string, call: HarnessAct
   }
 }
 
+function resolveKnownDependencyFailures(calls: readonly DurableCall[]) {
+  const resolved = calls.map((call) => ({ ...call }))
+  const callResults = resolved
+    .filter((call) => call.status === 'failed' && call.outcome !== undefined)
+    .map((call) => ({ id: call.id, status: 'failed' as const, content: call.outcome! }))
+  let changed = true
+  while (changed) {
+    changed = false
+    const failedIds = new Set(callResults.map((result) => result.id))
+    for (const [index, call] of resolved.entries()) {
+      if (call.status !== 'pending' || !call.dependsOn.some((dependency) => failedIds.has(dependency))) continue
+      const outcome = { code: 'harness_tool_dependency_failed' as const }
+      resolved[index] = { ...call, approval: 'not_required', status: 'failed', outcome }
+      callResults.push({ id: call.id, status: 'failed', content: outcome })
+      changed = true
+    }
+  }
+  const resultsById = new Map(callResults.map((result) => [result.id, result]))
+  return {
+    calls: resolved,
+    callResults: resolved.flatMap((call) => {
+      const result = resultsById.get(call.id)
+      return result ? [result] : []
+    }),
+  }
+}
+
+function validateDurableArguments(entry: HarnessToolCatalogEntry, value: JsonValue) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new HarnessSkillError('harness_tool_arguments_invalid', `Arguments for tool '${entry.name}' must be a JSON object.`)
+  }
+  validateJsonSchemaValue(entry.inputSchema, value, `Arguments for tool '${entry.name}'`)
+}
+
+function durableArgumentFailure(error: unknown, tool: string): JsonValue {
+  if (error instanceof HarnessSkillError) {
+    return {
+      code: 'harness_tool_arguments_invalid',
+      message: error.message,
+      ...(error.context?.issues === undefined ? {} : { details: { issues: error.context.issues } }),
+    }
+  }
+  return { code: 'harness_tool_arguments_invalid', message: `Arguments for tool '${tool}' failed frozen-schema validation.` }
+}
+
 function publicView(record: HarnessRunRecord): AgentRunView {
   const waiting = record.status === 'waiting_for_approval'
-    ? { kind: 'approval' as const, calls: record.calls.filter((call) => call.approval === 'pending').map(publicCall) }
+    ? {
+        kind: 'approval' as const,
+        calls: record.calls
+          .filter((call) => call.approval === 'pending' && !hasFailedDependency(record, call))
+          .map(publicCall),
+      }
     : record.status === 'waiting_for_authentication'
       ? {
           kind: 'authentication' as const,
@@ -587,8 +703,30 @@ function publicView(record: HarnessRunRecord): AgentRunView {
   }
 }
 
-function publicCall(call: DurableCall) {
-  return { id: call.id, tool: call.tool, arguments: call.arguments, argumentsDigest: call.argumentsDigest }
+function publicCall(call: DurableCall): {
+  id: string
+  tool: string
+  arguments: Record<string, JsonValue>
+  argumentsDigest: string
+} {
+  return {
+    id: call.id,
+    tool: call.tool,
+    arguments: call.arguments as Record<string, JsonValue>,
+    argumentsDigest: call.argumentsDigest,
+  }
+}
+
+function hasFailedDependency(record: HarnessRunRecord, call: DurableCall) {
+  return hasFailedDependencyInResults(call, record.callResults)
+}
+
+function hasFailedDependencyInResults(
+  call: Pick<DurableCall, 'dependsOn'>,
+  results: readonly { id: string; status: 'succeeded' | 'failed' }[],
+) {
+  const statuses = new Map(results.map((result) => [result.id, result.status]))
+  return call.dependsOn.some((dependency) => statuses.get(dependency) === 'failed')
 }
 
 function validateSpec(input: AgentRunSpec): AgentRunSpec {
@@ -717,6 +855,8 @@ function providerStatus(lifecycle: string) {
 }
 
 const MAX_PROVIDER_RESULT_BYTES = 768 * 1024
+const MAX_PROVIDER_REQUEST_RETRIES = 2
+const PROVIDER_RETRY_BASE_DELAY_MS = 100
 
 function boundedActionBatchResult(
   batchId: string,
@@ -755,6 +895,14 @@ function digestProjection(value: JsonValue): JsonValue {
 }
 
 function jsonBytes(value: unknown) { return Buffer.byteLength(JSON.stringify(value), 'utf8') }
+
+function providerRetryDelay(retryCount: number) {
+  return Math.min(1_000, PROVIDER_RETRY_BASE_DELAY_MS * 2 ** retryCount)
+}
+
+async function delay(milliseconds: number) {
+  await new Promise<void>((resolve) => setTimeout(resolve, milliseconds))
+}
 
 function assertExactKeys(value: Record<string, unknown>, allowed: readonly string[], label: string) {
   if (Object.keys(value).some((key) => !allowed.includes(key))) {

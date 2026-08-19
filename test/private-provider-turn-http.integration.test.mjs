@@ -7,8 +7,8 @@ import test from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import Ajv2020 from 'ajv/dist/2020.js'
 import addFormats from 'ajv-formats'
-import { parseStartTurnRequest, parseTurnState } from 'tokenless-internal-contracts/private/provider-turn'
-import { LocalHttpError, createLocalHttpClient } from 'tokenless-internal-contracts/private/provider-turn-http'
+import { parseStartTurnRequest, parseTurnState } from '../packages/harness/dist/src/http/provider-turn/index.js'
+import { LocalHttpError, createLocalHttpClient } from '../packages/harness/dist/src/http/provider-turn/http-client.js'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const daemonServer = pathToFileURL(path.join(root, 'packages/server/dist/src/http/server.js')).href
@@ -558,7 +558,7 @@ function readCanonicalExample(name) {
 }
 
 function openApiTurnValidator() {
-  const document = JSON.parse(fs.readFileSync(path.join(root, 'api/tokenless-daemon-api.openapi.json'), 'utf8'))
+  const document = JSON.parse(fs.readFileSync(path.join(root, 'packages/contracts/tokenless.openapi.json'), 'utf8'))
   const defs = Object.fromEntries(Object.entries(document.components.schemas).map(([name, schema]) => [name, rewriteOpenApiRefs(schema)]))
   const ajv = new Ajv2020({ allErrors: true, strict: true, strictRequired: false })
   ajv.addKeyword({

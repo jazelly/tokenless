@@ -2,7 +2,7 @@
 
 Status: superseded 2026-08-19 | Priority: P0 | Historical working title: Web AI Interaction Protocol
 
-Disposition: superseded by [OpenAI-compatible API 收敛](../P1-openai-compatible-api-convergence.md). The implemented provider-turn schema remains an internal Tokenless contract under `packages/contracts/private/provider-turn`; it is not the canonical public model API. This file is retained as decision history.
+Disposition: superseded by [OpenAI-compatible API 收敛](../P1-openai-compatible-api-convergence.md). The implemented provider-turn wire schema is documented in `packages/contracts/tokenless.openapi.json`; its Server Adapter belongs to `packages/server` and its first-party Client Adapter belongs to `packages/harness`. It is not the canonical public model API. This file is retained as decision history.
 
 Depends on: the typed visible-provider capability seam, durable daemon job and conversation identity, real-provider evidence rules, and the existing visible browser execution boundary
 

@@ -367,7 +367,7 @@ async function handleRequest(
       return
     }
 
-    if (method === 'POST' && url.pathname === '/control/dashboard') {
+    if (method === 'POST' && url.pathname === '/v1/private/control/dashboard') {
       const rawBody = await readBody(request)
       const body = rawBody ? parseJsonObject(rawBody) : {}
       if (Object.keys(body).some((key) => key !== 'profile_id' && key !== 'open')) {
@@ -382,15 +382,15 @@ async function handleRequest(
       return
     }
 
-    if (method === 'GET' && url.pathname === '/control/browser-runtime/status') {
+    if (method === 'GET' && url.pathname === '/v1/private/control/browser-runtime/status') {
       writeJson(response, 200, browserRuntimeStatus(runtimeController))
       return
     }
-    if (method === 'POST' && url.pathname === '/control/browser-runtime/quiesce') {
+    if (method === 'POST' && url.pathname === '/v1/private/control/browser-runtime/quiesce') {
       writeJson(response, 200, await browserRuntimeQuiesce(runtimeController))
       return
     }
-    if (method === 'POST' && url.pathname === '/control/browser-runtime/open-profile') {
+    if (method === 'POST' && url.pathname === '/v1/private/control/browser-runtime/open-profile') {
       const body = await readJsonObject(request)
       const openFields = new Set(['profile_id', 'browser_visibility'])
       if (Object.keys(body).some((key) => !openFields.has(key))) {
@@ -403,7 +403,7 @@ async function handleRequest(
       ))
       return
     }
-    if (method === 'POST' && url.pathname === '/control/browser-runtime/open-provider-tabs') {
+    if (method === 'POST' && url.pathname === '/v1/private/control/browser-runtime/open-provider-tabs') {
       const body = await readJsonObject(request)
       const openFields = new Set(['profile_id', 'browser_visibility', 'providers'])
       if (Object.keys(body).some((key) => !openFields.has(key))) {
@@ -418,7 +418,7 @@ async function handleRequest(
       return
     }
 
-    if (method === 'POST' && url.pathname === '/jobs') {
+    if (method === 'POST' && url.pathname === '/v1/private/jobs') {
       const body = await readJsonObject(request)
       const createJobFields = new Set([
         'provider',
@@ -463,7 +463,7 @@ async function handleRequest(
       return
     }
 
-    if (method === 'GET' && url.pathname === '/provider-mappings/resolve') {
+    if (method === 'GET' && url.pathname === '/v1/private/provider-mappings/resolve') {
       const mapping = store.resolveProviderMapping({
         provider: requiredQueryString(url.searchParams.get('provider'), 'provider'),
         profile_id: requiredQueryString(url.searchParams.get('profile_id'), 'profile_id'),
@@ -474,7 +474,7 @@ async function handleRequest(
       return
     }
 
-    if (method === 'GET' && url.pathname === '/provider-conversations/resolve') {
+    if (method === 'GET' && url.pathname === '/v1/private/provider-conversations/resolve') {
       const mapping = store.resolveProviderTaskConversation({
         provider: requiredQueryString(url.searchParams.get('provider'), 'provider'),
         profile_id: requiredQueryString(url.searchParams.get('profile_id'), 'profile_id'),
@@ -484,7 +484,7 @@ async function handleRequest(
       return
     }
 
-    if (method === 'GET' && url.pathname === '/jobs') {
+    if (method === 'GET' && url.pathname === '/v1/private/jobs') {
       const jobs = store.listJobs({
         status: optionalJobStatus(url.searchParams.get('status')),
         execution_backend: optionalQueryExecutionBackend(url.searchParams.get('execution_backend')),
@@ -497,7 +497,7 @@ async function handleRequest(
       return
     }
 
-    if (method === 'GET' && url.pathname === '/provider-capacity') {
+    if (method === 'GET' && url.pathname === '/v1/private/provider-capacity') {
       const provider = requiredQueryString(url.searchParams.get('provider'), 'provider')
       const projection = store.projectProviderCapacity({
         provider,
@@ -514,7 +514,7 @@ async function handleRequest(
       return
     }
 
-    if (method === 'POST' && url.pathname === '/replay/drain') {
+    if (method === 'POST' && url.pathname === '/v1/private/replay/drain') {
       const body = await readJsonObject(request)
       if (Object.keys(body).some((key) => key !== 'agent_kind' && key !== 'agent_session_id' && key !== 'limit')) {
         throw invalidInput('request body must be valid JSON: unknown field')
@@ -565,7 +565,7 @@ async function handleRequest(
       return
     }
 
-    if (method === 'POST' && url.pathname === '/control/shutdown') {
+    if (method === 'POST' && url.pathname === '/v1/private/control/shutdown') {
       deactivate()
       writeJson(response, 200, { ok: true, status: 'shutting_down', pid: process.pid })
       setImmediate(() => {
@@ -1058,7 +1058,7 @@ function validateReadyChallenge(challenge: string) {
 }
 
 function matchJobRoute(pathname: string) {
-  const match = /^\/jobs\/([^/]+)(?:\/([^/]+))?$/.exec(pathname)
+  const match = /^\/v1\/private\/jobs\/([^/]+)(?:\/([^/]+))?$/.exec(pathname)
   if (!match) return null
   const action = match[2] ?? null
   if (action !== null && !['resume', 'cancel', 'report'].includes(action)) return null

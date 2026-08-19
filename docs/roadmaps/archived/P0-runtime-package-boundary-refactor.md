@@ -255,8 +255,8 @@ server HTTP -> application -> jobs/providers/browser/persistence
 在第一次源码移动前，将以下现有 surface 映射到至少一条真实边界 case：
 
 1. `COMMANDS.md` 与 built CLI help 中每个保留 command family；
-2. `api/tokenless-daemon-api.openapi.json` 中每个保留 route family；
-3. `api/tokenless-ui-api.openapi.json` 中每个 Dashboard read/mutation family；
+2. unified `packages/contracts/tokenless.openapi.json` 中每个保留 daemon route family；
+3. 同一 OpenAPI document 中每个 Dashboard read/mutation family；
 4. Dashboard 的 setup、profiles、providers/routing、capabilities、jobs、system/diagnostics 与 output-savings 用户路径；
 5. Harness `start/read/resume/cancel`、Skill、tool、approval 与 HTTP provider-turn 路径；
 6. package install、daemon bootstrap、browser/profile preservation 与 real provider submission。

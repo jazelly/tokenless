@@ -14,7 +14,7 @@ import { ManagedProfileRegistry } from '../packages/server/dist/src/browser/prof
 
 const execFileAsync = promisify(execFile)
 const cliEntry = path.resolve('packages/cli/dist/src/tokenless.mjs')
-const uiApiDocument = JSON.parse(fs.readFileSync(path.resolve('api/tokenless-ui-api.openapi.json'), 'utf8'))
+const uiApiDocument = JSON.parse(fs.readFileSync(path.resolve('packages/contracts/tokenless.openapi.json'), 'utf8'))
 const validateUiSession = uiSchemaValidator('UiSession')
 const validateUiSnapshot = uiSchemaValidator('UiSnapshot')
 const validateUiError = uiSchemaValidator('ErrorEnvelope')
@@ -85,9 +85,13 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     assert.equal(typeof sessionBody.csrf, 'string')
     assertUiSchema(validateUiSession, sessionBody)
 
-    const machineRoute = await fetch(`${daemon.origin}/jobs`)
+    const machineRoute = await fetch(`${daemon.origin}/v1/private/jobs`)
     assert.equal(machineRoute.status, 401)
     assert.equal((await machineRoute.json()).error.code, 'control_auth_missing')
+    const removedLegacyRoute = await fetch(`${daemon.origin}/jobs`, {
+      headers: { authorization: `Bearer ${token}` },
+    })
+    assert.equal(removedLegacyRoute.status, 404)
 
     const snapshot = await fetch(`${daemon.origin}/ui-api/v1/snapshot`, { headers: { cookie } })
     assert.equal(snapshot.status, 200)

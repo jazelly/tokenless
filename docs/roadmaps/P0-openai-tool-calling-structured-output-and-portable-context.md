@@ -468,7 +468,7 @@ Exit: 任何 successful structured response都能由标准 JSON parser解析并�
 
 ### Phase 5: Standalone Harness Contract Convergence
 
-Lifecycle note（2026-08-15，updated 2026-08-19）：Universal API 与 Standalone Harness 共享 `tokenless-internal-contracts/structured-json` 的 strict JSON parser 与 AJV 2020 compile/validate setup。较早的 Harness grammar 也使用 exactly-one marker extraction；当前 Universal API 改为 strict whole-response JSON，故不共享该 extraction。Harness 仍独立拥有 `action_batch`、Skill/need 与 tool execution；API 仍独立拥有 OpenAI choice、bounded correction 和 structured-output subset。Public CLI 对所需 private artifacts 做 narrow bundling，offline packed install 不依赖 private workspace package。
+Lifecycle note（2026-08-15，updated 2026-08-19）：Universal API 与 Standalone Harness 共享 `tokenless-internal-shared/structured-json` 的 strict JSON parser 与 AJV 2020 compile/validate setup。较早的 Harness grammar 也使用 exactly-one marker extraction；当前 Universal API 改为 strict whole-response JSON，故不共享该 extraction。Harness 仍独立拥有 `action_batch`、Skill/need 与 tool execution；API 仍独立拥有 OpenAI choice、bounded correction 和 structured-output subset。Public CLI 对所需 private artifacts 做 narrow bundling，offline packed install 不依赖 private workspace package。
 
 同一 packaged ChatGPT strategy 的 Universal API 与 Standalone Harness real-provider run、首次 API failure 和独立 DeepSeek diagnostic 记录在[脱敏证据](../evidence/shared-structured-control-chatgpt-2026-08-15.md)。
 

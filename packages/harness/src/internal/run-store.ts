@@ -25,7 +25,7 @@ const RUN_ID = /^run_[a-f0-9]{32}$/
 export type DurableCall = {
   id: string
   tool: string
-  arguments: Record<string, JsonValue>
+  arguments: JsonValue
   argumentsDigest: string
   dependsOn: readonly string[]
   approval: 'not_required' | 'pending' | 'approved'
@@ -51,6 +51,7 @@ export type HarnessRunRecord = {
   turn: number
   nonce: string
   requestRef: string
+  providerRetryCount?: number | undefined
   catalog: readonly HarnessToolCatalogEntry[]
   pendingProviderRequest?: ProviderTurnRequest | undefined
   pendingProviderOperation?: {
@@ -239,6 +240,7 @@ function validateRecord(record: HarnessRunRecord) {
     !['discovering_tools', 'submitting_provider', 'awaiting_provider', 'resuming_provider', 'cancelling_provider', 'waiting_intervention', 'executing_batch', 'terminal', 'reconciliation_required'].includes(record.phase) ||
     !Number.isSafeInteger(record.revision) || record.revision < 0 ||
     !Number.isSafeInteger(record.turn) || record.turn < 1 ||
+    (record.providerRetryCount !== undefined && (!Number.isSafeInteger(record.providerRetryCount) || record.providerRetryCount < 0 || record.providerRetryCount > 2)) ||
     typeof record.nonce !== 'string' || record.nonce.length < 8 ||
     typeof record.requestRef !== 'string' || !record.requestRef.startsWith('request:') ||
     !Array.isArray(record.catalog) || !Array.isArray(record.calls) || !Array.isArray(record.needs) ||

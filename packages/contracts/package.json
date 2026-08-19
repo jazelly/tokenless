@@ -1,33 +1,19 @@
 {
-  "name": "tokenless-internal-contracts",
+  "name": "tokenless-api-contracts",
   "version": "0.0.0",
   "private": true,
-  "description": "Private Tokenless cross-package contracts and transport adapters.",
+  "description": "Canonical Tokenless OpenAPI source and generated HTTP API reference.",
   "type": "module",
   "license": "MIT",
-  "exports": {
-    "./private/provider-turn": "./dist/src/private/provider-turn/index.js",
-    "./private/provider-turn-http": "./dist/src/private/provider-turn/http-client.js",
-    "./localized-errors": "./dist/src/localized-errors.js",
-    "./structured-json": "./dist/src/structured-json.js",
-    "./ui": "./dist/src/ui.js"
-  },
   "files": [
-    "dist/src",
-    "schemas/v0",
+    "tokenless.openapi.json",
+    "reference.html",
+    "fixtures",
     "spec",
     "examples/v0",
     "README.md",
     "package.json"
   ],
-  "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "lint": "tsc -p tsconfig.json --noEmit"
-  },
-  "dependencies": {
-    "ajv": "^8.20.0",
-    "ajv-formats": "^3.0.1"
-  },
   "engines": {
     "node": ">=22.13.0"
   }

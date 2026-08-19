@@ -29,7 +29,7 @@ test('provider rate-limit policy projects subscription-aware cadence from durabl
   let database
   try {
     const token = fs.readFileSync(path.join(homeDir, 'daemon.token'), 'utf8').trim()
-    await daemonRequest(daemon.url, token, 'POST', '/control/browser-runtime/quiesce')
+    await daemonRequest(daemon.url, token, 'POST', '/v1/private/control/browser-runtime/quiesce')
     database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'))
 
     const burstBase = Date.now() - 5_000
@@ -224,7 +224,7 @@ async function capacity(url, token, profileId, provider, accessClass, tierLabel,
   })
   if (tierLabel) query.set('tier_label', tierLabel)
   if (subscriptionLabel) query.set('subscription_label', subscriptionLabel)
-  return daemonRequest(url, token, 'GET', `/provider-capacity?${query}`)
+  return daemonRequest(url, token, 'GET', `/v1/private/provider-capacity?${query}`)
 }
 
 function rule(projection, ruleId) {
@@ -270,7 +270,7 @@ async function startDaemon(homeDir) {
 async function shutdownDaemon(daemon) {
   if (daemon.child.exitCode !== null) return
   const token = fs.readFileSync(path.join(daemon.homeDir, 'daemon.token'), 'utf8').trim()
-  await daemonRequest(daemon.url, token, 'POST', '/control/shutdown')
+  await daemonRequest(daemon.url, token, 'POST', '/v1/private/control/shutdown')
   await waitForExit(daemon.child, 5_000)
   children.delete(daemon.child)
 }

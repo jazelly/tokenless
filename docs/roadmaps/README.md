@@ -74,14 +74,14 @@ The highest-priority shared compatibility contract is listed first, followed by 
 
 ## How the Roadmaps Fit Together
 
-The completed [Runtime Package Boundary Refactor](archived/P0-runtime-package-boundary-refactor.md) separated CLI, server, Dashboard, Harness, and shared-contract source while preserving product behavior. The active [OpenAI-compatible API Convergence](P1-openai-compatible-api-convergence.md) now owns the later execution change: CLI and Harness use OpenAI-compatible model/media interfaces wherever lossless, while Tokenless-only extensions live under `/v1/private/*`.
+The completed [Runtime Package Boundary Refactor](archived/P0-runtime-package-boundary-refactor.md) separated CLI, server, Dashboard, Harness, shared runtime primitives, and documentation-only API contracts while preserving product behavior. The active [OpenAI-compatible API Convergence](P1-openai-compatible-api-convergence.md) now owns the later execution change: CLI and Harness use OpenAI-compatible model/media Interfaces wherever lossless, Anthropic compatibility stays parallel, and Tokenless-only bearer machine behavior lives under `/v1/private/*`.
 
 ```mermaid
 flowchart LR
   Caller["Trusted local caller<br/>HTTP create + polling"]
   UI["Local web control plane<br/>profiles + providers + jobs"]
   Compat["OpenAI tool/JSON contract<br/>canonical portable history"]
-  API["Authenticated local API + proxy<br/>OpenAI-shaped requests + job reads"]
+  API["Authenticated local server<br/>OpenAI/Anthropic compatibility + private machine API"]
   Session["Agent session binding<br/>session tree + thread + working directory"]
   Codex["Codex guided delegation<br/>AGENTS + hooks + App Server enrichment"]
   Scheduler["Durable scheduler<br/>identity + lanes + backpressure"]

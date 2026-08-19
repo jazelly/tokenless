@@ -195,7 +195,7 @@ async function createPackedCliFixture() {
       cwd: cliDirectory,
       encoding: 'utf8',
     }))
-    assert.ok(cliPack.files.some((file) => file.path === 'dist/schemas/v0/common.schema.json'))
+    assert.ok(cliPack.files.some((file) => file.path === 'dist/schemas/provider-turn/v0/common.schema.json'))
     assert.equal(cliPack.files.some((file) => file.path.startsWith('schemas/')), false)
     assert.equal(cliPack.files.some((file) => file.path.startsWith('spec/')), false)
     assert.equal(cliPack.files.some((file) => file.path.startsWith('examples/')), false)

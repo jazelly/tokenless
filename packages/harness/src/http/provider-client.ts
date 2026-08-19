@@ -1,5 +1,5 @@
-import type { TurnState } from 'tokenless-internal-contracts/private/provider-turn'
-import { LocalHttpError, createLocalHttpClient } from 'tokenless-internal-contracts/private/provider-turn-http'
+import type { TurnState } from './provider-turn/index.js'
+import { LocalHttpError, createLocalHttpClient } from './provider-turn/http-client.js'
 
 import {
   PROVIDER_TURN_PROTOCOL,
@@ -22,8 +22,8 @@ export function createLocalHttpProviderTurnClient(options: { baseUrl: string; to
   return {
     async start(request) {
       if (request.continuation) throw new HarnessSkillError('harness_provider_request_invalid', 'Provider start cannot contain a continuation.')
-      const binding = await createLocalHttpClient(options).bind(request.provider, request.profileId)
       return dispatch(async () => {
+        const binding = await createLocalHttpClient(options).bind(request.provider, request.profileId)
         const turn = await startHarnessLocalHttpBootstrap({
           baseUrl: options.baseUrl,
           token: options.token,
@@ -43,7 +43,7 @@ export function createLocalHttpProviderTurnClient(options: { baseUrl: string; to
           providerRef: binding.capabilities.providerRef,
           providerBindingRef: binding.providerBindingRef,
         })
-      })
+      }, 'submission')
     },
 
     async continue(request) {
@@ -65,7 +65,7 @@ export function createLocalHttpProviderTurnClient(options: { baseUrl: string; to
           skillLoads: continuation.skillLoads,
         })
         return project(request, started.turnState, started.resultSha256, continuation)
-      })
+      }, 'submission')
     },
 
     async read(request) {
@@ -116,15 +116,24 @@ export function createLocalHttpProviderTurnClient(options: { baseUrl: string; to
   }
 }
 
-async function dispatch<T>(operation: () => Promise<T>): Promise<T> {
+async function dispatch<T>(operation: () => Promise<T>, mode: 'submission' | 'reconciliation' = 'reconciliation'): Promise<T> {
   try {
     return await operation()
   } catch (error) {
     if (error instanceof ProviderTurnDispatchError) throw error
     if (error instanceof LocalHttpError) {
+      const errorCode = error.error?.code ?? 'harness_provider_http_error'
+      const retryableSubmission = mode === 'submission' && error.status >= 500 && error.status < 600 && errorCode === 'daemon_starting'
+      const dispatch: 'deterministic' | 'retryable' | 'ambiguous' = retryableSubmission
+        ? 'retryable'
+        : error.status >= 500 && error.status < 600
+          ? 'ambiguous'
+          : error.error?.retryable
+            ? 'ambiguous'
+            : 'deterministic'
       throw new ProviderTurnDispatchError(
-        error.error?.retryable ? 'ambiguous' : 'deterministic',
-        error.error?.code ?? 'harness_provider_http_error',
+        dispatch,
+        errorCode,
         error.error?.message ?? 'Local provider dispatch failed.',
       )
     }

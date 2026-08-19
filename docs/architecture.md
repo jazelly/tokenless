@@ -6,15 +6,16 @@ Tokenless exposes visible AI websites through an HTTP-centered local server, a t
 
 ## Final shape
 
-Tokenless has four entry surfaces above one server-owned execution core:
+Tokenless has several entry surfaces above one server-owned execution core:
 
 ```mermaid
 flowchart TB
   Skill["Host Agent Skill<br/>skills/tokenless"] --> CLI
   CLI["packages/cli<br/>commands, bootstrap, HTTP client"] --> AgentAPI["/v1/private/agent/*"]
-  CLI --> Control["Authenticated CLI/control HTTP"]
+  CLI --> Control["Bearer machine HTTP<br/>/v1/private/*"]
   Dashboard["packages/dashboard<br/>full read + mutation control plane"] --> UIAPI["/ui-api/v1"]
-  External["OpenAI SDK / external Harness"] --> API["OpenAI-compatible HTTP<br/>chat, responses, images"]
+  OpenAIClient["OpenAI SDK / external Harness"] --> API["OpenAI-compatible HTTP<br/>chat, responses, images"]
+  AnthropicClient["Anthropic SDK / external Harness"] --> Anthropic["Anthropic-compatible HTTP<br/>messages"]
   AgentAPI --> Harness["packages/harness<br/>AgentRun, Skills, tools, MCP"]
   Harness --> API
   Harness -. "only non-representable extensions" .-> PrivateTurn["/v1/private/provider-turn/*"]
@@ -23,6 +24,7 @@ flowchart TB
     Control --> Application["Application services"]
     UIAPI --> Application
     API --> Universal["Universal API conversion"]
+    Anthropic --> Universal
     PrivateTurn --> Application
     Universal --> Application
     Application --> Provider["Jobs, routing, providers, browser/direct runtime, persistence"]
@@ -33,9 +35,14 @@ flowchart TB
 
   Harness --> Tools
   Provider --> Browser
+
+  Contracts["packages/contracts<br/>OpenAPI source + generated reference"] -. "documents" .-> API
+  Contracts -. "documents" .-> Anthropic
+  Contracts -. "documents" .-> Control
+  Contracts -. "documents" .-> UIAPI
 ```
 
-The callers use distinct HTTP interfaces but share one server implementation. OpenAI-compatible chat, Responses, and images are the default model/media interface for both external callers and the first-party Harness. Tokenless-only run control and non-representable provider-turn extensions stay under `/v1/private/*`.
+The callers use distinct HTTP Interfaces but share one server implementation. OpenAI-compatible and Anthropic-compatible are parallel compatibility Interfaces; OpenAI-compatible chat, Responses, and images remain the default model/media Interface for the first-party Harness. Tokenless-only bearer machine control and non-representable provider-turn extensions stay under `/v1/private/*`.
 
 ## Layer 1: Universal API
 
@@ -100,22 +107,19 @@ Tokenless CLI -> Web Agent Harness -> Universal API
 
 Universal API non-execution of external caller tools therefore does not prohibit the first-party Harness from executing its own tools. It prohibits only moving Harness authority into the low-level API or silently treating an external caller's tool catalog as Tokenless authority.
 
-## Shared and separate contracts
+## HTTP contract and runtime ownership
 
-The layers may share only low-level, provider-neutral primitives:
+`packages/contracts/tokenless.openapi.json` is the single HTTP documentation source. It describes paths, methods, authentication, serialized request/response shapes, status codes, and examples for all compatibility, private machine, Dashboard, and readiness Interfaces; `npm run api:docs` renders one generated Scalar reference.
 
-- canonical message and tool-call/result blocks;
-- JSON Schema validation and bounded JSON values;
-- strict framing, correlation, nonce, and opaque provider-turn references;
-- attachment identity, dispatch certainty, lifecycle, and stable error shapes; and
-- provider capability and turn-state contracts.
+`packages/contracts` is not a runtime dependency. Server routes and request validation remain in `packages/server`; the private provider-turn Client Adapter and its defensive response validation remain in `packages/harness`. `packages/shared` contains only runtime primitives with multiple real consumers—Dashboard DTO types, localized error summaries, and strict JSON helpers—and is not an HTTP contract source.
 
-Their high-level contracts remain separate:
+The high-level runtime Interfaces remain separate:
 
 - Universal API: OpenAI-compatible `tools`, `tool_calls`, `role: tool`, Responses items, `tool_choice`, and structured output;
+- Anthropic compatibility: Anthropic Messages framing mapped to the same Universal execution implementation;
 - Web Agent Harness: `AgentRun`, Skills, `action_batch`, `needs`, approval decisions, MCP outcomes, interventions, and final-output policy.
 
-The API adapter must not call the Harness mission queue, Tool Registry, or MCP runtime. The Harness must not import provider adapters, Playwright, daemon storage, profile management, or CLI implementation modules.
+The API Adapter must not call the Harness mission queue, Tool Registry, or MCP runtime. The Harness must not import provider Adapters, Playwright, daemon storage, profile management, or CLI implementation modules.
 
 ## Runtime components
 
@@ -131,12 +135,12 @@ The API adapter must not call the Harness mission queue, Tool Registry, or MCP r
 
 ## Provider runtime execution path
 
-Every normal cross-surface call enters through HTTP. The target first-party agent path is `Tokenless CLI → /v1/private/agent/* → Web Agent Harness → OpenAI-compatible API → provider runtime`, with `/v1/private/provider-turn/*` used only for non-representable extensions. Provider inspection, setup, and administration commands use the authenticated CLI/control HTTP surface.
+Every normal cross-surface call enters through HTTP. The target first-party agent path is `Tokenless CLI → /v1/private/agent/* → Web Agent Harness → OpenAI-compatible API → provider runtime`, with `/v1/private/provider-turn/*` used only for non-representable extensions. Jobs, provider inspection, setup, and administration commands use their bearer-authenticated `/v1/private/*` machine routes.
 
 | Interface | Execution path | Authentication | Status |
 | --- | --- | --- | --- |
 | CLI agent run | CLI → `/v1/private/agent/*` → Web Agent Harness → OpenAI-compatible API/private extension → provider runtime | Provider sign-in stored inside the managed profile | First-party agent interface |
-| Provider/control command | CLI → authenticated control HTTP → daemon → Playwright worker → managed profile → visible provider page | Provider sign-in stored inside the managed profile | Control interface |
+| Provider/control command | CLI → `/v1/private/*` → daemon → Playwright worker → managed profile → visible provider page | Daemon bearer token plus provider sign-in inside the managed profile | Private machine Interface |
 | Local dashboard | Browser → `/ui-api/v1` → shared services/daemon → managed profile → visible provider page | Direct loopback opening plus a short-lived UI session; provider sign-in remains inside the managed profile | Local administration interface |
 | Machine API | Trusted local caller → bearer API → daemon → Playwright worker | Daemon bearer token plus provider sign-in inside the managed profile | Local scripting interface |
 
@@ -209,7 +213,7 @@ The provider-session machine is intentionally separate from the daemon job state
 
 The daemon binds to loopback, stores its bearer token beside its SQLite database, and protects job and control endpoints with that token. The daemon home and token use restrictive filesystem permissions on supported systems. User configuration stores a preferred loopback origin. The daemon may scan upward from that port when it is occupied, while a single SQLite runtime-state row records the current actual origin, startup generation, and owner.
 
-The bearer-protected machine endpoints remain an internal runtime control plane. Browser administration uses a separate `/ui-api/v1` surface documented in `api/tokenless-ui-api.openapi.json`. Opening the daemon's loopback root redirects to `/ui/` and establishes a short-lived `HttpOnly`, `SameSite=Strict` session cookie; UI mutations require the exact daemon Origin and a per-session CSRF header. Sessions live only in daemon memory and are invalidated on restart.
+Every bearer-protected Tokenless machine endpoint, except the parallel compatibility Interfaces, lives under `/v1/private/*`. Browser administration uses the separate `/ui-api/v1` session/CSRF Interface; both are documented in [`packages/contracts/tokenless.openapi.json`](../packages/contracts/tokenless.openapi.json). Opening the daemon's loopback root redirects to `/ui/` and establishes a short-lived `HttpOnly`, `SameSite=Strict` session cookie; UI mutations require the exact daemon Origin and a per-session CSRF header. Sessions live only in daemon memory and are invalidated on restart.
 
 All UI routes enforce the daemon's exact loopback `Host`, a restrictive same-origin CSP, `frame-ancestors 'none'`, `nosniff`, and `Referrer-Policy: no-referrer`. Static assets are bundled in the same npm package and load no remote JavaScript, fonts, analytics, or CDN resources. Purpose-built responses redact control tokens, claims, checkpoints, browser storage, raw DOM, legacy source paths, and private file paths.
 
@@ -284,12 +288,13 @@ skills/              Host Agent instructions
 packages/cli/        commands, bootstrap, HTTP clients, localization, output
 packages/dashboard/  full Local Web Control Plane frontend
 packages/harness/    AgentRun, Skills, tools, MCP, approvals, agent loop
-packages/contracts/  cross-package contracts, validation, and thin Client Adapters
+packages/contracts/  canonical OpenAPI source, examples, generated API reference
+packages/shared/     shared runtime DTO types, localization data, strict JSON helpers
 packages/server/     HTTP, application, jobs, providers, browser/direct runtime, persistence
 ```
 
-The primary dependency direction is `CLI/Dashboard/Harness/external caller → HTTP → server`. The server does not import the Harness runtime, the Dashboard does not import backend source, and the Harness does not import provider, browser, or persistence internals. The existing single `tokenless` npm distribution continues to bundle the required private artifacts.
+The primary dependency direction is `CLI/Dashboard/Harness/external caller → HTTP → server`. `packages/contracts` documents that Seam but is not in the runtime dependency graph. The server does not import the Harness runtime, the Dashboard imports only shared browser-safe primitives rather than backend source, and the Harness does not import provider, browser, or persistence internals. The existing single `tokenless` npm distribution continues to bundle the required private artifacts.
 
 The Web Agent Harness roadmap owns the first-party Harness implementation. The Universal API tool-calling roadmap owns the OpenAI-compatible contract. The OpenAI-compatible API convergence roadmap owns migration of CLI and Harness model calls plus removal of unnecessary private provider-turn extensions.
 
-The runtime package boundary refactor and private namespace correction are implemented: `packages/server/`, `packages/cli/`, `packages/dashboard/`, `packages/harness/`, and `packages/contracts/` own their respective source while the existing `tokenless` npm distribution bundles the required private artifacts. OpenAI-compatible API convergence remains separate product work because it changes execution ownership rather than source location.
+The runtime package boundary refactor and private namespace correction are implemented: `packages/server/`, `packages/cli/`, `packages/dashboard/`, `packages/harness/`, `packages/shared/`, and documentation-only `packages/contracts/` own their respective source. OpenAI-compatible API convergence remains separate product work because it changes execution ownership rather than source location.

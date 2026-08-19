@@ -11,7 +11,7 @@ import {
   type TurnState,
 } from './contracts.js'
 import { PROTOCOL_SCHEMA_IDS } from './version.js'
-import { createAjv2020 } from '../../structured-json.js'
+import { createAjv2020 } from 'tokenless-internal-shared/structured-json'
 
 type MessageType = ProtocolValidationError['messageType']
 type JsonRecord = Record<string, unknown>
@@ -76,8 +76,9 @@ function createValidators() {
 function readSchemas(): object[] {
   const moduleDirectory = path.dirname(fileURLToPath(import.meta.url))
   const schemaDirectory = [
-    path.resolve(moduleDirectory, '../../../../schemas/v0'),
-    path.resolve(moduleDirectory, '../../schemas/v0'),
+    path.resolve(moduleDirectory, '../../../../schemas/provider-turn/v0'),
+    path.resolve(moduleDirectory, '../../../schemas/provider-turn/v0'),
+    path.resolve(moduleDirectory, '../../schemas/provider-turn/v0'),
   ].find((candidate) => fs.existsSync(candidate))
   if (!schemaDirectory) throw new Error('Missing private provider-turn schemas.')
   return fs.readdirSync(schemaDirectory)

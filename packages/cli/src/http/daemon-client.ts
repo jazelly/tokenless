@@ -318,7 +318,7 @@ export async function createDaemonJob({
   const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
   return daemonRequest<DaemonJob>({
     daemonUrl: daemon.daemonUrl,
-    path: '/jobs',
+    path: '/v1/private/jobs',
     body: {
       provider,
       action,
@@ -456,7 +456,7 @@ export async function drainDaemonReplay({
   const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
   return daemonRequest<{ jobs: DaemonReplaySummary[] }>({
     daemonUrl: daemon.daemonUrl,
-    path: '/replay/drain',
+    path: '/v1/private/replay/drain',
     body: {
       agent_kind: agentKind,
       agent_session_id: agentSessionId,
@@ -481,7 +481,7 @@ export async function markDaemonJobReported({
   const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
   return daemonRequest<{ reported: boolean; job: DaemonJob }>({
     daemonUrl: daemon.daemonUrl,
-    path: `/jobs/${encodeURIComponent(jobId)}/report`,
+    path: `/v1/private/jobs/${encodeURIComponent(jobId)}/report`,
     body: {
       agent_kind: agentKind,
       agent_session_id: agentSessionId,
@@ -515,7 +515,7 @@ export async function listDaemonJobs({
   return daemonRequest<DaemonJob[]>({
     daemonUrl: daemon.daemonUrl,
     method: 'GET',
-    path: `/jobs?${query.toString()}`,
+    path: `/v1/private/jobs?${query.toString()}`,
     token: daemon.token,
     timeoutMs: requestTimeoutMs,
     signal,
@@ -533,7 +533,7 @@ export async function getDaemonJob({
   return daemonRequest<DaemonJob>({
     daemonUrl: daemon.daemonUrl,
     method: 'GET',
-    path: `/jobs/${encodeURIComponent(jobId)}`,
+    path: `/v1/private/jobs/${encodeURIComponent(jobId)}`,
     token: daemon.token,
     timeoutMs: requestTimeoutMs,
     signal,
@@ -562,7 +562,7 @@ export async function getProviderCapacity({
   return daemonRequest<ProviderCapacityProjection>({
     daemonUrl: daemon.daemonUrl,
     method: 'GET',
-    path: `/provider-capacity?${query.toString()}`,
+    path: `/v1/private/provider-capacity?${query.toString()}`,
     token: daemon.token,
     timeoutMs: requestTimeoutMs,
     signal,
@@ -606,7 +606,7 @@ export async function resolveProviderMapping({
   }>({
     daemonUrl: daemon.daemonUrl,
     method: 'GET',
-    path: `/provider-mappings/resolve?${query.toString()}`,
+    path: `/v1/private/provider-mappings/resolve?${query.toString()}`,
     token: daemon.token,
     timeoutMs: requestTimeoutMs,
     signal,
@@ -640,7 +640,7 @@ export async function resolveProviderConversation({
   }>({
     daemonUrl: daemon.daemonUrl,
     method: 'GET',
-    path: `/provider-conversations/resolve?${query.toString()}`,
+    path: `/v1/private/provider-conversations/resolve?${query.toString()}`,
     token: daemon.token,
     timeoutMs: requestTimeoutMs,
     signal,
@@ -658,7 +658,7 @@ export async function cancelDaemonJob({
   const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
   return daemonRequest<DaemonJob>({
     daemonUrl: daemon.daemonUrl,
-    path: `/jobs/${encodeURIComponent(jobId)}/cancel`,
+    path: `/v1/private/jobs/${encodeURIComponent(jobId)}/cancel`,
     ...(reason === undefined ? {} : { body: { reason } }),
     token: daemon.token,
     timeoutMs: requestTimeoutMs,
@@ -681,7 +681,7 @@ export async function shutdownDaemon({
   }
   return daemonRequest<ShutdownDaemonResponse>({
     daemonUrl: explicitDaemonUrl,
-    path: '/control/shutdown',
+    path: '/v1/private/control/shutdown',
     token: controlToken,
     timeoutMs: requestTimeoutMs,
     signal,
@@ -698,7 +698,7 @@ export async function browserRuntimeStatus({
   return daemonRequest<BrowserRuntimeStatus>({
     daemonUrl: daemon.daemonUrl,
     method: 'GET',
-    path: '/control/browser-runtime/status',
+    path: '/v1/private/control/browser-runtime/status',
     token: daemon.token,
     timeoutMs: requestTimeoutMs,
     signal,
@@ -714,7 +714,7 @@ export async function quiesceBrowserRuntime({
   const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
   return daemonRequest<BrowserRuntimeStatus>({
     daemonUrl: daemon.daemonUrl,
-    path: '/control/browser-runtime/quiesce',
+    path: '/v1/private/control/browser-runtime/quiesce',
     token: daemon.token,
     timeoutMs: requestTimeoutMs,
     signal,
@@ -732,7 +732,7 @@ export async function openBrowserRuntimeProfile({
   const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
   return daemonRequest<BrowserRuntimeOpenProfileResponse>({
     daemonUrl: daemon.daemonUrl,
-    path: '/control/browser-runtime/open-profile',
+    path: '/v1/private/control/browser-runtime/open-profile',
     body: {
       profile_id: profileId,
       browser_visibility: browserVisibility,
@@ -755,7 +755,7 @@ export async function openBrowserRuntimeProviderTabs({
   const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
   return daemonRequest<BrowserRuntimeOpenProviderTabsResponse>({
     daemonUrl: daemon.daemonUrl,
-    path: '/control/browser-runtime/open-provider-tabs',
+    path: '/v1/private/control/browser-runtime/open-provider-tabs',
     body: {
       profile_id: profileId,
       providers,
@@ -778,7 +778,7 @@ export async function openTokenlessDashboard({
   const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
   return daemonRequest<OpenDashboardResponse>({
     daemonUrl: daemon.daemonUrl,
-    path: '/control/dashboard',
+    path: '/v1/private/control/dashboard',
     body: {
       ...(profileId ? { profile_id: profileId } : {}),
       open,
@@ -807,7 +807,7 @@ export async function resumeDaemonJob({
   const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
   return daemonRequest<DaemonJob>({
     daemonUrl: daemon.daemonUrl,
-    path: `/jobs/${encodeURIComponent(jobId)}/resume`,
+    path: `/v1/private/jobs/${encodeURIComponent(jobId)}/resume`,
     body: { browser_visibility: browserVisibility },
     token: daemon.token,
     timeoutMs: requestTimeoutMs,

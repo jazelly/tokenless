@@ -315,23 +315,26 @@ test('workspace packages keep standalone product names', () => {
   const cli = readJson('packages/cli/package.json')
   const harness = readJson('packages/harness/package.json')
   const contracts = readJson('packages/contracts/package.json')
+  const shared = readJson('packages/shared/package.json')
   assert.equal(cli.name, 'tokenless')
   assert.deepEqual(cli.bin, { tokenless: 'dist/src/tokenless.mjs' })
   assert.ok(!cli.name.startsWith('@tokenless/'))
   assert.equal(harness.name, 'tokenless-web-agent-harness')
   assert.equal(harness.private, true)
   assert.deepEqual(harness.exports, { '.': './dist/src/index.js' })
-  assert.equal(contracts.name, 'tokenless-internal-contracts')
+  assert.equal(contracts.name, 'tokenless-api-contracts')
   assert.equal(contracts.private, true)
-  assert.deepEqual(contracts.exports, {
-    './private/provider-turn': './dist/src/private/provider-turn/index.js',
-    './private/provider-turn-http': './dist/src/private/provider-turn/http-client.js',
+  assert.equal(contracts.exports, undefined)
+  assert.ok(contracts.files.includes('tokenless.openapi.json'))
+  assert.ok(contracts.files.includes('reference.html'))
+  assert.ok(contracts.files.includes('spec'))
+  assert.equal(shared.name, 'tokenless-internal-shared')
+  assert.equal(shared.private, true)
+  assert.deepEqual(shared.exports, {
     './localized-errors': './dist/src/localized-errors.js',
     './structured-json': './dist/src/structured-json.js',
     './ui': './dist/src/ui.js',
   })
-  assert.ok(contracts.files.includes('schemas/v0'))
-  assert.ok(contracts.files.includes('spec'))
   assert.equal(fs.existsSync(path.join(root, 'packages/extension')), false)
 })
 
@@ -783,7 +786,7 @@ test('pure JS CLI packs, installs, and exposes executable runtime artifacts', ()
       .map((entry) => entry.replaceAll(path.sep, '/'))
     assert.deepEqual(installedHarnessJavaScript, ['src/index.js'])
     assert.equal(
-      fs.readFileSync(installedHarness, 'utf8').includes('tokenless-internal-contracts'),
+      fs.readFileSync(installedHarness, 'utf8').includes('tokenless-internal-shared'),
       false,
     )
     const harnessImport = spawnSync(process.execPath, [
@@ -796,7 +799,7 @@ test('pure JS CLI packs, installs, and exposes executable runtime artifacts', ()
     const installedOpenAiToolProtocol = path.join(installedCli, 'dist', 'server', 'src', 'universal-api', 'openai-tool-protocol.js')
     assert.equal(fs.existsSync(installedOpenAiToolProtocol), true)
     assert.equal(
-      fs.readFileSync(installedOpenAiToolProtocol, 'utf8').includes('tokenless-internal-contracts'),
+      fs.readFileSync(installedOpenAiToolProtocol, 'utf8').includes('tokenless-internal-shared'),
       false,
     )
     assert.equal(

@@ -6,19 +6,14 @@ import Ajv2020 from 'ajv/dist/2020.js'
 import addFormats from 'ajv-formats'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const openApiPath = path.join(root, 'api/tokenless-daemon-api.openapi.json')
-const uiOpenApiPath = path.join(root, 'api/tokenless-ui-api.openapi.json')
-const fixturePath = path.join(root, 'api/fixtures/openapi-success-responses.json')
-const openApiArtifactPath = 'api/tokenless-daemon-api.openapi.json'
-const uiOpenApiArtifactPath = 'api/tokenless-ui-api.openapi.json'
+const openApiPath = path.join(root, 'packages/contracts/tokenless.openapi.json')
+const fixturePath = path.join(root, 'packages/contracts/fixtures/openapi-success-responses.json')
+const openApiArtifactPath = 'packages/contracts/tokenless.openapi.json'
 const HTTP_METHODS = new Set(['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace'])
 
 const document = await readJson(openApiPath)
 await validateOpenApiDocument(openApiArtifactPath, document)
 console.log(`api:check validated ${openApiArtifactPath}`)
-const uiDocument = await readJson(uiOpenApiPath)
-validateUiOpenApiDocument(uiOpenApiArtifactPath, uiDocument)
-console.log(`api:check validated ${uiOpenApiArtifactPath}`)
 
 async function readJson(filePath) {
   try {
@@ -55,8 +50,10 @@ function validateOpenApiDocument(artifactPath, parsed) {
     }
   }
 
-  if (!isRecord(parsed.components?.securitySchemes?.controlBearer)) {
-    throw new Error(`${artifactPath} must define controlBearer security scheme`)
+  for (const name of ['controlBearer', 'uiSession', 'csrf', 'featureBenchBearer']) {
+    if (!isRecord(parsed.components?.securitySchemes?.[name])) {
+      throw new Error(`${artifactPath} must define ${name} security scheme`)
+    }
   }
   if (JSON.stringify(parsed.security) !== JSON.stringify([{ controlBearer: [] }])) {
     throw new Error(`${artifactPath} must require bearer auth by default`)
@@ -65,13 +62,36 @@ function validateOpenApiDocument(artifactPath, parsed) {
   if (JSON.stringify(readyOperation.security) !== '[]') {
     throw new Error(`${artifactPath} /ready must explicitly opt out of bearer auth`)
   }
+  const controlSecurity = JSON.stringify([{ controlBearer: [] }])
+  const uiMutationSecurity = JSON.stringify([{ uiSession: [], csrf: [] }])
+  const featureBenchSecurity = JSON.stringify([{ featureBenchBearer: [] }])
   for (const [route, pathItem] of Object.entries(parsed.paths)) {
-    if (route === '/ready') continue
     for (const [method, operation] of Object.entries(pathItem)) {
       if (!HTTP_METHODS.has(method)) continue
-      if (operation.security !== undefined && JSON.stringify(operation.security) !== JSON.stringify([{ controlBearer: [] }])) {
-        throw new Error(`${artifactPath} ${method.toUpperCase()} ${route} must use bearer auth`)
+      if (route === '/ready') continue
+      if (route.startsWith('/ui-api/v1/')) {
+        const expected = method === 'get' ? '[]' : uiMutationSecurity
+        if (JSON.stringify(operation.security) !== expected) {
+          throw new Error(`${artifactPath} ${method.toUpperCase()} ${route} has invalid Dashboard security`)
+        }
+        continue
       }
+      if (route === '/v1/private/featurebench/turn' || route === '/v1/private/featurebench/turn/complete') {
+        if (JSON.stringify(operation.security) !== featureBenchSecurity) {
+          throw new Error(`${artifactPath} ${method.toUpperCase()} ${route} must use its issued channel bearer token`)
+        }
+        continue
+      }
+      if (operation.security !== undefined && JSON.stringify(operation.security) !== controlSecurity) {
+        throw new Error(`${artifactPath} ${method.toUpperCase()} ${route} must use daemon bearer auth`)
+      }
+    }
+  }
+
+  const legacyMachinePrefixes = ['/jobs', '/control', '/provider-mappings', '/provider-conversations', '/provider-capacity', '/replay']
+  for (const route of Object.keys(parsed.paths)) {
+    if (legacyMachinePrefixes.some((prefix) => route === prefix || route.startsWith(`${prefix}/`))) {
+      throw new Error(`${artifactPath} legacy bearer machine route must be under /v1/private: ${route}`)
     }
   }
 
@@ -79,49 +99,6 @@ function validateOpenApiDocument(artifactPath, parsed) {
   compileOpenApiComponentSchemas(artifactPath, parsed)
   validateDaemonApiDoesNotExposeProtocolIdentity(artifactPath, parsed)
   return validateOpenApiFixtures(artifactPath, parsed)
-}
-
-function validateUiOpenApiDocument(artifactPath, parsed) {
-  if (!isRecord(parsed)) throw new Error(`${artifactPath} must be an object`)
-  if (parsed.openapi !== '3.1.0') throw new Error(`${artifactPath} must be OpenAPI 3.1.0`)
-  if (!isRecord(parsed.info) || typeof parsed.info.title !== 'string' || parsed.info.version !== '1.0.0') {
-    throw new Error(`${artifactPath} must include info.title and API version 1.0.0`)
-  }
-  if (!isRecord(parsed.paths)) throw new Error(`${artifactPath} must include paths`)
-  if (!isRecord(parsed.components?.securitySchemes?.uiSession) || !isRecord(parsed.components?.securitySchemes?.csrf)) {
-    throw new Error(`${artifactPath} must define uiSession and csrf security schemes`)
-  }
-  if (parsed.security !== undefined) {
-    throw new Error(`${artifactPath} must not require the UI session globally because UI GET requests establish it automatically`)
-  }
-
-  const mutationSecurity = JSON.stringify([{ uiSession: [], csrf: [] }])
-  const operationIds = new Set()
-  for (const [route, pathItem] of Object.entries(parsed.paths)) {
-    if (!isRecord(pathItem)) throw new Error(`${artifactPath} ${route} path item must be an object`)
-    const operations = Object.entries(pathItem).filter(([method]) => HTTP_METHODS.has(method))
-    if (operations.length === 0) throw new Error(`${artifactPath} ${route} must define an operation`)
-    for (const [method, operation] of operations) {
-      if (!isRecord(operation) || typeof operation.operationId !== 'string' || !operation.operationId) {
-        throw new Error(`${artifactPath} ${method.toUpperCase()} ${route} must define operationId`)
-      }
-      if (operationIds.has(operation.operationId)) {
-        throw new Error(`${artifactPath} operationId must be unique: ${operation.operationId}`)
-      }
-      operationIds.add(operation.operationId)
-      if (!isRecord(operation.responses) || Object.keys(operation.responses).length === 0) {
-        throw new Error(`${artifactPath} ${method.toUpperCase()} ${route} must define responses`)
-      }
-      if (method === 'get' && operation.security !== undefined && JSON.stringify(operation.security) !== '[]') {
-        throw new Error(`${artifactPath} ${method.toUpperCase()} ${route} must allow automatic UI session establishment`)
-      }
-      if (method !== 'get' && JSON.stringify(operation.security) !== mutationSecurity) {
-        throw new Error(`${artifactPath} ${method.toUpperCase()} ${route} must require UI session and CSRF security`)
-      }
-    }
-  }
-  validateOpenApiReferences(artifactPath, parsed)
-  compileOpenApiComponentSchemas(artifactPath, parsed)
 }
 
 function getSingleOperation(pathItem, pathName) {

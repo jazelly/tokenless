@@ -14,13 +14,13 @@
     "package.json"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "lint": "tsc -p tsconfig.json --noEmit"
+    "build": "tsc -b ../shared && tsc -p tsconfig.json",
+    "lint": "tsc -b ../shared && tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
     "js-yaml": "^4.3.0",
-    "tokenless-internal-contracts": "0.0.0"
+    "tokenless-internal-shared": "0.0.0"
   },
   "engines": {
     "node": ">=22.13.0"

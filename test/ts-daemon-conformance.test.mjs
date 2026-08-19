@@ -34,7 +34,7 @@ test('TS daemon embeds the managed Playwright scheduler without idle browser lau
 
     const token = readControlToken(homeDir)
     const jobId = randomUUID()
-    await daemonRequest(daemon.url, token, 'POST', '/jobs', {
+    await daemonRequest(daemon.url, token, 'POST', '/v1/private/jobs', {
       provider: 'chatgpt',
       action: managedPlaywrightJobAction,
       execution_backend: 'playwright',
@@ -94,7 +94,7 @@ test('TS daemon rejects unsupported Playwright providers', {
   const daemon = await startTsDaemon(homeDir)
   try {
     const token = readControlToken(homeDir)
-    const rejected = await fetch(`${daemon.url}/jobs`, {
+    const rejected = await fetch(`${daemon.url}/v1/private/jobs`, {
       method: 'POST',
       headers: jsonHeaders(token),
       body: JSON.stringify({
@@ -131,7 +131,7 @@ test('TS daemon rejects under-declared capability routes before durable job crea
       candidates: [{ provider: 'chatgpt', runtimeEligibility: 'eligible' }],
     })
     assert.equal(route.ok, true)
-    const rejected = await fetch(`${daemon.url}/jobs`, {
+    const rejected = await fetch(`${daemon.url}/v1/private/jobs`, {
       method: 'POST',
       headers: jsonHeaders(token),
       body: JSON.stringify({
@@ -172,7 +172,7 @@ test('TS daemon rejects under-declared capability routes before durable job crea
     const body = await rejected.json()
     assert.equal(body.error.code, 'invalid_input')
     assert.match(body.error.message, /omits action-required capabilities: file\.upload/)
-    const jobs = await daemonRequest(daemon.url, token, 'GET', '/jobs?limit=10')
+    const jobs = await daemonRequest(daemon.url, token, 'GET', '/v1/private/jobs?limit=10')
     assert.deepEqual(jobs, [])
   } finally {
     await shutdownDaemon(daemon).catch(() => undefined)
@@ -386,7 +386,7 @@ test('TS daemon rejects raw image jobs that bypass the shared image/download con
       },
     ]
     for (const [index, entry] of cases.entries()) {
-      const rejected = await fetch(`${daemon.url}/jobs`, {
+      const rejected = await fetch(`${daemon.url}/v1/private/jobs`, {
         method: 'POST',
         headers: jsonHeaders(token),
         body: JSON.stringify({
@@ -403,7 +403,7 @@ test('TS daemon rejects raw image jobs that bypass the shared image/download con
       assert.equal(body.error.code, 'invalid_input')
       assert.match(body.error.message, entry.message)
     }
-    assert.deepEqual(await daemonRequest(daemon.url, token, 'GET', '/jobs?limit=10'), [])
+    assert.deepEqual(await daemonRequest(daemon.url, token, 'GET', '/v1/private/jobs?limit=10'), [])
   } finally {
     await shutdownDaemon(daemon).catch(() => undefined)
     await terminateChildrenForHome(homeDir)
@@ -430,12 +430,12 @@ test('agent replay drains each durable job once, survives restart, and keeps ful
   const unaddressedJob = randomUUID()
   try {
     const token = readControlToken(homeDir)
-    await daemonRequest(daemon.url, token, 'POST', '/control/browser-runtime/quiesce')
+    await daemonRequest(daemon.url, token, 'POST', '/v1/private/control/browser-runtime/quiesce')
     for (const invalidRecipient of [
       { agent_kind: null },
       { agent_kind: null, agent_session_id: null },
     ]) {
-      const response = await fetch(`${daemon.url}/jobs`, {
+      const response = await fetch(`${daemon.url}/v1/private/jobs`, {
         method: 'POST',
         headers: jsonHeaders(token),
         body: JSON.stringify({
@@ -451,7 +451,7 @@ test('agent replay drains each durable job once, survives restart, and keeps ful
       assert.equal((await response.json()).error.code, 'invalid_input')
     }
     for (const invalidLimit of [null, 201]) {
-      const invalidReplayLimit = await fetch(`${daemon.url}/replay/drain`, {
+      const invalidReplayLimit = await fetch(`${daemon.url}/v1/private/replay/drain`, {
         method: 'POST',
         headers: jsonHeaders(token),
         body: JSON.stringify({
@@ -468,7 +468,7 @@ test('agent replay drains each durable job once, survives restart, and keeps ful
       [jobB, agentB],
       [unaddressedJob, null],
     ]) {
-      await daemonRequest(daemon.url, token, 'POST', '/jobs', {
+      await daemonRequest(daemon.url, token, 'POST', '/v1/private/jobs', {
         provider: 'chatgpt',
         action: managedPlaywrightJobAction,
         execution_backend: 'playwright',
@@ -480,18 +480,18 @@ test('agent replay drains each durable job once, survives restart, and keeps ful
           taskId: `task-${jobId}`,
         },
       })
-      await daemonRequest(daemon.url, token, 'POST', `/jobs/${encodeURIComponent(jobId)}/cancel`, {
+      await daemonRequest(daemon.url, token, 'POST', `/v1/private/jobs/${encodeURIComponent(jobId)}/cancel`, {
         reason: { code: 'replay_test', detail: 'x'.repeat(2_000) },
       })
     }
 
-    const isolated = await daemonRequest(daemon.url, token, 'POST', '/replay/drain', {
+    const isolated = await daemonRequest(daemon.url, token, 'POST', '/v1/private/replay/drain', {
       agent_kind: agentA.agent_kind,
       agent_session_id: `unknown-${randomUUID()}`,
     })
     assert.deepEqual(isolated.jobs, [])
 
-    await daemonRequest(daemon.url, token, 'POST', '/jobs', {
+    await daemonRequest(daemon.url, token, 'POST', '/v1/private/jobs', {
       provider: 'chatgpt',
       action: managedPlaywrightJobAction,
       execution_backend: 'playwright',
@@ -517,7 +517,7 @@ test('agent replay drains each durable job once, survives restart, and keeps ful
     } finally {
       waitingDatabase.close()
     }
-    const waitingReplay = await daemonRequest(daemon.url, token, 'POST', '/replay/drain', agentC)
+    const waitingReplay = await daemonRequest(daemon.url, token, 'POST', '/v1/private/replay/drain', agentC)
     assert.deepEqual(waitingReplay.jobs.map((job) => [job.job_id, job.status]), [[jobC, 'waiting_for_user']])
     const sameTimestampDatabase = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'))
     try {
@@ -530,12 +530,12 @@ test('agent replay drains each durable job once, survives restart, and keeps ful
     } finally {
       sameTimestampDatabase.close()
     }
-    const finalRevisionReplay = await daemonRequest(daemon.url, token, 'POST', '/replay/drain', agentC)
+    const finalRevisionReplay = await daemonRequest(daemon.url, token, 'POST', '/v1/private/replay/drain', agentC)
     assert.deepEqual(finalRevisionReplay.jobs.map((job) => [job.job_id, job.status]), [[jobC, 'canceled']])
     assert.equal(finalRevisionReplay.jobs[0].updated_at, waitingReplay.jobs[0].updated_at)
-    assert.deepEqual((await daemonRequest(daemon.url, token, 'POST', '/replay/drain', agentC)).jobs, [])
+    assert.deepEqual((await daemonRequest(daemon.url, token, 'POST', '/v1/private/replay/drain', agentC)).jobs, [])
 
-    const createdJobD = await daemonRequest(daemon.url, token, 'POST', '/jobs', {
+    const createdJobD = await daemonRequest(daemon.url, token, 'POST', '/v1/private/jobs', {
       provider: 'chatgpt',
       action: managedPlaywrightJobAction,
       execution_backend: 'playwright',
@@ -546,8 +546,8 @@ test('agent replay drains each durable job once, survives restart, and keeps ful
     })
     assert.equal(Object.hasOwn(createdJobD, 'agent_kind'), false)
     assert.equal(Object.hasOwn(createdJobD, 'agent_session_id'), false)
-    await daemonRequest(daemon.url, token, 'POST', `/jobs/${encodeURIComponent(jobD)}/cancel`)
-    const mismatchedReceipt = await fetch(`${daemon.url}/jobs/${encodeURIComponent(jobD)}/report`, {
+    await daemonRequest(daemon.url, token, 'POST', `/v1/private/jobs/${encodeURIComponent(jobD)}/cancel`)
+    const mismatchedReceipt = await fetch(`${daemon.url}/v1/private/jobs/${encodeURIComponent(jobD)}/report`, {
       method: 'POST',
       headers: jsonHeaders(token),
       body: JSON.stringify({
@@ -576,9 +576,9 @@ test('agent replay drains each durable job once, survives restart, and keeps ful
       agentSessionId: agentD.agent_session_id,
     })
     assert.equal(repeatedReceipt.reported, false)
-    assert.deepEqual((await daemonRequest(daemon.url, token, 'POST', '/replay/drain', agentD)).jobs, [])
+    assert.deepEqual((await daemonRequest(daemon.url, token, 'POST', '/v1/private/replay/drain', agentD)).jobs, [])
 
-    await daemonRequest(daemon.url, token, 'POST', '/jobs', {
+    await daemonRequest(daemon.url, token, 'POST', '/v1/private/jobs', {
       provider: 'chatgpt',
       action: managedPlaywrightJobAction,
       execution_backend: 'playwright',
@@ -618,7 +618,7 @@ test('agent replay drains each durable job once, survives restart, and keeps ful
       agentSessionId: agentE.agent_session_id,
     })
     assert.equal(repeatedActiveWaitingReceipt.reported, false)
-    assert.deepEqual((await daemonRequest(daemon.url, token, 'POST', '/replay/drain', agentE)).jobs, [])
+    assert.deepEqual((await daemonRequest(daemon.url, token, 'POST', '/v1/private/replay/drain', agentE)).jobs, [])
 
     const cliReplay = runCli([
       'replay',
@@ -642,20 +642,20 @@ test('agent replay drains each durable job once, survives restart, and keeps ful
     assert.equal(Object.hasOwn(cliPayload.jobs[0], 'preview'), false)
     assert.equal(Object.hasOwn(cliPayload.jobs[0], 'request_json'), false)
 
-    const emptySecondDrain = await daemonRequest(daemon.url, token, 'POST', '/replay/drain', agentA)
+    const emptySecondDrain = await daemonRequest(daemon.url, token, 'POST', '/v1/private/replay/drain', agentA)
     assert.deepEqual(emptySecondDrain.jobs, [])
 
     await shutdownDaemon(daemon)
     daemon = await startTsDaemon(homeDir)
     const restartedToken = readControlToken(homeDir)
-    const emptyAfterRestart = await daemonRequest(daemon.url, restartedToken, 'POST', '/replay/drain', agentA)
+    const emptyAfterRestart = await daemonRequest(daemon.url, restartedToken, 'POST', '/v1/private/replay/drain', agentA)
     assert.deepEqual(emptyAfterRestart.jobs, [])
 
     const fullJob = await daemonRequest(
       daemon.url,
       restartedToken,
       'GET',
-      `/jobs/${encodeURIComponent(jobA)}`
+      `/v1/private/jobs/${encodeURIComponent(jobA)}`
     )
     assert.equal(fullJob.job_id, jobA)
     assert.equal(fullJob.status, 'canceled')
@@ -663,7 +663,7 @@ test('agent replay drains each durable job once, survives restart, and keeps ful
     assert.equal(Object.hasOwn(fullJob, 'agent_kind'), false)
     assert.equal(Object.hasOwn(fullJob, 'agent_session_id'), false)
 
-    const otherAgent = await daemonRequest(daemon.url, restartedToken, 'POST', '/replay/drain', agentB)
+    const otherAgent = await daemonRequest(daemon.url, restartedToken, 'POST', '/v1/private/replay/drain', agentB)
     assert.deepEqual(otherAgent.jobs.map((job) => job.job_id), [jobB])
     assert.equal(otherAgent.jobs.some((job) => job.job_id === unaddressedJob), false)
   } finally {
@@ -682,8 +682,8 @@ test('daemon startup reconciles an expired running lease before becoming ready',
   const jobId = randomUUID()
   try {
     const token = readControlToken(homeDir)
-    await daemonRequest(daemon.url, token, 'POST', '/control/browser-runtime/quiesce')
-    await daemonRequest(daemon.url, token, 'POST', '/jobs', {
+    await daemonRequest(daemon.url, token, 'POST', '/v1/private/control/browser-runtime/quiesce')
+    await daemonRequest(daemon.url, token, 'POST', '/v1/private/jobs', {
       provider: 'chatgpt',
       action: managedPlaywrightJobAction,
       execution_backend: 'playwright',
@@ -710,7 +710,7 @@ test('daemon startup reconciles an expired running lease before becoming ready',
       daemon.url,
       restartedToken,
       'GET',
-      `/jobs/${encodeURIComponent(jobId)}`
+      `/v1/private/jobs/${encodeURIComponent(jobId)}`
     )
     assert.equal(recovered.status, 'queued')
     const recoveredDatabase = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'), { readOnly: true })
@@ -743,9 +743,9 @@ test('replay migration initializes durable outcome revisions and preserves an ex
   const activeWaitingReportedJobId = randomUUID()
   try {
     const token = readControlToken(homeDir)
-    await daemonRequest(daemon.url, token, 'POST', '/control/browser-runtime/quiesce')
+    await daemonRequest(daemon.url, token, 'POST', '/v1/private/control/browser-runtime/quiesce')
     for (const jobId of [replayableJobId, alreadyReportedJobId]) {
-      await daemonRequest(daemon.url, token, 'POST', '/jobs', {
+      await daemonRequest(daemon.url, token, 'POST', '/v1/private/jobs', {
         provider: 'chatgpt',
         action: managedPlaywrightJobAction,
         execution_backend: 'playwright',
@@ -754,10 +754,10 @@ test('replay migration initializes durable outcome revisions and preserves an ex
         ...recipient,
         request_json: { malformed: true },
       })
-      await daemonRequest(daemon.url, token, 'POST', `/jobs/${encodeURIComponent(jobId)}/cancel`)
+      await daemonRequest(daemon.url, token, 'POST', `/v1/private/jobs/${encodeURIComponent(jobId)}/cancel`)
     }
     for (const jobId of [activeWaitingJobId, activeWaitingReportedJobId]) {
-      await daemonRequest(daemon.url, token, 'POST', '/jobs', {
+      await daemonRequest(daemon.url, token, 'POST', '/v1/private/jobs', {
         provider: 'chatgpt',
         action: managedPlaywrightJobAction,
         execution_backend: 'playwright',
@@ -812,9 +812,9 @@ test('replay migration initializes durable outcome revisions and preserves an ex
 
     daemon = await startTsDaemon(homeDir)
     const restartedToken = readControlToken(homeDir)
-    const replay = await daemonRequest(daemon.url, restartedToken, 'POST', '/replay/drain', recipient)
+    const replay = await daemonRequest(daemon.url, restartedToken, 'POST', '/v1/private/replay/drain', recipient)
     assert.deepEqual(replay.jobs.map((job) => job.job_id), [replayableJobId])
-    assert.deepEqual((await daemonRequest(daemon.url, restartedToken, 'POST', '/replay/drain', recipient)).jobs, [])
+    assert.deepEqual((await daemonRequest(daemon.url, restartedToken, 'POST', '/v1/private/replay/drain', recipient)).jobs, [])
     const runtime = await importCli()
     const migratedActiveReceipt = await runtime.markDaemonJobReported({
       homeDir,
@@ -1353,12 +1353,12 @@ test('TS daemon browser runtime control is authenticated, quiesces queued work, 
   try {
     const token = readControlToken(homeDir)
 
-    const missingStatus = await fetch(`${daemon.url}/control/browser-runtime/status`)
+    const missingStatus = await fetch(`${daemon.url}/v1/private/control/browser-runtime/status`)
     assert.equal(missingStatus.status, 401)
     const missingStatusBody = await missingStatus.json()
     assert.equal(missingStatusBody.error.code, 'control_auth_missing')
 
-    const rejectedQuiesce = await fetch(`${daemon.url}/control/browser-runtime/quiesce`, {
+    const rejectedQuiesce = await fetch(`${daemon.url}/v1/private/control/browser-runtime/quiesce`, {
       method: 'POST',
       headers: { authorization: 'Bearer wrong-token' },
     })
@@ -1367,7 +1367,7 @@ test('TS daemon browser runtime control is authenticated, quiesces queued work, 
     assert.equal(rejectedQuiesceBody.error.code, 'control_auth_rejected')
     assert.equal(JSON.stringify(rejectedQuiesceBody).includes(token), false)
 
-    const running = await daemonRequest(daemon.url, token, 'GET', '/control/browser-runtime/status')
+    const running = await daemonRequest(daemon.url, token, 'GET', '/v1/private/control/browser-runtime/status')
     assert.equal(Object.hasOwn(running, 'protocol'), false)
     assert.equal(running.status, 'running')
     assert.equal(running.pid, daemon.child.pid)
@@ -1375,7 +1375,7 @@ test('TS daemon browser runtime control is authenticated, quiesces queued work, 
     assert.equal(running.activeJobCount, 0)
 
     const pausedJobId = randomUUID()
-    await daemonRequest(daemon.url, token, 'POST', '/jobs', {
+    await daemonRequest(daemon.url, token, 'POST', '/v1/private/jobs', {
       provider: 'chatgpt',
       action: managedPlaywrightJobAction,
       execution_backend: 'playwright',
@@ -1383,13 +1383,13 @@ test('TS daemon browser runtime control is authenticated, quiesces queued work, 
       job_id: pausedJobId,
       request_json: { malformed: true },
     })
-    const quiesced = await daemonRequest(daemon.url, token, 'POST', '/control/browser-runtime/quiesce')
+    const quiesced = await daemonRequest(daemon.url, token, 'POST', '/v1/private/control/browser-runtime/quiesce')
     assert.equal(quiesced.status, 'quiesced')
     assert.equal(quiesced.activeProfileCount, 0)
     assert.equal(quiesced.activeJobCount, 0)
 
     await delay(1_500)
-    const stillQueued = await daemonRequest(daemon.url, token, 'GET', `/jobs/${encodeURIComponent(pausedJobId)}`)
+    const stillQueued = await daemonRequest(daemon.url, token, 'GET', `/v1/private/jobs/${encodeURIComponent(pausedJobId)}`)
     assert.equal(stillQueued.status, 'queued')
     const playwright = await importPlaywright()
     const roundtripPageRef = `page:http-roundtrip:${randomUUID()}`
@@ -1399,7 +1399,7 @@ test('TS daemon browser runtime control is authenticated, quiesces queued work, 
       actions: [{ action: playwright.VISIBLE_ACTIONS.AUTH_STATUS, payload: {} }],
     })
     const roundtripJobId = randomUUID()
-    const roundtripCreated = await daemonRequest(daemon.url, token, 'POST', '/jobs', {
+    const roundtripCreated = await daemonRequest(daemon.url, token, 'POST', '/v1/private/jobs', {
       provider: 'chatgpt',
       action: managedPlaywrightJobAction,
       execution_backend: 'playwright',
@@ -1412,10 +1412,10 @@ test('TS daemon browser runtime control is authenticated, quiesces queued work, 
       daemon.url,
       token,
       'GET',
-      `/jobs/${encodeURIComponent(roundtripJobId)}`,
+      `/v1/private/jobs/${encodeURIComponent(roundtripJobId)}`,
     )
     assert.equal(roundtripRead.request_json.pageRef, roundtripPageRef)
-    await daemonRequest(daemon.url, token, 'POST', `/jobs/${encodeURIComponent(roundtripJobId)}/cancel`, {
+    await daemonRequest(daemon.url, token, 'POST', `/v1/private/jobs/${encodeURIComponent(roundtripJobId)}/cancel`, {
       reason: { code: 'test_roundtrip_complete' },
     })
 
@@ -1423,7 +1423,7 @@ test('TS daemon browser runtime control is authenticated, quiesces queued work, 
     assertProfileDirectoryEmpty(profile.directory)
 
     const wakeJobId = randomUUID()
-    await daemonRequest(daemon.url, token, 'POST', '/jobs', {
+    await daemonRequest(daemon.url, token, 'POST', '/v1/private/jobs', {
       provider: 'chatgpt',
       action: managedPlaywrightJobAction,
       execution_backend: 'playwright',
@@ -1435,7 +1435,7 @@ test('TS daemon browser runtime control is authenticated, quiesces queued work, 
     assert.equal(failedPausedJob.error_json.code, 'invalid_playwright_job_request')
     const failedWakeJob = await waitForDaemonJobStatus(daemon.url, token, wakeJobId, 'failed', 10_000)
     assert.equal(failedWakeJob.error_json.code, 'invalid_playwright_job_request')
-    const awake = await daemonRequest(daemon.url, token, 'GET', '/control/browser-runtime/status')
+    const awake = await daemonRequest(daemon.url, token, 'GET', '/v1/private/control/browser-runtime/status')
     assert.equal(awake.status, 'running')
     assertProfileDirectoryEmpty(profile.directory)
   } finally {
@@ -1680,7 +1680,7 @@ async function waitForDaemon(child, url, homeDir, label) {
 async function shutdownDaemon(daemon) {
   if (!daemon) return null
   const token = readControlToken(daemon.homeDir)
-  const body = await daemonRequest(daemon.url, token, 'POST', '/control/shutdown')
+  const body = await daemonRequest(daemon.url, token, 'POST', '/v1/private/control/shutdown')
   await waitForExit(daemon.child, 5_000)
   createdChildren.delete(daemon.child)
   return body
@@ -1791,7 +1791,7 @@ async function waitForDaemonJobStatus(daemonUrl, token, jobId, status, timeoutMs
   const deadline = Date.now() + timeoutMs
   let latest
   while (Date.now() < deadline) {
-    latest = await daemonRequest(daemonUrl, token, 'GET', `/jobs/${encodeURIComponent(jobId)}`)
+    latest = await daemonRequest(daemonUrl, token, 'GET', `/v1/private/jobs/${encodeURIComponent(jobId)}`)
     if (latest.status === status) return latest
     await delay(100)
   }
@@ -1803,7 +1803,7 @@ async function waitForDaemonJobOneOf(daemonUrl, token, jobId, statuses, timeoutM
   const deadline = Date.now() + timeoutMs
   let latest
   while (Date.now() < deadline) {
-    latest = await daemonRequest(daemonUrl, token, 'GET', `/jobs/${encodeURIComponent(jobId)}`)
+    latest = await daemonRequest(daemonUrl, token, 'GET', `/v1/private/jobs/${encodeURIComponent(jobId)}`)
     if (expected.has(latest.status)) return latest
     await delay(100)
   }

@@ -40,5 +40,5 @@ export const CLI_ERROR_MESSAGES = {
 
 export type CliErrorMessageKey = keyof typeof CLI_ERROR_MESSAGES.en
 
-export { ERROR_SUMMARIES_ZH } from '#tokenless-contracts/localized-errors.js'
-export type { LocalizedErrorCode } from '#tokenless-contracts/localized-errors.js'
+export { ERROR_SUMMARIES_ZH } from '#tokenless-shared/localized-errors.js'
+export type { LocalizedErrorCode } from '#tokenless-shared/localized-errors.js'

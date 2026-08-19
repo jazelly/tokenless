@@ -372,7 +372,7 @@ Once the first provider turn mutates a conversation, the run is pinned to that p
 The compiler builds one immutable, content-addressed file before the first task Prompt. Its V1 sections are ordered and versioned:
 
 1. Harness identity, instruction precedence, untrusted-data boundaries, and the rule that local execution and authorization remain outside the web model;
-2. the complete visible response protocol, including `action_batch`, `skillLoads`, tool calls, missing-input events, `final`, nonce and correlation fields, validation rules, and one-repair limit;
+2. the complete visible response protocol, including `action_batch`, `skillLoads`, tool calls, missing-input events, `final`, nonce and correlation fields, and validation rules;
 3. the web-turn batching rule requiring every currently known Skill request, tool or MCP call, and missing input in the same response;
 4. `<available_skills>` containing every valid V1 registry entry's `name` and `description`, plus a non-sensitive logical identity when needed for disambiguation;
 5. the frozen filesystem, registered-local, and MCP tool schemas that are actually executable for this run, or explicit empty catalogs when those phases are unavailable;
@@ -408,7 +408,7 @@ The Harness optimizes provider turns before optimizing prompt bytes. Each task t
 - include every result from the preceding batch in one ordered aggregate provider turn; when bounded text does not fit comfortably in the message, attach one or more indexed, content-addressed result artifacts in that same turn and include their manifest in the prompt;
 - include every locally collected answer, denial, authentication completion, and approval outcome together when resuming the model.
 
-This is not a requirement to predict unknowable later work. If the arguments for action B depend on the unknown result of action A, B belongs in the next batch. If A and B are both already well-defined, returning only A violates the Harness contract and triggers the bounded repair path.
+This is not a requirement to predict unknowable later work. If the arguments for action B depend on the unknown result of action A, B belongs in the next batch. If A and B are both already well-defined, returning only A violates the Harness batching contract and is handled as a model-visible protocol result on the next same-provider turn.
 
 ## Visible Web-Agent Control Protocol
 
@@ -465,11 +465,11 @@ The conceptual envelope is:
 }
 ```
 
-The actual framing must be unambiguous in rendered page text and survive provider Markdown rendering. The parser accepts only the declared protocol version, current run and turn, current nonce, unique Skill names, unique call and need ids, registered tool names, arguments valid against the frozen JSON Schema, supported missing-input kinds, bounded user-facing prompts, and optional acyclic `dependsOn` references between calls. A requested Skill that is already delivered is idempotently ignored. An unavailable Skill is recorded as a soft omission rather than treated as executable failure.
+The actual framing must be unambiguous in rendered page text and survive provider Markdown rendering. The parser accepts only the declared protocol version, current run and turn, current nonce, unique Skill names, unique call and need ids, supported missing-input kinds, bounded user-facing prompts, and optional acyclic `dependsOn` references between calls. These framing, correlation, uniqueness, and dependency checks are structural gates and fail closed. A requested Skill that is already delivered is idempotently ignored. An unavailable Skill is recorded as a soft omission rather than treated as executable failure.
 
 The nonce detects stale or replayed envelopes; it is not authorization. Valid model output is still untrusted input.
 
-The Harness validates and persists the entire batch before dispatching any external call. One unknown tool, invalid argument, duplicate call id, impossible dependency, or malformed need rejects the whole executable batch, preventing partial execution followed by an ambiguous repair. Skill requests are resolved separately under the soft delivery policy. Malformed output receives at most one bounded protocol-repair turn containing all validation errors but no new authority. A second malformed response fails the run.
+The Harness validates and persists the entire structurally valid batch before dispatching any external call. An unknown tool or schema-invalid arguments are semantic call failures: the call is persisted as a stable failed result, is never executed, and is returned to the model in the next same-provider continuation. Independent valid calls may execute; calls depending on a failed call receive `harness_tool_dependency_failed` without requiring approval. Duplicate ids, impossible dependency graphs, malformed envelopes, stale correlation, and invalid framing still reject the whole batch and fail closed. The standalone Harness does not perform a general protocol-repair loop; any future correction must remain a separately bounded, escaping-only exception. Explicit transient provider request failures use at most two bounded retries with the same request identity; ambiguous dispatch uses requestRef reconciliation and does not create another model turn.
 
 After validation, the Harness stages all requested Skills in one set, executes every ready call concurrently only where local policy proves that safe, and consolidates model-requested user inputs with Harness-discovered approvals, authentication handoffs, and elicitations into one local interaction. A blocked call keeps its exact validated arguments and resumes after the local requirement is satisfied; the model does not regenerate it. Independent calls may finish while another waits. The next provider continuation contains the aggregate call and need results plus one Skill-delivery manifest delta, with every successful Skill file attached in the same upload action.
 
@@ -521,11 +521,11 @@ Validation is a staged gate. No tool dispatch, file mutation, approval request, 
 2. **Syntax:** parse strict JSON with duplicate-key rejection plus configured depth, property-count, string, and byte limits; never evaluate code or repair JSON locally.
 3. **Schema:** validate the declared protocol version and exact `action_batch` or `final` shape against canonical JSON Schema.
 4. **Correlation:** require the current run id, turn number, nonce, unique call and need ids, valid dependency references, and a response belonging to the exact provider conversation.
-5. **Capability:** for `action_batch`, resolve each requested Skill against the frozen registry under the soft delivery policy, require every canonical tool name and argument to match the frozen catalog and input schema, and require every missing-input item to use an allowed kind and schema; for `final`, require every declared artifact to resolve to a provider result or Harness artifact already owned by this run.
+5. **Capability:** for `action_batch`, resolve each requested Skill against the frozen registry under the soft delivery policy. A recognizable unknown tool or schema-invalid argument is a bounded per-call semantic failure; it is persisted, never executed, and returned in the next same-provider continuation. Structural call, dependency, and missing-input errors still fail the batch closed; for `final`, require every declared artifact to resolve to a provider result or Harness artifact already owned by this run.
 6. **Authority:** evaluate the complete valid batch against local policy and current resource state before dispatch, then bind every approval to its exact call. Schema validity and model assertions never imply permission.
 7. **Output contract:** validate the terminal value as bounded Markdown by default or against the caller's frozen JSON Schema when structured output was requested. Reject undeclared files, unknown artifact ids, media-type or digest mismatches, and output that exceeds the run budget.
 
-Protocol errors return one bounded repair turn with machine-readable validation issues and the same authority. A repair cannot add a tool, change a root, relax a schema, or increase a limit. A second invalid response fails clearly.
+Malformed framing, strict-JSON, correlation, duplicate-id, or dependency errors fail the run closed; the standalone Harness does not run a general protocol-repair loop. Recognizable tool semantic failures remain narrow model-visible call results and carry stable codes plus bounded validation detail.
 
 Provider-native generated images, files, citations, and other multimodal results remain Layer 1 result artifacts. The Harness may correlate and return those artifact references after validation. It never treats assistant prose such as “I wrote `x.png`” as filesystem evidence, and it materializes an artifact into the local workspace only through an explicit authorized filesystem tool call.
 
@@ -539,8 +539,7 @@ stateDiagram-v2
   validating_response --> awaiting_local_input: consolidated needs or approvals
   validating_response --> executing_batch: complete batch locally allowed
   validating_response --> succeeded: valid final envelope
-  validating_response --> repairing_protocol: invalid envelope
-  repairing_protocol --> awaiting_provider
+  validating_response --> terminal: structural envelope error
   awaiting_local_input --> executing_batch: answers and decisions recorded
   awaiting_local_input --> aggregating_batch: all remaining calls denied
   executing_batch --> waiting_for_batch_user: tool auth, elicitation, or ambiguity
@@ -740,11 +739,11 @@ Exit: the same no-tool `AgentRunSpec` can be started, read, resumed, and cancell
 - Compile one immutable Markdown `HarnessSystemPromptBundle` containing instruction precedence, the complete metadata registry, `action_batch`, `skillLoads`, tool-call, MCP-call, missing-input, aggregate-result, and `final` definitions, the all-known-items batching rule, catalogs, limits, and revision manifest.
 - Require a route with both `conversation.chat` and `file.upload`; visibly upload the bundle before the first task Prompt and fail before submission if the required file is not accepted.
 - Attach the bundle and task in the same first provider submission so bootstrap does not consume a separate acknowledgement turn.
-- Implement strict visible-envelope parsing, per-turn nonce, whole-batch validation before dispatch, consolidated missing-input requests, aggregate batch results, Markdown and JSON Schema final-output contracts, and one bounded repair turn.
+- Implement strict visible-envelope parsing, per-turn nonce, structural batch validation before dispatch, per-call semantic failure results, consolidated missing-input requests, aggregate batch results, and Markdown and JSON Schema final-output contracts.
 - Freeze and report the bundle, registry, tool catalog, and Context Envelope revisions.
 - Prove that the Harness can submit the next turn to the same active chat used by the run.
 
-Exit: through the built CLI, packaged daemon, managed profile, and visible website, real ChatGPT receives the required System Prompt Bundle before the first task, returns one schema-valid `action_batch` containing multiple known Skill names and missing inputs, accepts one aggregate continuation in the same chat, returns a schema-valid final envelope, and can complete one bounded protocol repair.
+Exit: through the built CLI, packaged daemon, managed profile, and visible website, real ChatGPT receives the required System Prompt Bundle before the first task, returns one schema-valid `action_batch` containing multiple known Skill names and missing inputs, accepts one aggregate continuation in the same chat, and returns a schema-valid final envelope; structural protocol errors fail closed and recognizable tool semantic errors are returned as call results.
 
 ### Phase 2: Best-Effort On-Demand `SKILL.md` File Delivery
 
@@ -825,7 +824,7 @@ The initial acceptance flow must prove:
 - a missing, invalid, over-limit, or failed-upload Skill that is recorded as omitted while the bootstrapped chat continues normally;
 - one consolidated local request and one aggregate provider continuation for the same batch;
 - no read, enumeration, upload, or execution of Skill `references/`, `assets/`, or `scripts/`;
-- structured final-output validation, artifact-reference validation, invalid arguments, unknown tools, duplicate envelopes, stale nonce, size limits, and bounded protocol repair;
+- structured final-output validation, artifact-reference validation, invalid arguments, unknown tools, duplicate envelopes, stale nonce, size limits, and structural fail-closed behavior;
 - no workspace write, arbitrary file read, process execution, network call, or MCP server during the initial skill slice;
 - in later filesystem and MCP phases, multiple independent calls execute from one batch and return through one aggregate continuation, while mutating calls cannot execute before exact approval;
 - prompt-injection text inside tool output cannot widen policy or execute an unapproved tool;
@@ -850,7 +849,7 @@ Real E2E does not automate login, CAPTCHA, MFA, Keychain approval, purchases, or
 - The required System Prompt Bundle is visibly accepted before the first task Prompt; failure prevents the model loop from starting.
 - Visible file delivery is reported honestly and is never mislabeled as a native API `system` role.
 - Every model response is exactly one complete `action_batch` or `final` envelope and passes framing, syntax, schema, correlation, capability, authority, and output-contract validation as applicable before any tool action or terminal success.
-- One invalid item rejects the entire undispatched batch; partial execution never precedes a protocol repair.
+- Structural invalidity rejects the entire undispatched batch; recognizable unknown tools and schema-invalid arguments become per-call failed results, while partial execution never precedes structural validation.
 - A valid batch lists all currently needed unloaded Skills, all currently well-defined actions, and all known missing user inputs; batching remains a Harness protocol behavior rather than a Provider capability tier.
 - The Harness persists blocked calls and resumes their exact ids and arguments after approval, authentication, or elicitation instead of asking the model to replan.
 - All stable outcomes from one batch return to the provider in one ordered aggregate continuation.
@@ -874,13 +873,13 @@ Real E2E does not automate login, CAPTCHA, MFA, Keychain approval, purchases, or
 
 | Risk | Response |
 | --- | --- |
-| A provider follows the control protocol inconsistently | Provider-specific real E2E, strict validation, one repair turn, finite limits, and a clear run error when valid agent output cannot be obtained |
-| A provider returns one Skill, independent call, or missing question per slow turn | Put the all-known-items rule in the required System Prompt Bundle, reject intentionally incomplete framing through the bounded repair path where detectable, and observe behavior without inventing another Provider capability tier |
+| A provider follows the control protocol inconsistently | Provider-specific real E2E, strict structural validation, finite limits, and a clear run error when valid agent output cannot be obtained |
+| A provider returns one Skill, independent call, or missing question per slow turn | Put the all-known-items rule in the required System Prompt Bundle, preserve structural fail-closed behavior, and observe behavior without inventing another Provider capability tier |
 | One batch is too large to validate, execute, or return safely | Bound calls, needs, dependencies, schemas, results, and artifacts; reject over-limit batches and require task or tool selection to narrow the run |
 | One call in a batch needs login or approval | Persist every call first, finish unrelated safe work, consolidate local interaction, resume the exact blocked call, and send one aggregate result only after all outcomes are stable |
 | An uploaded System Prompt is weaker than a native API system role | Report the visible attachment transport honestly, validate every output locally, enforce safety in the local runtime, and never claim semantic parity |
 | Tool output injects instructions into the model | Delimit it as untrusted data and make local policy authoritative even if the next model turn is compromised |
-| The model invents a tool or malformed arguments | Frozen schema snapshot, strict validation, structured error result, and bounded recovery |
+| The model invents a tool or malformed arguments | Frozen schema snapshot, strict validation, structured per-call error result for recognizable semantic failures, and fail-closed handling for malformed structure |
 | The caller Agent or web model selects the wrong Skill | Preserve selection provenance, expose the selected and delivered lists in run state, allow later additions, and keep every Skill instruction-only |
 | Duplicate or conflicting Skills change model behavior unpredictably | Require unique registry names, ignore already delivered revisions idempotently, apply access policy, and record exact content-addressed revisions and order per turn |
 | A Provider accepts the Skill file visibly but ignores its contents | Accept that Skill delivery is best-effort in V1; do not turn semantic use into another capability or terminal condition |

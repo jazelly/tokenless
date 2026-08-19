@@ -1,6 +1,6 @@
 # OpenAI-compatible API 收敛
 
-Status: active, proposed | Priority: P1
+Status: active, in progress | Priority: P1
 
 Depends on: [Runtime Package 边界重构](archived/P0-runtime-package-boundary-refactor.md) 完成、[OpenAI Tool Calling、Structured Output 与可移植 Provider Context](P0-openai-tool-calling-structured-output-and-portable-context.md) 的稳定 Responses contract、现有 authenticated local daemon HTTP boundary
 
@@ -14,8 +14,9 @@ CLI 与 Tokenless Web Agent Harness 都优先复用同一套 OpenAI-compatible A
 
 - language、tool calling 与 structured output 在能够无损表达时使用 `POST /v1/responses` 或 `POST /v1/chat/completions`；
 - image generation 与 image edit 使用 `POST /v1/images/generations`；
+- Anthropic-compatible `/v1/anthropic/messages` 与 OpenAI-compatible Interface 平级，共用 server-owned Universal execution implementation；
 - Harness 只有在 OpenAI contract 无法表达当前必需语义时，才使用 `/v1/private/provider-turn/*`；
-- CLI 的 agent-run control 使用 `/v1/private/agent/*`，普通 jobs、setup、provider inspection 与 administration 继续使用既有 control/jobs API；
+- CLI 的 agent-run control 使用 `/v1/private/agent/*`，普通 jobs、setup、provider inspection 与 administration 使用对应的 `/v1/private/*` bearer machine API；
 - Dashboard 保留现有全部 read 与 mutation 能力，通过 `/ui-api/v1/*` 使用 shared application services；
 - CLI 与 Harness 不各自维护另一套 provider execution implementation。
 
@@ -27,18 +28,21 @@ CLI 与 Tokenless Web Agent Harness 都优先复用同一套 OpenAI-compatible A
 
 | Before | Now | Ownership |
 | --- | --- | --- |
-| `packages/protocol/` | `packages/contracts/` | Cross-package contract，不是 HTTP server layer |
-| package root protocol export | `private/provider-turn` | Tokenless private provider-turn schema、type 与 validation |
-| `local-http` | `private/provider-turn-http` | Thin loopback HTTP Client Adapter |
+| `packages/protocol/` | `packages/contracts/` | Documentation-only OpenAPI source 与 generated reference |
+| Cross-package runtime helper | `packages/shared/` | UI DTO type、localized error data、strict JSON helper |
+| Contract-owned provider-turn runtime | `packages/harness/src/http/provider-turn/` | Harness private Client Adapter、type 与 defensive validation |
 | `server/http/web-ai/` | `server/http/private/provider-turn/` | Private HTTP route Adapter |
 | `/v1/web-ai/*` | `/v1/private/provider-turn/*` | Private provider-turn extensions |
 | `/v1/agent/*` | `/v1/private/agent/*` | Private first-party Harness run control |
 | `/v1/featurebench/*` | `/v1/private/featurebench/*` | Private benchmark channel |
 | `/v1/asset/*` | `/v1/private/assets/*` | Authenticated Tokenless asset readback |
+| `/jobs/*` | `/v1/private/jobs/*` | Durable job machine Interface |
+| `/control/*` | `/v1/private/control/*` | Daemon/browser control machine Interface |
+| `/provider-*`、`/replay/*` | `/v1/private/provider-*`、`/v1/private/replay/*` | Provider state 与 replay machine Interface |
 
-`packages/contracts/` 目前还包含 Dashboard DTO、localized error summary 与 shared structured-JSON helpers。它只定义跨 package 的 Interface 和 thin Client Adapter；真正的 HTTP implementation 在 `packages/server/src/http/`。
+`packages/contracts/tokenless.openapi.json` 现在是唯一 HTTP documentation source；`npm run api:docs` 生成一份 Scalar 汇总页。该 package 不导出 runtime code，也不参与 server、CLI、Dashboard 或 Harness 的运行时依赖。
 
-OpenAI-compatible request/response 不在 `packages/contracts/` 重新定义。它们由 compatibility route、OpenAPI contract 与 Universal API adapter 直接拥有。
+OpenAI-compatible 与 Anthropic-compatible request/response、private bearer machine API、Dashboard API 和 readiness 都记录在这份 OpenAPI 3.1 document 中。实际 route 与 request validation 仍由 `packages/server` 拥有。
 
 ## Target Architecture
 
@@ -49,12 +53,14 @@ flowchart TB
   AgentAPI --> Harness["packages/harness<br/>AgentRun + Skills + tools + MCP"]
 
   External["OpenAI SDK / external Harness"] --> OpenAI["OpenAI-compatible API<br/>chat + responses + images"]
+  AnthropicExternal["Anthropic SDK / external Harness"] --> Anthropic["Anthropic-compatible API<br/>messages"]
   Harness --> OpenAI
   Harness -. "only non-representable extensions" .-> PrivateTurn["/v1/private/provider-turn/*"]
   Dashboard["packages/dashboard<br/>full read + mutation Dashboard"] --> UIAPI["/ui-api/v1/*"]
 
   subgraph Server["packages/server"]
     OpenAI --> Universal["Universal API conversion"]
+    Anthropic --> Universal
     PrivateTurn --> Application["Application services"]
     UIAPI --> Application
     Universal --> Application
@@ -75,7 +81,7 @@ OpenAI API 是默认 model/media Interface。Private provider-turn 不是第二�
 | Image prompt/edit → persisted image result | `/v1/images/generations` | 不属于 CLI 或 provider-turn |
 | First-party Harness run create/read/resume/cancel | `/v1/private/agent/*` | Tokenless AgentRun control |
 | Attachment acceptance、opaque turn refs、waiting/resume 或其他无法无损映射的 turn control | `/v1/private/provider-turn/*` | 只保留必要 extension |
-| Jobs、detached execution、setup、provider inspection、administration | Existing control/jobs API | 不伪装成 OpenAI model API |
+| Jobs、detached execution、setup、provider inspection、administration | `/v1/private/*` bearer machine API | 不伪装成 compatibility model API |
 | Dashboard read/mutation | `/ui-api/v1/*` | 保留全部现有能力 |
 
 任何 private provider-turn 字段都必须通过 deletion test：删掉后，如果当前 Harness 仍能用 OpenAI API 完成同一 observable behavior，该字段或 route 就不应继续保留。
@@ -98,7 +104,7 @@ CLI、external caller 与未来 Harness image tool 都消费同一 `images/gener
 
 | Caller/path | Current implementation | Target |
 | --- | --- | --- |
-| Default `tokenless run` | CLI 通过 `/jobs` 创建 provider job | Lossless model subset 收敛到 Universal execution owner |
+| Default `tokenless run` | CLI 通过 `/v1/private/jobs` 创建 provider job | Lossless model subset 收敛到 Universal execution owner |
 | CLI image generation/edit | `/v1/images/generations` | 保持 |
 | CLI agent run control | `/v1/private/agent/*` | 保持 |
 | External OpenAI caller | `/v1/chat/completions`、`/v1/responses`、`/v1/images/generations` | 保持 |
@@ -117,7 +123,7 @@ namespace 迁移没有宣称 Harness 已经完成 OpenAI convergence。当前 pr
 - `api-proxy enable/disable` 与 normal CLI availability；
 - no-wait、waiting、resume/cancel、workspace、attachments 与 provider-specific controls。
 
-无法无损表示的 CLI control behavior 保留在 control/jobs API，不增加大量 `tokenless.*` OpenAI extensions。
+无法无损表示的 CLI control behavior 保留在 `/v1/private/*` machine API，不增加大量 `tokenless.*` OpenAI extensions。
 
 ### Harness
 
@@ -152,6 +158,8 @@ namespace 迁移没有宣称 Harness 已经完成 OpenAI convergence。当前 pr
 - legacy private paths 不再作为 route 暴露；
 - full repository check 与代表性 configured-browser E2E。
 
+2026-08-19 evidence：`npm run check` 通过 157 个 real-boundary test；configured persistent browser 的 Dashboard E2E 1/1；built CLI、packaged daemon 与真实 provider 网站的 Web UI E2E 1/1。旧 `/jobs` route 由 authenticated loopback HTTP 明确证明为 404，新 `/v1/private/jobs` 保持 bearer protection。
+
 ### Convergence slices
 
 - 同一 bounded task 只走一条 execution path，避免 duplicate provider mutation；
@@ -166,7 +174,10 @@ namespace 迁移没有宣称 Harness 已经完成 OpenAI convergence。当前 pr
 
 - [x] 将 private versioned routes 收口到 `/v1/private/*`。
 - [x] 将 `packages/protocol/` 改为 `packages/contracts/`。
-- [x] 分开 provider-turn Contract、HTTP Client Adapter 与 server HTTP Adapter。
+- [x] 将所有非 compatibility 的 bearer-authenticated Tokenless machine API 收口到 `/v1/private/*`。
+- [x] 将 `packages/contracts/` 收纯为单一 OpenAPI documentation source 与 generated Scalar reference。
+- [x] 将 provider-turn Client Adapter/validation 归 Harness，server validation 归 server，共享 runtime primitive 归 `packages/shared/`。
+- [x] 在单一 OpenAPI 中补齐 Agent、Dashboard control 与 FeatureBench bridge，并删除未实现的 UI browser-runtime 声明。
 - [x] 保持 OpenAI-compatible routes 和 Dashboard behavior 不变。
 - [x] 用 package、loopback HTTP 与 existing E2E 验证迁移。
 
@@ -196,7 +207,7 @@ Exit: 多个 Interface Adapter 后面只有一个 model execution implementation
 ### Phase 4: Migrate the lossless CLI subset
 
 - [ ] 迁移 exact-provider synchronous model generation subset。
-- [ ] 保持 control/jobs、setup、inspection、no-wait 与 resume/cancel lane。
+- [ ] 保持 `/v1/private/*` jobs/control、setup、inspection、no-wait 与 resume/cancel lane。
 - [ ] 保持 CLI JSON/human output、exit code、localization 与 persisted identity。
 
 ### Phase 5: Final consolidation
@@ -218,7 +229,7 @@ Exit: 多个 Interface Adapter 后面只有一个 model execution implementation
 
 ## Non-goals
 
-- 把 jobs、setup、profiles、browser、Dashboard 或 provider administration 塞进 OpenAI schema；
+- 把 jobs、setup、profiles、browser、Dashboard 或 provider administration 塞进 compatibility schema；
 - 维护一套与 OpenAI 平级的 Tokenless model protocol；
 - 为 future requirement 保留无 current caller 的 private extension；
 - 同时执行无关 provider feature、storage migration 或 control API redesign；
