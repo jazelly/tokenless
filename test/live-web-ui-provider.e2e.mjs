@@ -86,6 +86,8 @@ test(`Web UI displays one completed real-provider job from ${profile}`, { timeou
       const detail = page.getByTestId('job-detail')
       await detail.waitFor()
       assert.match(await detail.textContent(), /capital of Australia/i, matrixCase.id)
+      assert.equal(await page.getByTestId('modal').count(), 0, matrixCase.id)
+      assert.equal(await page.locator('.modal-backdrop').count(), 0, matrixCase.id)
       assert.equal(await hasDocumentOverflow(page), false, matrixCase.id)
   }
   assert.deepEqual(consoleFailures, [])

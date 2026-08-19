@@ -105,9 +105,18 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       assert.equal(await readinessRefresh.getAttribute('title'), 'Refresh provider readiness')
       assert.equal(await readinessRefresh.evaluate((element) => element.tagName), 'BUTTON')
       assert.match(await page.getByTestId('overview-readiness-summary').textContent(), /^0\/\d+ signed in$/)
+      await page.context().addCookies([{
+        name: 'tokenless_ui_session',
+        value: 'expired-dashboard-session',
+        url: consoleOrigin,
+        httpOnly: true,
+        sameSite: 'Strict',
+      }])
+      assert.equal(await page.evaluate(async () => (await fetch('/ui-api/v1/snapshot')).status), 200)
       await readinessRefresh.click()
       await page.getByTestId('overview-readiness-status').waitFor()
       assert.equal(await readinessRefresh.getAttribute('aria-busy'), 'true')
+      assert.equal((await readinessRefresh.getAttribute('class')).includes('spinning'), false)
       assert.match(await page.getByTestId('overview-readiness-status').textContent(), /Checking provider sign-in…/)
       await page.getByTestId('overview-readiness-status').waitFor({ state: 'detached', timeout: 130_000 })
       assert.equal(await readinessRefresh.getAttribute('aria-busy'), 'false')
@@ -188,8 +197,12 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       await page.waitForFunction(() => new URL(location.href).searchParams.get('jobStatus') === 'canceled')
       assert.equal(new URL(page.url()).searchParams.get('jobSearch'), 'web-ui-durable-work')
       await workRow.click()
+      await page.getByTestId('job-detail-page').waitFor()
       assert.match(await page.getByTestId('job-detail').textContent(), /web-ui-durable-work|Canceled/)
-      await page.getByTestId('modal-close').click()
+      assert.equal(await page.getByTestId('modal').count(), 0)
+      assert.equal(await page.locator('.modal-backdrop').count(), 0)
+      await page.getByTestId('job-detail-back').click()
+      await page.getByTestId('jobs-view').waitFor()
       await page.reload({ waitUntil: 'networkidle' })
       await page.getByTestId('jobs-view').waitFor()
       assert.equal(await page.getByTestId('job-search').inputValue(), 'web-ui-durable-work')

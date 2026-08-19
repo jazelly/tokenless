@@ -8,6 +8,8 @@ Implementation note (2026-08-18): phases 0–4 and the currently stable phase-5 
 
 The setup slice now has a dedicated `/ui/setup/` route, discovers verified native Chrome/Brave and installed CloakBrowser candidates, and pre-fills the config-wired default profile before saving its selected runtime binding.
 
+Implementation note (2026-08-19): Chat History now opens each conversation as a complete page with a full transcript and a separate facts panel instead of a modal. Provider-readiness refresh keeps a stable busy state without rotating the control, and the Dashboard re-establishes its current UI session immediately before each mutation so a replacement session cookie cannot leave a stale CSRF header in memory.
+
 ## Outcome
 
 Tokenless provides a browser-based control plane served by the local daemon. After an interactive setup completes, Tokenless opens one reserved control-plane tab in the selected managed browser profile. The same interface remains available later for configuration, provider and account readiness, browser profiles, capabilities, jobs, user handoffs, diagnostics, and recovery.

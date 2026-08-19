@@ -100,7 +100,6 @@
           {#if readinessBusy}<span class="mono-label" aria-live="polite" data-testid="overview-readiness-status">{t('checkingProviderReadiness')}</span>{/if}
           <span class="badge neutral" data-testid="overview-readiness-summary">{formatNumber(authenticatedProviders.length, language)}/{formatNumber(enabledProviders.length, language)} {t('signedIn')}</span>
           <button
-            class:spinning={readinessBusy}
             class="icon-button"
             type="button"
             disabled={readinessBusy || enabledProviders.length === 0}

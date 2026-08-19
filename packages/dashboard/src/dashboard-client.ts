@@ -169,36 +169,41 @@ export class DashboardClient {
   }
 
   private async request<T>(path: string, options: RequestInit, allowNotModified = false): Promise<T | null> {
-    const response = await fetch(`/ui-api/v1${path}`, {
-      ...options,
-      headers: {
-        'content-type': 'application/json',
-        ...(options.method && options.method !== 'GET' ? { 'x-tokenless-csrf': this.csrf } : {}),
-        ...(path === '/snapshot' && this.snapshotEtag ? { 'if-none-match': this.snapshotEtag } : {}),
-        ...(options.headers ?? {}),
-      },
-    })
-    if (response.status === 401) {
-      throw new DashboardRequestError(translate(this.currentLanguage(), 'reopen'), { sessionExpired: true, status: 401 })
+    const method = options.method ?? 'GET'
+    for (let attempt = 0; ; attempt += 1) {
+      if (method !== 'GET') await this.authenticate()
+      const response = await fetch(`/ui-api/v1${path}`, {
+        ...options,
+        headers: {
+          'content-type': 'application/json',
+          ...(method !== 'GET' ? { 'x-tokenless-csrf': this.csrf } : {}),
+          ...(path === '/snapshot' && this.snapshotEtag ? { 'if-none-match': this.snapshotEtag } : {}),
+          ...(options.headers ?? {}),
+        },
+      })
+      if (response.status === 401) {
+        throw new DashboardRequestError(translate(this.currentLanguage(), 'reopen'), { sessionExpired: true, status: 401 })
+      }
+      if (response.status === 304 && allowNotModified) return null
+      const body: unknown = await response.json().catch(() => null)
+      if (!response.ok) {
+        const error = uiErrorEnvelope(body)?.error
+        if (method !== 'GET' && error?.code === 'ui_csrf_rejected' && attempt === 0) continue
+        const code = error?.code ?? ''
+        const language = this.currentLanguage()
+        const summary = translateError(language, code, error?.message)
+        const diagnostic = error?.message ?? ''
+        const message = language === 'en' && diagnostic && diagnostic !== summary
+          ? `${summary}\n${translate(language, 'diagnostics')}: ${diagnostic}`
+          : summary
+        throw new DashboardRequestError(
+          message,
+          { code, diagnostic, status: response.status },
+        )
+      }
+      if (path === '/snapshot') this.snapshotEtag = response.headers.get('etag') ?? ''
+      return body as T
     }
-    if (response.status === 304 && allowNotModified) return null
-    const body: unknown = await response.json().catch(() => null)
-    if (!response.ok) {
-      const error = uiErrorEnvelope(body)?.error
-      const code = error?.code ?? ''
-      const language = this.currentLanguage()
-      const summary = translateError(language, code, error?.message)
-      const diagnostic = error?.message ?? ''
-      const message = language === 'en' && diagnostic && diagnostic !== summary
-        ? `${summary}\n${translate(language, 'diagnostics')}: ${diagnostic}`
-        : summary
-      throw new DashboardRequestError(
-        message,
-        { code, diagnostic, status: response.status },
-      )
-    }
-    if (path === '/snapshot') this.snapshotEtag = response.headers.get('etag') ?? ''
-    return body as T
   }
 }
 
