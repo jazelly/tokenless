@@ -41,10 +41,6 @@ type ExplainOptions = {
 const SPINNER_FRAMES = Object.freeze(['-', '\\', '|', '/'])
 const REPLACE_TERMINAL_LINE = '\u001b[2K\u001b[1G'
 
-export const SETUP_READINESS_DISCLOSURE = Object.freeze([
-  'Checks visible sign-in state without submitting a prompt.',
-])
-
 export class SetupPresenter {
   private readonly enabled: boolean
   private readonly colorEnabled: boolean

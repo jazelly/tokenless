@@ -1,4 +1,6 @@
-export type UiLanguage = 'en' | 'zh-CN'
+import type { TokenlessLanguage } from './i18n.js'
+
+export type UiLanguage = TokenlessLanguage
 
 export type UiBrowserSelection =
   | 'auto'

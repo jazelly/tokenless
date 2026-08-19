@@ -109,9 +109,16 @@ Universal API non-execution of external caller tools therefore does not prohibit
 
 ## HTTP contract and runtime ownership
 
-`packages/contracts/tokenless.openapi.json` is the single HTTP documentation source. It describes paths, methods, authentication, serialized request/response shapes, status codes, and examples for all compatibility, private machine, Dashboard, and readiness Interfaces; `npm run api:docs` renders one generated Scalar reference.
+`packages/contracts/tokenless.openapi.json` is the single HTTP documentation source. It describes paths, methods, authentication, serialized request/response shapes, status codes, and examples for all compatibility, private machine, Dashboard, and readiness Interfaces; `npm run api:docs` renders English and Simplified Chinese Scalar references from that source plus a text-only Chinese Overlay.
 
-`packages/contracts` is not a runtime dependency. Server routes and request validation remain in `packages/server`; the private provider-turn Client Adapter and its defensive response validation remain in `packages/harness`. `packages/shared` contains only runtime primitives with multiple real consumers—Dashboard DTO types, localized error summaries, and strict JSON helpers—and is not an HTTP contract source.
+`packages/contracts` is not a runtime dependency. Server routes and request validation remain in `packages/server`; the private provider-turn Client Adapter and its defensive response validation remain in `packages/harness`. `packages/shared` contains only runtime primitives with multiple real consumers—Dashboard DTO types, locale normalization/interpolation, localized error summaries, and strict JSON helpers—and is not an HTTP contract source.
+
+## Localization ownership
+
+- `packages/shared/src/i18n.ts` owns only supported locales, normalization, fallback, and message interpolation.
+- `packages/cli/src/i18n/` and `packages/dashboard/src/i18n/` own their respective user-facing catalogs; neither imports the other's copy.
+- Server and Harness return stable codes and bounded fallback diagnostics. They do not own CLI or Dashboard presentation catalogs; Server validates persisted language as a configuration value inside its standalone package boundary.
+- Public Markdown uses aligned `.md` and `.zh-CN.md` partners. The OpenAPI Overlay changes human-readable text only and cannot redefine paths, schemas, operation IDs, or examples.
 
 The high-level runtime Interfaces remain separate:
 
@@ -289,7 +296,7 @@ packages/cli/        commands, bootstrap, HTTP clients, localization, output
 packages/dashboard/  full Local Web Control Plane frontend
 packages/harness/    AgentRun, Skills, tools, MCP, approvals, agent loop
 packages/contracts/  canonical OpenAPI source, examples, generated API reference
-packages/shared/     shared runtime DTO types, localization data, strict JSON helpers
+packages/shared/     shared DTO types, locale primitives, error summaries, strict JSON helpers
 packages/server/     HTTP, application, jobs, providers, browser/direct runtime, persistence
 ```
 

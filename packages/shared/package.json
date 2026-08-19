@@ -9,7 +9,8 @@
     "./localized-errors": "./dist/src/localized-errors.js",
     "./structured-json": "./dist/src/structured-json.js",
     "./ui": "./dist/src/ui.js",
-    "./harness-sidecar": "./dist/src/harness-sidecar.js"
+    "./harness-sidecar": "./dist/src/harness-sidecar.js",
+    "./i18n": "./dist/src/i18n.js"
   },
   "files": [
     "dist/src",

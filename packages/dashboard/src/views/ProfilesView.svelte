@@ -3,7 +3,7 @@
   import { tick } from 'svelte'
   import Modal from '../components/Modal.svelte'
   import ProfileForm from '../components/ProfileForm.svelte'
-  import { stateLabel, type MessageKey } from '../localization.js'
+  import { stateLabel, type MessageKey } from '../i18n/index.js'
   import type {
     DashboardActions,
     Language,

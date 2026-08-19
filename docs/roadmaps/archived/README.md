@@ -24,6 +24,7 @@ Archived roadmap filenames retain the `P0-` through `P3-` product-priority prefi
 
 | Roadmap | Disposition |
 | --- | --- |
+| [Product Localization](P1-product-localization.md) | Completed 2026-08-19 after CLI, Dashboard, generated API references, and reasonable public documentation gained aligned English/简体中文 surfaces and passed packaged CLI, full local, and configured persistent-browser E2E gates. |
 | [Web AI Interaction Protocol](P0-web-ai-interaction-protocol.md) | Superseded 2026-08-19 by [OpenAI-compatible API Convergence](../P1-openai-compatible-api-convergence.md); implemented provider-turn contracts remain private Tokenless extensions rather than a second canonical model API. |
 | [Runtime Package Boundary Refactor](P0-runtime-package-boundary-refactor.md) | Completed 2026-08-19 after the remaining CLI profile, config, routing, runtime, and output-savings behavior moved behind authenticated HTTP; generated contracts and local, packed, persistent-browser, and representative real-provider gates passed without functional regression. |
 | [Arena Full Capability Integration](P0-arena-full-capability-integration.md) | Completed 2026-08-11 after Direct, Search, comparison, Image, Code, Agent, Video, task routes, and OpenAI-compatible chat passed real-provider or authenticated local-HTTP boundaries and independent review. |

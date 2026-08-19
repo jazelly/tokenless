@@ -70,7 +70,7 @@ The highest-priority shared compatibility contract is listed first, followed by 
 ## Backlog and Archive
 
 - [Backlog](backlog/README.md): no roadmap is currently backlogged.
-- [Archive](archived/README.md): Runtime Package Boundary Refactor, Arena Full Capability Integration, Browser Connection Mode Capability Evaluation, and Provider Architecture and Registry were completed; Web AI Interaction Protocol was superseded by OpenAI-compatible API Convergence; the browser runtime/profile compatibility matrix and its Windows acceptance plan were superseded by native Chrome/Brave CDP connection; the Daemon Fastify HTTP API direction was cancelled.
+- [Archive](archived/README.md): Product Localization, Runtime Package Boundary Refactor, Arena Full Capability Integration, Browser Connection Mode Capability Evaluation, and Provider Architecture and Registry were completed; Web AI Interaction Protocol was superseded by OpenAI-compatible API Convergence; the browser runtime/profile compatibility matrix and its Windows acceptance plan were superseded by native Chrome/Brave CDP connection; the Daemon Fastify HTTP API direction was cancelled.
 
 ## How the Roadmaps Fit Together
 

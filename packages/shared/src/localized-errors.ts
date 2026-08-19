@@ -1,4 +1,7 @@
 export const ERROR_SUMMARIES_ZH = {
+  featurebench_option_invalid: 'FeatureBench option 无效。',
+  featurebench_option_required: '缺少必需的 FeatureBench option。',
+  featurebench_subcommand_invalid: '请使用有效的 FeatureBench subcommand。',
   agent_admission_ref_invalid: 'Harness admission ref 格式无效。',
   agent_run_selector_conflict: '请只提供 --run-id 或 --admission-ref 其中一个。',
   agent_command_invalid: '请使用 `tokenless agent run|read|resume|cancel`。',
@@ -193,6 +196,7 @@ export const ERROR_SUMMARIES_ZH = {
   profile_delete_confirmation_required: '移除 profile 前需要 --confirm-delete。',
   profile_managed_browser_required: '该 profile 需要 managed browser。',
   profile_not_configured: '找不到该 profile 的配置。',
+  profile_not_found: '找不到该 profile。',
   profile_open_provider_required: '使用 --target-url 打开 profile 时必须提供 --provider。',
   profiles_command_invalid: '请使用有效的 profiles 子命令。',
   conversation_continue_mapping_required: '继续对话需要当前 task 已存在精确的 provider conversation mapping。',

@@ -3,7 +3,7 @@
   import { tick, untrack } from 'svelte'
   import PageHeader from '../components/PageHeader.svelte'
   import { formatNumber, formatTime } from '../formatting.js'
-  import { stateLabel, type MessageKey } from '../localization.js'
+  import { stateLabel, type MessageKey } from '../i18n/index.js'
   import type { DashboardActions, Language, UiConfigUpdate, UiDiagnostic, UiSnapshot } from '../types.js'
 
   let {

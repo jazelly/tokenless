@@ -12,7 +12,7 @@
     type RouterResult,
   } from '../router-engine.js'
   import type { DashboardActions, UiProvider, UiSnapshot } from '../types.js'
-  import type { MessageKey } from '../localization.js'
+  import type { MessageKey } from '../i18n/index.js'
 
   let {
     snapshot,

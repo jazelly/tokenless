@@ -1,5 +1,5 @@
 import type { DashboardClient } from './dashboard-client.js'
-import type { MessageKey } from './localization.js'
+import type { MessageKey } from './i18n/index.js'
 import type {
   ReadinessJobs,
   UiJobStatus,

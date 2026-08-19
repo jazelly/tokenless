@@ -2,7 +2,7 @@
   import { ArrowLeft, ExternalLink, Link2, Monitor, RefreshCw, ScanSearch } from '@lucide/svelte'
   import PageHeader from '../components/PageHeader.svelte'
   import ProviderModeBadges from '../components/ProviderModeBadges.svelte'
-  import { stateLabel, type MessageKey } from '../localization.js'
+  import { stateLabel, type MessageKey } from '../i18n/index.js'
   import RoutingView from './RoutingView.svelte'
   import type { DashboardActions, Language, UiProvider, UiProviderExecutionMode, UiSnapshot } from '../types.js'
 

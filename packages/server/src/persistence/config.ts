@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { normalizeBrowserVisibility } from '../browser-visibility.js'
-import { normalizeTokenlessLanguage, type TokenlessLanguage } from '../language.js'
+import type { TokenlessLanguage } from 'tokenless-internal-shared/i18n'
 import { TOKENLESS_CONFIG_SCHEMA_ID } from '../schema-ids.js'
 import { providerRegistry } from '../providers/registry.js'
 import type { ProviderExecutionMode } from '../providers/provider-identity.js'
@@ -695,6 +695,14 @@ function validateConfigLanguage(value: unknown): TokenlessLanguage {
   const language = normalizeTokenlessLanguage(value)
   if (!language) throw configError('tokenless_config_invalid', 'Invalid Tokenless language; expected en or zh-CN.')
   return language
+}
+
+function normalizeTokenlessLanguage(value: unknown): TokenlessLanguage | null {
+  if (typeof value !== 'string') return null
+  const normalized = value.trim().replace(/_/g, '-').toLowerCase()
+  if (normalized === 'en' || normalized.startsWith('en-')) return 'en'
+  if (normalized === 'zh' || normalized.startsWith('zh-')) return 'zh-CN'
+  return null
 }
 
 export async function hasConfiguredTokenlessLanguage(homeDir = tokenlessHome()) {

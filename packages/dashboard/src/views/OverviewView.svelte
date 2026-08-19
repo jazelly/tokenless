@@ -3,7 +3,7 @@
   import PageHeader from '../components/PageHeader.svelte'
   import ProviderModeBadges from '../components/ProviderModeBadges.svelte'
   import { formatNumber } from '../formatting.js'
-  import { stateLabel, type MessageKey } from '../localization.js'
+  import { stateLabel, type MessageKey } from '../i18n/index.js'
   import type {
     Language,
     ReadinessJobs,

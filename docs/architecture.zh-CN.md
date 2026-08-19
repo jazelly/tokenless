@@ -117,9 +117,16 @@ Universal API 不执行外部 caller tools，并不禁止 first-party Harness �
 
 ## HTTP contract 与 runtime ownership
 
-`packages/contracts/tokenless.openapi.json` 是唯一的 HTTP documentation source。它统一描述所有 compatibility、private machine、Dashboard 与 readiness Interface 的 path、method、authentication、serialized request/response shape、status code 和 example；`npm run api:docs` 将其生成一份 Scalar 汇总 reference。
+`packages/contracts/tokenless.openapi.json` 是唯一的 HTTP documentation source。它统一描述所有 compatibility、private machine、Dashboard 与 readiness Interface 的 path、method、authentication、serialized request/response shape、status code 和 example；`npm run api:docs` 使用该 source 与只含中文文案的 Overlay，生成 English 与简体中文两份 Scalar reference。
 
-`packages/contracts` 不是 runtime dependency。Server route 与 request validation 留在 `packages/server`；private provider-turn Client Adapter 及其 defensive response validation 留在 `packages/harness`。`packages/shared` 只保存有多个真实 consumer 的 runtime primitive——Dashboard DTO type、localized error summary 与 strict JSON helper——它不是 HTTP contract source。
+`packages/contracts` 不是 runtime dependency。Server route 与 request validation 留在 `packages/server`；private provider-turn Client Adapter 及其 defensive response validation 留在 `packages/harness`。`packages/shared` 只保存有多个真实 consumer 的 runtime primitive——Dashboard DTO type、locale normalization/interpolation、localized error summary 与 strict JSON helper——它不是 HTTP contract source。
+
+## Localization ownership
+
+- `packages/shared/src/i18n.ts` 只负责 supported locale、normalization、fallback 与 message interpolation。
+- `packages/cli/src/i18n/` 和 `packages/dashboard/src/i18n/` 分别拥有自己的 user-facing catalog；两者不互相 import 文案。
+- Server 与 Harness 返回 stable code 和有界 fallback diagnostic，不拥有 CLI 或 Dashboard presentation catalog。Server 只在 standalone package boundary 内把持久化 language 当作 configuration value 校验。
+- Public Markdown 使用结构和语义对齐的 `.md` / `.zh-CN.md` 配对。OpenAPI Overlay 只改变 human-readable text，不能重新定义 path、schema、operationId 或 example。
 
 高层 runtime Interface 保持分离：
 
@@ -234,7 +241,7 @@ packages/cli/        commands, bootstrap, HTTP clients, localization, output
 packages/dashboard/  full Local Web Control Plane frontend
 packages/harness/    AgentRun, Skills, tools, MCP, approvals, agent loop
 packages/contracts/  canonical OpenAPI source、examples、generated API reference
-packages/shared/     shared runtime DTO types、localization data、strict JSON helpers
+packages/shared/     shared DTO types、locale primitive、error summary、strict JSON helper
 packages/server/     HTTP, application, jobs, providers, browser/direct runtime, persistence
 ```
 

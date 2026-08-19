@@ -1,7 +1,8 @@
 import { ERROR_SUMMARIES_ZH } from 'tokenless-internal-shared/localized-errors'
+import { interpolateTokenlessMessage, type TokenlessLanguage } from 'tokenless-internal-shared/i18n'
 
 type JsonRecord = Record<string, any>
-type Language = 'en' | 'zh-CN'
+type Language = TokenlessLanguage
 
 const enMessages = {
     overview: 'Overview', profiles: 'Profiles', providers: 'Providers', capabilities: 'Capabilities', routing: 'Routing', jobs: 'Chat history', system: 'System',
@@ -107,7 +108,10 @@ const zhMessages: Record<keyof typeof enMessages, string> = {
     chromeSetup: '启用 Chrome 实验性 AI', chromeSetupIntro: '要看到 testing page 并使用 Prompt API，需要先启用以下本机 Chrome flags。', chromeSetupOptimization: '把 On-device model 设为 Enabled：', chromeSetupPrompt: '把 Prompt API for Gemini Nano 设为 Enabled（或 Enabled Multilingual）：', chromeSetupRelaunch: '修改 flags 后重新启动 Chrome。', chromeSetupInspect: '打开 Model Status 和 Event Logs：', chromeModelVersionHelp: 'Chrome 会在这个内部页面展示已安装 component 和模型信息；Prompt API 不会向 JavaScript 暴露精确模型版本。',
 }
 
-const messages = { en: enMessages, 'zh-CN': zhMessages } as const
+const messages = {
+  en: enMessages,
+  'zh-CN': zhMessages,
+} as const
 
 export type MessageKey = keyof typeof messages.en
 
@@ -241,8 +245,8 @@ const uiErrorZh = {
   output_savings_clear_confirmation_required: '清除输出节省历史前需要明确确认。',
 } as const
 
-export function translate(language: Language, key: MessageKey) {
-  return messages[language][key]
+export function translate(language: Language, key: MessageKey, params: Readonly<Record<string, string | number>> = {}) {
+  return interpolateTokenlessMessage(messages[language][key], params)
 }
 
 export function translateError(language: Language, code: string, fallback?: string) {

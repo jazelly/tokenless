@@ -326,7 +326,9 @@ test('workspace packages keep standalone product names', () => {
   assert.equal(contracts.private, true)
   assert.equal(contracts.exports, undefined)
   assert.ok(contracts.files.includes('tokenless.openapi.json'))
+  assert.ok(contracts.files.includes('tokenless.zh-CN.overlay.json'))
   assert.ok(contracts.files.includes('reference.html'))
+  assert.ok(contracts.files.includes('reference.zh-CN.html'))
   assert.ok(contracts.files.includes('spec'))
   assert.equal(shared.name, 'tokenless-internal-shared')
   assert.equal(shared.private, true)
@@ -334,6 +336,8 @@ test('workspace packages keep standalone product names', () => {
     './localized-errors': './dist/src/localized-errors.js',
     './structured-json': './dist/src/structured-json.js',
     './ui': './dist/src/ui.js',
+    './harness-sidecar': './dist/src/harness-sidecar.js',
+    './i18n': './dist/src/i18n.js',
   })
   assert.equal(fs.existsSync(path.join(root, 'packages/extension')), false)
 })
@@ -455,6 +459,12 @@ test('CLI localizes human output from system setup locale and persistent languag
     assert.equal(localizedError.status, 2)
     assert.match(localizedError.stderr, /^错误： invalid_option: tokenless run 不接受选项：--all。/)
     assert.match(localizedError.stderr, /^用法：$/m)
+
+    const localizedSuccess = runCli(['daemon', 'stop', '--home', homeDir], {
+      env: { ...process.env, TOKENLESS_HOME: homeDir },
+    })
+    assert.equal(localizedSuccess.status, 0, localizedSuccess.stderr || localizedSuccess.stdout)
+    assert.match(localizedSuccess.stdout, /Tokenless daemon (?:未在 .* 运行|已在 .* 停止(?:（pid \d+）)?)。/)
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
   }

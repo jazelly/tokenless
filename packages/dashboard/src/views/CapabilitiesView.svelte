@@ -3,7 +3,7 @@
   import Modal from '../components/Modal.svelte'
   import PageHeader from '../components/PageHeader.svelte'
   import { formatNumber } from '../formatting.js'
-  import { capabilityFamilyLabel, capabilityText, stateLabel, type MessageKey } from '../localization.js'
+  import { capabilityFamilyLabel, capabilityText, stateLabel, type MessageKey } from '../i18n/index.js'
   import type { Language, UiCapability, UiSnapshot } from '../types.js'
 
   let { snapshot, selectedProfile, language, t, onselect }: {

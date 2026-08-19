@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Link2, Monitor } from '@lucide/svelte'
-  import type { MessageKey } from '../localization.js'
+  import type { MessageKey } from '../i18n/index.js'
   import type { UiProvider, UiProviderExecutionMode, UiProviderProfileState } from '../types.js'
 
   let { provider, state, t }: {

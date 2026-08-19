@@ -1,14 +1,16 @@
 import { CLI_ERROR_MESSAGES, CLI_MESSAGES, ERROR_SUMMARIES_ZH, type CliErrorMessageKey, type CliMessageKey } from './i18n/catalog.js'
 import {
+  DEFAULT_TOKENLESS_LANGUAGE,
   TOKENLESS_LANGUAGES,
+  interpolateTokenlessMessage,
   normalizeTokenlessLanguage,
   type TokenlessLanguage,
-} from '#tokenless-server/language.js'
+} from '#tokenless-shared/i18n.js'
 
-export { TOKENLESS_LANGUAGES, normalizeTokenlessLanguage }
+export { DEFAULT_TOKENLESS_LANGUAGE, TOKENLESS_LANGUAGES, normalizeTokenlessLanguage }
 export type { TokenlessLanguage }
 
-let activeLanguage: TokenlessLanguage = 'en'
+let activeLanguage: TokenlessLanguage = DEFAULT_TOKENLESS_LANGUAGE
 
 export function detectSystemLanguage({
   env = process.env,
@@ -22,7 +24,7 @@ export function detectSystemLanguage({
     env.LANG ||
     locale ||
     Intl.DateTimeFormat().resolvedOptions().locale
-  return normalizeTokenlessLanguage(candidate.split('.')[0]) ?? 'en'
+  return normalizeTokenlessLanguage(candidate.split('.')[0]) ?? DEFAULT_TOKENLESS_LANGUAGE
 }
 
 export function setActiveLanguage(language: TokenlessLanguage) {
@@ -43,7 +45,7 @@ export function t(key: CliMessageKey | LegacyCliMessageKey, params: Record<strin
   const canonicalKey = (key.startsWith('cli')
     ? `${key[3]!.toLowerCase()}${key.slice(4)}` as CliMessageKey
     : key) as CliMessageKey
-  return interpolate(CLI_MESSAGES[language][canonicalKey], params)
+  return interpolateTokenlessMessage(CLI_MESSAGES[language][canonicalKey], params)
 }
 
 export function localizedError(code: string, fallback?: string, language = activeLanguage) {
@@ -56,9 +58,5 @@ export function localizedError(code: string, fallback?: string, language = activ
 }
 
 export function tError(key: CliErrorMessageKey, params: Record<string, string | number> = {}, language = activeLanguage) {
-  return interpolate(CLI_ERROR_MESSAGES[language][key], params)
-}
-
-function interpolate(template: string, params: Record<string, string | number>) {
-  return template.replace(/\{([A-Za-z][A-Za-z0-9_]*)\}/g, (_match, name: string) => String(params[name] ?? `{${name}}`))
+  return interpolateTokenlessMessage(CLI_ERROR_MESSAGES[language][key], params)
 }

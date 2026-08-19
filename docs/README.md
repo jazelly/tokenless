@@ -7,8 +7,10 @@ This index separates user guidance, stable product contracts, implementation arc
 - [README](../README.md) — product overview, installation, and first run.
 - [CLI Commands](../COMMANDS.md) — complete command and option reference.
 - [Capability Matrix](capability-matrix.md) — canonical outcomes, current provider mappings, support states, and extension rules.
-- [FeatureBench Evaluation](featurebench-evaluation.md) — pinned coding-agent benchmark, runtime boundary, commands, reports, and acceptance rules.
 - [API Proxy Integration](api-proxy-integration.md) — calling the OpenAI/Anthropic-compatible local proxy from an existing project.
+- [HTTP API Reference](../packages/contracts/reference.html) — generated OpenAI-compatible, Anthropic-compatible, private, Dashboard, and readiness interfaces.
+- [Provider Guest Access](../PROVIDER_GUEST_ACCESS.md) — observed signed-out behavior and authentication routing rules.
+- [Provider Rate Limits](provider-rate-limits.md) — official Web-provider limit knowledge and runtime policy.
 - [Provider Tool-Calling Conformance](provider-tool-calling-conformance.md) — current official provider contracts, canonical mapping, and Tokenless evidence boundaries.
 - [Privacy](../PRIVACY.md) — browser-profile, credential, file, and local-data boundaries.
 

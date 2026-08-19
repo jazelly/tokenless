@@ -1,4 +1,4 @@
-import { translate, translateError } from './localization.js'
+import { translate, translateError } from './i18n/index.js'
 import type {
   UiConfirmedDeletion,
   UiConfig,
@@ -189,7 +189,7 @@ export class DashboardClient {
       const language = this.currentLanguage()
       const summary = translateError(language, code, error?.message)
       const diagnostic = error?.message ?? ''
-      const message = diagnostic && diagnostic !== summary
+      const message = language === 'en' && diagnostic && diagnostic !== summary
         ? `${summary}\n${translate(language, 'diagnostics')}: ${diagnostic}`
         : summary
       throw new DashboardRequestError(

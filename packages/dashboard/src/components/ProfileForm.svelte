@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick, untrack } from 'svelte'
-  import type { MessageKey } from '../localization.js'
+  import type { MessageKey } from '../i18n/index.js'
   import type { UiProfile, UiProfileCreate, UiProfileUpdate, UiSnapshot } from '../types.js'
 
   let {

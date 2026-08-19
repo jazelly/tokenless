@@ -4,7 +4,7 @@
 
 Tokenless Capability Matrix 是 caller outcome 与 provider implementation 之间的公共契约。它让用户无需依赖 provider 的按钮名称即可描述任务，也为贡献者新增或修改 provider support 提供统一的证据标准。
 
-本文档是 capability 命名、mapping、support state 与扩展流程的规范性文档。尚未成为 Tokenless support 的产品调研记录见 [Provider Capability Census](provider-capability-census.md)。
+本文档是 capability 命名、mapping、support state 与扩展流程的规范性文档。尚未成为 Tokenless support 的产品调研记录见 [Provider Capability Census](provider-capability-census.zh-CN.md)。
 
 ## 四个独立关注点
 
@@ -250,7 +250,7 @@ Provider-only concept 保留为 `deepseek.mode`、`kimi.skill`、`dola.translate
 | 真实 provider required cases | `test/live-provider-capability-matrix.json` |
 | 真实 provider journeys | `test/live-managed-playwright.e2e.mjs` |
 | Provider website 测试边界 | `AGENTS.md`、`test/live-provider-capability-matrix.json` |
-| Product reconnaissance | `docs/provider-capability-census.md` |
+| Product reconnaissance | `docs/provider-capability-census.zh-CN.md` |
 | CLI behavior | `COMMANDS.md` |
 
 当文档与 runtime output 不一致时，以 `tokenless capabilities list --json` 和 checked-in source 为准，并在同一次 change 中修正文档。

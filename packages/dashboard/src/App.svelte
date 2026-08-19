@@ -2,7 +2,8 @@
   import { onMount } from 'svelte'
   import { Blocks, LayoutDashboard, ListChecks, PanelsTopLeft, Settings, UsersRound } from '@lucide/svelte'
   import { DashboardClient } from './dashboard-client.js'
-  import { translate } from './localization.js'
+  import { translate } from './i18n/index.js'
+  import { DEFAULT_TOKENLESS_LANGUAGE, normalizeTokenlessLanguage } from 'tokenless-internal-shared/i18n'
   import { createReadinessState } from './readiness-state.svelte.js'
   import CapabilitiesView from './views/CapabilitiesView.svelte'
   import JobsView from './views/JobsView.svelte'
@@ -21,7 +22,7 @@
   } from './types.js'
 
   const sections = new Set<Section>(['overview', 'profiles', 'providers', 'capabilities', 'jobs', 'system'])
-  const initialLanguage: Language = document.documentElement.lang === 'zh-CN' ? 'zh-CN' : 'en'
+  const initialLanguage: Language = normalizeTokenlessLanguage(document.documentElement.lang) ?? DEFAULT_TOKENLESS_LANGUAGE
 
   function parseSection(hash: string): Section {
     const candidate = hash.replace(/^#/, '') as Section

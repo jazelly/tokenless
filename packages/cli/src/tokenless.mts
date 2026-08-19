@@ -118,7 +118,6 @@ import { reconcileTokenlessMaintenance } from './bootstrap/maintenance.js'
 import { DaemonRuntimeState } from '#tokenless-server/runtime/state.js'
 import { fetchTokenlessLatestVersion } from './http/npm-registry.js'
 import {
-  SETUP_READINESS_DISCLOSURE,
   createSetupPresenter,
   resolveSetupTerminalCapabilities,
   type SetupPresenter,
@@ -501,8 +500,8 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
       defaultProfile: result.defaultProfile,
       runner,
       compactOutput: clearAll
-        ? (cleared.length === 0 ? 'No managed profiles to clear.' : `Cleared ${cleared.length} managed profiles.`)
-        : `Cleared managed profile '${cleared[0]!.slug}'.`,
+        ? (cleared.length === 0 ? t('profilesNothingToClear') : t('profilesCleared', { count: cleared.length }))
+        : t('profileCleared', { profile: cleared[0]!.slug }),
     }, args)
     return
   }
@@ -654,7 +653,7 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
         effectiveVisibility: opened.effectiveBrowserVisibility,
         pageCount: opened.pageCount,
       },
-      compactOutput: `Opened managed profile '${profile.slug}' in a headed browser.`,
+      compactOutput: t('profileOpened', { profile: profile.slug }),
       status: opened.status.status,
       statusLog: statusReporter.events,
     }, args)
@@ -690,8 +689,8 @@ async function dashboardCommand(args: CliArgs) {
       reused: dashboard.opened?.reused ?? false,
     },
     compactOutput: args.noOpen === true
-      ? `Dashboard ready for managed profile '${profile.slug}': ${dashboard.url}`
-      : `Opened the Tokenless dashboard in managed profile '${profile.slug}'.`,
+      ? t('dashboardReady', { profile: profile.slug, url: dashboard.url })
+      : t('dashboardOpened', { profile: profile.slug }),
   }, args)
 }
 
@@ -1008,7 +1007,15 @@ function setupReportedCompactOutput({
   const classifications = providers
     .map((provider) => `${provider}: ${readiness[provider]?.classification ?? 'unknown'}`)
     .join('; ')
-  return `Tokenless setup checked ${providers.join(', ')} once in profile ${profile.slug}. Provider summary: ${classifications}. Counts: authenticated ${providerSummary.counts.authenticated}, unauthenticated ${providerSummary.counts.unauthenticated}, unknown ${providerSummary.counts.unknown}, failed ${providerSummary.counts.failed}.`
+  return t('setupCompactSummary', {
+    providers: providers.join(', '),
+    profile: profile.slug,
+    classifications,
+    authenticated: providerSummary.counts.authenticated,
+    unauthenticated: providerSummary.counts.unauthenticated,
+    unknown: providerSummary.counts.unknown,
+    failed: providerSummary.counts.failed,
+  })
 }
 
 function setupFailedCompactOutput({
@@ -1028,7 +1035,15 @@ function setupFailedCompactOutput({
       return `${provider}: ${result?.classification ?? 'unknown'}${result?.error?.code ? ` (${result.error.code})` : ''}`
     })
     .join('; ')
-  return `Tokenless setup checked ${providers.join(', ')} once in profile ${profile.slug}. Provider summary: ${classifications}. Counts: authenticated ${providerSummary.counts.authenticated}, unauthenticated ${providerSummary.counts.unauthenticated}, unknown ${providerSummary.counts.unknown}, failed ${providerSummary.counts.failed}.`
+  return t('setupCompactSummary', {
+    providers: providers.join(', '),
+    profile: profile.slug,
+    classifications,
+    authenticated: providerSummary.counts.authenticated,
+    unauthenticated: providerSummary.counts.unauthenticated,
+    unknown: providerSummary.counts.unknown,
+    failed: providerSummary.counts.failed,
+  })
 }
 
 async function setupCliVersionCheck(): Promise<SetupCliVersionCheck> {
@@ -1081,19 +1096,22 @@ function noteSetupCliVersion(check: SetupCliVersionCheck, presenter: SetupPresen
 
 function setupCliVersionCompact(check: SetupCliVersionCheck) {
   if (check.status === 'check_unavailable') {
-    return `CLI: tokenless ${check.currentVersion}; npm latest check unavailable (${check.error?.code ?? 'npm_registry_unavailable'}, non-blocking).`
+    return t('setupCliUnavailable', { current: check.currentVersion, code: check.error?.code ?? 'npm_registry_unavailable' })
   }
   if (check.updateAvailable) {
-    return `CLI: tokenless ${check.currentVersion}; npm latest ${check.latestVersion} is available.`
+    return t('setupCliAvailable', { current: check.currentVersion, latest: check.latestVersion ?? 'latest' })
   }
-  return `CLI: tokenless ${check.currentVersion}; npm latest ${check.latestVersion} is up to date.`
+  return t('setupCliCurrent', { current: check.currentVersion, latest: check.latestVersion ?? check.currentVersion })
 }
 
 function setupDaemonCompact(daemon: {
   runningControlApiRevision: number | null
   runningVersion: string | null
 }) {
-  return `Daemon: ready on tokenless ${daemon.runningVersion ?? 'unknown'} / control API r${daemon.runningControlApiRevision ?? 'unknown'} (exact match required).`
+  return t('setupDaemonReady', {
+    version: daemon.runningVersion ?? 'unknown',
+    revision: daemon.runningControlApiRevision ?? 'unknown',
+  })
 }
 
 function compareSemanticVersions(left: string, right: string) {
@@ -2701,12 +2719,12 @@ async function limitsCommand(subcommand: string | undefined, args: CliArgs) {
     tierLabel: observation?.account?.tier.label ?? null,
     subscriptionLabel: observation?.account?.subscription ?? null,
   })
-  const eligible = capacity.eligibleAt ? `; next eligible ${capacity.eligibleAt}` : ''
+  const eligible = capacity.eligibleAt ? t('providerCapacityNextEligible', { eligibleAt: capacity.eligibleAt }) : ''
   printPayload({
     ok: true,
     profile: publicManagedProfile(profile, profile.slug),
     capacity,
-    compactOutput: `Provider capacity for ${provider} / ${profile.slug}: ${capacity.decision}${eligible}.`,
+    compactOutput: t('providerCapacity', { provider, profile: profile.slug, decision: capacity.decision, eligible }),
   }, args)
 }
 
@@ -2854,7 +2872,12 @@ async function daemonCommand(subcommand: string | undefined, args: CliArgs) {
     daemonUrl: configuredDaemonUrl,
     timeoutMs: args.timeoutMs === undefined ? undefined : strictPositiveInteger(args.timeoutMs, '--timeout-ms'),
   })
-  printPayload(result, args)
+  const compactOutput = result.status === 'not_running'
+    ? t('daemonNotRunning', { url: result.url })
+    : result.pid === undefined
+      ? t('daemonStopped', { url: result.url })
+      : t('daemonStoppedWithPid', { url: result.url, pid: result.pid })
+  printPayload({ ...result, compactOutput }, args)
 }
 
 async function agentCommand(subcommand: string | undefined, args: CliArgs) {
@@ -3510,12 +3533,12 @@ async function setupCommand(args: CliArgs) {
     } | null
     if (selectedRuntime) {
       presenter.explain({
-        title: 'Anti-Detect mode',
+        title: t('setupAntiDetectTitle'),
         lines: [
-          'CloakBrowser project: https://github.com/CloakHQ/CloakBrowser',
-          `Supported CloakBrowser on this platform: artifact ${selectedRuntime.artifactVersion} (Chromium ${selectedRuntime.actualVersion}).`,
-          'Tokenless downloads the verified, platform-pinned CloakBrowser from its official release and does not redistribute it.',
-          'CloakBrowser profiles must already be bound to the exact runtime; Tokenless does not copy or rebind native Chrome profiles.',
+          t('setupCloakProject'),
+          t('setupCloakSupported', { artifactVersion: String(selectedRuntime.artifactVersion), actualVersion: String(selectedRuntime.actualVersion) }),
+          t('setupCloakDownload'),
+          t('setupCloakBinding'),
         ],
       })
     }
@@ -3606,7 +3629,7 @@ async function setupCommand(args: CliArgs) {
     if (browserReady) {
       presenter.explain({
         title: t('cliSetupProviderSignIn'),
-        lines: SETUP_READINESS_DISCLOSURE,
+        lines: [t('setupReadinessDisclosure')],
       })
       for (const provider of providers) {
         let result: Awaited<ReturnType<typeof runSetupAuthCheck>>
@@ -3875,13 +3898,13 @@ async function ensureSetupManagedProfile({
     return await ensureSetupRuntimeBoundProfile({ args, homeDir, runtime, prompt, presenter })
   }
   presenter.explain({
-    title: nativeBrowser === 'brave' ? 'Native Brave Browser' : 'Native Google Chrome',
+    title: t('setupNativeBrowserTitle', { browser: nativeBrowser === 'brave' ? 'Brave Browser' : 'Google Chrome' }),
     lines: [
-      `Tokenless connects to the ${nativeBrowser === 'brave' ? 'Brave Browser' : 'Google Chrome'} you installed and already run on this computer.`,
-      'Tokenless does not bundle or download Chrome or Brave. If discovery fails, setup still finishes and tells you how to add an executable path before browser use.',
-      `Enable remote debugging at ${nativeBrowser === 'brave' ? 'brave' : 'chrome'}://inspect/#remote-debugging and approve the connection request.`,
-      'The browser manages the underlying CDP endpoint and Tokenless discovers it automatically; no --remote-debugging-port launch flag or fixed-port setting is required.',
-      'Native mode is headed-only. Tokenless does not copy your browser profile or own the browser process.',
+      t('setupNativeConnect', { browser: nativeBrowser === 'brave' ? 'Brave Browser' : 'Google Chrome' }),
+      t('setupNativeNoBundle'),
+      t('setupNativeRemoteDebugging', { scheme: nativeBrowser === 'brave' ? 'brave' : 'chrome' }),
+      t('setupNativeCdp'),
+      t('setupNativeHeaded'),
     ],
   })
   const registry = new ManagedProfileRegistry(homeDir)
@@ -3897,10 +3920,10 @@ async function ensureSetupManagedProfile({
         label: profile.slug,
         value: profile.slug,
       })),
-      { label: 'Create a new Tokenless profile', value: '__new__' },
+      { label: t('setupCreateNewProfile'), value: '__new__' },
     ]
     const chosen = await prompt.select(
-      'Choose a Tokenless profile',
+      t('setupChooseProfile'),
       choices,
       Math.max(0, choices.findIndex((choice) => choice.value === configuredDefaultProfile))
     )
@@ -3921,15 +3944,15 @@ async function ensureSetupManagedProfile({
     if (selected.lifecycle !== 'ready') selected = await registry.updateLifecycle(selected.slug, 'ready')
     const selectedSlug = selected.slug
     if (args.setDefault === true || prompt) {
-      await presenter.withProgress(`Setting Tokenless profile ${selectedSlug} as default`, () => registry.setDefault(selectedSlug))
+      await presenter.withProgress(t('setupSetDefaultProfile', { profile: selectedSlug }), () => registry.setDefault(selectedSlug))
     }
     return selected
   }
 
-  if (!slug && prompt) slug = await prompt.text('Profile name', existing.length === 0 ? 'default' : 'primary')
+  if (!slug && prompt) slug = await prompt.text(t('setupProfileName'), existing.length === 0 ? 'default' : 'primary')
   slug ??= 'default'
   return await presenter.withProgress(
-    `Creating Tokenless profile ${slug}`,
+    t('setupCreatingProfile', { profile: slug }),
     () => registry.addProfile({
       slug,
       setDefault: true,
@@ -3952,10 +3975,10 @@ async function ensureSetupRuntimeBoundProfile({
   presenter: SetupPresenter
 }) {
   presenter.explain({
-    title: 'Managed browser profile',
+    title: t('setupManagedProfileTitle'),
     lines: [
-      `This profile will be bound to ${runtime.runtimeId}.`,
-      'Existing native or differently bound profiles cannot be reused, copied, or rebound.',
+      t('setupManagedProfileBinding', { runtime: runtime.runtimeId }),
+      t('setupManagedProfileIsolation'),
     ],
   })
   const registry = new ManagedProfileRegistry(homeDir)
@@ -3974,10 +3997,10 @@ async function ensureSetupRuntimeBoundProfile({
   if (!slug && prompt && existing.length > 0) {
     const choices = [
       ...compatible.map((profile) => ({ label: profile.slug, value: profile.slug })),
-      { label: 'Create a new managed profile', value: '__new__' },
+      { label: t('setupCreateNewManagedProfile'), value: '__new__' },
     ]
     const chosen = await prompt.select(
-      'Choose a managed profile',
+      t('setupChooseManagedProfile'),
       choices,
       Math.max(0, choices.findIndex((choice) => choice.value === configuredDefaultProfile)),
     )
@@ -4003,15 +4026,15 @@ async function ensureSetupRuntimeBoundProfile({
       )
     }
     if (args.setDefault === true || prompt) {
-      await presenter.withProgress(`Setting managed profile ${selected.slug} as default`, () => registry.setDefault(selected.slug))
+      await presenter.withProgress(t('setupSetDefaultManagedProfile', { profile: selected.slug }), () => registry.setDefault(selected.slug))
     }
     return selected
   }
 
-  if (!slug && prompt) slug = await prompt.text('Profile name', existing.length === 0 ? 'default' : `${runtime.browserId}-default`)
+  if (!slug && prompt) slug = await prompt.text(t('setupProfileName'), existing.length === 0 ? 'default' : `${runtime.browserId}-default`)
   slug ??= existing.length === 0 ? 'default' : availableRuntimeProfileSlug(runtime.browserId, existing)
   return await presenter.withProgress(
-    `Creating clean managed profile ${slug}`,
+    t('setupCreatingManagedProfile', { profile: slug }),
     () => registry.addProfile({
       slug,
       setDefault: true,
@@ -4154,25 +4177,25 @@ async function selectSetupProviders({
   const available = setupVisibleProviders()
   if (args.providerWhitelist !== undefined) {
     const providers = requireSetupProviders(parseProviderList(args.providerWhitelist) as ProviderId[])
-    presenter.success(`Checking providers: ${providers.join(', ')}.`)
+    presenter.success(t('setupCheckingProviders', { providers: providers.join(', ') }))
     return providers
   }
   if (!prompt) {
     const configuredScope = await setupConfiguredProviderScope({ args, config, homeDir })
     const configured = configuredScope.filter((provider: unknown): provider is ProviderId => available.includes(provider as ProviderId))
     const providers = requireSetupProviders(configured)
-    presenter.success(`Checking providers: ${providers.join(', ')}.`)
+    presenter.success(t('setupCheckingProviders', { providers: providers.join(', ') }))
     return providers
   }
   const providers = await prompt.removeByIndex(
-    'Supported providers (all are enabled by default):',
+    t('setupSupportedProviders'),
     available.map((provider) => {
       const descriptor = getProviderDescriptorById(provider)
       return { label: `${descriptor?.label ?? provider} (${provider})`, value: provider }
     }),
   )
   requireSetupProviders(providers)
-  presenter.success(`Checking providers: ${providers.join(', ')}.`)
+  presenter.success(t('setupCheckingProviders', { providers: providers.join(', ') }))
   return providers
 }
 
@@ -4255,7 +4278,7 @@ async function ensureSetupProviderReviewTabs({
   presenter: SetupPresenter
 }) {
   try {
-    const result = await presenter.withProgress('Opening provider review tabs', () => openBrowserRuntimeProviderTabs({
+    const result = await presenter.withProgress(t('setupOpeningProviderTabs'), () => openBrowserRuntimeProviderTabs({
       daemonUrl: actualDaemonUrl,
       homeDir,
       profileId: profile.id,
@@ -4265,9 +4288,9 @@ async function ensureSetupProviderReviewTabs({
     const opened = result.tabs.map((tab) => tab.provider as ProviderId)
     const failures = result.failures.map((failure) => ({ ...failure, provider: failure.provider as ProviderId }))
     if (failures.length === 0) {
-      presenter.success(`Opened ${opened.length} provider review tab(s).`)
+      presenter.success(t('setupOpenedProviderTabs', { count: opened.length }))
     } else {
-      presenter.note(`Could not open ${failures.length} provider review tab(s).`)
+      presenter.note(t('setupProviderTabsFailed', { count: failures.length }))
     }
     return {
       opened,
@@ -4281,7 +4304,7 @@ async function ensureSetupProviderReviewTabs({
       code: (error as CliError).code ?? 'setup_review_tabs_failed',
       message: error instanceof Error ? error.message : String(error),
     }
-    presenter.note('Could not keep the provider review browser open.')
+    presenter.note(t('setupProviderTabsKeepOpenFailed'))
     return {
       opened: [],
       failures: [],

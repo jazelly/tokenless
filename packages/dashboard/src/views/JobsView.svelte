@@ -5,7 +5,7 @@
   import PageHeader from '../components/PageHeader.svelte'
   import ProviderIdentity from '../components/ProviderIdentity.svelte'
   import { formatNumber, formatTime } from '../formatting.js'
-  import { stateLabel, translateError, type MessageKey } from '../localization.js'
+  import { stateLabel, translateError, type MessageKey } from '../i18n/index.js'
   import { createRouterEngine } from '../router-engine.js'
   import type { DashboardActions, Language, UiJobDetail, UiJobSummary, UiSnapshot } from '../types.js'
 

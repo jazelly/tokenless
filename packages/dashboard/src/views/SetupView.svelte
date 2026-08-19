@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Check, ChevronRight, Globe2, Monitor, UserRound } from '@lucide/svelte'
   import { tick, untrack } from 'svelte'
-  import type { MessageKey } from '../localization.js'
+  import type { MessageKey } from '../i18n/index.js'
   import type { Language, UiSetupBrowserId, UiSetupInput, UiSnapshot } from '../types.js'
 
   let {
