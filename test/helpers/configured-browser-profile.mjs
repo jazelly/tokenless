@@ -62,7 +62,9 @@ export async function resolveConfiguredBrowserTarget() {
       })
     : await resolveNativeRuntime(runtimeManager, config)
   if (profile.runtimeBinding && (
-    runtime.browserId !== profile.runtimeBinding.browserId || runtime.runtimeId !== profile.runtimeBinding.runtimeId
+    runtime.browserId !== profile.runtimeBinding.browserId ||
+    runtime.runtimeId !== profile.runtimeBinding.runtimeId ||
+    (profile.runtimeBinding.executablePath !== undefined && runtime.executablePath !== profile.runtimeBinding.executablePath)
   )) throw new Error(`Configured browser profile '${profile.slug}' did not resolve its bound runtime.`)
   return Object.freeze({ configPath: configured.configPath, homeDir, config, profile, runtime, relativeDirectory })
 }

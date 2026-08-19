@@ -3,6 +3,8 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import type { TokenlessLanguage } from './localization.js'
 
+export { tokenlessHome } from './bootstrap/home.js'
+
 export {
   DEFAULT_DAEMON_URL,
   MAX_DAEMON_REQUEST_BYTES,
@@ -14,15 +16,22 @@ export {
   getDaemonJob,
   generateImage,
   getProviderCapacity,
+  getControlState,
+  getControlCapabilities,
   listDaemonJobs,
   markDaemonJobReported,
   openBrowserRuntimeProfile,
   openBrowserRuntimeProviderTabs,
   openTokenlessDashboard,
+  addControlProfile,
+  clearControlProfiles,
   quiesceBrowserRuntime,
   readDaemonToken,
   resolveProviderConversation,
   resolveProviderMapping,
+  resolveControlProfile,
+  resolveControlExecution,
+  removeControlProfile,
   resumeDaemonJob,
   shutdownDaemon,
   waitDaemonJobResult,
@@ -31,6 +40,11 @@ export {
   readAgentRunByAdmission,
   resumeAgentRun,
   cancelAgentRun,
+  setDefaultControlProfile,
+  updateControlConfig,
+  updateControlProfileConfig,
+  updateControlProfileObservation,
+  updateOutputSavings,
 } from './http/daemon-client.js'
 
 export type {
@@ -59,6 +73,9 @@ export type {
   ShutdownDaemonResponse,
   WaitDaemonJobResultOptions,
   AgentRunClientOptions,
+  ControlProfile,
+  ControlState,
+  ResolveControlProfileResponse,
 } from './http/daemon-client.js'
 
 export type { ManagedProfileConfig, TokenlessConfig } from '#tokenless-server/persistence/config.js'
@@ -85,7 +102,6 @@ export {
   normalizeManagedProfileProxy,
   readTokenlessConfig,
   TOKENLESS_CONFIG_SCHEMA_ID,
-  tokenlessHome,
   upsertTokenlessProfileConfig,
   writeTokenlessConfig,
   hasConfiguredTokenlessLanguage,

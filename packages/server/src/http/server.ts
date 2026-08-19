@@ -136,14 +136,15 @@ export async function serveHttp({
         }))
         return agentRunHandlerPromise
       }
+  const applicationServices = new TokenlessApplicationServices({
+    store,
+    runtimeController,
+    outputSavingsProcessor,
+    origin,
+    startedAt,
+  })
   const uiServer = new TokenlessUiServer({
-    services: new TokenlessApplicationServices({
-      store,
-      runtimeController,
-      outputSavingsProcessor,
-      origin,
-      startedAt,
-    }),
+    services: applicationServices,
     sessions: new UiSessionManager(),
     origin,
   })
@@ -152,7 +153,7 @@ export async function serveHttp({
   const apiProxy = new ApiProxyAdapter(store, async () => await runtimeController?.wake(), g4fService?.client)
   const imageGeneration = new ImageGenerationAdapter(store, async () => await runtimeController?.wake(), g4fService?.client)
   server = http.createServer((request, response) => {
-    void handleRequest(store, close, () => active, deactivate, runtimeController, g4fService, uiServer, privateProviderTurn, apiProxy, imageGeneration, featureBench, resolveAgentRunHandler, origin(), request, response)
+    void handleRequest(store, close, () => active, deactivate, runtimeController, g4fService, applicationServices, uiServer, privateProviderTurn, apiProxy, imageGeneration, featureBench, resolveAgentRunHandler, origin(), request, response)
   })
   await new Promise<void>((resolve, reject) => {
     const onError = (error: Error) => {
@@ -217,6 +218,7 @@ async function handleRequest(
   deactivate: () => void,
   runtimeController: BrowserRuntimeController | undefined,
   g4fService: G4fServiceProcess | undefined,
+  applicationServices: TokenlessApplicationServices,
   uiServer: TokenlessUiServer,
   privateProviderTurn: PrivateProviderTurnV0Adapter,
   apiProxy: ApiProxyAdapter,
@@ -285,6 +287,140 @@ async function handleRequest(
     }
 
     requireControlAuth(store, request)
+
+    if (method === 'GET' && url.pathname === '/v1/private/control/state') {
+      writeJson(response, 200, await applicationServices.controlState())
+      return
+    }
+
+    if (method === 'GET' && url.pathname === '/v1/private/control/capabilities') {
+      writeJson(response, 200, applicationServices.controlCapabilities())
+      return
+    }
+
+    if (method === 'POST' && url.pathname === '/v1/private/control/execution-route') {
+      const body = await readJsonObject(request)
+      if (Object.keys(body).some((key) => !['profile', 'provider', 'requirements', 'execution_mode'].includes(key))) {
+        throw invalidInput('request body must be valid JSON: unknown field')
+      }
+      if (!Array.isArray(body.requirements) || body.requirements.some((entry) => typeof entry !== 'string')) {
+        throw invalidInput('requirements must be an array of strings')
+      }
+      if (body.execution_mode !== 'browser' && body.execution_mode !== 'direct') {
+        throw invalidInput('execution_mode must be browser or direct')
+      }
+      const profile = optionalString(body.profile) ?? undefined
+      const provider = optionalString(body.provider) ?? undefined
+      writeJson(response, 200, await applicationServices.resolveControlExecution({
+        ...(profile === undefined ? {} : { profile }),
+        ...(provider === undefined ? {} : { provider }),
+        requirements: body.requirements,
+        executionMode: body.execution_mode,
+      }))
+      return
+    }
+
+    if (method === 'GET' && url.pathname === '/v1/private/control/profiles/resolve') {
+      writeJson(response, 200, await applicationServices.resolveControlProfile(
+        optionalQueryString(url.searchParams.get('profile')) ?? undefined,
+      ))
+      return
+    }
+
+    if (method === 'POST' && url.pathname === '/v1/private/control/profiles') {
+      const body = await readJsonObject(request)
+      if (Object.keys(body).some((key) => !['slug', 'set_default', 'browser', 'provider_whitelist'].includes(key))) {
+        throw invalidInput('request body must be valid JSON: unknown field')
+      }
+      const providerWhitelist = body.provider_whitelist === undefined
+        ? undefined
+        : requiredProviderList(body.provider_whitelist)
+      writeJson(response, 200, await applicationServices.addControlProfile({
+        slug: requiredString(body.slug, 'slug'),
+        setDefault: body.set_default === true,
+        browser: body.browser === null ? null : optionalString(body.browser),
+        ...(providerWhitelist === undefined ? {} : { providerWhitelist }),
+      }))
+      return
+    }
+
+    if (method === 'POST' && url.pathname === '/v1/private/control/profiles/clear') {
+      const body = await readJsonObject(request)
+      if (Object.keys(body).some((key) => key !== 'profile' && key !== 'all')) {
+        throw invalidInput('request body must be valid JSON: unknown field')
+      }
+      const profile = optionalString(body.profile)
+      writeJson(response, 200, await applicationServices.clearControlProfiles({
+        ...(profile === null ? {} : { profile }),
+        all: body.all === true,
+      }))
+      return
+    }
+
+    const controlProfileRoute = /^\/v1\/private\/control\/profiles\/([^/]+)(?:\/(config|default|observation))?$/.exec(url.pathname)
+    if (controlProfileRoute) {
+      const slug = decodeURIComponent(controlProfileRoute[1] ?? '')
+      const action = controlProfileRoute[2] ?? null
+      if (method === 'DELETE' && action === null) {
+        writeJson(response, 200, await applicationServices.removeControlProfile(slug))
+        return
+      }
+      if (method === 'POST' && action === 'default') {
+        writeJson(response, 200, await applicationServices.setDefaultControlProfile(slug))
+        return
+      }
+      if (method === 'PATCH' && action === 'config') {
+        writeJson(response, 200, await applicationServices.updateControlProfileConfig(
+          slug,
+          await readJsonObject(request) as never,
+        ))
+        return
+      }
+      if (method === 'POST' && action === 'observation') {
+        writeJson(response, 200, await applicationServices.updateControlProfileObservation(
+          slug,
+          await readJsonObject(request) as never,
+        ))
+        return
+      }
+    }
+
+    if (method === 'PATCH' && url.pathname === '/v1/private/control/config') {
+      writeJson(response, 200, await applicationServices.updateControlConfig(await readJsonObject(request)))
+      return
+    }
+
+    if (method === 'GET' && url.pathname === '/v1/private/control/output-savings') {
+      writeJson(response, 200, await applicationServices.controlOutputSavingsState())
+      return
+    }
+    if (method === 'POST' && url.pathname === '/v1/private/control/output-savings/enable') {
+      await applicationServices.enableOutputSavings()
+      writeJson(response, 200, await applicationServices.controlOutputSavingsState())
+      return
+    }
+    if (method === 'POST' && url.pathname === '/v1/private/control/output-savings/disable') {
+      await applicationServices.disableOutputSavings()
+      writeJson(response, 200, await applicationServices.controlOutputSavingsState())
+      return
+    }
+    if (method === 'POST' && url.pathname === '/v1/private/control/output-savings/uninstall') {
+      await applicationServices.uninstallOutputSavings(
+        await readJsonObject(request) as never,
+      )
+      writeJson(response, 200, await applicationServices.controlOutputSavingsState())
+      return
+    }
+    if (method === 'POST' && url.pathname === '/v1/private/control/output-savings/clear') {
+      const cleared = await applicationServices.clearOutputSavings(
+        await readJsonObject(request) as never,
+      )
+      writeJson(response, 200, {
+        ...await applicationServices.controlOutputSavingsState(),
+        cleared: cleared.cleared,
+      })
+      return
+    }
 
     if (url.pathname.startsWith('/v1/private/agent/')) {
       const handler = await resolveAgentRunHandler?.(daemonOrigin)

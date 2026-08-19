@@ -10,17 +10,16 @@ import {
   MANAGED_PLAYWRIGHT_JOB_ACTION,
   PLAYWRIGHT_EXECUTION_BACKEND,
   TASK_CAPABILITIES,
-  TASK_CAPABILITY_CATALOG_SCHEMA_ID,
   VISIBLE_ACTIONS,
   ManagedProfileRegistry,
   TaskCapabilityRequestError,
   createManagedPlaywrightJobRequest,
   createE2EInspectionJobId,
   getProviderDescriptorById,
-  listProviderTaskCapabilityRoutes,
   listProviderDescriptors,
   listTaskCapabilityDefinitions,
   normalizeTaskCapabilityRequirements,
+  normalizeSlug as normalizeManagedProfileSlug,
   readManagedProfileRegistryReadOnly,
   resolveTaskCapabilityRoutes,
   type ManagedProfileRecord,
@@ -49,6 +48,8 @@ import {
   ensureDaemonReady,
   generateImage,
   getDaemonJob,
+  getControlState,
+  getControlCapabilities,
   getProviderCapacity,
   inspectManagedRuntime,
   listDaemonJobs,
@@ -58,6 +59,8 @@ import {
   openBrowserRuntimeProfile,
   openBrowserRuntimeProviderTabs,
   openTokenlessDashboard,
+  addControlProfile,
+  clearControlProfiles,
   openProviderUrl,
   persistDaemonSnapshot,
   probeDaemonReady,
@@ -70,6 +73,9 @@ import {
   resolveChromiumBrowser,
   resolveProviderConversation,
   resolveProviderMapping,
+  resolveControlProfile,
+  resolveControlExecution,
+  removeControlProfile,
   resumeAgentRun,
   resumeDaemonJob,
   semanticVersionMajor,
@@ -79,6 +85,11 @@ import {
   tokenlessHome,
   upsertTokenlessProfileConfig,
   waitDaemonJobResult,
+  setDefaultControlProfile,
+  updateControlConfig,
+  updateControlProfileConfig,
+  updateControlProfileObservation,
+  updateOutputSavings,
   writeTokenlessConfig,
   API_PROXY_CONVERSATION_MODES,
   type ApiProxyConversationMode,
@@ -87,7 +98,6 @@ import type { TokenlessConfig } from '#tokenless-server/persistence/config.js'
 import { G4fRuntimeManager } from '#tokenless-server/providers/direct/g4f/runtime-manager.js'
 import { g4fProviderName, nativeDirectProviderAvailable } from '#tokenless-server/providers/direct/g4f-map.js'
 import {
-  OUTPUT_SAVINGS_ESTIMATOR,
   OutputSavingsRuntimeManager,
 } from '#tokenless-server/output-savings/index.js'
 import {
@@ -106,7 +116,6 @@ import {
 } from './bootstrap/setup-workflow.js'
 import { reconcileTokenlessMaintenance } from './bootstrap/maintenance.js'
 import { DaemonRuntimeState } from '#tokenless-server/runtime/state.js'
-import { JobStore } from '#tokenless-server/jobs/store.js'
 import { fetchTokenlessLatestVersion } from './http/npm-registry.js'
 import {
   SETUP_READINESS_DISCLOSURE,
@@ -122,6 +131,7 @@ import {
   type ResolvedBrowserRuntime,
 } from '#tokenless-server/browser/runtime/index.js'
 import { featureBenchCommand } from './commands/featurebench/cli.js'
+import { readBootstrapDaemonUrl, readBootstrapLanguage } from './bootstrap/home.js'
 
 const CLI_ARG_FLAGS: unique symbol = Symbol('tokenless.cliArgFlags')
 
@@ -441,7 +451,7 @@ try {
 
 async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
-  const registry = new ManagedProfileRegistry(homeDir)
+  const control = await ensureControlDaemon(args, homeDir)
 
   if (subcommand === 'add') {
     const slug = requiredAdminValue(args.profile, '--profile')
@@ -452,28 +462,19 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
         'Profiles add supports --browser managed-chromium or --browser cloak; omit --browser for the configured native Chrome or Brave browser.',
       )
     }
-    const runtime = requestedBrowser === null
-      ? null
-      : await new BrowserRuntimeManager({ homeDir }).ensure(requestedBrowser, { allowDownload: false })
-    const record = await registry.addProfile({
-      slug,
+    const added = await addControlProfile({
+      homeDir,
+      daemonUrl: control.daemon.url,
+      profile: slug,
       setDefault: args.setDefault === true,
-      lifecycle: 'ready',
-      ...(runtime === null ? {} : { runtimeBinding: browserRuntimeBinding(runtime) }),
+      browser: requestedBrowser,
+      ...(args.providerWhitelist === undefined
+        ? {}
+        : { providerWhitelist: parseProviderList(args.providerWhitelist) }),
     })
-    const current = await readTokenlessConfig(homeDir)
-    const configured = current.profiles[record.slug]
-    if (!configured) throw usageError('profile_not_configured', `Managed profile '${record.slug}' has no configuration.`)
-    if (args.providerWhitelist !== undefined) {
-      await upsertTokenlessProfileConfig({
-        homeDir,
-        slug: record.slug,
-        profile: { ...configured, enabledProviders: parseProviderList(args.providerWhitelist) },
-      })
-    }
     printPayload({
       ok: true,
-      profile: publicManagedProfile(record, await defaultProfileSlug(registry)),
+      profile: publicManagedProfile(added.profile, added.defaultProfile),
     }, args)
     return
   }
@@ -487,26 +488,17 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
         'Profiles clear requires exactly one of --profile <slug> or --all.'
       )
     }
-    const targets = clearAll
-      ? await registry.listProfiles()
-      : [await registry.resolveProfile(selectedSlug!)]
-    const runner = await quiesceBrowserRuntimeForProfileMutation({ homeDir })
-    if (runner.state === 'unsafe') {
-      throw usageError(
-        'profile_clear_runner_unsafe',
-        'Cannot clear managed profiles while the Playwright runner identity is unverified.'
-      )
-    }
-    const cleared = []
-    for (const profile of targets) {
-      const removed = await registry.removeProfile(profile.slug, { confirmDelete: true })
-      await deleteTokenlessProfileConfig({ homeDir, slug: profile.slug })
-      cleared.push({ slug: removed.slug, id: removed.id })
-    }
+    const result = await clearControlProfiles({
+      homeDir,
+      daemonUrl: control.daemon.url,
+      ...(clearAll ? { all: true } : { profile: selectedSlug! }),
+    })
+    const runner = stoppedRunnerStatus()
+    const cleared = result.cleared
     printPayload({
       ok: true,
       cleared,
-      defaultProfile: (await registry.read()).defaultProfile,
+      defaultProfile: result.defaultProfile,
       runner,
       compactOutput: clearAll
         ? (cleared.length === 0 ? 'No managed profiles to clear.' : `Cleared ${cleared.length} managed profiles.`)
@@ -516,20 +508,23 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
   }
 
   if (subcommand === 'list') {
-    const config = await readTokenlessConfig(homeDir)
-    const defaultSlug = await defaultProfileSlug(registry)
-    const profiles = (await registry.listProfiles())
+    const state = await getControlState({ homeDir, daemonUrl: control.daemon.url })
+    const profiles = state.profiles
       .map((profile) => ({
-        ...publicManagedProfile(profile, defaultSlug),
-        ...requiredProfileConfig(config, profile.slug),
+        ...publicManagedProfile(profile, state.defaultProfile),
+        ...requiredProfileConfig(state.config, profile.slug),
       }))
     printPayload({ ok: true, profiles }, args)
     return
   }
 
   if (subcommand === 'set-default') {
-    const record = await registry.setDefault(requiredAdminValue(args.profile, '--profile'))
-    printPayload({ ok: true, profile: publicManagedProfile(record, record.slug) }, args)
+    const result = await setDefaultControlProfile({
+      homeDir,
+      daemonUrl: control.daemon.url,
+      profile: requiredAdminValue(args.profile, '--profile'),
+    })
+    printPayload({ ok: true, profile: publicManagedProfile(result.profile, result.defaultProfile) }, args)
     return
   }
 
@@ -538,13 +533,15 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
     if (args.confirmDelete !== true) {
       throw usageError('profile_delete_confirmation_required', 'Profile removal requires --confirm-delete.')
     }
-    await registry.resolveProfile(slug)
-    const runner = await quiesceBrowserRuntimeForProfileMutation({ homeDir })
-    const record = await registry.removeProfile(slug, { confirmDelete: true })
-    await deleteTokenlessProfileConfig({ homeDir, slug })
+    const result = await removeControlProfile({
+      homeDir,
+      daemonUrl: control.daemon.url,
+      profile: slug,
+    })
+    const runner = stoppedRunnerStatus()
     printPayload({
       ok: true,
-      profile: publicManagedProfile(record, null),
+      profile: publicManagedProfile(result.profile, result.defaultProfile),
       runner,
     }, args)
     return
@@ -575,7 +572,11 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
       ? authObservationFromManagedResult(result.waitResult?.result)
       : null
     const profile = authObservation
-      ? await registry.updateProviderStatus(result.profile.slug, {
+      ? (await updateControlProfileObservation({
+          homeDir,
+          daemonUrl: control.daemon.url,
+          profile: result.profile.slug,
+          observation: {
           provider,
           auth: authObservation.state,
           access: authObservation.access,
@@ -583,14 +584,15 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
           ...(authObservation.state === 'authenticated' && authObservation.account
             ? { account: authObservation.account }
             : {}),
-        })
+          },
+        })).profile
       : result.profile
     printPayload({
       ok: true,
       command: `profiles.${subcommand}`,
       transport: 'daemon',
       backend: PLAYWRIGHT_EXECUTION_BACKEND,
-      profile: publicManagedProfile(profile, await defaultProfileSlug(registry)),
+      profile: publicManagedProfile(profile, (await getControlState({ homeDir, daemonUrl: control.daemon.url })).defaultProfile),
       provider,
       runner: result.runner,
       jobId: result.job.job_id,
@@ -606,15 +608,16 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
     if (args.targetUrl !== undefined) {
       throw usageError('profile_open_provider_required', '--target-url requires --provider for profiles open.')
     }
-    const config = await readTokenlessConfig(homeDir)
-    const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
+    const config = control.state.config
+    const configuredDaemonUrl = control.daemon.url
     const statusReporter = createCliStatusReporter(args)
-    const profile = await registry.resolveProfile(args.profile)
-    const daemon = await ensureDaemonReady({
+    const resolved = await resolveControlProfile({
       homeDir,
       daemonUrl: configuredDaemonUrl,
-      timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
+      profile: args.profile,
     })
+    const profile = resolved.profile
+    const daemon = control.daemon
     const actualDaemonUrl = daemon.url
     statusReporter.report({
       event: daemon.started ? 'daemon_started' : 'daemon_ready',
@@ -623,9 +626,6 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
       daemonPid: daemon.pid,
       backend: PLAYWRIGHT_EXECUTION_BACKEND,
     })
-    if (args.daemonUrl === undefined && config.daemonUrl !== configuredDaemonUrl) {
-      await writeTokenlessConfig({ homeDir, daemonUrl: configuredDaemonUrl })
-    }
     const opened = await openBrowserRuntimeProfile({
       daemonUrl: actualDaemonUrl,
       homeDir,
@@ -647,7 +647,7 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
       command: 'profiles.open',
       transport: 'daemon',
       backend: PLAYWRIGHT_EXECUTION_BACKEND,
-      profile: publicManagedProfile(profile, await defaultProfileSlug(registry)),
+      profile: publicManagedProfile(profile, resolved.defaultProfile),
       runner,
       browser: {
         requestedVisibility: opened.browserVisibility,
@@ -666,16 +666,13 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
 
 async function dashboardCommand(args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
-  const config = await readTokenlessConfig(homeDir)
-  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
-  const daemon = await ensureDaemonReady({
+  const control = await ensureControlDaemon(args, homeDir)
+  const daemon = control.daemon
+  const profile = (await resolveControlProfile({
     homeDir,
-    daemonUrl: configuredDaemonUrl,
-    timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
-  })
-  const profile = await new ManagedProfileRegistry(homeDir).resolveProfile(
-    args.profile === undefined ? undefined : String(args.profile),
-  )
+    daemonUrl: daemon.url,
+    profile: args.profile === undefined ? undefined : String(args.profile),
+  })).profile
   const dashboard = await openTokenlessDashboard({
     homeDir,
     daemonUrl: daemon.url,
@@ -696,6 +693,25 @@ async function dashboardCommand(args: CliArgs) {
       ? `Dashboard ready for managed profile '${profile.slug}': ${dashboard.url}`
       : `Opened the Tokenless dashboard in managed profile '${profile.slug}'.`,
   }, args)
+}
+
+async function ensureControlDaemon(
+  args: CliArgs,
+  homeDir = tokenlessHome(args.home),
+  requiredProvider?: string,
+) {
+  const bootstrapDaemonUrl = await readBootstrapDaemonUrl(homeDir)
+  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? bootstrapDaemonUrl ?? undefined)
+  const daemon = await ensureDaemonReady({
+    homeDir,
+    daemonUrl: configuredDaemonUrl,
+    timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
+    ...(requiredProvider === undefined ? {} : { requiredProvider }),
+  })
+  return {
+    daemon,
+    state: await getControlState({ homeDir, daemonUrl: daemon.url }),
+  }
 }
 
 async function quiesceBrowserRuntimeForProfileMutation({
@@ -724,7 +740,7 @@ async function quiesceBrowserRuntimeForProfileMutation({
 
 async function profileMutationConfiguredDaemonUrl(homeDir: string) {
   try {
-    return (await readTokenlessConfig(homeDir)).daemonUrl ?? undefined
+    return await readBootstrapDaemonUrl(homeDir) ?? undefined
   } catch {
     return undefined
   }
@@ -1127,7 +1143,7 @@ async function defaultProfileSlug(registry: ManagedProfileRegistry) {
   return (await registry.read()).defaultProfile
 }
 
-function publicManagedProfile(profile: ManagedProfileRecord, defaultSlug: string | null) {
+function publicManagedProfile(profile: Pick<ManagedProfileRecord, 'slug' | 'id' | 'lifecycle' | 'createdAt' | 'updatedAt' | 'lastObservedAuth'>, defaultSlug: string | null) {
   return {
     slug: profile.slug,
     id: profile.id,
@@ -1151,19 +1167,42 @@ function publicManagedProfile(profile: ManagedProfileRecord, defaultSlug: string
   }
 }
 
-function resolveDaemonJobCapabilityRoutes({
-  config,
-  profile,
+function requiredProfileConfig(
+  config: { profiles: Record<string, any> },
+  slug: string,
+) {
+  const configured = config.profiles[slug]
+  if (!configured) throw usageError('profile_not_configured', `Managed profile '${slug}' has no configuration.`)
+  return configured
+}
+
+async function preflightControlExecutionBeforeDaemonStart({
+  homeDir,
+  profileSlug,
   explicitProvider,
   requirements,
   executionMode,
 }: {
-  config: Awaited<ReturnType<typeof readTokenlessConfig>>
-  profile: ManagedProfileRecord
+  homeDir: string
+  profileSlug?: string | undefined
   explicitProvider?: ProviderId | undefined
   requirements: readonly TaskCapabilityId[]
   executionMode: 'browser' | 'direct'
-}): readonly TaskCapabilityRoute[] {
+}) {
+  const [config, registry] = await Promise.all([
+    readTokenlessConfig(homeDir),
+    readManagedProfileRegistryReadOnly(homeDir),
+  ])
+  const slug = profileSlug === undefined
+    ? registry.defaultProfile
+    : normalizeManagedProfileSlug(profileSlug)
+  if (!slug) {
+    throw usageError('profile_not_configured', 'No managed profile was specified and no default profile is configured.')
+  }
+  const profile = registry.profiles[slug]
+  if (!profile || profile.lifecycle === 'removed') {
+    throw usageError('profile_not_found' as LocalizedErrorCode, `Managed profile '${slug}' is not registered.`)
+  }
   const enabledProviders = requiredProfileConfig(config, profile.slug).enabledProviders
   if (explicitProvider && !enabledProviders.includes(explicitProvider)) {
     throw usageError('provider_not_enabled', `Provider '${explicitProvider}' is not enabled for profile '${profile.slug}'.`)
@@ -1179,9 +1218,7 @@ function resolveDaemonJobCapabilityRoutes({
         checkedAt: profile.lastObservedAuth?.[explicitProvider]?.checkedAt ?? null,
         tier: profile.lastObservedAuth?.[explicitProvider]?.account?.tier ?? null,
       }]
-    : providerObservationContext(implicitProviderCandidates(
-        enabledProviders,
-      ), profile)
+    : providerObservationContext(enabledProviders.map(normalizeProvider), profile)
   const decision = resolveTaskCapabilityRoutes({
     requirements,
     executionMode,
@@ -1192,9 +1229,7 @@ function resolveDaemonJobCapabilityRoutes({
       preferenceRank,
     })),
   })
-  if (decision.ok) {
-    return decision.routes
-  }
+  if (decision.ok) return decision.routes
 
   const runtimeProviderUnavailable = !explicitProvider && providers.every((provider) => provider.runtimeEligibility === 'ineligible')
   const providerUnavailable = requirements.length === 0 || runtimeProviderUnavailable
@@ -1205,10 +1240,7 @@ function resolveDaemonJobCapabilityRoutes({
       : decision.message,
   )
   error.context = {
-    profile: {
-      slug: profile.slug,
-      id: profile.id,
-    },
+    profile: { slug: profile.slug, id: profile.id },
     requirements: decision.requirements,
     providers: providerUnavailable ? providers : decision.evaluated,
     usableProviders: explicitProvider
@@ -1221,22 +1253,9 @@ function resolveDaemonJobCapabilityRoutes({
   throw error
 }
 
-function implicitProviderCandidates(enabledProviders: readonly string[]): ProviderId[] {
-  return enabledProviders.map(normalizeProvider)
-}
-
-function requiredProfileConfig(
-  config: Pick<Awaited<ReturnType<typeof readTokenlessConfig>>, 'profiles'>,
-  slug: string,
-) {
-  const configured = config.profiles[slug]
-  if (!configured) throw usageError('profile_not_configured', `Managed profile '${slug}' has no configuration.`)
-  return configured
-}
-
 function providerObservationContext(
   providers: readonly ProviderId[],
-  profile: ManagedProfileRecord,
+  profile: Pick<ManagedProfileRecord, 'lastObservedAuth'>,
 ) {
   return providers.map((provider) => {
     const observed = profile.lastObservedAuth?.[provider]
@@ -1285,7 +1304,6 @@ async function imageGenerationCommand(
   requirements: readonly TaskCapabilityId[],
 ) {
   const homeDir = tokenlessHome(args.home)
-  const config = await readTokenlessConfig(homeDir)
   const executionMode = normalizeExecutionMode(args.executionMode)
   const requestedProvider = String(args.provider || process.env.TOKENLESS_PROVIDER || '').trim().toLowerCase()
   const provider = requestedProvider || 'auto'
@@ -1321,13 +1339,12 @@ async function imageGenerationCommand(
       `The image generation HTTP endpoint does not support: ${unsupportedControls.join(', ')}.`,
     )
   }
-  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
-  const daemon = await ensureDaemonReady({
+  const control = await ensureControlDaemon(
+    args,
     homeDir,
-    daemonUrl: configuredDaemonUrl,
-    timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
-    ...(executionMode === 'browser' && provider !== 'auto' ? { requiredProvider: provider } : {}),
-  })
+    executionMode === 'browser' && provider !== 'auto' ? provider : undefined,
+  )
+  const daemon = control.daemon
   const response = await generateImage({
     homeDir,
     daemonUrl: daemon.url,
@@ -1357,30 +1374,16 @@ async function capabilitiesCommand(subcommand: string | undefined, args: CliArgs
   if (subcommand !== 'list') {
     throw usageError('capabilities_subcommand_required', 'Usage: tokenless capabilities list --json')
   }
-  printPayload({
-    ok: true,
-    schema: TASK_CAPABILITY_CATALOG_SCHEMA_ID,
-    capabilities: listTaskCapabilityDefinitions().map((definition) => {
-      const routes = listProviderTaskCapabilityRoutes(definition.id)
-      return {
-        ...definition,
-        routeable: routes.length > 0,
-        routes,
-      }
-    }),
-  }, args)
+  const homeDir = tokenlessHome(args.home)
+  const control = await ensureControlDaemon(args, homeDir)
+  const catalog = await getControlCapabilities({ homeDir, daemonUrl: control.daemon.url })
+  printPayload({ ok: true, ...catalog }, args)
 }
 
 async function replayCommand(args: CliArgs) {
   const recipient = agentRecipientFromArgs(args, true)
   const homeDir = tokenlessHome(args.home)
-  const config = await readTokenlessConfig(homeDir)
-  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
-  const daemon = await ensureDaemonReady({
-    homeDir,
-    daemonUrl: configuredDaemonUrl,
-    timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
-  })
+  const daemon = (await ensureControlDaemon(args, homeDir)).daemon
   const replay = await drainDaemonReplay({
     homeDir,
     daemonUrl: daemon.url,
@@ -1738,7 +1741,6 @@ async function executeDaemonJob({
   visibleAction?: { action: string; payload: Record<string, unknown> } | undefined
 }) {
   const homeDir = tokenlessHome(args.home)
-  const config = await readTokenlessConfig(homeDir)
   const executionMode = normalizeExecutionMode(args.executionMode)
   const explicitProvider = args.provider || process.env.TOKENLESS_PROVIDER
   const explicitProviderId = explicitProvider ? normalizeProvider(explicitProvider) : undefined
@@ -1752,22 +1754,6 @@ async function executeDaemonJob({
   const explicitProviderControls = explicitProviderId && !visibleAction
     ? resolveProviderControls({ args, provider: explicitProviderId, action, requirements: taskCapabilities })
     : undefined
-  const registry = new ManagedProfileRegistry(homeDir)
-  const profileForTarget = await registry.resolveProfile(args.profile)
-  const capabilityRoutes = resolveDaemonJobCapabilityRoutes({
-    config,
-    profile: profileForTarget,
-    explicitProvider: explicitProviderId,
-    requirements: taskCapabilities,
-    executionMode,
-  })
-  const capabilityRoute = capabilityRoutes[0]
-  if (!capabilityRoute) throw usageError('task_capability_route_unavailable', 'No provider capability route is available.')
-  const provider = capabilityRoute.provider
-  const recordedCapabilityRoute = taskCapabilities.length === 0 ? null : capabilityRoute
-  const providerControls = visibleAction
-    ? {}
-    : explicitProviderControls ?? resolveProviderControls({ args, provider, action, requirements: taskCapabilities })
   const projectName = executionMode === 'direct'
     ? undefined
     : args.projectName || process.env.TOKENLESS_PROJECT_NAME
@@ -1781,15 +1767,63 @@ async function executeDaemonJob({
         chatName,
         idempotencyKey: args.taskId || args.idempotencyKey || process.env.TOKENLESS_TASK_ID || process.env.TOKENLESS_IDEMPOTENCY_KEY,
       })
-  const requestId = visibleRequestId(visibleAction ? (taskId ?? randomUUID()) : (taskId ?? randomUUID()))
-  const managedJobId = managedPlaywrightJobId()
   const workspaceMode = args.workspaceMode === undefined
     ? undefined
     : normalizeWorkspaceMode(args.workspaceMode)
+  const bootstrapDaemonUrl = daemonUrl(args.daemonUrl ?? await readBootstrapDaemonUrl(homeDir) ?? undefined)
+  const ready = await probeDaemonReady({ homeDir, daemonUrl: bootstrapDaemonUrl })
+  if (!ready.ok) {
+    const preflightRoutes = await preflightControlExecutionBeforeDaemonStart({
+      homeDir,
+      profileSlug: args.profile === undefined ? undefined : String(args.profile),
+      explicitProvider: explicitProviderId,
+      requirements: taskCapabilities,
+      executionMode,
+    })
+    const preflightRoute = preflightRoutes[0]
+    if (preflightRoute) {
+      assertManagedProviderTargetArguments({
+        provider: preflightRoute.provider,
+        taskCapabilities,
+        explicitTargetUrl: args.targetUrl,
+        workspaceMode,
+        taskId,
+      })
+    }
+  }
+  const control = await ensureControlDaemon(args, homeDir)
+  const config = control.state.config
+  const routeDecision = await resolveControlExecution({
+    homeDir,
+    daemonUrl: control.daemon.url,
+    profile: args.profile,
+    provider: explicitProviderId,
+    requirements: taskCapabilities,
+    executionMode,
+  })
+  if (!routeDecision.ok || !routeDecision.profile || !routeDecision.routes) {
+    const error = usageError(
+      (routeDecision.code ?? 'task_capability_route_unavailable') as LocalizedErrorCode,
+      routeDecision.message ?? 'No provider capability route is available.',
+    )
+    if (routeDecision.context) error.context = routeDecision.context
+    throw error
+  }
+  const profileForTarget = routeDecision.profile
+  const capabilityRoutes = routeDecision.routes as TaskCapabilityRoute[]
+  const capabilityRoute = capabilityRoutes[0]
+  if (!capabilityRoute) throw usageError('task_capability_route_unavailable', 'No provider capability route is available.')
+  const provider = capabilityRoute.provider
+  const recordedCapabilityRoute = taskCapabilities.length === 0 ? null : capabilityRoute
+  const providerControls = visibleAction
+    ? {}
+    : explicitProviderControls ?? resolveProviderControls({ args, provider, action, requirements: taskCapabilities })
+  const requestId = visibleRequestId(visibleAction ? (taskId ?? randomUUID()) : (taskId ?? randomUUID()))
+  const managedJobId = managedPlaywrightJobId()
   const workspace = visibleAction || workspaceMode === undefined
     ? undefined
     : await workspaceEnsurePayloadFromArgs(args, workspaceMode)
-  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
+  const configuredDaemonUrl = control.daemon.url
   let stagedAttachmentBundleId: string | undefined
   let daemonJobSubmissionStarted = false
 
@@ -2067,11 +2101,15 @@ async function executeManagedPlaywrightJob({
   jobId?: string | undefined
 }) {
   const homeDir = tokenlessHome(args.home)
-  const config = await readTokenlessConfig(homeDir)
+  const control = await ensureControlDaemon(args, homeDir, provider)
+  const config = control.state.config
   const browserVisibility = requiredBrowserVisibility(args.browserVisibility ?? config.browserVisibility)
-  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
   const statusReporter = createCliStatusReporter(args)
-  const profile = await new ManagedProfileRegistry(homeDir).resolveProfile(args.profile)
+  const profile = (await resolveControlProfile({
+    homeDir,
+    daemonUrl: control.daemon.url,
+    profile: args.profile,
+  })).profile
   if (!requiredProfileConfig(config, profile.slug).enabledProviders.includes(normalizeProvider(provider))) {
     throw usageError('provider_not_enabled', `Provider '${provider}' is not enabled for profile '${profile.slug}'.`)
   }
@@ -2095,12 +2133,7 @@ async function executeManagedPlaywrightJob({
         ...(request.pagePolicy === undefined ? {} : { pagePolicy: request.pagePolicy }),
         actions: request.actions,
       })
-  const daemon = await ensureDaemonReady({
-    homeDir,
-    daemonUrl: configuredDaemonUrl,
-    timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
-    requiredProvider: provider,
-  })
+  const daemon = control.daemon
   const actualDaemonUrl = daemon.url
   statusReporter.report({
     event: daemon.started ? 'daemon_started' : 'daemon_ready',
@@ -2109,9 +2142,6 @@ async function executeManagedPlaywrightJob({
     daemonPid: daemon.pid,
     backend: PLAYWRIGHT_EXECUTION_BACKEND,
   })
-  if (args.daemonUrl === undefined && config.daemonUrl !== configuredDaemonUrl) {
-    await writeTokenlessConfig({ homeDir, daemonUrl: configuredDaemonUrl })
-  }
   const runner = await embeddedRunnerStatus({ homeDir, daemonUrl: actualDaemonUrl })
   statusReporter.report({
     event: 'playwright_runner_ready',
@@ -2384,28 +2414,18 @@ function managedVisibleActions({
   return actions
 }
 
-async function managedProviderTarget({
+function assertManagedProviderTargetArguments({
   provider,
   taskCapabilities,
   explicitTargetUrl,
   workspaceMode,
   taskId,
-  projectName,
-  homeDir,
-  daemonUrl,
-  daemonStartTimeoutMs,
-  profileId,
 }: {
   provider: string
   taskCapabilities: readonly TaskCapabilityId[]
   explicitTargetUrl: unknown
   workspaceMode?: string | undefined
   taskId?: string | null | undefined
-  projectName?: string | undefined
-  homeDir: string
-  daemonUrl: string
-  daemonStartTimeoutMs?: number | undefined
-  profileId: string
 }) {
   if (
     provider === 'arena' &&
@@ -2440,6 +2460,40 @@ async function managedProviderTarget({
         'conversation.continue requires a stable task identity.',
       )
     }
+  }
+}
+
+async function managedProviderTarget({
+  provider,
+  taskCapabilities,
+  explicitTargetUrl,
+  workspaceMode,
+  taskId,
+  projectName,
+  homeDir,
+  daemonUrl,
+  daemonStartTimeoutMs,
+  profileId,
+}: {
+  provider: string
+  taskCapabilities: readonly TaskCapabilityId[]
+  explicitTargetUrl: unknown
+  workspaceMode?: string | undefined
+  taskId?: string | null | undefined
+  projectName?: string | undefined
+  homeDir: string
+  daemonUrl: string
+  daemonStartTimeoutMs?: number | undefined
+  profileId: string
+}) {
+  assertManagedProviderTargetArguments({
+    provider,
+    taskCapabilities,
+    explicitTargetUrl,
+    workspaceMode,
+    taskId,
+  })
+  if (taskCapabilities.includes(TASK_CAPABILITIES.CONVERSATION_CONTINUE)) {
     const daemon = await ensureDaemonReady({
       homeDir,
       daemonUrl,
@@ -2451,7 +2505,7 @@ async function managedProviderTarget({
       daemonUrl: daemon.url,
       provider,
       profileId,
-      taskId,
+      taskId: taskId!,
     })
     const mapped = resolved.mapping?.canonical_url
     if (!mapped) {
@@ -2550,13 +2604,9 @@ function visibleRequestId(value: string) {
 
 async function stateCommand(args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
-  const config = await readTokenlessConfig(homeDir)
-  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
-  const daemon = await ensureDaemonReady({
-    homeDir,
-    daemonUrl: configuredDaemonUrl,
-    timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
-  })
+  const control = await ensureControlDaemon(args, homeDir)
+  const config = control.state.config
+  const daemon = control.daemon
   const actualDaemonUrl = daemon.url
   const requestedTaskId = args.taskId || args.idempotencyKey || (args.jobId ? undefined : deriveTaskId({
     projectName: args.projectName || process.env.TOKENLESS_PROJECT_NAME,
@@ -2568,13 +2618,12 @@ async function stateCommand(args: CliArgs) {
     }
   }
   const explicitProviderValue = args.provider || process.env.TOKENLESS_PROVIDER
-  const registry = new ManagedProfileRegistry(homeDir)
   const daemonJobs = args.jobId
     ? [await getDaemonJob({ daemonUrl: actualDaemonUrl, homeDir, jobId: args.jobId })]
     : null
   const profile = daemonJobs
-    ? await resolveProfileForDaemonJob(registry, daemonJobs[0]!, args.profile)
-    : await registry.resolveProfile(args.profile)
+    ? await resolveProfileForDaemonJob(control.state.profiles, daemonJobs[0]!, args.profile)
+    : (await resolveControlProfile({ homeDir, daemonUrl: actualDaemonUrl, profile: args.profile })).profile
   const providerValue = explicitProviderValue || (args.jobId
     ? undefined
     : requiredProfileConfig(config, profile.slug).enabledProviders[0] || defaultVisibleProviderId())
@@ -2635,16 +2684,14 @@ async function limitsCommand(subcommand: string | undefined, args: CliArgs) {
   if (subcommand !== 'inspect') throw usageError('invalid_limits_command', 'Usage: tokenless limits inspect --profile <slug> --provider <provider> --json')
   const homeDir = tokenlessHome(args.home)
   const provider = normalizeProvider(requiredAdminValue(args.provider, '--provider'))
-  const registry = new ManagedProfileRegistry(homeDir)
-  const profile = await registry.resolveProfile(args.profile)
-  const observation = profile.lastObservedAuth[provider]
-  const config = await readTokenlessConfig(homeDir)
-  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
-  const daemon = await ensureDaemonReady({
+  const control = await ensureControlDaemon(args, homeDir)
+  const profile = (await resolveControlProfile({
     homeDir,
-    daemonUrl: configuredDaemonUrl,
-    timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
-  })
+    daemonUrl: control.daemon.url,
+    profile: args.profile,
+  })).profile
+  const observation = profile.lastObservedAuth[provider]
+  const daemon = control.daemon
   const capacity = await getProviderCapacity({
     homeDir,
     daemonUrl: daemon.url,
@@ -2664,7 +2711,7 @@ async function limitsCommand(subcommand: string | undefined, args: CliArgs) {
 }
 
 async function resolveProfileForDaemonJob(
-  registry: ManagedProfileRegistry,
+  profiles: Array<Pick<ManagedProfileRecord, 'slug' | 'id' | 'lifecycle' | 'createdAt' | 'updatedAt' | 'lastObservedAuth'>>,
   job: Awaited<ReturnType<typeof getDaemonJob>>,
   requestedProfile: string | undefined
 ) {
@@ -2672,13 +2719,16 @@ async function resolveProfileForDaemonJob(
     throw usageError('task_state_profile_not_found', 'The daemon job does not have a managed Playwright profile.')
   }
   if (requestedProfile !== undefined) {
-    const explicitProfile = await registry.resolveProfile(requestedProfile)
+    const explicitProfile = profiles.find((candidate) => candidate.slug === requestedProfile)
+    if (!explicitProfile) {
+      throw usageError('task_state_profile_not_found', 'The managed profile for this Tokenless job is not available.')
+    }
     if (explicitProfile.id !== job.profile_id) {
       throw usageError('task_state_not_found', `No daemon-backed Tokenless task state found for ${job.job_id}.`)
     }
     return explicitProfile
   }
-  const profile = (await registry.listProfiles()).find((candidate) => candidate.id === job.profile_id)
+  const profile = profiles.find((candidate) => candidate.id === job.profile_id)
   if (!profile) {
     throw usageError('task_state_profile_not_found', 'The managed profile for this Tokenless job is not available.')
   }
@@ -2694,20 +2744,14 @@ async function resumeCommand(args: CliArgs) {
     throw usageError('invalid_resume_browser_visibility', 'tokenless resume requires --browser-visibility headed.')
   }
   const homeDir = tokenlessHome(args.home)
-  const config = await readTokenlessConfig(homeDir)
-  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
-  const daemon = await ensureDaemonReady({
-    homeDir,
-    daemonUrl: configuredDaemonUrl,
-    timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
-  })
+  const control = await ensureControlDaemon(args, homeDir)
+  const daemon = control.daemon
   const actualDaemonUrl = daemon.url
   const existing = await getDaemonJob({ homeDir, daemonUrl: actualDaemonUrl, jobId: args.jobId })
   if (existing.execution_backend !== PLAYWRIGHT_EXECUTION_BACKEND || !existing.profile_id) {
     throw usageError('invalid_resume_job', 'tokenless resume accepts only a managed Playwright job with a profile.')
   }
-  const registry = new ManagedProfileRegistry(homeDir)
-  const profile = (await registry.listProfiles()).find((candidate) => candidate.id === existing.profile_id)
+  const profile = control.state.profiles.find((candidate) => candidate.id === existing.profile_id)
   if (!profile) throw usageError('resume_profile_not_found', 'The managed profile for this Tokenless job is not available.')
 
   const runner = await embeddedRunnerStatus({ homeDir, daemonUrl: actualDaemonUrl })
@@ -2766,13 +2810,7 @@ async function resumeCommand(args: CliArgs) {
 async function cancelCommand(args: CliArgs) {
   if (!args.jobId) throw usageError('missing_job_id', 'Usage: tokenless cancel --job-id <job-id>.')
   const homeDir = tokenlessHome(args.home)
-  const config = await readTokenlessConfig(homeDir)
-  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
-  const daemon = await ensureDaemonReady({
-    homeDir,
-    daemonUrl: configuredDaemonUrl,
-    timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
-  })
+  const daemon = (await ensureControlDaemon(args, homeDir)).daemon
   const actualDaemonUrl = daemon.url
   let job: Record<string, any>
   try {
@@ -2810,8 +2848,7 @@ async function cancelCommand(args: CliArgs) {
 
 async function daemonCommand(subcommand: string | undefined, args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
-  const config = await readTokenlessConfig(homeDir)
-  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
+  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? await readBootstrapDaemonUrl(homeDir) ?? undefined)
   const result = await stopDaemon({
     homeDir,
     daemonUrl: configuredDaemonUrl,
@@ -2822,14 +2859,8 @@ async function daemonCommand(subcommand: string | undefined, args: CliArgs) {
 
 async function agentCommand(subcommand: string | undefined, args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
-  const config = await readTokenlessConfig(homeDir)
-  const ready = await ensureDaemonReady({
-    homeDir,
-    daemonUrl: daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined),
-    timeoutMs: args.daemonStartTimeoutMs === undefined
-      ? undefined
-      : strictPositiveInteger(args.daemonStartTimeoutMs, '--daemon-start-timeout-ms'),
-  })
+  const control = await ensureControlDaemon(args, homeDir)
+  const ready = control.daemon
   const client = {
     homeDir,
     daemonUrl: ready.url,
@@ -2838,7 +2869,11 @@ async function agentCommand(subcommand: string | undefined, args: CliArgs) {
 
   if (subcommand === 'run') {
     const provider = requiredAdminValue(args.provider, '--provider')
-    const profile = await new ManagedProfileRegistry(homeDir).resolveProfile(args.profile)
+    const profile = (await resolveControlProfile({
+      homeDir,
+      daemonUrl: ready.url,
+      profile: args.profile,
+    })).profile
     const taskPrompt = await agentTaskPrompt(args)
     const mcpServers = args.mcpConfig === undefined ? undefined : await readAgentMcpServers(String(args.mcpConfig))
     const admissionRef = agentAdmissionRef(args.admissionRef)
@@ -3990,7 +4025,8 @@ function profileRuntimeMatches(profile: ManagedProfileRecord, runtime: ResolvedB
   const binding = profile.runtimeBinding
   return binding?.runtimeId === runtime.runtimeId &&
     binding.family === runtime.family &&
-    binding.browserId === runtime.browserId
+    binding.browserId === runtime.browserId &&
+    binding.executablePath === runtime.executablePath
 }
 
 function availableRuntimeProfileSlug(browserId: string, existing: readonly ManagedProfileRecord[]) {
@@ -4009,6 +4045,7 @@ function browserRuntimeBinding(runtime: ResolvedBrowserRuntime) {
     runtimeId: runtime.runtimeId,
     family: runtime.family,
     browserId: runtime.browserId,
+    executablePath: runtime.executablePath,
     createdWithVersion: runtime.actualVersion,
     profileFormat: 1 as const,
   }
@@ -4122,7 +4159,7 @@ async function selectSetupProviders({
   }
   if (!prompt) {
     const configuredScope = await setupConfiguredProviderScope({ args, config, homeDir })
-    const configured = configuredScope.filter((provider): provider is ProviderId => available.includes(provider as ProviderId))
+    const configured = configuredScope.filter((provider: unknown): provider is ProviderId => available.includes(provider as ProviderId))
     const providers = requireSetupProviders(configured)
     presenter.success(`Checking providers: ${providers.join(', ')}.`)
     return providers
@@ -4691,6 +4728,10 @@ async function readManagedProfileReadOnly(homeDir: string) {
 
 async function configCommand(args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
+  const control = await ensureControlDaemon(
+    args.daemonUrl === undefined ? args : { ...args, daemonUrl: undefined },
+    homeDir,
+  )
   if (args.profile !== undefined) {
     if (
       args.browser !== undefined ||
@@ -4701,8 +4742,13 @@ async function configCommand(args: CliArgs) {
     ) {
       throw usageError('profile_config_scope_invalid', '--profile can scope only provider membership and headed browser visibility.')
     }
-    const profile = await new ManagedProfileRegistry(homeDir).resolveProfile(String(args.profile))
-    const current = await readTokenlessConfig(homeDir)
+    const resolved = await resolveControlProfile({
+      homeDir,
+      daemonUrl: control.daemon.url,
+      profile: String(args.profile),
+    })
+    const profile = resolved.profile
+    const current = resolved.config
     const existing = requiredProfileConfig(current, profile.slug)
     const browserVisibility = args.browserVisibility === undefined
       ? 'headed'
@@ -4710,10 +4756,11 @@ async function configCommand(args: CliArgs) {
     if (browserVisibility !== 'headed') {
       throw usageError('native_chrome_headless_unsupported', 'Native Chrome supports headed mode only.')
     }
-    const config = await upsertTokenlessProfileConfig({
+    const updated = await updateControlProfileConfig({
       homeDir,
-      slug: profile.slug,
-      profile: {
+      daemonUrl: control.daemon.url,
+      profile: profile.slug,
+      config: {
         ...existing,
         enabledProviders: args.providerWhitelist === undefined
           ? existing.enabledProviders
@@ -4722,6 +4769,7 @@ async function configCommand(args: CliArgs) {
         proxy: null,
       },
     })
+    const config = updated.config
     printPayload({
       ok: true,
       configPath: `${homeDir}/config.json`,
@@ -4741,7 +4789,7 @@ async function configCommand(args: CliArgs) {
     args.daemonUrl !== undefined ||
     args.language !== undefined
   ) {
-    const current = await readTokenlessConfig(homeDir)
+    const current = control.state.config
     const requestedBrowser = args.browser === undefined ? current.browser : normalizeCliBrowser(args.browser)
     if (requestedBrowser !== 'chrome' && requestedBrowser !== 'brave') {
       throw usageError('native_chrome_required', 'Tokenless native mode supports a running Google Chrome or Brave Browser.')
@@ -4763,27 +4811,26 @@ async function configCommand(args: CliArgs) {
     if (args.clearBrowserExecutablePath === true) {
       browserExecutablePath = null
     } else if (args.browserExecutablePath !== undefined) {
-      const runtime = await new BrowserRuntimeManager({ homeDir }).ensure(requestedBrowser, {
-        allowDownload: false,
-        browserExecutablePath: String(args.browserExecutablePath),
-      })
-      browserExecutablePath = runtime.executablePath
+      browserExecutablePath = String(args.browserExecutablePath)
     } else if (args.browser !== undefined && requestedBrowser !== current.browser) {
       browserExecutablePath = null
     }
-    const config = await writeTokenlessConfig({
+    const config = await updateControlConfig({
       homeDir,
-      browser: requestedBrowser,
-      browserExecutablePath,
-      browserVisibility: 'headed',
-      daemonUrl: args.daemonUrl === undefined ? undefined : daemonUrl(args.daemonUrl),
-      language: args.language,
+      daemonUrl: control.daemon.url,
+      config: {
+        browser: requestedBrowser,
+        browserExecutablePath,
+        browserVisibility: 'headed',
+        daemonUrl: args.daemonUrl === undefined ? undefined : daemonUrl(args.daemonUrl),
+        language: args.language,
+      },
     })
     setActiveLanguage(config.language)
     printPayload({ ok: true, configPath: `${homeDir}/config.json`, config }, args)
     return
   }
-  const config = await readTokenlessConfig(homeDir)
+  const config = control.state.config
   printPayload({ ok: true, configPath: `${homeDir}/config.json`, config }, args)
 }
 
@@ -4805,21 +4852,13 @@ async function promptCommand(args: CliArgs) {
 
 async function savingsCommand(subcommand: string | undefined, args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
-  const manager = new OutputSavingsRuntimeManager(homeDir)
-  if (subcommand === 'enable') {
-    await manager.ensureInstalled()
-    await writeTokenlessConfig({ homeDir, outputSavings: { enabled: true } })
-  } else if (subcommand === 'disable') {
-    await writeTokenlessConfig({ homeDir, outputSavings: { enabled: false } })
-  } else if (subcommand === 'uninstall') {
+  if (subcommand === 'uninstall') {
     if (args.confirmDelete !== true) {
       throw usageError(
         'output_savings_uninstall_confirmation_required',
         'Output savings runtime removal requires --confirm-delete.',
       )
     }
-    await writeTokenlessConfig({ homeDir, outputSavings: { enabled: false } })
-    await manager.remove()
   } else if (subcommand === 'clear') {
     if (args.confirmDelete !== true) {
       throw usageError(
@@ -4827,63 +4866,47 @@ async function savingsCommand(subcommand: string | undefined, args: CliArgs) {
         'Output savings history removal requires --confirm-delete.',
       )
     }
-  } else if (subcommand !== 'status') {
+  } else if (subcommand !== 'status' && subcommand !== 'enable' && subcommand !== 'disable') {
     throw usageError('invalid_savings_command', 'Usage: tokenless savings <status|enable|disable|uninstall|clear> --json')
   }
-  const store = await JobStore.open(homeDir)
-  let summary
-  let cleared: number | undefined
-  try {
-    if (subcommand === 'disable' || subcommand === 'uninstall') {
-      store.discardOutputSavingsWork()
-    }
-    if (subcommand === 'clear') cleared = store.clearOutputSavings().cleared
-    summary = store.reconcileOutputSavings()
-  } finally {
-    store.close()
-  }
-  const [config, runtime] = await Promise.all([
-    readTokenlessConfig(homeDir),
-    manager.inspect(),
-  ])
+  const control = await ensureControlDaemon(args, homeDir)
+  const state = await updateOutputSavings({
+    homeDir,
+    daemonUrl: control.daemon.url,
+    action: subcommand,
+  })
+  const { basis: _basis, ...outputSavings } = state
   printPayload({
     ok: true,
-    outputSavings: {
-      enabled: config.outputSavings.enabled,
-      collection: config.outputSavings.enabled
-        ? runtime.state === 'ready' ? 'enabled' : 'unavailable'
-        : 'disabled',
-      estimator: OUTPUT_SAVINGS_ESTIMATOR,
-      runtime,
-      summary,
-      ...(cleared === undefined ? {} : { cleared }),
-    },
+    outputSavings,
   }, args)
 }
 
 async function apiProxyCommand(subcommand: string | undefined, args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
+  const control = await ensureControlDaemon(args, homeDir)
+  let config = control.state.config
   if (subcommand === 'enable') {
-    const current = await readTokenlessConfig(homeDir)
-    await writeTokenlessConfig({
+    config = await updateControlConfig({
       homeDir,
-      apiProxy: {
-        enabled: true,
-        conversationMode: args.conversationMode === undefined
-          ? current.apiProxy.conversationMode
-          : requiredApiProxyConversationMode(args.conversationMode),
-        executionMode: current.apiProxy.executionMode,
-      },
+      daemonUrl: control.daemon.url,
+      config: { apiProxy: {
+          enabled: true,
+          conversationMode: args.conversationMode === undefined
+            ? config.apiProxy.conversationMode
+            : requiredApiProxyConversationMode(args.conversationMode),
+          executionMode: config.apiProxy.executionMode,
+        } },
     })
   } else if (subcommand === 'disable') {
-    const current = await readTokenlessConfig(homeDir)
-    await writeTokenlessConfig({
+    config = await updateControlConfig({
       homeDir,
-      apiProxy: {
-        enabled: false,
-        conversationMode: current.apiProxy.conversationMode,
-        executionMode: current.apiProxy.executionMode,
-      },
+      daemonUrl: control.daemon.url,
+      config: { apiProxy: {
+          enabled: false,
+          conversationMode: config.apiProxy.conversationMode,
+          executionMode: config.apiProxy.executionMode,
+        } },
     })
   } else if (subcommand !== 'status') {
     throw usageError(
@@ -4891,12 +4914,15 @@ async function apiProxyCommand(subcommand: string | undefined, args: CliArgs) {
       'Usage: tokenless api-proxy <status|enable|disable> [--conversation-mode <new-conversation|continue-conversation>] --json',
     )
   }
-  const config = await readTokenlessConfig(homeDir)
   const baseUrl = config.daemonUrl ?? DEFAULT_DAEMON_URL
   // Provider enablement is per managed profile, so report the profile the proxy
   // will actually resolve rather than an installation-wide list.
-  const profile = await new ManagedProfileRegistry(homeDir)
-    .resolveProfile(args.profile === undefined ? undefined : String(args.profile))
+  const profile = await resolveControlProfile({
+      homeDir,
+      daemonUrl: control.daemon.url,
+      profile: args.profile === undefined ? undefined : String(args.profile),
+    })
+    .then((result) => result.profile)
     .catch(() => null)
   printPayload({
     ok: true,
@@ -4937,13 +4963,13 @@ async function promptFromArgs(args: CliArgs) {
   const turnContext = args.contextFile || args.turnContextFile
     ? await fs.readFile(args.contextFile || args.turnContextFile, 'utf8')
     : args.context
-  const config = await readTokenlessConfig(tokenlessHome(args.home))
+  const language = await readBootstrapLanguage(tokenlessHome(args.home)) ?? 'en'
   return buildTokenlessPrompt({
     userPrompt,
     projectRoot: args.projectRoot,
     files: args.files,
     turnContext,
-    responseLanguage: config.language,
+    responseLanguage: language,
   })
 }
 
@@ -7163,11 +7189,12 @@ async function initializeCliLanguage(argv: string[]) {
     : undefined
   const homeDir = tokenlessHome(explicitHome)
   try {
-    if (!await hasConfiguredTokenlessLanguage(homeDir)) {
+    const language = await readBootstrapLanguage(homeDir)
+    if (!language) {
       setActiveLanguage(detectSystemLanguage())
       return
     }
-    setActiveLanguage((await readTokenlessConfig(homeDir, { persistMigrations: false })).language)
+    setActiveLanguage(language)
   } catch {
     setActiveLanguage(detectSystemLanguage())
   }

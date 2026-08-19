@@ -56,9 +56,13 @@ export class OutputSavingsProcessor {
   }
 
   async discardPending() {
+    const interruptedMeasurement = this.activeController !== undefined
     this.activeController?.abort()
     const discarded = this.store.discardOutputSavingsWork()
     await this.drainPromise?.catch(() => undefined)
+    if (interruptedMeasurement && (await this.runtimeManager.inspect()).state !== 'ready') {
+      await this.runtimeManager.remove()
+    }
     return discarded
   }
 

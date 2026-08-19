@@ -1,7 +1,7 @@
 import path from 'node:path'
 
 import { daemonUrl, issueFeatureBenchChannel } from '../../http/daemon-client.js'
-import { tokenlessHome, readTokenlessConfig } from '#tokenless-server/persistence/config.js'
+import { readBootstrapDaemonUrl, tokenlessHome } from '../../bootstrap/home.js'
 import { ensureDaemonReady } from '../../bootstrap/runtime.js'
 import { runFeatureBenchAgent } from './agent-runtime.js'
 import {
@@ -37,8 +37,7 @@ export async function featureBenchCommand(subcommand: string | undefined, args: 
   }
   if (subcommand === 'issue-channel') {
     const homeDir = tokenlessHome(optionalString(args.home))
-    const config = await readTokenlessConfig(homeDir)
-    const configuredUrl = daemonUrl(optionalString(args.daemonUrl) ?? config.daemonUrl ?? undefined)
+    const configuredUrl = daemonUrl(optionalString(args.daemonUrl) ?? await readBootstrapDaemonUrl(homeDir) ?? undefined)
     const daemon = await ensureDaemonReady({
       homeDir,
       daemonUrl: configuredUrl,

@@ -23,11 +23,15 @@ import {
   listProviderInstances,
   listProviderTaskCapabilityRoutes,
   listTaskCapabilityDefinitions,
+  normalizeTaskCapabilityRequirements,
+  resolveTaskCapabilityRoutes,
+  TASK_CAPABILITY_CATALOG_SCHEMA_ID,
   type ProviderAccessClass,
   type ProviderId,
 } from '../providers/registry.js'
 import {
   ManagedProfileRegistry,
+  type ProviderStatus,
   type ManagedProfileRecord,
 } from '../browser/profiles/registry.js'
 import {
@@ -195,6 +199,281 @@ export class TokenlessApplicationServices {
     )
   }
 
+  async controlState() {
+    const [config, registry, outputSavings] = await Promise.all([
+      this.migratedConfig(),
+      this.profiles.read(),
+      this.outputSavingsState(),
+    ])
+    return {
+      config,
+      profiles: Object.values(registry.profiles)
+        .filter((profile) => profile.lifecycle !== 'removed')
+        .sort((left, right) => left.slug.localeCompare(right.slug)),
+      defaultProfile: registry.defaultProfile,
+      profileRegistryPath: this.profiles.paths.registryFile,
+      runtime: this.runtimeController?.status() ?? {
+        status: 'stopped' as const,
+        activeProfileCount: 0,
+        activeJobCount: 0,
+        pid: process.pid,
+      },
+      outputSavings,
+    }
+  }
+
+  async resolveControlProfile(slug?: string) {
+    const [profile, registry, config] = await Promise.all([
+      this.profiles.resolveProfile(slug),
+      this.profiles.read(),
+      this.migratedConfig(),
+    ])
+    return {
+      profile,
+      defaultProfile: registry.defaultProfile,
+      config,
+    }
+  }
+
+  controlCapabilities() {
+    return {
+      schema: TASK_CAPABILITY_CATALOG_SCHEMA_ID,
+      capabilities: listTaskCapabilityDefinitions().map((definition) => {
+        const routes = listProviderTaskCapabilityRoutes(definition.id)
+        return {
+          ...definition,
+          routeable: routes.length > 0,
+          routes,
+        }
+      }),
+    }
+  }
+
+  async resolveControlExecution(input: {
+    profile?: string
+    provider?: string
+    requirements: string[]
+    executionMode: 'browser' | 'direct'
+  }) {
+    requireKnownFields(input, ['profile', 'provider', 'requirements', 'executionMode'])
+    const requirements = normalizeTaskCapabilityRequirements(input.requirements)
+    const profile = await this.profiles.resolveProfile(input.profile)
+    const config = await this.migratedConfig()
+    const configured = profileConfig(config, profile.slug)
+    const explicitProvider = input.provider === undefined
+      ? undefined
+      : listProviderDescriptors().find((candidate) => candidate.id === input.provider)?.id
+    if (input.provider !== undefined && explicitProvider === undefined) {
+      return {
+        ok: false as const,
+        code: 'provider_not_supported',
+        message: `Unsupported provider: ${input.provider}`,
+        context: { provider: input.provider },
+      }
+    }
+    if (explicitProvider && !configured.enabledProviders.includes(explicitProvider)) {
+      return {
+        ok: false as const,
+        code: 'provider_not_enabled',
+        message: `Provider '${explicitProvider}' is not enabled for profile '${profile.slug}'.`,
+        context: { profile: { slug: profile.slug, id: profile.id }, provider: explicitProvider },
+      }
+    }
+    const candidates = explicitProvider
+      ? [{
+          provider: explicitProvider,
+          observed: profile.lastObservedAuth[explicitProvider] !== undefined,
+          usable: true,
+          runtimeEligibility: 'unchecked' as const,
+          auth: profile.lastObservedAuth[explicitProvider]?.auth ?? 'unknown',
+          access: profile.lastObservedAuth[explicitProvider]?.access ?? 'unknown',
+          checkedAt: profile.lastObservedAuth[explicitProvider]?.checkedAt ?? null,
+          tier: profile.lastObservedAuth[explicitProvider]?.account?.tier ?? null,
+        }]
+      : configured.enabledProviders.map((provider) => controlProviderObservation(profile, provider as ProviderId))
+    const decision = resolveTaskCapabilityRoutes({
+      requirements,
+      executionMode: input.executionMode,
+      candidates: candidates.map((provider, preferenceRank) => ({
+        provider: provider.provider,
+        runtimeEligibility: explicitProvider ? 'unchecked' : provider.runtimeEligibility,
+        reason: provider.usable ? null : `provider_access_${provider.access}`,
+        preferenceRank,
+      })),
+    })
+    if (decision.ok) {
+      return { ok: true as const, profile, routes: decision.routes }
+    }
+    const runtimeProviderUnavailable = !explicitProvider && candidates.every((provider) => provider.runtimeEligibility === 'ineligible')
+    const providerUnavailable = requirements.length === 0 || runtimeProviderUnavailable
+    return {
+      ok: false as const,
+      code: providerUnavailable ? 'provider_unavailable' : decision.code,
+      message: providerUnavailable
+        ? `No configured provider is currently usable for profile '${profile.slug}'. Run "tokenless setup" or sign in to a provider, then rerun the command.`
+        : decision.message,
+      context: {
+        profile: { slug: profile.slug, id: profile.id },
+        requirements: decision.requirements,
+        providers: providerUnavailable ? candidates : decision.evaluated,
+        usableProviders: explicitProvider
+          ? []
+          : candidates.filter((provider) => provider.usable).map((provider) => provider.provider),
+        nextAction: providerUnavailable
+          ? 'Run "tokenless setup" to refresh provider access observations, or pass --provider to target a provider explicitly.'
+          : 'Choose a provider scope with an evidence-backed route, remove unsupported capabilities, or complete the required real-provider E2E closure.',
+      },
+    }
+  }
+
+  async addControlProfile(input: {
+    slug: string
+    setDefault?: boolean
+    browser?: string | null
+    providerWhitelist?: string[]
+  }) {
+    requireKnownFields(input, ['slug', 'setDefault', 'browser', 'providerWhitelist'])
+    const browser = input.browser === undefined ? null : input.browser
+    let runtimeBinding
+    if (browser !== null) {
+      const selection = normalizeBrowserSelection(browser)
+      if (selection !== 'managed-chromium' && selection !== 'cloak') {
+        throw applicationError(
+          'profile_managed_browser_required',
+          'Profiles add supports managed-chromium or cloak when a browser is specified.',
+        )
+      }
+      const runtime = await this.runtimeManager.ensure(selection, { allowDownload: false })
+      runtimeBinding = {
+        runtimeId: runtime.runtimeId,
+        family: runtime.family,
+        browserId: runtime.browserId,
+        executablePath: runtime.executablePath,
+        createdWithVersion: runtime.actualVersion,
+        profileFormat: 1 as const,
+      }
+    }
+    const profile = await this.profiles.addProfile({
+      slug: input.slug,
+      setDefault: input.setDefault === true,
+      lifecycle: 'ready',
+      ...(runtimeBinding === undefined ? {} : { runtimeBinding }),
+    })
+    const config = await this.migratedConfig()
+    const configured = config.profiles[profile.slug]
+    if (!configured) {
+      throw applicationError('profile_not_configured', `Managed profile '${profile.slug}' has no configuration.`)
+    }
+    if (input.providerWhitelist !== undefined) {
+      await upsertTokenlessProfileConfig({
+        homeDir: this.store.homeDir,
+        slug: profile.slug,
+        profile: { ...configured, enabledProviders: input.providerWhitelist },
+      })
+    }
+    return {
+      profile,
+      defaultProfile: (await this.profiles.read()).defaultProfile,
+    }
+  }
+
+  async clearControlProfiles(input: { profile?: string; all?: boolean }) {
+    requireKnownFields(input, ['profile', 'all'])
+    const clearAll = input.all === true
+    if (clearAll === (input.profile !== undefined)) {
+      throw applicationError('profile_clear_target_required', 'Exactly one profile or all profiles must be selected.')
+    }
+    if (this.runtimeController?.status().activeJobCount) {
+      throw applicationError('profile_mutation_unsafe', 'A profile cannot be removed while browser jobs are active.')
+    }
+    await this.runtimeController?.quiesce()
+    const targets = clearAll
+      ? await this.profiles.listProfiles()
+      : [await this.profiles.resolveProfile(input.profile)]
+    const cleared = []
+    for (const profile of targets) {
+      const removed = await this.profiles.removeProfile(profile.slug, { confirmDelete: true })
+      await deleteTokenlessProfileConfig({ homeDir: this.store.homeDir, slug: profile.slug })
+      cleared.push({ slug: removed.slug, id: removed.id })
+    }
+    return {
+      cleared,
+      defaultProfile: (await this.profiles.read()).defaultProfile,
+    }
+  }
+
+  async setDefaultControlProfile(slug: string) {
+    const profile = await this.profiles.setDefault(slug)
+    return { profile, defaultProfile: profile.slug }
+  }
+
+  async removeControlProfile(slug: string) {
+    if (this.runtimeController?.status().activeJobCount) {
+      throw applicationError('profile_mutation_unsafe', 'A profile cannot be removed while browser jobs are active.')
+    }
+    await this.runtimeController?.quiesce()
+    const profile = await this.profiles.removeProfile(slug, { confirmDelete: true })
+    await deleteTokenlessProfileConfig({ homeDir: this.store.homeDir, slug })
+    return { profile, defaultProfile: (await this.profiles.read()).defaultProfile }
+  }
+
+  async updateControlProfileObservation(slug: string, input: ProviderStatus) {
+    requireKnownFields(input, ['provider', 'auth', 'access', 'checkedAt', 'account'])
+    const profile = await this.profiles.updateProviderStatus(slug, input)
+    return { profile, defaultProfile: (await this.profiles.read()).defaultProfile }
+  }
+
+  async updateControlProfileConfig(slug: string, input: ManagedProfileConfig) {
+    await this.profiles.resolveProfile(slug)
+    const config = await upsertTokenlessProfileConfig({
+      homeDir: this.store.homeDir,
+      slug,
+      profile: input,
+    })
+    return { config, profile: config.profiles[slug] }
+  }
+
+  async updateControlConfig(input: Record<string, unknown>) {
+    requireKnownFields(input, [
+      'browser',
+      'browserExecutablePath',
+      'browserVisibility',
+      'daemonUrl',
+      'language',
+      'outputSavings',
+      'apiProxy',
+      'g4f',
+      'directProvider',
+      'router',
+    ])
+    let browserExecutablePath = input.browserExecutablePath
+    if (typeof browserExecutablePath === 'string') {
+      const current = await this.migratedConfig()
+      const browser = normalizeBrowserSelection(input.browser ?? current.browser)
+      if (browser !== 'chrome' && browser !== 'brave') {
+        throw applicationError('native_chrome_required', 'Tokenless native mode supports Google Chrome or Brave Browser.')
+      }
+      const runtime = await this.runtimeManager.ensure(browser, {
+        allowDownload: false,
+        browserExecutablePath,
+      })
+      browserExecutablePath = runtime.executablePath
+    }
+    return await writeTokenlessConfig({
+      homeDir: this.store.homeDir,
+      browser: input.browser,
+      browserExecutablePath,
+      browserVisibility: input.browserVisibility,
+      daemonUrl: input.daemonUrl,
+      language: input.language,
+      outputSavings: input.outputSavings,
+      apiProxy: input.apiProxy,
+      g4f: input.g4f,
+      directProvider: input.directProvider,
+      router: input.router,
+    })
+  }
+
   async enableOutputSavings(): Promise<UiOutputSavingsState> {
     await this.outputSavingsRuntimeManager.ensureInstalled()
     const config = await writeTokenlessConfig({
@@ -202,6 +481,23 @@ export class TokenlessApplicationServices {
       outputSavings: { enabled: true },
     })
     return await this.outputSavingsState(config)
+  }
+
+  async controlOutputSavingsState() {
+    this.store.reconcileOutputSavings()
+    const config = await this.migratedConfig()
+    const runtime = await this.outputSavingsRuntimeManager.inspect()
+    const state = {
+      enabled: config.outputSavings.enabled,
+      collection: config.outputSavings.enabled
+        ? runtime.state === 'ready' ? 'enabled' as const : 'unavailable' as const
+        : 'disabled' as const,
+      estimator: OUTPUT_SAVINGS_ESTIMATOR,
+      runtime,
+      summary: this.store.outputSavingsSummary(),
+    }
+    this.outputSavingsProcessor?.wake()
+    return state
   }
 
   async disableOutputSavings(): Promise<UiOutputSavingsState> {
@@ -717,6 +1013,25 @@ function providerProfileState(
       support: route.support,
     })),
     controls: latestProviderControls(jobs, profile.id, provider),
+  }
+}
+
+function controlProviderObservation(profile: ManagedProfileRecord, provider: ProviderId) {
+  const observed = profile.lastObservedAuth[provider]
+  const access = observed?.access ?? (observed?.auth === 'authenticated' ? 'signed_in_unknown' : 'unknown')
+  const usable = access === 'guest' || access.startsWith('signed_in_')
+  const checkedAt = observed?.checkedAt ?? null
+  const checkedAtMs = checkedAt === null ? Number.NaN : Date.parse(checkedAt)
+  const fresh = Number.isFinite(checkedAtMs) && Date.now() - checkedAtMs <= 5 * 60 * 1000
+  return {
+    provider,
+    observed: observed !== undefined,
+    usable,
+    runtimeEligibility: usable ? (fresh ? 'eligible' as const : 'unchecked' as const) : 'ineligible' as const,
+    auth: observed?.auth ?? 'unknown',
+    access,
+    checkedAt,
+    tier: observed?.account?.tier ?? null,
   }
 }
 

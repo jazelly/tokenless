@@ -117,7 +117,7 @@ export class BrowserRuntimeManager {
     if (selection === 'auto') {
       return await this.ensureManagedRuntime('managed-chromium', platform, options)
     }
-    if (selection === 'profile') return await this.resolveTestProfile(platform)
+    if (selection === 'profile') return await this.resolveTestProfile(platform, options.browserExecutablePath)
     if (isSystemBrowserId(selection)) {
       return await this.requireSystemBrowser(selection, platform, options.browserExecutablePath)
     }
@@ -136,11 +136,20 @@ export class BrowserRuntimeManager {
       )
     }
     const selection = selectionForBinding(binding)
-    const runtime = await this.ensure(selection, { ...options, allowDownload: false })
-    if (runtime.runtimeId !== binding.runtimeId || runtime.family !== binding.family || runtime.browserId !== binding.browserId) {
+    const runtime = await this.ensure(selection, {
+      ...options,
+      allowDownload: false,
+      ...(binding.executablePath === undefined ? {} : { browserExecutablePath: binding.executablePath }),
+    })
+    if (
+      runtime.runtimeId !== binding.runtimeId ||
+      runtime.family !== binding.family ||
+      runtime.browserId !== binding.browserId ||
+      (binding.executablePath !== undefined && runtime.executablePath !== binding.executablePath)
+    ) {
       throw tokenlessError(
         'profile_runtime_mismatch',
-        `Managed profile '${profile.slug}' is bound to ${binding.runtimeId}, but Tokenless resolved ${runtime.runtimeId}.`,
+        `Managed profile '${profile.slug}' is bound to browser runtime ${binding.runtimeId}${binding.executablePath ? ` at ${binding.executablePath}` : ''}, but Tokenless resolved ${runtime.runtimeId} at ${runtime.executablePath}.`,
       )
     }
     if (compareBrowserVersions(runtime.actualVersion, binding.createdWithVersion) < 0) {
@@ -400,8 +409,9 @@ export class BrowserRuntimeManager {
         'Browser executable path must be absolute.',
       )
     }
-    await assertExecutable(executablePath)
-    const actualVersion = await browserExecutableVersion(executablePath)
+    const canonicalExecutablePath = await fs.realpath(executablePath).catch(() => executablePath)
+    await assertExecutable(canonicalExecutablePath)
+    const actualVersion = await browserExecutableVersion(canonicalExecutablePath)
     return {
       selection: browserId,
       runtimeId: `system:${browserId}`,
@@ -409,7 +419,7 @@ export class BrowserRuntimeManager {
       browserId,
       displayName: systemBrowserDisplayName(browserId),
       platform,
-      executablePath,
+      executablePath: canonicalExecutablePath,
       actualVersion,
       expectedVersion: null,
       artifactVersion: null,
@@ -420,15 +430,19 @@ export class BrowserRuntimeManager {
     }
   }
 
-  private async resolveTestProfile(platform: BrowserRuntimePlatform): Promise<ResolvedBrowserRuntime> {
-    const executablePath = process.env.TOKENLESS_BROWSER_EXECUTABLE?.trim()
+  private async resolveTestProfile(
+    platform: BrowserRuntimePlatform,
+    configuredExecutablePath?: string | null,
+  ): Promise<ResolvedBrowserRuntime> {
+    const executablePath = configuredExecutablePath?.trim() || process.env.TOKENLESS_BROWSER_EXECUTABLE?.trim()
     if (!executablePath) {
       throw tokenlessError(
         'browser_not_found',
         'The profile browser is test-only and requires TOKENLESS_BROWSER_EXECUTABLE.',
       )
     }
-    await assertExecutable(executablePath)
+    const canonicalExecutablePath = await fs.realpath(executablePath).catch(() => executablePath)
+    await assertExecutable(canonicalExecutablePath)
     return {
       selection: 'profile',
       runtimeId: 'test:profile',
@@ -436,8 +450,8 @@ export class BrowserRuntimeManager {
       browserId: 'profile',
       displayName: 'test browser profile',
       platform,
-      executablePath,
-      actualVersion: await browserExecutableVersion(executablePath),
+      executablePath: canonicalExecutablePath,
+      actualVersion: await browserExecutableVersion(canonicalExecutablePath),
       expectedVersion: null,
       artifactVersion: null,
       source: 'system',

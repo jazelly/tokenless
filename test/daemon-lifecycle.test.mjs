@@ -49,6 +49,90 @@ test('ensureDaemonReady installs the packaged daemon and reports OpenAPI v1 read
   }
 })
 
+test('built CLI profile, config, API proxy, and savings commands cross the private HTTP control boundary', async () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-http-control-')))
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
+  const env = { TOKENLESS_DAEMON_URL: daemonUrl, TOKENLESS_HOME: homeDir }
+  let pid
+  try {
+    const added = runCli(['profiles', 'add', '--home', homeDir, '--profile', 'http-control', '--set-default', '--json'], env)
+    assert.equal(added.status, 0, added.stderr || added.stdout)
+    const addedPayload = JSON.parse(added.stdout)
+    assert.equal(addedPayload.profile.slug, 'http-control')
+    assert.equal(addedPayload.profile.isDefault, true)
+
+    const duplicate = runCli(['profiles', 'add', '--home', homeDir, '--profile', 'http-control', '--json'], env)
+    assert.equal(duplicate.status, 1, duplicate.stderr || duplicate.stdout)
+    const duplicateError = JSON.parse(duplicate.stdout).error
+    assert.equal(duplicateError.code, 'profile_already_exists')
+    assert.equal(Object.hasOwn(duplicateError, 'status'), false)
+
+    const state = await authenticatedJson(homeDir, daemonUrl, '/v1/private/control/state')
+    pid = state.runtime.pid
+    assert.equal(state.defaultProfile, 'http-control')
+    assert.equal(state.profiles.some((profile) => profile.slug === 'http-control'), true)
+
+    const capabilities = runCli(['capabilities', 'list', '--json'], env)
+    assert.equal(capabilities.status, 0, capabilities.stderr || capabilities.stdout)
+    const capabilityPayload = JSON.parse(capabilities.stdout)
+    assert.equal(capabilityPayload.schema, 'tokenless.task-capability-catalog.v3')
+    assert.equal(capabilityPayload.capabilities.some((capability) => capability.id === 'conversation.chat'), true)
+
+    const route = await authenticatedJson(homeDir, daemonUrl, '/v1/private/control/execution-route', {
+      method: 'POST',
+      body: {
+        profile: 'http-control',
+        provider: 'chatgpt',
+        requirements: ['conversation.chat'],
+        execution_mode: 'browser',
+      },
+    })
+    assert.equal(route.ok, true)
+    assert.equal(route.profile.slug, 'http-control')
+    assert.equal(route.routes[0].provider, 'chatgpt')
+
+    const configured = runCli([
+      'config',
+      '--home', homeDir,
+      '--profile', 'http-control',
+      '--provider-whitelist', 'chatgpt,claude',
+      '--json',
+    ], env)
+    assert.equal(configured.status, 0, configured.stderr || configured.stdout)
+    assert.deepEqual(JSON.parse(configured.stdout).profile.enabledProviders, ['chatgpt', 'claude'])
+
+    const proxy = runCli(['api-proxy', 'enable', '--home', homeDir, '--conversation-mode', 'continue-conversation', '--json'], env)
+    assert.equal(proxy.status, 0, proxy.stderr || proxy.stdout)
+    assert.equal(JSON.parse(proxy.stdout).apiProxy.conversationMode, 'continue-conversation')
+
+    const savings = runCli(['savings', 'status', '--home', homeDir, '--json'], env)
+    assert.equal(savings.status, 0, savings.stderr || savings.stdout)
+    const savingsPayload = JSON.parse(savings.stdout).outputSavings
+    assert.equal(savingsPayload.estimator, 'o200k_base')
+    assert.equal(savingsPayload.summary.response_count, 0)
+    assert.equal(Object.hasOwn(savingsPayload.summary, 'responseCount'), false)
+
+    const removed = runCli([
+      'profiles',
+      'remove',
+      '--home', homeDir,
+      '--profile', 'http-control',
+      '--confirm-delete',
+      '--json',
+    ], env)
+    assert.equal(removed.status, 0, removed.stderr || removed.stdout)
+    assert.equal(JSON.parse(removed.stdout).profile.lifecycle, 'removed')
+
+    const stopped = runCli(['daemon', 'stop', '--home', homeDir, '--json'], env)
+    assert.equal(stopped.status, 0, stopped.stderr || stopped.stdout)
+    assert.equal(await pidExited(pid), true)
+    pid = undefined
+  } finally {
+    if (pid) await stopPid(pid)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
 test('ensureDaemonReady never restarts a healthy daemon for a provider absent from the local registry', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-daemon-provider-reconcile-')))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
@@ -621,6 +705,21 @@ function runCli(args, env = {}) {
     encoding: 'utf8',
     timeout: 20_000,
   })
+}
+
+async function authenticatedJson(homeDir, daemonUrl, requestPath, options = {}) {
+  const token = fs.readFileSync(path.join(homeDir, 'daemon.token'), 'utf8').trim()
+  const response = await fetch(`${daemonUrl}${requestPath}`, {
+    method: options.method ?? 'GET',
+    headers: {
+      authorization: `Bearer ${token}`,
+      accept: 'application/json',
+      ...(options.body === undefined ? {} : { 'content-type': 'application/json' }),
+    },
+    ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+  })
+  assert.equal(response.status, 200)
+  return await response.json()
 }
 
 async function importCli() {

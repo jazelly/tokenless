@@ -143,7 +143,7 @@ API Adapter 不得调用 Harness mission queue、Tool Registry 或 MCP runtime�
 
 ## Provider runtime execution path
 
-所有正常的跨产品调用都经过 HTTP。目标 first-party agent 路径是：`Tokenless CLI → /v1/private/agent/* → Web Agent Harness → OpenAI-compatible API → provider runtime`；只有无法无损表达的 extension 才走 `/v1/private/provider-turn/*`。Jobs、provider inspection、setup 与 administration command 使用对应的 bearer-authenticated `/v1/private/*` machine route。
+所有正常的跨产品调用都经过 HTTP。目标 first-party agent 路径是：`Tokenless CLI → /v1/private/agent/* → Web Agent Harness → OpenAI-compatible API → provider runtime`；只有无法无损表达的 extension 才走 `/v1/private/provider-turn/*`。Daemon ready 后，job、provider inspection、profile/configuration、capability routing、output-savings 与 administration command 使用 bearer-authenticated `/v1/private/*` machine route。Daemon discovery、daemon install/start、setup-time browser provisioning、upgrade 与 offline diagnostic 是明确的 pre-daemon bootstrap 边界；正常产品命令不得把它们当作 in-process fallback。当不存在已验证 daemon 时，CLI 只可保留 request-local validation 与 read-only fail-fast capability/profile preflight，用于维持“无效请求在创建 daemon、token、SQLite 或 job 之前失败”的现有行为；可执行请求在实际执行前必须由 server 通过 authenticated HTTP 再次解析。
 
 | Interface | Execution path | Tool 或 provider owner |
 | --- | --- | --- |
@@ -176,7 +176,7 @@ Job 必须携带明确的 provider/profile identity。Unsupported control、ambi
 
 `tokenless setup` 通过 `BrowserRuntimeManager` 选择并验证一个 runtime，再创建或选择兼容的 clean managed profile。Tokenless 不复制现有 Chrome、Brave 或 Cloak profile，也不导入它们的 authentication state；用户在可见的 managed profile 中完成登录。
 
-Profile 保存明确的 runtime binding，job 复用该 profile，但不会自动 import、reset、clear 或 replace。Provider authentication 只根据可见页面 observation 判断；login、CAPTCHA、MFA、consent 与 confirmation 仍然是用户动作。
+新建 Profile 保存明确的 runtime binding，包括 canonical browser executable path；job 只能复用同一个 browser executable instance，不能因为 browser family 相同就跨安装复用。没有 executable path 的 legacy binding 仍可读取，但不具备 instance-level pinning；请重新执行 setup 创建新的 exact binding。Profile 不会自动 import、reset、clear 或 replace；Provider authentication 只根据可见页面 observation 判断，login、CAPTCHA、MFA、consent 与 confirmation 仍然是用户动作。
 
 ## Provider architecture and session state machine
 

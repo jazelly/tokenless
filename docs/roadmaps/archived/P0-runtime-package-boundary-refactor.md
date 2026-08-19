@@ -1,8 +1,8 @@
 # Runtime Package 边界重构
 
-Status: completed 2026-08-18 | Priority: P0
+Status: completed 2026-08-19 | Priority: P0
 
-Disposition: completed after the package boundaries, dependency direction, packaging, documentation, and zero-regression gates were implemented and verified.
+Disposition: completed after Phase 6 moved the remaining CLI product behavior behind authenticated HTTP, retained only explicit bootstrap/package-compatibility and fail-before-side-effect preflight edges, regenerated the API reference, and passed local, packaged, browser, and real-provider boundaries without changing product capability.
 
 Related: [Tokenless Architecture](../../architecture.zh-CN.md)、[Web Agent Harness](../P0-web-agent-harness.md)、[historical Web AI Interaction Protocol](P0-web-ai-interaction-protocol.md)、[OpenAI-compatible API 收敛](../P1-openai-compatible-api-convergence.md)、[OpenAI Tool Calling、Structured Output 与可移植 Provider Context](../P0-openai-tool-calling-structured-output-and-portable-context.md)、[Local Web Control Plane](../P0-local-web-control-plane.md)
 
@@ -18,7 +18,7 @@ Depends on: 当前 built CLI、authenticated daemon HTTP API、完整 `/ui-api/v
 - `packages/cli/` 是 daemon bootstrap、HTTP client、命令解析、本地化与结果展示层，正常产品命令不再直接执行 provider、Playwright 或 Harness 逻辑；
 - `packages/dashboard/` 保留当前 Local Web Control Plane 的全部 read、mutation、setup、profile、provider、job、runtime、diagnostics 与 recovery 能力，通过现有 `/ui-api/v1` HTTP boundary 工作；
 - `packages/harness/` 独立拥有 AgentRun、prompt、Skill runtime、Tool Registry、MCP、approval 与 agent loop，通过 HTTP 调用 server；
-- `packages/protocol/` 只保留语言中立 contract 的 TypeScript binding、schema validation 与薄 HTTP client；
+- `packages/contracts/` 只保留 canonical OpenAPI source、examples、focused specification 与生成的 Scalar API reference，不承担 runtime 功能；
 - 顶层 `skills/` 继续分发给 Host Agent，指导 Agent 调用本地 `tokenless` CLI，不承载产品 runtime；
 - 已发布的 `tokenless` npm package、`tokenless` binary、CLI contract、HTTP contract、Dashboard 行为、Harness 行为与 provider 行为全部保持不变。
 
@@ -51,7 +51,8 @@ flowchart TB
   Agent["Host Agent"] --> Skill["skills/tokenless<br/>Agent instructions"]
   Skill --> CLI["packages/cli<br/>commands + HTTP client"]
   External["OpenAI SDK / external Harness"] --> OpenAI["OpenAI-compatible HTTP API"]
-  Harness["packages/harness<br/>AgentRun + Skills + Tools + MCP"] --> Turn["Provider-turn HTTP API"]
+  Harness["packages/harness<br/>AgentRun + Skills + Tools + MCP"] --> OpenAI
+  Harness -. "only non-representable extensions" .-> Turn["Private provider-turn HTTP API"]
   CLI --> Control["CLI / control HTTP API"]
   Dashboard["packages/dashboard<br/>full Local Web Control Plane"] --> UIAPI["/ui-api/v1<br/>read + mutation"]
 
@@ -74,7 +75,7 @@ flowchart TB
 | Surface | Primary callers | Ownership |
 | --- | --- | --- |
 | OpenAI-compatible `/v1/*` | OpenAI SDK、external Harness、compatible local callers | `server/http` + `server/universal-api` |
-| Provider-turn `/v1/web-ai/*` | Tokenless Web Agent Harness | `server/http` + shared application services |
+| Private provider-turn `/v1/private/provider-turn/*` | Tokenless Web Agent Harness，仅用于 OpenAI contract 无法无损表达的 extension | `server/http` + shared application services |
 | Authenticated control/jobs API | CLI 与 trusted local callers | `server/http` + application services |
 | `/ui-api/v1/*` | Bundled Dashboard | `server/http` + application services；完整保留 read 与 mutation |
 
@@ -119,9 +120,9 @@ packages/
       mcp/
       approvals/
       http/
-  protocol/
-    src/
-    schemas/
+  contracts/
+    tokenless.openapi.json
+    reference.html
     spec/
     examples/
 
@@ -153,7 +154,7 @@ assets/
 
 - 负责所有 HTTP routes、authentication、OpenAI/Anthropic conversion、application services、durable jobs、routing、providers、browser/CDP、direct runtime、persistence 与 output-savings processing。
 - `universal-api/` 只转换和验证 caller-owned model/tool contracts，不执行 external Harness tools。
-- `application/` 是 CLI control API、Dashboard API、provider-turn API 与 Universal API 共用的 use-case boundary。
+- `application/` 是 CLI control API、Dashboard API、private provider-turn API 与 Universal API 共用的 use-case boundary。
 - Server 不 import CLI commands、Dashboard components、Harness Tool Registry、MCP runtime 或 distributable Skills。
 
 ### `packages/dashboard/`
@@ -166,14 +167,14 @@ assets/
 ### `packages/harness/`
 
 - 负责 AgentRun、prompt、Skill runtime、tool authorization/execution、MCP、approval、intervention、continuation 与 final output。
-- 通过 provider-turn HTTP client 调用 server；不得 import server、provider、browser、profile 或 daemon persistence internals。
+- 普通 model turn 通过 OpenAI-compatible HTTP client 调用 server；只有 OpenAI contract 无法无损表达的语义才使用 private provider-turn extension。Harness 不得 import server、provider、browser、profile 或 daemon persistence internals。
 - Harness-owned tools 只在 Harness 内执行；Universal API 不获取该 authority。
 
-### `packages/protocol/`
+### `packages/contracts/`
 
-- 由当前 `packages/web-ai-interaction-protocol/` 演进而来。
-- 只包含 specification、schemas、types、validation、examples 与薄 HTTP client。
-- 不拥有 storage、daemon lifecycle、provider adapter、browser、Harness policy 或 retry/recovery runtime。
+- 由早期 `packages/web-ai-interaction-protocol/` 方向收敛而来。
+- 只包含 canonical OpenAPI source、documentation examples、focused specification 与 generated Scalar reference。
+- 不拥有 DTO/runtime type、validation、HTTP client、storage、daemon lifecycle、provider adapter、browser、Harness policy 或 retry/recovery runtime；这些运行时职责分别留在 Server、Harness 或 Shared 的真实 owner 中。
 
 ## Dependency Rules
 
@@ -181,9 +182,9 @@ assets/
 
 ```text
 skills -> CLI command surface
-CLI -> HTTP contracts/client -> server HTTP
+CLI -> private HTTP client -> server HTTP
 Dashboard -> UI HTTP contract -> server HTTP
-Harness -> protocol/client -> server HTTP
+Harness -> OpenAI-compatible client / private extension client -> server HTTP
 External callers -> OpenAI-compatible HTTP -> server HTTP
 server HTTP -> application -> jobs/providers/browser/persistence
 ```
@@ -221,7 +222,7 @@ server HTTP -> application -> jobs/providers/browser/persistence
 | `packages/cli/src/setup-workflow.ts`、`runtime.ts`、`maintenance.ts` | CLI `bootstrap/` + server control endpoints | 先区分 process bootstrap 与运行期 use case；不一次重写 setup |
 | `packages/cli/src/featurebench/cli.ts` | `packages/cli/src/commands/featurebench/` | CLI adapter 保留；server-owned execution 通过 HTTP |
 | `packages/web-agent-harness/` | `packages/harness/` | 目录与 package internal name 调整不改变 Harness contract |
-| `packages/web-ai-interaction-protocol/` | `packages/protocol/` | 保持 schemas、spec、examples 与 local HTTP semantics |
+| `packages/web-ai-interaction-protocol/` | `packages/contracts/` + Harness/Server runtime owner | OpenAPI/spec/examples 留在 documentation-only contracts；private client、validation 与 route implementation 分别归 Harness/Server |
 | `skills/` | unchanged | 已经位于正确的产品边界 |
 | `api/` | unchanged | 继续是 checked-in OpenAPI contract source of truth |
 
@@ -258,7 +259,7 @@ server HTTP -> application -> jobs/providers/browser/persistence
 2. unified `packages/contracts/tokenless.openapi.json` 中每个保留 daemon route family；
 3. 同一 OpenAPI document 中每个 Dashboard read/mutation family；
 4. Dashboard 的 setup、profiles、providers/routing、capabilities、jobs、system/diagnostics 与 output-savings 用户路径；
-5. Harness `start/read/resume/cancel`、Skill、tool、approval 与 HTTP provider-turn 路径；
+5. Harness `start/read/resume/cancel`、Skill、tool、approval、OpenAI-compatible model call 与必要的 private provider-turn extension 路径；
 6. package install、daemon bootstrap、browser/profile preservation 与 real provider submission。
 
 如果已有 case 在真实边界证明该行为，记录并复用，不再增加重复 case。如果没有，新增最小 happy-path E2E；只有当前 reproduced failure 或明确安全 contract 才增加 failure-path case。
@@ -284,6 +285,25 @@ npm run test:e2e:web-provider
 每个迁移 phase 至少运行 `npm run check` 与受影响的 focused real-boundary suite。最终 acceptance 运行 packed-install、完整 local Web UI、Harness HTTP、API proxy、daemon lifecycle，以及所有受影响的 explicitly gated real-provider suites。真实 provider gate 失败时必须修复或明确保留未完成状态，不能用 fixture 替代。
 
 ## Delivery Phases
+
+### Active Mission Contract（2026-08-19）
+
+**Goal:** daemon ready 后，全部 CLI 产品命令只通过 authenticated HTTP 调用 server-owned application behavior；CLI 不再直接实例化或打开 provider、browser runtime、profile registry、job store、output-savings runtime 或 server persistence implementation。
+
+**Allowed edges:** daemon discovery/start composition root、install/upgrade/setup bootstrap、offline diagnostics、packaged server artifact bundling、为保持已发布 npm contract 所需的 public facade re-export，以及 daemon 尚未 verified 时用于维持 fail-before-side-effect 行为的 request-local validation/read-only capability/profile preflight。Preflight 只拒绝无效请求；通过后 server 必须经 authenticated HTTP 重新解析。Allowed edge 不能被产品命令用作 in-process execution path。
+
+**Non-goals:** 不改变 commands、flags、defaults、output、exit codes、localization、HTTP wire behavior、Dashboard、Harness、provider behavior 或 persistence；不在本阶段执行 OpenAI-compatible API convergence；不新增 transport、framework、unit test、mock、fake 或 source-regex test。
+
+**Acceptance assertions:**
+
+1. 现有 CLI command families 的 built-binary observable behavior 不变。
+2. Profile、config、provider、job、runtime 与 output-savings 操作经 bearer-authenticated `/v1/private/*` HTTP boundary 完成。
+3. Server HTTP adapters 复用现有 application services，不复制业务实现。
+4. CLI command path 不执行 server application/provider/browser/job/persistence/output-savings implementation；除只读 fail-fast preflight 与上文列出的 bootstrap/package-compatibility edge 外，运行期不 import 这些 implementation。
+5. Generated API reference 包含新增 private routes，Dashboard 与现有 compatibility APIs 无回归。
+6. 证据来自 built CLI、packaged daemon、真实 local HTTP/filesystem/SQLite boundaries 与现有适用 E2E。
+
+**Stop condition:** 上述直接执行路径全部删除，focused real-boundary E2E 与 `npm run check` 通过；否则 roadmap 保持 active。
 
 ### Phase 0：冻结行为与架构 contract
 
@@ -323,15 +343,15 @@ Exit: server 可以从 packaged entry 独立启动并拥有全部执行逻辑；
 
 Exit: CLI command path 不再拥有 provider、Playwright、job store 或 Harness loop；所有 CLI E2E 保持通过。
 
-### Phase 4：收紧 Harness 与 protocol 边界
+### Phase 4：收紧 Harness 与 contract 边界
 
 - [x] 将 `packages/web-agent-harness/` 移为 `packages/harness/`。
-- [x] 将 `packages/web-ai-interaction-protocol/` 移为 `packages/protocol/`。
-- [x] Harness runtime 只通过 protocol HTTP client 调用 packaged server。
+- [x] 将早期 `packages/web-ai-interaction-protocol/` 收敛为 documentation-only `packages/contracts/`，并把 runtime client/validation 移交真实 owner。
+- [x] Harness runtime 只通过 OpenAI-compatible HTTP client 与必要的 private extension client 调用 packaged server。
 - [x] 测试 setup 不再要求 Harness import private daemon/server implementation。
 - [x] 保持 Harness schemas、state、Skill、MCP、approval、resume/cancel 与 package distribution behavior。
 
-Exit: Harness 与 server 的唯一 runtime crossing 是 HTTP；protocol 仍然是无 runtime ownership 的 contract package。
+Exit: Harness 与 server 的唯一 runtime crossing 是 HTTP；contracts 是无 runtime ownership 的 documentation package。
 
 ### Phase 5：删除过渡路径并完成真实边界验收
 
@@ -343,13 +363,24 @@ Exit: Harness 与 server 的唯一 runtime crossing 是 HTTP；protocol 仍然�
 
 Exit: target repository shape 成立，禁止依赖不存在，全部零回归 acceptance criteria 通过。
 
+### Phase 6：修正 CLI HTTP boundary 审计缺口
+
+- [x] 为 CLI 仍直接调用的 server application behavior 补齐最小 `/v1/private/*` HTTP adapter。
+- [x] 将 profiles、config/provider resolution、runtime 与 output-savings/job-store command paths 切换到 authenticated HTTP client。
+- [x] 删除 CLI product command 对 server implementation 的 compile-time dependency；只保留 Mission Contract 明示的 allowed edges。
+- [x] 更新生成式 OpenAPI 汇总与 reference artifact。
+- [x] 用 built CLI + packaged daemon 的真实边界 E2E 固定迁移前后行为，并运行全量 gate。
+- [x] 重新审计依赖方向，确认后再归档本 roadmap。
+
+Exit: Phase 3 的原始声明与实际代码一致，CLI 是 daemon bootstrap + HTTP adapter + presentation，而不是第二个 server execution surface。
+
 ## Acceptance Criteria
 
-- [x] `packages/server/`、`packages/cli/`、`packages/dashboard/`、`packages/harness/` 与 `packages/protocol/` ownership 与 target shape 一致。
+- [x] `packages/server/`、`packages/cli/`、`packages/dashboard/`、`packages/harness/` 与 `packages/contracts/` ownership 与 target shape 一致。
 - [x] CLI、Dashboard、Harness 与 external SDK 都通过明确 HTTP surface 进入 server；没有第二套业务实现。
 - [x] Dashboard 当前所有 read 与 mutation 能力完整保留。
 - [x] CLI 当前全部 command family、JSON/human output、English/简体中文与 exit behavior 完整保留。
-- [x] Daemon、OpenAI-compatible API、provider-turn API、control API 与 UI API contract 完整保留。
+- [x] Daemon、OpenAI-compatible API、private provider-turn API、control API 与 UI API contract 完整保留。
 - [x] Config、profile、SQLite、jobs、provider mappings 与 browser profile 可由重构后的 packaged product 原样读取和继续使用。
 - [x] `tokenless` npm package 与 binary 仍可 clean pack/install/run，且不要求用户安装新的外部 Tokenless package。
 - [x] Harness 不 import server/provider/browser/persistence internals，CLI product commands 不直接执行这些实现，Dashboard 不 import backend source。
@@ -366,12 +397,26 @@ Exit: target repository shape 成立，禁止依赖不存在，全部零回归 a
 | --- | --- |
 | Pre-move baseline | `npm run check`：157/157 |
 | Final static and local boundary gate | `npm run check`：OpenAPI validated；TypeScript clean；Svelte 0 errors/0 warnings；157/157 |
-| Packed distribution | `test/package-contract.test.mjs`：23/23，包括 pack、offline install、binary、server、Dashboard、Harness 与 protocol artifacts |
+| Packed distribution | `test/package-contract.test.mjs`：23/23，包括 pack、offline install、binary、server、Dashboard、Harness 与 contract artifacts |
 | Dashboard browser boundary | `TOKENLESS_LOCAL_WEB_UI_E2E_GATE=configured-persistent-visible-browser npm run test:e2e:web`：1/1 |
 | Real provider → CLI → daemon/job → Dashboard | `npm run test:e2e:web-provider`：configured persistent profile 上的 representative ChatGPT case 1/1 |
 | Dependency audit | Harness 与 Dashboard 无 server source import；server 无 Harness runtime import；旧 CLI/server implementation directories 无残留 source reference |
 
 真实 provider gate 在迁移后的 standalone server artifact 中发现 `/ui/mark.png` 未被复制；修复 build ownership 后，同一 gate 无 console、HTTP、job 或 provider failure。Image generation 继续由 `server/universal-api` 拥有，现有 Chat Completions、Responses 与 Images local HTTP cases全部保留。
+
+### CLI HTTP boundary correction（2026-08-19）
+
+Phase 6 没有新增 transport、framework、unit test、mock、fake 或 provider fixture。CLI 的正常 product use case 在 daemon ready 后通过 bearer-authenticated HTTP 进入同一份 server application services；无 verified daemon 时只保留 read-only fail-fast preflight，以维持无效请求不创建 daemon、token、SQLite 或 job 的既有行为。
+
+| Gate | Result |
+| --- | --- |
+| Generated contract | `npm run api:check`：OpenAPI validated；Scalar reference 与 source 同步 |
+| Static + default local boundary gate | `npm run check`：TypeScript/Svelte clean；163/163 |
+| Focused CLI control/routing | `test/daemon-lifecycle.test.mjs` 的 built CLI private-control case 通过；`test/provider-availability-routing.test.mjs` 16/16 |
+| Output savings real boundary | `npm run test:e2e:output-savings`：2/2 |
+| Dashboard browser boundary | `TOKENLESS_LOCAL_WEB_UI_E2E_GATE=configured-persistent-visible-browser npm run test:e2e:web`：1/1 |
+| Real provider → CLI → daemon/job → Dashboard | `npm run test:e2e:web-provider`：configured `web-ai` profile 上 1/1 |
+| Dependency audit | 普通 CLI command 不再实例化 profile registry、browser runtime、job store 或 output-savings runtime；CLI TypeScript project 不再 reference Server project；setup/install/doctor、package bundling/public facade 与 read-only fail-fast preflight 是明示 edge |
 
 ## Non-Goals
 

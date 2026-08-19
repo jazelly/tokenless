@@ -39,6 +39,7 @@ export class DaemonError extends Error {
   readonly productCode?: string | undefined
   readonly productRetryable?: boolean | undefined
   readonly productDetails?: unknown
+  readonly productStatus?: number | undefined
 
   constructor(kind: DaemonErrorKind, message: string, options: {
     jobId?: string | undefined
@@ -50,6 +51,7 @@ export class DaemonError extends Error {
     productCode?: string | undefined
     productRetryable?: boolean | undefined
     productDetails?: unknown
+    productStatus?: number | undefined
   } = {}) {
     super(message)
     this.name = 'DaemonError'
@@ -63,6 +65,7 @@ export class DaemonError extends Error {
     this.productCode = options.productCode
     this.productRetryable = options.productRetryable
     this.productDetails = options.productDetails
+    this.productStatus = options.productStatus
   }
 }
 
@@ -139,6 +142,15 @@ export function toDaemonError(error: unknown) {
       productDetails: error.details,
     })
   }
+  if (isProductError(error)) {
+    return new DaemonError('product', error.message, {
+      cause: error,
+      productCode: error.code,
+      productRetryable: error.retryable ?? false,
+      productDetails: error.details,
+      productStatus: error.status,
+    })
+  }
   return sqliteError(error)
 }
 
@@ -160,7 +172,7 @@ export function daemonErrorStatus(error: DaemonError) {
     case 'bridge_busy':
       return 409
     case 'product':
-      return 409
+      return error.productStatus ?? 409
     case 'io':
     case 'random':
     case 'sqlite':
@@ -168,6 +180,19 @@ export function daemonErrorStatus(error: DaemonError) {
     case 'missing_home':
       return 500
   }
+}
+
+function isProductError(error: unknown): error is Error & {
+  code: string
+  retryable?: boolean | undefined
+  status?: number | undefined
+  details?: unknown
+} {
+  if (!(error instanceof Error) || typeof (error as { code?: unknown }).code !== 'string') return false
+  const candidate = error as { retryable?: unknown; status?: unknown }
+  const hasRetryable = typeof candidate.retryable === 'boolean'
+  const hasStatus = Number.isInteger(candidate.status) && Number(candidate.status) >= 400 && Number(candidate.status) <= 499
+  return hasRetryable || hasStatus
 }
 
 export function daemonErrorCodeRetryable(error: DaemonError) {

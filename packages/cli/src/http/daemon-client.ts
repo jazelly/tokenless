@@ -1,9 +1,8 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
-import { tokenlessHome } from '#tokenless-server/persistence/config.js'
+import { tokenlessHome } from '../bootstrap/home.js'
 import { DaemonRuntimeState } from '#tokenless-server/runtime/state.js'
-import type { ProviderCapacityProjection } from '#tokenless-server/providers/rate-limit-policy.js'
 
 export const DEFAULT_DAEMON_URL = 'http://127.0.0.1:7331'
 export const MAX_DAEMON_REQUEST_BYTES = 900 * 1024
@@ -112,6 +111,20 @@ export type GetProviderCapacityOptions = DaemonClientOptions & {
   subscriptionLabel?: string | null | undefined
 }
 
+export type ProviderCapacityProjection = {
+  schema: 'tokenless.provider-capacity-projection.v1'
+  catalogVersion: number
+  catalogRevision: string
+  provider: string
+  profileId: string
+  evaluatedAt: string
+  subscription: Record<string, unknown>
+  decision: 'admit' | 'defer' | 'unknown'
+  eligibleAt: string | null
+  reason: string
+  rules: readonly Record<string, unknown>[]
+}
+
 export type CancelDaemonJobOptions = GetDaemonJobOptions & {
   reason?: unknown
 }
@@ -217,6 +230,39 @@ export type OpenDashboardOptions = DaemonClientOptions & {
 export type OpenDashboardResponse = {
   url: string
   opened: null | (BrowserRuntimeOpenProfileResponse & { url: string, reused: boolean })
+}
+
+export type ControlProfile = {
+  slug: string
+  id: string
+  directory: string
+  lifecycle: 'created' | 'ready' | 'removed' | 'failed'
+  createdAt: string
+  updatedAt: string
+  runtimeBinding?: {
+    runtimeId: string
+    family: string
+    browserId: string
+    executablePath?: string
+    createdWithVersion: string
+    profileFormat: 1
+  } | undefined
+  lastObservedAuth: Record<string, any>
+}
+
+export type ControlState = {
+  config: Record<string, any> & { profiles: Record<string, any> }
+  profiles: ControlProfile[]
+  defaultProfile: string | null
+  profileRegistryPath: string
+  runtime: BrowserRuntimeStatus
+  outputSavings: Record<string, any>
+}
+
+export type ResolveControlProfileResponse = {
+  profile: ControlProfile
+  defaultProfile: string | null
+  config: Record<string, any> & { profiles: Record<string, any> }
 }
 
 type DaemonError = Error & {
@@ -789,6 +835,195 @@ export async function openTokenlessDashboard({
   })
 }
 
+export async function getControlState(options: DaemonClientOptions = {}) {
+  return controlRequest<ControlState>(options, '/v1/private/control/state', 'GET')
+}
+
+export async function getControlCapabilities(options: DaemonClientOptions = {}) {
+  return controlRequest<{
+    schema: string
+    capabilities: Array<Record<string, any> & { id: string; lifecycle: string; routes: any[] }>
+  }>(options, '/v1/private/control/capabilities', 'GET')
+}
+
+export async function resolveControlExecution(options: DaemonClientOptions & {
+  profile?: string | undefined
+  provider?: string | undefined
+  requirements: readonly string[]
+  executionMode: 'browser' | 'direct'
+}) {
+  return controlRequest<{
+    ok: boolean
+    profile?: ControlProfile
+    routes?: any[]
+    code?: string
+    message?: string
+    context?: Record<string, any>
+  }>(
+    options,
+    '/v1/private/control/execution-route',
+    'POST',
+    {
+      profile: options.profile,
+      provider: options.provider,
+      requirements: [...options.requirements],
+      execution_mode: options.executionMode,
+    },
+  )
+}
+
+export async function resolveControlProfile(options: DaemonClientOptions & { profile?: string | undefined }) {
+  const query = new URLSearchParams()
+  if (options.profile !== undefined) query.set('profile', options.profile)
+  return controlRequest<ResolveControlProfileResponse>(
+    options,
+    `/v1/private/control/profiles/resolve${query.size > 0 ? `?${query.toString()}` : ''}`,
+    'GET',
+  )
+}
+
+export async function addControlProfile(options: DaemonClientOptions & {
+  profile: string
+  setDefault?: boolean | undefined
+  browser?: string | null | undefined
+  providerWhitelist?: string[] | undefined
+}) {
+  return controlRequest<{ profile: ControlProfile; defaultProfile: string | null }>(
+    options,
+    '/v1/private/control/profiles',
+    'POST',
+    {
+      slug: options.profile,
+      set_default: options.setDefault,
+      browser: options.browser,
+      provider_whitelist: options.providerWhitelist,
+    },
+  )
+}
+
+export async function clearControlProfiles(options: DaemonClientOptions & {
+  profile?: string | undefined
+  all?: boolean | undefined
+}) {
+  return controlRequest<{ cleared: Array<{ slug: string; id: string }>; defaultProfile: string | null }>(
+    options,
+    '/v1/private/control/profiles/clear',
+    'POST',
+    { profile: options.profile, all: options.all },
+  )
+}
+
+export async function setDefaultControlProfile(options: DaemonClientOptions & { profile: string }) {
+  return controlRequest<{ profile: ControlProfile; defaultProfile: string }>(
+    options,
+    `/v1/private/control/profiles/${encodeURIComponent(options.profile)}/default`,
+    'POST',
+    {},
+  )
+}
+
+export async function removeControlProfile(options: DaemonClientOptions & { profile: string }) {
+  return controlRequest<{ profile: ControlProfile; defaultProfile: string | null }>(
+    options,
+    `/v1/private/control/profiles/${encodeURIComponent(options.profile)}`,
+    'DELETE',
+  )
+}
+
+export async function updateControlProfileConfig(options: DaemonClientOptions & {
+  profile: string
+  config: Record<string, unknown>
+}) {
+  return controlRequest<{ config: Record<string, any>; profile: Record<string, any> }>(
+    options,
+    `/v1/private/control/profiles/${encodeURIComponent(options.profile)}/config`,
+    'PATCH',
+    options.config,
+  )
+}
+
+export async function updateControlProfileObservation(options: DaemonClientOptions & {
+  profile: string
+  observation: Record<string, unknown>
+}) {
+  return controlRequest<{ profile: ControlProfile; defaultProfile: string | null }>(
+    options,
+    `/v1/private/control/profiles/${encodeURIComponent(options.profile)}/observation`,
+    'POST',
+    options.observation,
+  )
+}
+
+export async function updateControlConfig(options: DaemonClientOptions & {
+  config: Record<string, unknown>
+}) {
+  return controlRequest<Record<string, any> & { profiles: Record<string, any> }>(
+    options,
+    '/v1/private/control/config',
+    'PATCH',
+    options.config,
+  )
+}
+
+export async function updateOutputSavings(options: DaemonClientOptions & {
+  action: 'status' | 'enable' | 'disable' | 'uninstall' | 'clear'
+}) {
+  if (options.action === 'status') {
+    return controlRequest<Record<string, any>>(
+      options,
+      '/v1/private/control/output-savings',
+      'GET',
+    )
+  }
+  return controlRequest<Record<string, any>>(
+    options,
+    `/v1/private/control/output-savings/${options.action}`,
+    'POST',
+    options.action === 'uninstall' || options.action === 'clear'
+      ? { confirmDelete: true }
+      : {},
+  )
+}
+
+async function controlRequest<T>(
+  options: DaemonClientOptions,
+  requestPath: string,
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+  body?: Record<string, unknown>,
+) {
+  const daemon = await authenticatedDaemonAccess(options)
+  try {
+    return await daemonRequest<T>({
+      daemonUrl: daemon.daemonUrl,
+      method,
+      path: requestPath,
+      ...(body === undefined ? {} : { body }),
+      token: daemon.token,
+      timeoutMs: options.requestTimeoutMs,
+      signal: options.signal,
+    })
+  } catch (error) {
+    preservePreHttpControlErrorShape(error)
+    throw error
+  }
+}
+
+function preservePreHttpControlErrorShape(error: unknown) {
+  if (!error || typeof error !== 'object') return
+  const controlError = error as DaemonError
+  const code = controlError.code
+  if (!code || isControlTransportErrorCode(code)) return
+  delete controlError.status
+}
+
+function isControlTransportErrorCode(code: string) {
+  return code.startsWith('daemon_') ||
+    code === 'control_auth_missing' ||
+    code === 'control_auth_rejected' ||
+    code === 'invalid_input' ||
+    code === 'non_loopback_bind'
+}
+
 export async function resumeDaemonJob({
   daemonUrl: explicitDaemonUrl,
   homeDir,
@@ -1017,7 +1252,7 @@ async function daemonRequest<T>({
   signal,
 }: {
   daemonUrl?: string | undefined
-  method?: 'GET' | 'POST'
+  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'
   path: string
   body?: Record<string, unknown>
   token?: string | undefined

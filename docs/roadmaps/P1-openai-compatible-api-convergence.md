@@ -2,7 +2,7 @@
 
 Status: active, in progress | Priority: P1
 
-Depends on: [Runtime Package 边界重构](archived/P0-runtime-package-boundary-refactor.md) 完成、[OpenAI Tool Calling、Structured Output 与可移植 Provider Context](P0-openai-tool-calling-structured-output-and-portable-context.md) 的稳定 Responses contract、现有 authenticated local daemon HTTP boundary
+Depends on: [Runtime Package 边界重构](archived/P0-runtime-package-boundary-refactor.md) 的 CLI HTTP boundary correction 完成、[OpenAI Tool Calling、Structured Output 与可移植 Provider Context](P0-openai-tool-calling-structured-output-and-portable-context.md) 的稳定 Responses contract、现有 authenticated local daemon HTTP boundary
 
 Related: [Tokenless Architecture](../architecture.zh-CN.md)、[API Proxy Integration](../api-proxy-integration.zh-CN.md)、[Downloaded Image Assets](P0-downloaded-image-assets.md)、[Web Agent Harness](P0-web-agent-harness.md)
 

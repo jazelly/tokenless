@@ -74,7 +74,7 @@ The highest-priority shared compatibility contract is listed first, followed by 
 
 ## How the Roadmaps Fit Together
 
-The completed [Runtime Package Boundary Refactor](archived/P0-runtime-package-boundary-refactor.md) separated CLI, server, Dashboard, Harness, shared runtime primitives, and documentation-only API contracts while preserving product behavior. The active [OpenAI-compatible API Convergence](P1-openai-compatible-api-convergence.md) now owns the later execution change: CLI and Harness use OpenAI-compatible model/media Interfaces wherever lossless, Anthropic compatibility stays parallel, and Tokenless-only bearer machine behavior lives under `/v1/private/*`.
+The completed [Runtime Package Boundary Refactor](archived/P0-runtime-package-boundary-refactor.md) separated CLI, server, Dashboard, Harness, shared runtime primitives, and documentation-only API contracts, then closed the remaining CLI in-process execution paths behind authenticated HTTP while preserving fail-before-side-effect behavior. The active [OpenAI-compatible API Convergence](P1-openai-compatible-api-convergence.md) owns the later execution change: CLI and Harness use OpenAI-compatible model/media Interfaces wherever lossless, Anthropic compatibility stays parallel, and Tokenless-only bearer machine behavior lives under `/v1/private/*`.
 
 ```mermaid
 flowchart LR

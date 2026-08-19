@@ -135,7 +135,7 @@ The API Adapter must not call the Harness mission queue, Tool Registry, or MCP r
 
 ## Provider runtime execution path
 
-Every normal cross-surface call enters through HTTP. The target first-party agent path is `Tokenless CLI → /v1/private/agent/* → Web Agent Harness → OpenAI-compatible API → provider runtime`, with `/v1/private/provider-turn/*` used only for non-representable extensions. Jobs, provider inspection, setup, and administration commands use their bearer-authenticated `/v1/private/*` machine routes.
+Every normal cross-surface call enters through HTTP. The target first-party agent path is `Tokenless CLI → /v1/private/agent/* → Web Agent Harness → OpenAI-compatible API → provider runtime`, with `/v1/private/provider-turn/*` used only for non-representable extensions. After daemon readiness, jobs, provider inspection, profile/configuration, capability routing, output-savings, and administration commands use bearer-authenticated `/v1/private/*` machine routes. Pre-daemon discovery, daemon installation/start, setup-time browser provisioning, upgrade, and offline diagnostics are explicit bootstrap boundaries; normal product commands must never use them as an in-process fallback. When no verified daemon exists, the CLI may retain request-local validation and a read-only fail-fast capability/profile preflight solely to preserve rejection before daemon, token, SQLite, or job side effects; an accepted request is always re-resolved by the server over authenticated HTTP before execution.
 
 | Interface | Execution path | Authentication | Status |
 | --- | --- | --- | --- |
@@ -177,7 +177,7 @@ Each routed job carries `tokenless.context-envelope.v1`. It records the task ide
 
 Browser selection is system-first. `auto` uses an installed supported browser and lazily installs catalog-pinned Chrome for Testing only when none exists. `managed-chromium` forces that cache-managed runtime; `cloak` explicitly opts into the platform-specific Cloak release. Managed downloads happen only during setup or install and are never performed by npm postinstall, daemon startup, or a job.
 
-Each managed profile stores a runtime binding containing the exact runtime identity, family, browser ID, and creation version. The daemon resolves from this binding and always passes the resulting executable path to Playwright. Existing unbound profiles can migrate only to a compatible system/test runtime; a family change provisions a clean profile.
+New managed profiles store a runtime binding containing the exact runtime identity, canonical browser executable path, family, browser ID, and creation version. The daemon resolves from this binding and always passes the same executable instance to Playwright; two installations of the same browser family are different runtimes. Legacy bindings without an executable path remain readable but do not provide instance-level pinning; rerun setup to create a new exact binding. A family or executable-instance change provisions a clean profile.
 
 Managed profiles live under the Tokenless home and use unique directories. Jobs reuse them but never import, reset, clear, or replace them automatically. New profiles always start clean; deletion requires an explicit command and confirmation.
 

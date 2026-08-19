@@ -1871,6 +1871,336 @@
         }
       }
     },
+    "/v1/private/control/state": {
+      "get": {
+        "operationId": "getPrivateControlState",
+        "summary": "Read the server-owned config, profiles, runtime, and output-savings state used by the CLI",
+        "responses": {
+          "200": {
+            "description": "Private CLI control state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["config", "profiles", "defaultProfile", "profileRegistryPath", "runtime", "outputSavings"],
+                  "properties": {
+                    "config": { "type": "object", "additionalProperties": true },
+                    "profiles": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+                    "defaultProfile": { "type": ["string", "null"] },
+                    "profileRegistryPath": { "type": "string" },
+                    "runtime": { "$ref": "#/components/schemas/BrowserRuntimeStatus" },
+                    "outputSavings": { "$ref": "#/components/schemas/OutputSavingsState" }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        },
+        "tags": ["Private · Control"]
+      }
+    },
+    "/v1/private/control/capabilities": {
+      "get": {
+        "operationId": "getPrivateControlCapabilities",
+        "summary": "List the capability catalog and provider routes used by the CLI",
+        "responses": {
+          "200": {
+            "description": "Capability catalog with routeability",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["schema", "capabilities"],
+                  "properties": {
+                    "schema": { "const": "tokenless.task-capability-catalog.v3" },
+                    "capabilities": { "type": "array", "items": { "type": "object", "additionalProperties": true } }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        },
+        "tags": ["Private · Control"]
+      }
+    },
+    "/v1/private/control/execution-route": {
+      "post": {
+        "operationId": "resolvePrivateControlExecutionRoute",
+        "summary": "Resolve provider capability routes inside the server-owned registry",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["requirements", "execution_mode"],
+                "properties": {
+                  "profile": { "type": "string" },
+                  "provider": { "type": "string" },
+                  "requirements": { "type": "array", "items": { "type": "string" } },
+                  "execution_mode": { "type": "string", "enum": ["browser", "direct"] }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Resolved routes or a structured unavailable decision", "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        },
+        "tags": ["Private · Control"]
+      }
+    },
+    "/v1/private/control/config": {
+      "patch": {
+        "operationId": "updatePrivateControlConfig",
+        "summary": "Update server-owned Tokenless configuration for a trusted CLI caller",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "browser": { "type": "string" },
+                  "browserExecutablePath": { "type": ["string", "null"] },
+                  "browserVisibility": { "type": "string" },
+                  "daemonUrl": { "type": ["string", "null"] },
+                  "language": { "type": "string", "enum": ["en", "zh-CN"] },
+                  "outputSavings": { "type": "object", "additionalProperties": true },
+                  "apiProxy": { "type": "object", "additionalProperties": true },
+                  "g4f": { "type": "object", "additionalProperties": true },
+                  "directProvider": { "type": "object", "additionalProperties": true },
+                  "router": { "type": "object", "additionalProperties": true }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Updated private configuration", "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        },
+        "tags": ["Private · Control"]
+      }
+    },
+    "/v1/private/control/profiles/resolve": {
+      "get": {
+        "operationId": "resolvePrivateControlProfile",
+        "summary": "Resolve an explicit or default managed profile inside the server",
+        "parameters": [
+          { "name": "profile", "in": "query", "required": false, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Resolved profile and current configuration", "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        },
+        "tags": ["Private · Control"]
+      }
+    },
+    "/v1/private/control/profiles": {
+      "post": {
+        "operationId": "createPrivateControlProfile",
+        "summary": "Create a managed profile through the server-owned registry",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["slug"],
+                "properties": {
+                  "slug": { "type": "string" },
+                  "set_default": { "type": "boolean" },
+                  "browser": { "type": ["string", "null"] },
+                  "provider_whitelist": { "type": "array", "items": { "type": "string" } }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Created profile", "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        },
+        "tags": ["Private · Control"]
+      }
+    },
+    "/v1/private/control/profiles/clear": {
+      "post": {
+        "operationId": "clearPrivateControlProfiles",
+        "summary": "Quiesce the runtime and remove one or all managed profiles",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "profile": { "type": "string" },
+                  "all": { "type": "boolean" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Cleared profiles", "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        },
+        "tags": ["Private · Control"]
+      }
+    },
+    "/v1/private/control/profiles/{profile}": {
+      "parameters": [
+        { "name": "profile", "in": "path", "required": true, "schema": { "type": "string" } }
+      ],
+      "delete": {
+        "operationId": "deletePrivateControlProfile",
+        "summary": "Quiesce the runtime and remove a managed profile",
+        "responses": {
+          "200": { "description": "Removed profile", "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        },
+        "tags": ["Private · Control"]
+      }
+    },
+    "/v1/private/control/profiles/{profile}/config": {
+      "parameters": [
+        { "name": "profile", "in": "path", "required": true, "schema": { "type": "string" } }
+      ],
+      "patch": {
+        "operationId": "updatePrivateControlProfileConfig",
+        "summary": "Update one managed profile configuration",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } },
+        "responses": {
+          "200": { "description": "Updated profile configuration", "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        },
+        "tags": ["Private · Control"]
+      }
+    },
+    "/v1/private/control/profiles/{profile}/default": {
+      "parameters": [
+        { "name": "profile", "in": "path", "required": true, "schema": { "type": "string" } }
+      ],
+      "post": {
+        "operationId": "setDefaultPrivateControlProfile",
+        "summary": "Set the default managed profile",
+        "responses": {
+          "200": { "description": "Default profile updated", "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        },
+        "tags": ["Private · Control"]
+      }
+    },
+    "/v1/private/control/profiles/{profile}/observation": {
+      "parameters": [
+        { "name": "profile", "in": "path", "required": true, "schema": { "type": "string" } }
+      ],
+      "post": {
+        "operationId": "recordPrivateControlProfileObservation",
+        "summary": "Record an observed provider authentication state for a managed profile",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } },
+        "responses": {
+          "200": { "description": "Updated profile observation", "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        },
+        "tags": ["Private · Control"]
+      }
+    },
+    "/v1/private/control/output-savings": {
+      "get": {
+        "operationId": "getPrivateControlOutputSavings",
+        "summary": "Read output-savings runtime and aggregate state",
+        "responses": {
+          "200": { "description": "CLI output-savings state", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PrivateOutputSavingsState" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        },
+        "tags": ["Private · Control"]
+      }
+    },
+    "/v1/private/control/output-savings/enable": {
+      "post": {
+        "operationId": "enablePrivateControlOutputSavings",
+        "summary": "Install and enable output-savings measurement",
+        "responses": {
+          "200": { "description": "CLI output-savings state", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PrivateOutputSavingsState" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        },
+        "tags": ["Private · Control"]
+      }
+    },
+    "/v1/private/control/output-savings/disable": {
+      "post": {
+        "operationId": "disablePrivateControlOutputSavings",
+        "summary": "Disable output-savings measurement and discard pending work",
+        "responses": {
+          "200": { "description": "CLI output-savings state", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PrivateOutputSavingsState" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        },
+        "tags": ["Private · Control"]
+      }
+    },
+    "/v1/private/control/output-savings/uninstall": {
+      "post": {
+        "operationId": "uninstallPrivateControlOutputSavings",
+        "summary": "Disable and remove the output-savings runtime",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConfirmedDeletion" } } } },
+        "responses": {
+          "200": { "description": "CLI output-savings state", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PrivateOutputSavingsState" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        },
+        "tags": ["Private · Control"]
+      }
+    },
+    "/v1/private/control/output-savings/clear": {
+      "post": {
+        "operationId": "clearPrivateControlOutputSavings",
+        "summary": "Clear persisted output-savings history",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConfirmedDeletion" } } } },
+        "responses": {
+          "200": { "description": "CLI output-savings state", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PrivateOutputSavingsState" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        },
+        "tags": ["Private · Control"]
+      }
+    },
     "/v1/private/control/shutdown": {
       "post": {
         "operationId": "shutdownDaemon",
@@ -7177,6 +7507,42 @@
           "jobCount",
           "firstMeasuredAt",
           "lastMeasuredAt"
+        ],
+        "additionalProperties": false
+      },
+      "PrivateOutputSavingsState": {
+        "type": "object",
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "collection": {
+            "type": "string",
+            "enum": ["disabled", "enabled", "unavailable"]
+          },
+          "estimator": { "const": "o200k_base" },
+          "runtime": { "$ref": "#/components/schemas/OutputSavingsRuntime" },
+          "summary": { "$ref": "#/components/schemas/PrivateOutputSavingsSummary" },
+          "cleared": { "type": "integer", "minimum": 0 }
+        },
+        "required": ["enabled", "collection", "estimator", "runtime", "summary"],
+        "additionalProperties": false
+      },
+      "PrivateOutputSavingsSummary": {
+        "type": "object",
+        "properties": {
+          "estimated_output_tokens": { "type": "integer", "minimum": 0 },
+          "visible_characters": { "type": "integer", "minimum": 0 },
+          "response_count": { "type": "integer", "minimum": 0 },
+          "job_count": { "type": "integer", "minimum": 0 },
+          "first_measured_at": { "type": ["string", "null"], "format": "date-time" },
+          "last_measured_at": { "type": ["string", "null"], "format": "date-time" }
+        },
+        "required": [
+          "estimated_output_tokens",
+          "visible_characters",
+          "response_count",
+          "job_count",
+          "first_measured_at",
+          "last_measured_at"
         ],
         "additionalProperties": false
       },

@@ -397,6 +397,7 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
       runtimeId: 'cloak:darwin-arm64:145.0.7632.109.2',
       family: 'cloak',
       browserId: 'cloak',
+      executablePath: path.join(homeDir, 'browser', 'runtimes', 'cloak', 'darwin-arm64', '145.0.7632.109.2', 'CloakBrowser'),
       createdWithVersion: '145.0.7632.109.2',
       profileFormat: 1,
     })

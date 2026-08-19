@@ -4,7 +4,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { tokenlessHome } from '#tokenless-server/persistence/config.js'
+import { tokenlessHome } from '../bootstrap/home.js'
 import { tokenlessPackageVersion } from '#tokenless-server/platform-package.js'
 import { t } from '../localization.js'
 import type { CliMessageKey } from '../i18n/catalog.js'

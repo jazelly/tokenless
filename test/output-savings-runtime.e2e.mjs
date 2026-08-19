@@ -19,8 +19,7 @@ test('built daemon completes the job before its durable background tokenizer wor
     assert.equal(initial.outputSavings.runtime.state, 'not_installed')
     assert.equal(fs.existsSync(path.join(homeDir, 'tokenizers')), false)
 
-    const [{ startDaemon }, { OutputSavingsRuntimeManager }, { JobStore }] = await Promise.all([
-      import('../packages/server/dist/src/runtime/lifecycle.js'),
+    const [{ OutputSavingsRuntimeManager }, { JobStore }] = await Promise.all([
       import('../packages/cli/dist/src/index.js'),
       import('../packages/server/dist/src/jobs/store.js'),
     ])
@@ -53,13 +52,10 @@ test('built daemon completes the job before its durable background tokenizer wor
       handoffStore.close()
     }
 
-    const daemon = await startDaemon({ homeDir, port: 0 })
-    try {
-      await waitFor(() => daemon.store.outputSavingsSummary().estimated_output_tokens === 2)
-      assert.equal(daemon.store.pendingOutputSavingsWorkCount(), 0)
-    } finally {
-      await daemon.close()
-    }
+    await waitFor(
+      () => runSavings(homeDir, 'status').outputSavings.summary.estimated_output_tokens === 2,
+      120_000,
+    )
 
     const enabled = runSavings(homeDir, 'status')
     assert.equal(enabled.outputSavings.enabled, true)
@@ -95,6 +91,7 @@ test('built daemon completes the job before its durable background tokenizer wor
     assert.equal(removed.outputSavings.runtime.state, 'not_installed')
     assert.equal(fs.existsSync(path.join(homeDir, 'tokenizers')), false)
   } finally {
+    stopDaemon(homeDir)
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
@@ -144,6 +141,7 @@ test('disabling output savings discards durable work without installing the toke
     }
     assert.equal(fs.existsSync(path.join(homeDir, 'tokenizers')), false)
   } finally {
+    stopDaemon(homeDir)
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
@@ -173,4 +171,19 @@ function runSavings(homeDir, subcommand, ...extra) {
   })
   assert.equal(result.status, 0, [result.stderr, result.stdout].filter(Boolean).join('\n'))
   return JSON.parse(result.stdout)
+}
+
+function stopDaemon(homeDir) {
+  spawnSync(process.execPath, [
+    cliEntry,
+    'daemon',
+    'stop',
+    '--home',
+    homeDir,
+    '--json',
+  ], {
+    cwd: root,
+    encoding: 'utf8',
+    timeout: 20_000,
+  })
 }

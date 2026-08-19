@@ -30,6 +30,7 @@ export type BrowserRuntimeBinding = {
   runtimeId: string
   family: BrowserRuntimeFamily
   browserId: string
+  executablePath?: string
   createdWithVersion: string
   profileFormat: 1
 }
