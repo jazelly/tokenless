@@ -27,5 +27,4 @@ docs/*
 !docs/provider-capability-census.zh-CN.md
 !docs/provider-rate-limits.md
 !docs/provider-rate-limits.zh-CN.md
-!docs/roadmaps/
-!docs/roadmaps/**
+/docs/roadmaps/
