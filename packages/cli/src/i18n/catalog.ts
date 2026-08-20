@@ -1,6 +1,5 @@
 export const CLI_MESSAGES = {
   en: {
-    agentAdmissionRetry: 'Retry this admission with --admission-ref {admissionRef}.',
     upgradeTitle: 'Tokenless upgrade', failed: 'Tokenless CLI failed.',
     agentsInstallNextStep: 'Restart Codex, open /hooks, and trust the Tokenless hook definition before expecting automatic chat and turn binding.',
     agentsInstalled: 'Tokenless is installed for normal Codex sessions. Restart Codex and trust the Tokenless hooks in /hooks.',
@@ -21,7 +20,6 @@ export const CLI_MESSAGES = {
     setupCompactSummary: 'Tokenless setup checked {providers} once in profile {profile}. Provider summary: {classifications}. Counts: authenticated {authenticated}, unauthenticated {unauthenticated}, unknown {unknown}, failed {failed}.', setupCliUnavailable: 'CLI: tokenless {current}; npm latest check unavailable ({code}, non-blocking).', setupCliAvailable: 'CLI: tokenless {current}; npm latest {latest} is available.', setupCliCurrent: 'CLI: tokenless {current}; npm latest {latest} is up to date.', setupDaemonReady: 'Daemon: ready on tokenless {version} / control API r{revision} (exact match required).',
   },
   'zh-CN': {
-    agentAdmissionRetry: '请使用 --admission-ref {admissionRef} 重试同一 admission。',
     upgradeTitle: 'Tokenless 升级', failed: 'Tokenless CLI 执行失败。',
     agentsInstallNextStep: '请重启 Codex，打开 /hooks，并信任 Tokenless hook definition，之后才能使用自动 chat 和 turn 绑定。',
     agentsInstalled: 'Tokenless 已安装到普通 Codex sessions。请重启 Codex，并在 /hooks 中信任 Tokenless hooks。',

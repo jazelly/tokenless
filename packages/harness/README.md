@@ -25,21 +25,17 @@ The package reads only `SKILL.md`. It never reads or executes `references/`, `as
 
 Provider transport stays outside this package: the selected adapter must support both `conversation.chat` and `file.upload`. User-owned Skills are context inputs, never provider capabilities. The adapter must visibly accept the context before it calls `finalizeHarnessBootstrapTurn`; a rejected Skill becomes a soft `provider_upload_failed` omission, while a rejected System Prompt produces no prompt and no task submission. A run is single-writer; callers must not prepare the same turn concurrently.
 
-### Sequential mission admission
-
-`openSequentialHarnessMissionQueue` is a durable local admission ledger only: it freezes a bounded private mission specification in `harness.sqlite3`, exposes a redacted task projection, and atomically admits at most one `preparing` task. It does not start a daemon, contact a provider, prepare a bootstrap, or finalize output.
-
 ### Local HTTP V0 bootstrap
 
 `startHarnessLocalHttpBootstrap` is the intentionally narrow local-control-plane seam. It binds the configured provider/profile, compiles the required System Prompt and frozen tool catalog, resolves caller-selected Skills, and stages the context as bounded named Markdown files. `continueHarnessLocalHttpTurn` keeps the proved provider conversation, while read, resume, and cancel operate on opaque turn references.
 
 `completeHarnessLocalHttpBootstrap` reads a succeeded turn, validates the delivered atomic attachment batch against the required System Prompt digest, validates the strict correlated Harness envelope, then finalizes the pending bootstrap with its selected Skills. It strips only bounded single-line provider chrome around one exact envelope; invalid output never finalizes the Harness state, and repeated completion is idempotent.
 
-The durable `WebAgentHarness` owns MCP catalog discovery, approval-bound calls, action batches, provider continuation, and restart recovery in `<TOKENLESS_HOME>/harness.sqlite3`. MCP servers are explicit local stdio processes; environment values remain in the invoking process and every MCP call requires digest-bound approval.
+`WebAgentHarness` keeps runs in the daemon process and owns MCP catalog discovery, approval-bound calls, action batches, and provider continuation. Runs are lost when the daemon exits; MCP servers are explicit local stdio processes, environment values remain in the invoking process, and every mutating MCP call requires digest-bound approval.
 
 ### AI sidecars
 
-Front Door and Exit Door are sidecars around the durable Harness loop. They do not add phases to provider execution: Front Door prepares metadata and a concrete provider route before `WebAgentHarness.start`, while Exit Door reviews the terminal result after the Harness run completes.
+Front Door and Exit Door are sidecars around the Harness loop. They do not add phases to provider execution: Front Door prepares metadata and a concrete provider route before `WebAgentHarness.start`, while Exit Door reviews the terminal result after the Harness run completes.
 
 The sidecars depend on the small `HarnessAiEngine` contract. The first adapter is the browser-side Chrome Prompt API implementation backed by Gemini Nano; local and remote engines can implement the same contract later without changing Front Door or Exit Door.
 
@@ -53,7 +49,7 @@ const frontDoor = createHarnessFrontDoorSidecar(geminiNanoEngine)
 const exitDoor = createHarnessExitDoorSidecar(geminiNanoEngine)
 const prepared = await frontDoor.prepare({ taskPrompt, providers, browserBinding })
 const run = await harness.start({ ...spec, provider: prepared.route.providerId })
-// Read the durable run through the normal Harness interface.
+// Read the run through the normal Harness interface while the daemon remains alive.
 const postprocessed = run.final
   ? await exitDoor.finalize({ taskPrompt, output: run.final.output, artifacts: run.final.artifacts, browserBinding })
   : undefined
@@ -70,7 +66,7 @@ tokenless agent cancel --run-id <run-id> --json
 
 The package API is the SDK-like seam for local callers (`openWebAgentHarness`, `start`, `read`, `resume`, and `cancel`). The daemon exposes the same run contract at `/v1/private/agent/runs` for the CLI and at the UI-session-protected `/ui-api/v1/harness/runs` facade for Dashboard; the latter adds UI session and CSRF checks but does not create a second Harness implementation.
 
-A queued provider turn proves local staging and durable scheduling, not visible-provider acceptance. Provider authentication and verification stay external; resume continues the same durable turn after the user completes the handoff.
+A queued provider turn proves local staging, not visible-provider acceptance. Provider authentication and verification stay external; resume continues the same in-process run after the user completes the handoff.
 
 Agent context is stored separately in `<TOKENLESS_HOME>/harness.sqlite3`. The ledger stores bounded IDs, canonical project identity, hashes, timestamps, provider mapping references, and job IDs. It does not store raw Codex prompts, transcripts, assistant messages, tool results, browser state, or credentials. The Web Provider API owns real provider Projects, conversations, and jobs; this package binds their returned opaque IDs to Harness conversations.
 

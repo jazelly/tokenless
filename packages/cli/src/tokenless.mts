@@ -67,7 +67,6 @@ import {
   providerWakeUrl,
   readTokenlessConfig,
   readAgentRun,
-  readAgentRunByAdmission,
   hasConfiguredTokenlessLanguage,
   removeStagedVisibleAttachmentBundle,
   resolveChromiumBrowser,
@@ -2899,46 +2898,27 @@ async function agentCommand(subcommand: string | undefined, args: CliArgs) {
     })).profile
     const taskPrompt = await agentTaskPrompt(args)
     const mcpServers = args.mcpConfig === undefined ? undefined : await readAgentMcpServers(String(args.mcpConfig))
-    const admissionRef = agentAdmissionRef(args.admissionRef)
-    let view: Record<string, unknown>
-    try {
-      view = await startAgentRun({
-        ...client,
-        body: {
-          admissionRef,
-          provider,
-          profileId: profile.id,
-          taskPrompt,
-          ...(args.skills.length > 0
-            ? { selectedSkills: args.skills.map((name) => ({ name, selectedBy: 'explicit_user' })) }
-            : {}),
-          ...(mcpServers ? { mcpServers } : {}),
-          ...(args.maxTurns === undefined
-            ? {}
-            : { maxTurns: strictPositiveInteger(args.maxTurns, '--max-turns') }),
-        },
-      })
-    } catch (error) {
-      const failure = error as CliError
-      if (failure.retryable) {
-        failure.context = { ...(failure.context ?? {}), admissionRef, recoveryCommand: `tokenless agent read --admission-ref ${admissionRef} --json` }
-        failure.message = `${failure.message} ${t('agentAdmissionRetry', { admissionRef })}`
-      }
-      throw failure
-    }
+    const view = await startAgentRun({
+      ...client,
+      body: {
+        provider,
+        profileId: profile.id,
+        taskPrompt,
+        ...(args.skills.length > 0
+          ? { selectedSkills: args.skills.map((name) => ({ name, selectedBy: 'explicit_user' })) }
+          : {}),
+        ...(mcpServers ? { mcpServers } : {}),
+        ...(args.maxTurns === undefined
+          ? {}
+          : { maxTurns: strictPositiveInteger(args.maxTurns, '--max-turns') }),
+      },
+    })
     printAgentRunView(view, args)
     return
   }
 
   if (subcommand === 'read') {
-    if (args.runId !== undefined && args.admissionRef !== undefined) {
-      throw usageError('agent_run_selector_conflict', 'Use either --run-id or --admission-ref, not both.')
-    }
-    if (args.admissionRef !== undefined) {
-      printAgentRunView(await readAgentRunByAdmission({ ...client, admissionRef: agentAdmissionRef(args.admissionRef) }), args)
-    } else {
-      printAgentRunView(await readAgentRun({ ...client, runId: requiredAgentRunId(args.runId) }), args)
-    }
+    printAgentRunView(await readAgentRun({ ...client, runId: requiredAgentRunId(args.runId) }), args)
     return
   }
   const runId = requiredAgentRunId(args.runId)
@@ -3004,16 +2984,6 @@ function requiredAgentRunId(value: unknown) {
     throw usageError('agent_run_id_required', '--run-id must be a Harness run ID returned by tokenless agent run.')
   }
   return value
-}
-
-function agentAdmissionRef(value: unknown) {
-  const admissionRef = value === undefined
-    ? `admission:${randomUUID().replaceAll('-', '')}`
-    : String(value)
-  if (!/^admission:[a-f0-9]{32,64}$/u.test(admissionRef)) {
-    throw usageError('agent_admission_ref_invalid', '--admission-ref must be admission:<32-64 lowercase hexadecimal characters>.')
-  }
-  return admissionRef
 }
 
 function agentIntervention(args: CliArgs) {
@@ -5423,8 +5393,8 @@ function createCommandContracts(): CommandContract[] {
     { command: 'help', usage: ['tokenless help'], options: [] },
     { command: 'version', usage: ['tokenless --version', 'tokenless -V', 'tokenless version'], options: [] },
     { command: 'run', usage: [`tokenless run [--capability <capability>] --provider ${VISIBLE_PROVIDER_USAGE} [--execution-mode browser|direct] --prompt <text> --json`], options: runOptions },
-    { command: 'agent', subcommand: 'run', usage: [`tokenless agent run --provider ${VISIBLE_PROVIDER_USAGE} [--profile <slug>] (--prompt <text>|--prompt-file <path>) [--admission-ref <ref>] [--skill <name>] [--mcp-config <path>] [--max-turns <count>] --json`], options: ['home', 'json', 'profile', 'provider', 'prompt', 'promptFile', 'admissionRef', 'skills', 'mcpConfig', 'maxTurns', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
-    { command: 'agent', subcommand: 'read', usage: ['tokenless agent read (--run-id <run-id>|--admission-ref <ref>) --json'], options: ['home', 'json', 'runId', 'admissionRef', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
+    { command: 'agent', subcommand: 'run', usage: [`tokenless agent run --provider ${VISIBLE_PROVIDER_USAGE} [--profile <slug>] (--prompt <text>|--prompt-file <path>) [--skill <name>] [--mcp-config <path>] [--max-turns <count>] --json`], options: ['home', 'json', 'profile', 'provider', 'prompt', 'promptFile', 'skills', 'mcpConfig', 'maxTurns', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
+    { command: 'agent', subcommand: 'read', usage: ['tokenless agent read --run-id <run-id> --json'], options: ['home', 'json', 'runId', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
     { command: 'agent', subcommand: 'resume', usage: ['tokenless agent resume --run-id <run-id> (--approve <call-id:digest>|--auth-completed <call-id:digest>|--answer <need-id=json>|--provider-ready) --json'], options: ['home', 'json', 'runId', 'approvals', 'authenticationCompleted', 'answers', 'providerReady', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
     { command: 'agent', subcommand: 'cancel', usage: ['tokenless agent cancel --run-id <run-id> --json'], options: ['home', 'json', 'runId', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
     { command: 'capabilities', subcommand: 'list', usage: ['tokenless capabilities list --json'], options: ['json'] },
@@ -5526,7 +5496,6 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--task-id': 'taskId',
     '--job-id': 'jobId',
     '--run-id': 'runId',
-    '--admission-ref': 'admissionRef',
     '--agent-kind': 'agentKind',
     '--agent-session-id': 'agentSessionId',
     '--limit': 'limit',
@@ -7063,7 +7032,6 @@ function commonOptionsFor(options: readonly string[]) {
 function optionUsageLabel(option: string) {
   return ({
     action: '--action <action>',
-    admissionRef: '--admission-ref <ref>',
     allProfiles: '--all',
     answers: '--answer <need-id=json>',
     approvals: '--approve <call-id:digest>',

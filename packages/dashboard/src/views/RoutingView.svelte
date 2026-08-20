@@ -309,7 +309,6 @@ import {
     startingHarnessRun = true
     try {
       const started = await actions.startHarnessRun({
-        admissionRef: `admission:${crypto.randomUUID().replaceAll('-', '')}`,
         provider: frontDoorResult.route.providerId,
         profileId: profile.id,
         taskPrompt: task.trim(),

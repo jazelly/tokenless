@@ -31,35 +31,6 @@ test('built singular agent CLI keeps one local control-plane turn across run, re
       enabledTools: ['echo'],
       timeoutMs: 30_000,
     }] }))
-    const admissionRef = `admission:${'e'.repeat(32)}`
-    const cancellableCommand = [
-      'agent', 'run', '--provider', 'chatgpt', '--profile', profile.slug,
-      '--prompt', 'Cancel this admitted run.', '--mcp-config', mcpConfig,
-      '--admission-ref', admissionRef,
-    ]
-    const cancellable = await runCli(cancellableCommand, homeDir, daemon.origin)
-    const replayed = await runCli(cancellableCommand, homeDir, daemon.origin)
-    assert.equal(replayed.runId, cancellable.runId)
-    const recovered = await runCli(['agent', 'read', '--admission-ref', admissionRef], homeDir, daemon.origin)
-    assert.equal(recovered.runId, cancellable.runId)
-    const conflict = await runCliFailure([
-      'agent', 'run', '--provider', 'chatgpt', '--profile', profile.slug,
-      '--prompt', 'A different spec cannot claim the admitted reference.', '--mcp-config', mcpConfig,
-      '--admission-ref', admissionRef,
-    ], homeDir, daemon.origin)
-    assert.equal(conflict.error.code, 'harness_admission_conflict')
-    const missing = await runCliFailure([
-      'agent', 'read', '--admission-ref', `admission:${'d'.repeat(32)}`,
-    ], homeDir, daemon.origin)
-    assert.equal(missing.error.code, 'harness_admission_missing')
-    const pending = await runCli(['agent', 'read', '--run-id', cancellable.runId], homeDir, daemon.origin)
-    assert.equal(pending.status, 'submitting_provider')
-    const requestRef = harnessRequestRef(homeDir, cancellable.runId)
-    const cancelledBeforeStart = await runCli(['agent', 'cancel', '--run-id', cancellable.runId], homeDir, daemon.origin)
-    assert.equal(cancelledBeforeStart.status, 'cancelled')
-    assert.equal(store.getWebAiTurnByRequestRef(requestRef), null)
-    assert.equal(requestCancellationCount(homeDir, requestRef), 1)
-
     const started = await runCli([
       'agent', 'run', '--provider', 'chatgpt', '--profile', profile.slug,
       '--prompt', 'Return a final answer.', '--mcp-config', mcpConfig,
@@ -105,35 +76,6 @@ async function runCli(command, homeDir, daemonUrl) {
   ], { cwd: path.resolve('.'), env: { ...process.env, TOKENLESS_HOME: homeDir } })
   assert.equal(stderr, '')
   return JSON.parse(stdout)
-}
-
-async function runCliFailure(command, homeDir, daemonUrl) {
-  try {
-    await runCli(command, homeDir, daemonUrl)
-    assert.fail('Expected the built CLI command to fail.')
-  } catch (error) {
-    assert.notEqual(error.code, 'ERR_ASSERTION')
-    return JSON.parse(error.stdout)
-  }
-}
-
-function harnessRequestRef(homeDir, runId) {
-  const database = new DatabaseSync(path.join(homeDir, 'harness.sqlite3'))
-  try {
-    const row = database.prepare('SELECT state_json FROM harness_agent_runs WHERE run_id = ?').get(runId)
-    return JSON.parse(row.state_json).requestRef
-  } finally {
-    database.close()
-  }
-}
-
-function requestCancellationCount(homeDir, requestRef) {
-  const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'))
-  try {
-    return database.prepare('SELECT COUNT(*) AS count FROM web_ai_v0_request_cancellations WHERE request_ref = ?').get(requestRef).count
-  } finally {
-    database.close()
-  }
 }
 
 function injectWaitingJob(homeDir, jobId) {
