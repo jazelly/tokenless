@@ -38,6 +38,16 @@ tokenless agents install codex
 
 使用 `tokenless agents status codex --json`、`tokenless agents inspect codex --chat-id <codex-thread-id> --json` 和 `tokenless agents uninstall codex` 进行检查与移除。Harness ledger 只保存有界 ID 与 hash，不保存原始 prompt、transcript、credential 或 browser state。
 
+Codex hooks 不会替换 native subagent execution。Codex workflow 需要显式委托 Tokenless Harness-owned child 时，请使用 `tokenless agent delegate --workspace-root "$PWD" ...`。
+
+## DeepSeek Harness Subagent 集成
+
+```bash
+tokenless agents install dsh --provider chatgpt --profile default --dsh-profile headless --json
+```
+
+该命令注册一个 DeepSeek Harness `SubagentProvider`，并把它的普通 one-shot `subagent` tool 路由到 Tokenless Harness。它与 model base URL 路径彼此独立；后者继续使用 DeepSeek Harness 现有的 `llm-deepseek` adapter。
+
 ## 运行
 
 ```bash

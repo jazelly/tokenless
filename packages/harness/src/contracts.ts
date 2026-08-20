@@ -344,6 +344,7 @@ export type AgentRunSpec = {
   mcpServers?: readonly AgentMcpServerSpec[] | undefined
   /** Opaque first-party tool adapter binding; never exposed to the model. */
   toolBinding?: HarnessToolBinding | undefined
+  workspaceRoot?: string | undefined
 }
 
 export type ProviderTurnRequest = {
@@ -453,10 +454,12 @@ export type HarnessToolExecutionContext = {
   runId: string
   callId: string
   argumentsDigest: string
+  workspaceRoot?: string | undefined
 }
 
 export type HarnessToolCatalogContext = {
   runId: string
+  workspaceRoot?: string | undefined
 }
 
 export type HarnessToolProviderContext = {

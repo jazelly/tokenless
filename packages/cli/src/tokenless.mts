@@ -277,12 +277,13 @@ const TOP_LEVEL_USAGE = [
   'tokenless setup [--install-codex [--codex-home <dir>]]',
   `tokenless run --provider ${VISIBLE_PROVIDER_USAGE} [--execution-mode browser|direct] --prompt <text> --json`,
   `tokenless agent run --provider ${VISIBLE_PROVIDER_USAGE} [--profile <slug>] --prompt <text> --json`,
+  `tokenless agent delegate --provider ${VISIBLE_PROVIDER_USAGE} [--profile <slug>] --workspace-root <dir> --prompt <text> --json`,
   'tokenless capabilities list --json',
   'tokenless limits inspect --profile <slug> --provider <provider> --json',
   'tokenless featurebench inspect --json',
   'tokenless replay --agent-kind <kind> --agent-session-id <id> --json',
   'tokenless profiles <subcommand> [options]',
-  'tokenless agents <install|status|inspect|uninstall> codex [options]',
+  'tokenless agents <install|status|inspect|uninstall> <codex|dsh> [options]',
   'tokenless dashboard [--no-open] [--json]',
   'tokenless savings <status|enable|disable|uninstall|clear> --json',
   'tokenless daemon stop [--json]',
@@ -2889,7 +2890,7 @@ async function agentCommand(subcommand: string | undefined, args: CliArgs) {
     requestTimeoutMs: args.timeoutMs === undefined ? undefined : strictPositiveInteger(args.timeoutMs, '--timeout-ms'),
   }
 
-  if (subcommand === 'run') {
+  if (subcommand === 'run' || subcommand === 'delegate') {
     const provider = requiredAdminValue(args.provider, '--provider')
     const profile = (await resolveControlProfile({
       homeDir,
@@ -2904,6 +2905,9 @@ async function agentCommand(subcommand: string | undefined, args: CliArgs) {
         provider,
         profileId: profile.id,
         taskPrompt,
+        ...(subcommand === 'delegate'
+          ? { workspaceRoot: requiredWorkspaceRoot(args.workspaceRoot) }
+          : {}),
         ...(args.skills.length > 0
           ? { selectedSkills: args.skills.map((name) => ({ name, selectedBy: 'explicit_user' })) }
           : {}),
@@ -2913,7 +2917,8 @@ async function agentCommand(subcommand: string | undefined, args: CliArgs) {
           : { maxTurns: strictPositiveInteger(args.maxTurns, '--max-turns') }),
       },
     })
-    printAgentRunView(view, args)
+    if (subcommand === 'delegate') await waitForDelegatedAgentRun(view, client, args)
+    else printAgentRunView(view, args)
     return
   }
 
@@ -2931,18 +2936,93 @@ async function agentCommand(subcommand: string | undefined, args: CliArgs) {
     printAgentRunView(await resumeAgentRun({ ...client, runId, body }), args)
     return
   }
-  throw usageError('agent_command_invalid', 'Usage: tokenless agent <run|read|resume|cancel>.')
+  throw usageError('agent_command_invalid', 'Usage: tokenless agent <run|delegate|read|resume|cancel>.')
 }
 
 async function agentTaskPrompt(args: CliArgs) {
-  if (args.prompt !== undefined && args.promptFile !== undefined) {
-    throw usageError('duplicate_prompt', 'Use either --prompt or --prompt-file, not both.')
+  const sources = [args.prompt !== undefined, args.promptFile !== undefined, args.promptStdin === true].filter(Boolean).length
+  if (sources > 1) {
+    throw usageError('duplicate_prompt', 'Use one of --prompt, --prompt-file, or --prompt-stdin.')
   }
-  const value = args.promptFile === undefined ? args.prompt : await fs.readFile(String(args.promptFile), 'utf8')
+  const value = args.promptStdin === true
+    ? await readBoundedStdin(MAX_DAEMON_REQUEST_BYTES)
+    : args.promptFile === undefined
+      ? args.prompt
+      : await fs.readFile(String(args.promptFile), 'utf8')
   if (typeof value !== 'string' || value.trim() === '') {
-    throw usageError('missing_prompt', 'Agent run requires --prompt <text> or --prompt-file <path>.')
+    throw usageError('missing_prompt', 'Agent run requires --prompt <text>, --prompt-file <path>, or --prompt-stdin.')
   }
   return value
+}
+
+function requiredWorkspaceRoot(value: unknown) {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw usageError('missing_argument_value', 'Delegation requires --workspace-root <dir>.')
+  }
+  return path.resolve(value)
+}
+
+async function waitForDelegatedAgentRun(started: Record<string, any>, client: {
+  homeDir: string
+  daemonUrl: string
+  requestTimeoutMs?: number | undefined
+}, args: CliArgs) {
+  let view = started
+  const runId = requiredAgentRunId(view.runId)
+  const protocol = 'tokenless.harness.delegation.v1'
+  const emit = (event: Record<string, unknown>) => process.stdout.write(`${JSON.stringify({ protocol, ...event })}\n`)
+  if (args.adapterStream === true) emit({ type: 'started', runId })
+
+  let interrupted = false
+  const deadline = Date.now() + (args.timeoutMs === undefined ? 600_000 : strictPositiveInteger(args.timeoutMs, '--timeout-ms'))
+  const onSignal = () => { interrupted = true }
+  process.once('SIGINT', onSignal)
+  process.once('SIGTERM', onSignal)
+  try {
+    while (!delegationSettled(view)) {
+      if (interrupted || Date.now() >= deadline) {
+        view = await cancelAgentRun({ ...client, runId })
+        break
+      }
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      view = await readAgentRun({ ...client, runId })
+    }
+    if (delegationRequiresIntervention(view)) {
+      view = await cancelAgentRun({ ...client, runId })
+    }
+  } finally {
+    process.off('SIGINT', onSignal)
+    process.off('SIGTERM', onSignal)
+  }
+
+  if (args.adapterStream === true) emit({ type: 'settled', run: view })
+  else printPayload({
+    ok: view.status === 'succeeded',
+    ...view,
+    compactOutput: formatAgentRunView(view),
+  }, args)
+  if (view.status !== 'succeeded') process.exitCode = 1
+}
+
+function delegationSettled(view: Record<string, any>) {
+  if ([
+    'succeeded',
+    'failed',
+    'cancelled',
+    'waiting_for_approval',
+    'waiting_for_input',
+    'waiting_for_authentication',
+  ].includes(String(view.status))) return true
+  return view.waiting && typeof view.waiting === 'object' && view.waiting.kind === 'provider'
+}
+
+function delegationRequiresIntervention(view: Record<string, any>) {
+  if ([
+    'waiting_for_approval',
+    'waiting_for_input',
+    'waiting_for_authentication',
+  ].includes(String(view.status))) return true
+  return view.waiting && typeof view.waiting === 'object' && view.waiting.kind === 'provider'
 }
 
 async function readAgentMcpServers(file: string) {
@@ -3071,10 +3151,30 @@ function formatAgentRunView(view: Record<string, any>) {
 
 async function agentsCommand(subcommand: string | undefined, args: CliArgs) {
   const agent = String(args.agent ?? '').trim().toLowerCase()
-  if (agent !== 'codex') {
-    throw usageError('agent_integration_unsupported', 'Tokenless agent integration currently supports codex.')
-  }
   const harness = await loadWebAgentHarness()
+
+  if (agent === 'dsh') {
+    const input = dshIntegrationInput(args, subcommand === 'install')
+    if (subcommand === 'install') {
+      const status = await harness.installDshIntegration(input)
+      printPayload({ ok: true, status, nextStep: t('agentsDshInstallNextStep'), compactOutput: t('agentsDshInstalled') }, args)
+      return
+    }
+    if (subcommand === 'uninstall') {
+      const status = await harness.uninstallDshIntegration(input)
+      printPayload({ ok: true, status, compactOutput: t('agentsDshRemoved') }, args)
+      return
+    }
+    if (subcommand === 'status') {
+      const status = await harness.inspectDshIntegration(input)
+      printPayload({ ok: true, status }, args)
+      return
+    }
+    throw usageError('agents_subcommand_required', 'Usage: tokenless agents <install|status|uninstall> dsh.')
+  }
+  if (agent !== 'codex') {
+    throw usageError('agent_integration_unsupported', 'Tokenless agent integration supports codex and dsh.')
+  }
   const input = codexIntegrationInput(args)
 
   if (subcommand === 'hook') {
@@ -3142,6 +3242,23 @@ function codexIntegrationInput(args: CliArgs, homeDir = tokenlessHome(args.home)
       executable: process.execPath,
       script: fileURLToPath(import.meta.url),
     },
+  }
+}
+
+function dshIntegrationInput(args: CliArgs, requireRoute: boolean) {
+  const provider = requireRoute
+    ? requiredAdminValue(args.provider, '--provider')
+    : String(args.provider || 'chatgpt')
+  const profile = requireRoute
+    ? requiredAdminValue(args.profile, '--profile')
+    : String(args.profile || 'default')
+  return {
+    dshHome: path.resolve(String(args.dshHome || process.env.DSH_HOME || path.join(os.homedir(), '.dsh'))),
+    dshProfile: String(args.dshProfile || 'headless'),
+    tokenlessHome: tokenlessHome(args.home),
+    provider,
+    profile,
+    command: { executable: process.execPath, script: fileURLToPath(import.meta.url) },
   }
 }
 
@@ -3280,6 +3397,9 @@ async function loadWebAgentHarness(): Promise<{
   inspectCodexIntegration(input: Record<string, unknown>): Promise<Record<string, unknown>>
   installCodexIntegration(input: Record<string, unknown>): Promise<Record<string, unknown>>
   uninstallCodexIntegration(input: Record<string, unknown>): Promise<Record<string, unknown>>
+  inspectDshIntegration(input: Record<string, unknown>): Promise<Record<string, unknown>>
+  installDshIntegration(input: Record<string, unknown>): Promise<Record<string, unknown>>
+  uninstallDshIntegration(input: Record<string, unknown>): Promise<Record<string, unknown>>
 }> {
   const moduleUrl = new URL('../harness/src/index.js', import.meta.url)
   return await import(moduleUrl.href)
@@ -5394,6 +5514,7 @@ function createCommandContracts(): CommandContract[] {
     { command: 'version', usage: ['tokenless --version', 'tokenless -V', 'tokenless version'], options: [] },
     { command: 'run', usage: [`tokenless run [--capability <capability>] --provider ${VISIBLE_PROVIDER_USAGE} [--execution-mode browser|direct] --prompt <text> --json`], options: runOptions },
     { command: 'agent', subcommand: 'run', usage: [`tokenless agent run --provider ${VISIBLE_PROVIDER_USAGE} [--profile <slug>] (--prompt <text>|--prompt-file <path>) [--skill <name>] [--mcp-config <path>] [--max-turns <count>] --json`], options: ['home', 'json', 'profile', 'provider', 'prompt', 'promptFile', 'skills', 'mcpConfig', 'maxTurns', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
+    { command: 'agent', subcommand: 'delegate', usage: [`tokenless agent delegate --provider ${VISIBLE_PROVIDER_USAGE} [--profile <slug>] --workspace-root <dir> (--prompt <text>|--prompt-file <path>|--prompt-stdin) [--skill <name>] [--mcp-config <path>] [--max-turns <count>] --json`], options: ['home', 'json', 'profile', 'provider', 'prompt', 'promptFile', 'promptStdin', 'workspaceRoot', 'adapterStream', 'skills', 'mcpConfig', 'maxTurns', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
     { command: 'agent', subcommand: 'read', usage: ['tokenless agent read --run-id <run-id> --json'], options: ['home', 'json', 'runId', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
     { command: 'agent', subcommand: 'resume', usage: ['tokenless agent resume --run-id <run-id> (--approve <call-id:digest>|--auth-completed <call-id:digest>|--answer <need-id=json>|--provider-ready) --json'], options: ['home', 'json', 'runId', 'approvals', 'authenticationCompleted', 'answers', 'providerReady', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
     { command: 'agent', subcommand: 'cancel', usage: ['tokenless agent cancel --run-id <run-id> --json'], options: ['home', 'json', 'runId', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
@@ -5440,10 +5561,10 @@ function createCommandContracts(): CommandContract[] {
     { command: 'profiles', subcommand: 'set-default', usage: ['tokenless profiles set-default --profile <slug> --json'], options: ['home', 'json', 'profile'] },
     { command: 'profiles', subcommand: 'remove', usage: ['tokenless profiles remove --profile <slug> --confirm-delete --json'], options: ['home', 'json', 'profile', 'confirmDelete'] },
     { command: 'daemon', subcommand: 'stop', usage: ['tokenless daemon stop [--daemon-url <loopback-url>] [--timeout-ms <ms>] --json'], options: ['home', 'json', 'daemonUrl', 'timeoutMs'] },
-    { command: 'agents', subcommand: 'install', usage: ['tokenless agents install codex [--codex-home <dir>] [--home <dir>] --json'], options: ['agent', 'codexHome', 'home', 'json'] },
-    { command: 'agents', subcommand: 'status', usage: ['tokenless agents status codex [--codex-home <dir>] [--home <dir>] --json'], options: ['agent', 'codexHome', 'home', 'json'] },
+    { command: 'agents', subcommand: 'install', usage: ['tokenless agents install codex [--codex-home <dir>] [--home <dir>] --json', 'tokenless agents install dsh --provider <provider> --profile <profile> [--dsh-home <dir>] [--dsh-profile <name>] [--home <dir>] --json'], options: ['agent', 'codexHome', 'dshHome', 'dshProfile', 'home', 'json', 'provider', 'profile'] },
+    { command: 'agents', subcommand: 'status', usage: ['tokenless agents status codex [--codex-home <dir>] [--home <dir>] --json', 'tokenless agents status dsh [--dsh-home <dir>] [--dsh-profile <name>] [--home <dir>] --json'], options: ['agent', 'codexHome', 'dshHome', 'dshProfile', 'home', 'json', 'provider', 'profile'] },
     { command: 'agents', subcommand: 'inspect', usage: ['tokenless agents inspect codex --chat-id <id> [--home <dir>] --json'], options: ['agent', 'chatId', 'codexHome', 'home', 'json'] },
-    { command: 'agents', subcommand: 'uninstall', usage: ['tokenless agents uninstall codex [--codex-home <dir>] [--home <dir>] --json'], options: ['agent', 'codexHome', 'home', 'json'] },
+    { command: 'agents', subcommand: 'uninstall', usage: ['tokenless agents uninstall codex [--codex-home <dir>] [--home <dir>] --json', 'tokenless agents uninstall dsh [--dsh-home <dir>] [--dsh-profile <name>] [--home <dir>] --json'], options: ['agent', 'codexHome', 'dshHome', 'dshProfile', 'home', 'json', 'provider', 'profile'] },
     { command: 'agents', subcommand: 'hook', usage: ['tokenless agents hook codex --integration-id <id> [--codex-home <dir>] [--home <dir>]'], options: ['agent', 'codexHome', 'home', 'integrationId'] },
   ]
   return contracts.map((contract) => ({
@@ -5538,6 +5659,8 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--kimi-skill': 'kimiSkill',
     '--chat-surface': 'chatSurface',
     '--codex-home': 'codexHome',
+    '--dsh-home': 'dshHome',
+    '--dsh-profile': 'dshProfile',
     '--chat-id': 'chatId',
     '--integration-id': 'integrationId',
     '--instance-id': 'instanceId',
@@ -5545,6 +5668,7 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--channel-file': 'channelFile',
     '--instruction-file': 'instructionFile',
     '--workspace': 'workspace',
+    '--workspace-root': 'workspaceRoot',
     '--events-file': 'eventsFile',
     '--max-steps': 'maxSteps',
     '--max-turns': 'maxTurns',
@@ -5577,6 +5701,8 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--defaults': 'setupDefaults',
     '--all': 'allProfiles',
     '--provider-ready': 'providerReady',
+    '--prompt-stdin': 'promptStdin',
+    '--adapter-stream': 'adapterStream',
   }
   const repeatedValueFlags: Record<string, keyof Pick<CliArgs, 'answers' | 'approvals' | 'authenticationCompleted' | 'skills'>> = {
     '--answer': 'answers',
@@ -7053,6 +7179,8 @@ function optionUsageLabel(option: string) {
     context: '--context <text>',
     contextFile: '--context-file <path>',
     codexHome: '--codex-home <dir>',
+    dshHome: '--dsh-home <dir>',
+    dshProfile: '--dsh-profile <name>',
     daemonStartTimeoutMs: '--daemon-start-timeout-ms <ms>',
     daemonUrl: '--daemon-url <url>',
     effort: '--effort <label>',
@@ -7090,6 +7218,7 @@ function optionUsageLabel(option: string) {
     projectRoot: '--project-root <path>',
     prompt: '--prompt <text>',
     promptFile: '--prompt-file <path>',
+    promptStdin: '--prompt-stdin',
     provider: '-p, --provider <provider>',
     quiet: '--quiet',
     repairBrowser: '--repair-browser',
@@ -7108,6 +7237,8 @@ function optionUsageLabel(option: string) {
     verbose: '-v, --verbose',
     pageRef: '--page-ref <page-ref>',
     workspaceMode: '--workspace-mode <auto|native|conversation>',
+    workspaceRoot: '--workspace-root <dir>',
+    adapterStream: '--adapter-stream',
   } as Record<string, string>)[option] ?? `--${option.replace(/[A-Z]/g, (character) => `-${character.toLowerCase()}`)}`
 }
 

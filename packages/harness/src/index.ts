@@ -33,6 +33,20 @@ export {
   readCodexThreadFromAppServer,
 } from './agent-context/codex-app-server.js'
 
+export { createAgentToolRegistry } from './tools/registry.js'
+
+export {
+  DSH_INTEGRATION_PROTOCOL,
+  inspectDshIntegration,
+  installDshIntegration,
+  uninstallDshIntegration,
+} from './agent-context/dsh-integration.js'
+
+export type {
+  DshIntegrationInput,
+  DshIntegrationStatus,
+} from './agent-context/dsh-integration.js'
+
 export {
   HARNESS_SKILL_MODULE_PROTOCOL,
   HARNESS_SKILL_STATE_PROTOCOL,

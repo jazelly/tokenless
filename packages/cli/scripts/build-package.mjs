@@ -52,6 +52,7 @@ const providersRoot = path.join(distRoot, 'server', 'src', 'providers')
 const runtimeRoot = path.join(distRoot, 'runtime')
 fs.mkdirSync(providersRoot, { recursive: true })
 fs.cpSync(path.join(packageRoot, 'runtime'), runtimeRoot, { recursive: true })
+fs.cpSync(path.join(packageRoot, 'integrations'), path.join(distRoot, 'integrations'), { recursive: true })
 fs.copyFileSync(
   path.join(serverRoot, 'catalog', 'provider-rate-limits.v1.json'),
   path.join(providersRoot, 'provider-rate-limits.v1.json'),

@@ -36,6 +36,16 @@ Restart Codex and trust the Tokenless definition in `/hooks`, then continue laun
 
 Use `tokenless agents status codex --json`, `tokenless agents inspect codex --chat-id <codex-thread-id> --json`, and `tokenless agents uninstall codex` for inspection and removal. The separate Harness ledger stores bounded IDs and hashes, not raw Codex prompts, transcripts, credentials, or browser state.
 
+Codex hooks do not replace native subagent execution. Use `tokenless agent delegate --workspace-root "$PWD" ...` when a Codex workflow explicitly delegates a Tokenless Harness-owned child.
+
+## DeepSeek Harness Subagent Integration
+
+```bash
+tokenless agents install dsh --provider chatgpt --profile default --dsh-profile headless --json
+```
+
+This registers a DeepSeek Harness `SubagentProvider` and routes its ordinary one-shot `subagent` tool to Tokenless Harness. It is separate from the model-base-URL path, which continues to use DeepSeek Harness's existing `llm-deepseek` adapter.
+
 ## Run
 
 ```bash

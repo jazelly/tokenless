@@ -2,7 +2,7 @@ import path from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 import { createLocalHttpProviderTurnClient } from './provider-client.js'
-import { createStdioMcpToolRegistry } from '../mcp/stdio.js'
+import { createAgentToolRegistry } from '../tools/registry.js'
 import { openWebAgentHarness } from '../run/web-agent-harness.js'
 import type { AgentRunSpec } from '../contracts.js'
 import { BrowserExtensionBroker } from '../browser-extension/broker.js'
@@ -29,7 +29,7 @@ export function createAgentRunHttpHandler({
   token: string
 }): AgentRunHttpHandler {
   const broker = new BrowserExtensionBroker(tokenlessHome, baseUrl)
-  const toolRegistry = broker.registry(createStdioMcpToolRegistry())
+  const toolRegistry = broker.registry(createAgentToolRegistry())
   const harness = openWebAgentHarness({
     providerClient: createLocalHttpProviderTurnClient({ baseUrl, token }),
     toolRegistry,
@@ -52,7 +52,7 @@ export function createAgentRunHttpHandler({
       const action = route[2]
       if (method === 'POST' && runId === undefined) {
         const body = await readJsonObject(request)
-        const allowed = new Set(['provider', 'profileId', 'taskPrompt', 'selectedSkills', 'finalOutput', 'limits', 'maxTurns', 'mcpServers'])
+        const allowed = new Set(['provider', 'profileId', 'taskPrompt', 'selectedSkills', 'finalOutput', 'limits', 'maxTurns', 'workspaceRoot', 'mcpServers'])
         if (Object.keys(body).some((key) => !allowed.has(key))) throw requestError('invalid_input', 'Harness run request contains an unknown field')
         writeJson(response, 200, await harness.start({
           ...body,

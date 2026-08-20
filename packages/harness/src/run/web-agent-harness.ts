@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto'
+import path from 'node:path'
 
 import {
   HARNESS_RUN_PROTOCOL,
@@ -289,7 +290,10 @@ class InMemoryWebAgentHarness implements WebAgentHarness {
   }
 
   private async discoverTools(record: HarnessRunRecord) {
-    const catalog = await this.tools.catalog(record.spec.mcpServers ?? [], { runId: record.runId })
+    const catalog = await this.tools.catalog(record.spec.mcpServers ?? [], {
+      runId: record.runId,
+      ...(record.spec.workspaceRoot ? { workspaceRoot: record.spec.workspaceRoot } : {}),
+    })
     const pendingProviderRequest = providerRequest({ ...record, catalog })
     return this.update(record.runId, (current) => ({
       ...current,
@@ -415,6 +419,7 @@ class InMemoryWebAgentHarness implements WebAgentHarness {
           runId: record.runId,
           callId: call.id,
           argumentsDigest: call.argumentsDigest,
+          ...(record.spec.workspaceRoot ? { workspaceRoot: record.spec.workspaceRoot } : {}),
         }
         let executionArguments: JsonValue
         try {
@@ -446,8 +451,8 @@ class InMemoryWebAgentHarness implements WebAgentHarness {
           } else {
             record = this.recordCallOutcome(record, call.id, outcome.status, outcome.content)
           }
-        } catch {
-          record = this.recordCallOutcome(record, call.id, 'failed', { code: 'harness_tool_execution_failed' })
+        } catch (error) {
+          record = this.recordCallOutcome(record, call.id, 'failed', harnessExecutionFailure(error))
         }
         progressed = true
       }
@@ -719,6 +724,13 @@ function harnessArgumentFailure(error: unknown, tool: string): JsonValue {
   return { code: 'harness_tool_arguments_invalid', message: `Arguments for tool '${tool}' failed frozen-schema validation.` }
 }
 
+function harnessExecutionFailure(error: unknown): JsonValue {
+  if (error instanceof HarnessSkillError && error.code.startsWith('harness_workspace_')) {
+    return { code: error.code, message: error.message }
+  }
+  return { code: 'harness_tool_execution_failed' }
+}
+
 function publicView(record: HarnessRunRecord): AgentRunView {
   const waiting = record.status === 'waiting_for_approval'
     ? {
@@ -780,7 +792,7 @@ function validateSpec(input: AgentRunSpec): AgentRunSpec {
   if (!isRecord(input)) throw new HarnessSkillError('harness_spec_invalid', 'Agent run spec must be a JSON object.')
   assertExactKeys(input, [
     'provider', 'profileId', 'taskPrompt', 'stagingRoot', 'selectedSkills',
-    'finalOutput', 'limits', 'maxTurns', 'mcpServers', 'toolBinding',
+    'finalOutput', 'limits', 'maxTurns', 'mcpServers', 'toolBinding', 'workspaceRoot',
   ], 'Agent run spec')
   if (typeof input.provider !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(input.provider)) {
     throw new HarnessSkillError('harness_spec_invalid', 'Agent run provider is invalid.')
@@ -794,6 +806,7 @@ function validateSpec(input: AgentRunSpec): AgentRunSpec {
   const limits = sanitizeLimits(input.limits)
   const mcpServers = sanitizeMcpServers(input.mcpServers)
   const toolBinding = sanitizeToolBinding(input.toolBinding)
+  const workspaceRoot = sanitizeWorkspaceRoot(input.workspaceRoot)
   return {
     provider: input.provider,
     profileId: input.profileId,
@@ -803,6 +816,7 @@ function validateSpec(input: AgentRunSpec): AgentRunSpec {
     ...(finalOutput ? { finalOutput } : {}),
     ...(limits ? { limits } : {}),
     ...(input.maxTurns === undefined ? {} : { maxTurns: input.maxTurns }),
+    ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
     mcpServers,
     ...(toolBinding ? { toolBinding } : {}),
   }
@@ -816,6 +830,14 @@ function sanitizeToolBinding(value: unknown): AgentRunSpec['toolBinding'] {
   }
   assertExactKeys(value, ['kind', 'ref'], 'toolBinding')
   return { kind: 'opaque', ref: value.ref }
+}
+
+function sanitizeWorkspaceRoot(value: unknown): string | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== 'string' || value.trim() === '' || value.length > 4096 || value.includes('\0') || !path.isAbsolute(value)) {
+    throw new HarnessSkillError('harness_spec_invalid', 'Agent run workspaceRoot must be an absolute path.')
+  }
+  return path.normalize(value)
 }
 
 function sanitizeSelectedSkills(value: unknown): AgentRunSpec['selectedSkills'] {

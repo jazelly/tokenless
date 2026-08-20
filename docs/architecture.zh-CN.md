@@ -95,6 +95,15 @@ Harness 不接收 Playwright `Page`、browser profile path、provider cookie、p
 | Tokenless CLI agent run | Web Agent Harness | `/v1/private/agent/*` → Harness → OpenAI-compatible API，必要时加 `/v1/private/provider-turn/*` extension | Tokenless Web Agent Harness |
 | Tokenless provider inspection 或 administration command | CLI control adapter | authenticated daemon control API | 按该 command 定义的 provider runtime 或 control plane |
 
+宿主集成有两个不同 seam：
+
+| Integration | 替换内容 | Child Agent Loop owner |
+| --- | --- | --- |
+| Model base URL | 宿主现有 model adapter 改为调用 Tokenless API | 宿主 Harness |
+| Subagent provider | 宿主专用 executor 把一个 child 委托给 Tokenless Harness | 该 child 由 Tokenless Harness 负责 |
+
+DeepSeek Harness 通过 `SubagentProvider` seam 支持第二条路径。它的 model base URL 路径继续使用 `llm-deepseek`；Tokenless 不配置、也不依赖 `llm-pi-ai`。Codex 当前提供 hooks，但没有外部 subagent executor replacement seam，因此其受支持的 Tokenless Harness 路径是显式 `tokenless agent delegate`，而不是声称替换 native `spawn_agent`。详见 [Harness 集成](harness-integrations.zh-CN.md)。
+
 第三条路径只用于 inspection 与 administration，不是另一套 agent loop。Agent path 不得在 CLI command code 中重复 Harness 的 prompt compilation、Skill resolution、tool authorization 或 loop state。
 
 ## Tool ownership

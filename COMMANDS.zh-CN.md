@@ -203,6 +203,30 @@ tokenless agents uninstall codex
 - `--chat-id <id>` 是 `inspect` 的必填项，必须传精确的 Codex thread ID。
 - `--json` 返回结构化 status 或 context contract。
 
+### `tokenless agents <install|status|uninstall> dsh`
+
+安装一个可逆的 DeepSeek Harness `SubagentProvider`，把普通 one-shot `subagent` tool 委托给 Tokenless Harness：
+
+```bash
+tokenless agents install dsh --provider chatgpt --profile default --dsh-profile headless --json
+tokenless agents status dsh --dsh-profile headless --json
+tokenless agents uninstall dsh --dsh-profile headless --json
+```
+
+`install` 只向所选 profile 的 `cordis.patch.yml` 添加一个带 marker 的区块。它会保留无关 row、注册 `tokenless-harness`，并且只把普通 `subagent` tool 切换到该 provider。它不会修改或删除 DeepSeek Harness 的 `llm-pi-ai` package。
+
+`--dsh-home <dir>` 可覆盖 `DSH_HOME` 或 `~/.dsh`；`--dsh-profile <name>` 默认为 `headless`。安装时必须指定 delegated child 使用的 Tokenless `--provider` 与 `--profile`。
+
+### `tokenless agent delegate`
+
+同步执行一个由 Tokenless Harness 拥有的 child task，并返回 terminal result：
+
+```bash
+tokenless agent delegate --provider chatgpt --profile default --workspace-root "$PWD" --prompt "Inspect this repository." --json
+```
+
+Delegated run 会获得以 `--workspace-root` 为根的有界 `workspace.read` 与 `workspace.search` tools。`--prompt-file` 和 `--prompt-stdin` 可替代 `--prompt`。对于 Codex 这类当前 hooks 无法替换 native subagent execution 的宿主，这个显式 command 才是如实的 integration。
+
 ### `tokenless dashboard`
 
 启动或发现同一 Tokenless home 的 daemon，并在所选 managed profile 中打开一个保留的控制台标签页。也可以直接在浏览器中打开 daemon 的 loopback URL：

@@ -203,6 +203,30 @@ Main options:
 - `--chat-id <id>` is required by `inspect` and must be the exact Codex thread ID.
 - `--json` returns the structured status or context contract.
 
+### `tokenless agents <install|status|uninstall> dsh`
+
+Installs a reversible DeepSeek Harness `SubagentProvider` that delegates the ordinary one-shot `subagent` tool to Tokenless Harness:
+
+```bash
+tokenless agents install dsh --provider chatgpt --profile default --dsh-profile headless --json
+tokenless agents status dsh --dsh-profile headless --json
+tokenless agents uninstall dsh --dsh-profile headless --json
+```
+
+`install` adds one marked block to the selected profile's `cordis.patch.yml`. It preserves unrelated rows, registers `tokenless-harness`, and switches only the ordinary `subagent` tool to that provider. It does not modify or remove DeepSeek Harness's `llm-pi-ai` package.
+
+Use `--dsh-home <dir>` to override `DSH_HOME` or `~/.dsh`; `--dsh-profile <name>` defaults to `headless`. Installation requires the Tokenless `--provider` and `--profile` used by delegated children.
+
+### `tokenless agent delegate`
+
+Runs one Tokenless Harness-owned child task synchronously and returns its terminal result:
+
+```bash
+tokenless agent delegate --provider chatgpt --profile default --workspace-root "$PWD" --prompt "Inspect this repository." --json
+```
+
+The delegated run receives bounded `workspace.read` and `workspace.search` tools rooted at `--workspace-root`. `--prompt-file` and `--prompt-stdin` are alternatives to `--prompt`. This explicit command is the truthful integration for hosts such as Codex whose current hooks cannot replace native subagent execution.
+
 ### `tokenless dashboard`
 
 Starts or discovers the same-home daemon and opens one reserved dashboard tab in the selected managed profile. You can also open the daemon loopback URL directly in your browser:

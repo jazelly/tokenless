@@ -9,6 +9,7 @@ This index separates user guidance, stable product contracts, implementation arc
 - [Capability Matrix](capability-matrix.md) — canonical outcomes, current provider mappings, support states, and extension rules.
 - [API Proxy Integration](api-proxy-integration.md) — calling the OpenAI/Anthropic-compatible local proxy from an existing project.
 - [Tokenless Harness Browser Extension](harness-browser-extension.md) — install, pairing, supported inputs, approval, and the experimental real-page acceptance flow.
+- [Harness Integrations](harness-integrations.md) — model-base-URL integration, Tokenless Harness subagent delegation, and current host support.
 - [HTTP API Reference](../packages/contracts/reference.html) — generated OpenAI-compatible, Anthropic-compatible, private, Dashboard, and readiness interfaces.
 - [Provider Guest Access](../PROVIDER_GUEST_ACCESS.md) — observed signed-out behavior and authentication routing rules.
 - [Provider Rate Limits](provider-rate-limits.md) — official Web-provider limit knowledge and runtime policy.

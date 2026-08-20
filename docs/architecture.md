@@ -93,6 +93,15 @@ Harness-owned tools are not external caller tools. The Harness may project its o
 | Tokenless CLI agent run | Tokenless Web Agent Harness | `/v1/private/agent/*` → Harness → OpenAI-compatible API, plus necessary `/v1/private/provider-turn/*` extensions | Tokenless Web Agent Harness |
 | Provider inspection or administration command | Tokenless CLI/control adapter | Daemon → managed provider runtime | The provider/control adapter, within its command boundary |
 
+Host integration has two distinct seams:
+
+| Integration | What changes | Child agent loop owner |
+| --- | --- | --- |
+| Model base URL | The host's existing model adapter calls Tokenless API | The host Harness |
+| Subagent provider | A host-specific executor delegates one child to Tokenless Harness | Tokenless Harness for that child |
+
+DeepSeek Harness supports the second path through its `SubagentProvider` seam. Its model-base-URL path continues to use `llm-deepseek`; Tokenless neither configures nor requires `llm-pi-ai`. Codex currently exposes hooks but no external subagent-executor replacement seam, so its supported Tokenless Harness path is explicit `tokenless agent delegate`, not a claimed replacement of native `spawn_agent`. See [Harness Integrations](harness-integrations.md).
+
 ```text
 External Harness -> Universal API
   API validates caller-owned tools
