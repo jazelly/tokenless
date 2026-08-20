@@ -11,7 +11,7 @@ Tokenless has several entry surfaces above one server-owned execution core:
 ```mermaid
 flowchart TB
   Skill["Host Agent Skill<br/>skills/tokenless"] --> CLI
-  CLI["packages/cli<br/>commands, bootstrap, HTTP client"] --> AgentAPI["/v1/private/agent/*"]
+  CLI["packages/cli<br/>commands, bootstrap, HTTP client"] --> AgentAPI["Tokenless Harness API<br/>/v1/private/agent/*"]
   CLI --> Control["Bearer machine HTTP<br/>/v1/private/*"]
   Dashboard["packages/dashboard<br/>full read + mutation control plane"] --> UIAPI["/ui-api/v1"]
   OpenAIClient["OpenAI SDK / external Harness"] --> API["OpenAI-compatible HTTP<br/>chat, responses, images"]
@@ -71,6 +71,8 @@ This makes the API directly deployable to an existing Harness. Pi, Mono, Codex, 
 
 The Web Agent Harness is Tokenless's first-party agent runtime in `packages/harness/`. It is used by Tokenless-owned agent runs and integrations while remaining above the server HTTP boundary.
 
+Its caller-facing local control and tool-exchange surface is the **Tokenless Harness API**. The current trusted-machine routes live under `/v1/private/agent/*`, with a Dashboard projection under `/ui-api/v1/harness/*`; both call the same Harness implementation. The Tokenless Harness API remains above and uses the provider-facing Tokenless API.
+
 It owns:
 
 - `AgentRun` identity, lifecycle, checkpoints, recovery, scaling, and final output;
@@ -122,6 +124,7 @@ Universal API non-execution of external caller tools therefore does not prohibit
 
 The high-level runtime Interfaces remain separate:
 
+- Tokenless Harness API: AgentRun admission, state, intervention, cancellation, and authorized Harness-owned tool exchange;
 - Universal API: OpenAI-compatible `tools`, `tool_calls`, `role: tool`, Responses items, `tool_choice`, and structured output;
 - Anthropic compatibility: Anthropic Messages framing mapped to the same Universal execution implementation;
 - Web Agent Harness: `AgentRun`, Skills, `action_batch`, `needs`, approval decisions, MCP outcomes, interventions, and final-output policy.
@@ -142,11 +145,11 @@ The API Adapter must not call the Harness mission queue, Tool Registry, or MCP r
 
 ## Provider runtime execution path
 
-Every normal cross-surface call enters through HTTP. The target first-party agent path is `Tokenless CLI → /v1/private/agent/* → Web Agent Harness → OpenAI-compatible API → provider runtime`, with `/v1/private/provider-turn/*` used only for non-representable extensions. After daemon readiness, jobs, provider inspection, profile/configuration, capability routing, output-savings, and administration commands use bearer-authenticated `/v1/private/*` machine routes. Pre-daemon discovery, daemon installation/start, setup-time browser provisioning, upgrade, and offline diagnostics are explicit bootstrap boundaries; normal product commands must never use them as an in-process fallback. When no verified daemon exists, the CLI may retain request-local validation and a read-only fail-fast capability/profile preflight solely to preserve rejection before daemon, token, SQLite, or job side effects; an accepted request is always re-resolved by the server over authenticated HTTP before execution.
+Every normal cross-surface call enters through HTTP. The target first-party agent path is `Tokenless CLI → Tokenless Harness API (/v1/private/agent/*) → Web Agent Harness → Tokenless API → provider runtime`, with `/v1/private/provider-turn/*` used only for non-representable extensions. After daemon readiness, jobs, provider inspection, profile/configuration, capability routing, output-savings, and administration commands use bearer-authenticated `/v1/private/*` machine routes. Pre-daemon discovery, daemon installation/start, setup-time browser provisioning, upgrade, and offline diagnostics are explicit bootstrap boundaries; normal product commands must never use them as an in-process fallback. When no verified daemon exists, the CLI may retain request-local validation and a read-only fail-fast capability/profile preflight solely to preserve rejection before daemon, token, SQLite, or job side effects; an accepted request is always re-resolved by the server over authenticated HTTP before execution.
 
 | Interface | Execution path | Authentication | Status |
 | --- | --- | --- | --- |
-| CLI agent run | CLI → `/v1/private/agent/*` → Web Agent Harness → OpenAI-compatible API/private extension → provider runtime | Provider sign-in stored inside the managed profile | First-party agent interface |
+| CLI agent run | CLI → Tokenless Harness API (`/v1/private/agent/*`) → Web Agent Harness → Tokenless API/private extension → provider runtime | Provider sign-in stored inside the managed profile | First-party Tokenless Harness API interface |
 | Provider/control command | CLI → `/v1/private/*` → daemon → Playwright worker → managed profile → visible provider page | Daemon bearer token plus provider sign-in inside the managed profile | Private machine Interface |
 | Local dashboard | Browser → `/ui-api/v1` → shared services/daemon → managed profile → visible provider page | Direct loopback opening plus a short-lived UI session; provider sign-in remains inside the managed profile | Local administration interface |
 | Machine API | Trusted local caller → bearer API → daemon → Playwright worker | Daemon bearer token plus provider sign-in inside the managed profile | Local scripting interface |

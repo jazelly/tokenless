@@ -8,6 +8,7 @@ Canonical terms for how Tokenless interacts with AI provider web surfaces. This 
 |---|---|---|
 | **Tokenless API** | The provider-facing HTTP/API layer of Tokenless, including the Universal API. It accepts API requests and owns provider-turn routing and lifecycle; it is separate from the Tokenless Harness. | Tokenless Harness, provider's official API |
 | **Tokenless Harness** | Tokenless's independent first-party agent runtime in `packages/harness/`. It owns AgentRun state, Skills, tool discovery and execution, MCP, approvals, continuation, and final output, and uses the Tokenless API over HTTP. | Tokenless API, external Harness |
+| **Tokenless Harness API** | The caller-facing local API exposed by the Tokenless Harness. It starts, observes, resumes, and cancels AgentRuns and, for explicitly authorized local clients, exchanges Harness-owned tool actions and results. It sits above and uses the Tokenless API; it is not a provider-facing API. | Tokenless API, Dashboard UI API, external Harness API |
 
 ## Harness model roles
 
@@ -62,6 +63,7 @@ Direct Provider Protocol
 - The **Harness AI Engine** serves **AI Sidecars** only; it never becomes the model route that executes the user's Harness task.
 - The **Harness Task Model** is always reached through the **Tokenless API**, whether the **Harness AI Engine** is local, browser-provided, or remote.
 - **Front Door** may select the provider route for a **Harness Task Model**, but its own inference still runs on the separate **Harness AI Engine**.
+- The **Tokenless Harness API** is the caller-facing control and tool-exchange interface for the **Tokenless Harness**. The Harness continues to reach the **Harness Task Model** only through the **Tokenless API**.
 
 ## Example dialogue
 

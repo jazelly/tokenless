@@ -56,6 +56,7 @@ Every roadmap filename must begin with its product priority (`P0-`, `P1-`, `P2-`
 | [FeatureBench Agent Runtime Evaluation](P0-featurebench-agent-runtime-evaluation.md) | Run Tokenless as a FeatureBench scaffold across the pinned 200-task full split, using real provider turns, container tools, patches, and the official evaluator. | P0 |
 | [Context Delivery and Workspace Alignment](P0-context-delivery-and-workspace-alignment.md) | Carry authorized task, repository, instruction, and file context into the exact provider Project or conversation, including a new chat. | P0 |
 | [Web Agent Harness](P0-web-agent-harness.md) | Own Agent adapters and context persistence, then build a ChatGPT-first file-based web Harness with a compiled System Prompt Bundle, Skill registry, validated model output, complete action batches, consolidated user input, rooted filesystem work, and resumable MCP tool execution. | P0 |
+| [Tokenless Harness Browser Extension](P0-tokenless-harness-browser-extension.md) | Expose the Tokenless Harness API to a least-privilege Chrome side panel and close a real Web Provider tool loop that observes any scriptable ordinary page and fills a user-approved textual input in the user's real browser. | P0 |
 | [Codex Guided Delegation and Session Binding](P0-codex-guided-delegation-and-session-binding.md) | Keep Codex's normal model provider and user launch flow while adding RTK-style guidance, native hooks for exact chat/turn/tool-call identity, bounded App Server enrichment, and provider conversation continuity. | P0 |
 | [Concurrency and Session Scheduling](P0-concurrency-and-session-scheduling.md) | Persist every invocation through the local daemon and schedule exact project, workspace, conversation, profile, and page lanes safely under concurrent load. | P0 |
 | [Local Web Control Plane](P0-local-web-control-plane.md) | Provide a secure localhost console for setup handoff, browser identities, provider configuration, capabilities, jobs, diagnostics, and user recovery. | P0 |
@@ -87,6 +88,8 @@ flowchart LR
   Scheduler["Durable scheduler<br/>identity + lanes + backpressure"]
   Context["Context envelope<br/>provenance + policy + limits"]
   Harness["Web agent harness<br/>instructions + durable tool loop"]
+  HarnessAPI["Tokenless Harness API<br/>AgentRun + browser-tool exchange"]
+  Extension["Chrome side panel<br/>current-tab DOM adapter"]
   Private["Private provider-turn extensions<br/>/v1/private/provider-turn/*"]
   Tools["Tool runtime<br/>batched filesystem + MCP execution"]
   Graph["Project knowledge graph<br/>rules + architecture + symbols"]
@@ -109,6 +112,8 @@ flowchart LR
   Scheduler --> Context
   Graph --> Context
   API --> Harness
+  Extension --> HarnessAPI
+  HarnessAPI --> Harness
   Session --> Harness
   Context --> Harness
   Harness --> API
@@ -144,9 +149,10 @@ Shared substrate and later product work follow:
 7. Make the local daemon the durable authority for idempotency, admission, scheduling lanes, conversation identity, and recovery.
 8. Use OpenAI-compatible chat, Responses, and images as the default Harness model/media interface; retain only current, non-representable waiting, attachment, identity, and lifecycle extensions under `/v1/private/provider-turn/*`.
 9. Build the ChatGPT-first web agent harness as one independently buildable deep module exposed through package, authenticated daemon HTTP, and CLI adapters; require existing `conversation.chat` plus `file.upload`, compile and upload one System Prompt Bundle containing the global Skill registry and event protocol, accept upstream Skill preselections and batched web-model `skillLoads`, deliver individual `SKILL.md` revisions on a best-effort basis, and add durable checkpoints, strict output validation, complete action batches, consolidated user interactions, rooted filesystem operations, resumable MCP tool execution, aggregate results, and finite loop limits; defer repository extraction until the interface is stable.
-10. Expand provider coverage using the same mode-specific real-session and evidence requirements as the existing providers; agent-harness eligibility closes independently from normal QA support.
-11. Add Codex guided delegation through a reversible inline `AGENTS.md` policy and native lifecycle hooks; bind exact project, thread, turn, and tool-call identity in normally launched Codex sessions, and use bounded App Server reads only to enrich session-tree and lineage while leaving ordinary Codex model traffic unchanged.
-12. Produce a local project graph and synchronize bounded, reviewable context artifacts into the bound provider workspace.
+10. Expose the Tokenless Harness API to a least-privilege Chrome side panel and current-tab DOM adapter, then require a user-owned real-browser acceptance run before claiming the generic textual-input loop works.
+11. Expand provider coverage using the same mode-specific real-session and evidence requirements as the existing providers; agent-harness eligibility closes independently from normal QA support.
+12. Add Codex guided delegation through a reversible inline `AGENTS.md` policy and native lifecycle hooks; bind exact project, thread, turn, and tool-call identity in normally launched Codex sessions, and use bounded App Server reads only to enrich session-tree and lineage while leaving ordinary Codex model traffic unchanged.
+13. Produce a local project graph and synchronize bounded, reviewable context artifacts into the bound provider workspace.
 
 ## Shared Product Principles
 

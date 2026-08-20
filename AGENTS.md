@@ -3,6 +3,7 @@
 ## Language
 
 - Use English for code, identifiers, package/config keys, and inline comments.
+- Never use `Tokenless` alone when naming a product or architecture tier. Use `Tokenless API` for the provider-access API, daemon, CLI, and configuration in this repository, and `Tokenless Harness` for the agent runtime that consumes it. Prefer an even more specific subsystem name when relevant; exact identifiers and quoted product names are exempt.
 - Localize every reasonable user-facing surface in both English and Simplified Chinese. Never ship one language alone or assume users know the other.
 - Keep commands, flags, identifiers, protocol fields, provider/model names, and clearer technical terms unchanged.
 - Keep language selection and fallback consistent; cover externally visible localization through real boundaries.
@@ -19,9 +20,9 @@
 
 ## Production configuration boundary
 
-- Production behavior controls must be read from the persisted Tokenless `config.json`, not from `.env` or process-environment overrides.
+- Production behavior controls must be read from the persisted Tokenless API `config.json`, not from `.env` or process-environment overrides.
 - `.env` is reserved for test/bootstrap selectors such as `TOKENLESS_TEST_HOME`; it may locate the complete test home but must not override production behavior defined inside that home.
-- When a production setting needs to change, update the selected Tokenless config through the supported configuration path. Do not add an environment-variable escape hatch.
+- When a production setting needs to change, update the selected Tokenless API config through the supported configuration path. Do not add an environment-variable escape hatch.
 
 ## Tokenless skill
 
@@ -56,11 +57,11 @@
 
 ### Test Browser Policy
 
-- Every repository browser test must load `TOKENLESS_TEST_HOME` from the repository-local `.env`. It points to one complete Tokenless home; tests derive its root `config.json` and adjacent production profile registry, with the registry as the only source of the test profile name, directory, and runtime binding.
+- Every repository browser test must load `TOKENLESS_TEST_HOME` from the repository-local `.env`. It points to one complete Tokenless API home; tests derive its root `config.json` and adjacent production profile registry, with the registry as the only source of the test profile name, directory, and runtime binding.
 - Different developers may use different profile slugs. The adjacent registry's default profile is the only browser-test profile; tests must never select, hard-code, derive, or separately configure another name.
 - Never launch Playwright's bundled Chromium (`chromium.executablePath()`) or resolve a browser outside `TOKENLESS_TEST_HOME`. Browser selection and executable resolution come from that default profile's production runtime binding.
 - The selected test home is canonical external state: tests must not replace, delete, or rewrite its root `config.json`, profile registry, profile directories, or runtime binding. Normal runtime state and provider-side artifacts may be written by the real run.
-- Playwright browser tests must use `test/helpers/configured-browser-profile.mjs` and Tokenless's production CDP path.
+- Playwright browser tests must use `test/helpers/configured-browser-profile.mjs` and the Tokenless API production CDP path.
 - Browser tests must not create disposable user-data directories or delete a browser profile or config home during teardown. Reuse the configured profile across runs; profile deletion requires an explicit user request naming that profile.
 - Direct `chromium.launch()`, `chromium.launchPersistentContext()`, and ad hoc browser process launches are forbidden in test files. Tests must not resize browser windows or emulate a viewport.
 - Browser tests must never directly invoke browser/context/page close or test profile deletion, browser crash/kill, forced relaunch, runtime replacement/repair, visibility-switch relaunch, or corruption of `DevToolsActivePort`, PID, CDP endpoint, or runtime-session metadata.
@@ -70,11 +71,11 @@
 
 - Visible-browser mode keeps provider authentication in the user's selected browser and must not copy or import a complete browser profile.
 - An explicitly selected direct provider-protocol mode may locally acquire the required provider session values from the selected live browser or CDP session, a user-supplied HAR, the selected browser's Cookie database, user-supplied cookies or tokens, and required browser storage. This access must be limited to the selected provider and explicitly selected auth source and must never be enabled implicitly.
-- When an import or save auth source is implemented, a user may explicitly persist a HAR, cookies, or tokens locally. Without that explicit choice, Tokenless must not import or persist session values; every auth source must declare whether its lifetime is ephemeral or user-persisted.
+- When an import or save auth source is implemented, a user may explicitly persist a HAR, cookies, or tokens locally. Without that explicit choice, Tokenless API must not import or persist session values; every auth source must declare whether its lifetime is ephemeral or user-persisted.
 - On macOS, that explicit direct mode may read only the browser encryption material required to decrypt the selected provider's cookies, including through the necessary OS or Keychain API. It must not read passwords, unrelated Keychain items, or credentials for another provider, account, or profile.
-- Provider session values may be passed in local process memory to the explicitly selected direct adapter or sidecar and sent to the selected provider as required by that mode. The adapter or sidecar must not log, independently persist, or return them. Never print them to stdout or stderr; include them in logs, errors, telemetry, jobs, checkpoints, evidence, or UI responses; expose them to callers or web models; or send them to a Tokenless-operated remote service or any unrelated service.
+- Provider session values may be passed in local process memory to the explicitly selected direct adapter or sidecar and sent to the selected provider as required by that mode. The adapter or sidecar must not log, independently persist, or return them. Never print them to stdout or stderr; include them in logs, errors, telemetry, jobs, checkpoints, evidence, or UI responses; expose them to callers or web models; or send them to a Tokenless API-operated remote service or any unrelated service.
 - On macOS, production native mode uses the running Chrome's normal Keychain access. Never add `--password-store=basic` or `--use-mock-keychain` to production browser control.
-- Keychain approval remains a user-controlled security decision. Tokenless may explain why the expected browser is asking and the user may approve it, but tests and automation must never click the prompt, enter a password, or weaken the prompt on the user's behalf.
+- Keychain approval remains a user-controlled security decision. Tokenless API may explain why the expected browser is asking and the user may approve it, but tests and automation must never click the prompt, enter a password, or weaken the prompt on the user's behalf.
 - Installer smoke checks may stay keychain-neutral because they do not become reusable test profiles. Browser-surface and real-provider E2E use the configured persistent profile and the production credential-storage policy; they may pause for manual user approval.
 - Keychain safety never permits mocked browser boundaries.
 - For browser-launch changes, verify native credential storage on the configured persistent profile, keychain neutrality only for installer smoke checks, enabled Chromium sandboxing, CDP detach, profile preservation, resident-browser preservation, and focused real-boundary completion.

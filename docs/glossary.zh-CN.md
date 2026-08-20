@@ -8,6 +8,7 @@
 |---|---|---|
 | **Tokenless API** | Tokenless 面向 provider 的 HTTP/API 层，包括 Universal API。它接收 API request，并负责 provider-turn routing 与 lifecycle；它与 Tokenless Harness 分开。 | Tokenless Harness、provider 官方 API |
 | **Tokenless Harness** | Tokenless 在 `packages/harness/` 中独立维护的 first-party agent runtime。它负责 AgentRun state、Skills、tool discovery 与 execution、MCP、approval、continuation 和 final output，并通过 HTTP 使用 Tokenless API。 | Tokenless API、external Harness |
+| **Tokenless Harness API** | Tokenless Harness 对 caller 暴露的本地 API。它负责启动、观察、恢复与取消 AgentRun，并为经过显式授权的本地 client 交换 Harness-owned tool action 与 result。它位于 Tokenless API 之上并使用 Tokenless API；它不是面向 provider 的 API。 | Tokenless API、Dashboard UI API、external Harness API |
 
 ## Harness model role
 
@@ -62,6 +63,7 @@ Direct Provider Protocol
 - **Harness AI Engine** 只服务于 **AI Sidecar**；它绝不会成为执行用户 Harness task 的 model route。
 - 无论 **Harness AI Engine** 是 local、browser-provided 还是 remote，**Harness Task Model** 都必须通过 **Tokenless API** 到达。
 - **Front Door** 可以为 **Harness Task Model** 选择 provider route，但它自己的 inference 仍由独立的 **Harness AI Engine** 执行。
+- **Tokenless Harness API** 是 caller 与 **Tokenless Harness** 交互的 control 与 tool-exchange interface。Harness 仍然只通过 **Tokenless API** 到达 **Harness Task Model**。
 
 ## 对话示例
 

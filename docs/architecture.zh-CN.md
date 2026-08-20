@@ -9,7 +9,7 @@ Tokenless 在一个 server-owned execution core 之上有多类 caller：
 ```mermaid
 flowchart TB
   Skill["Host Agent Skill<br/>skills/tokenless"] --> CLI
-  CLI["packages/cli<br/>command、bootstrap、HTTP client"] --> AgentAPI["/v1/private/agent/*"]
+  CLI["packages/cli<br/>command、bootstrap、HTTP client"] --> AgentAPI["Tokenless Harness API<br/>/v1/private/agent/*"]
   CLI --> Control["Bearer machine HTTP<br/>/v1/private/*"]
   Dashboard["packages/dashboard<br/>完整 read + mutation control plane"] --> UIAPI["/ui-api/v1"]
   OpenAIClient["OpenAI SDK / external Harness"] --> API["OpenAI-compatible HTTP<br/>chat、responses、images"]
@@ -72,6 +72,8 @@ Universal API 不拥有：
 
 Web Agent Harness 是 Tokenless 在 `packages/harness/` 中的 first-party agent runtime。它由 Tokenless-owned agent run 与 integration 使用，并且完全位于 server HTTP boundary 之上。
 
+它面向 caller 的本地 control 与 tool-exchange surface 称为 **Tokenless Harness API**。当前 trusted-machine route 位于 `/v1/private/agent/*`，Dashboard projection 位于 `/ui-api/v1/harness/*`；两者调用同一份 Harness implementation。Tokenless Harness API 位于面向 provider 的 Tokenless API 之上，并使用 Tokenless API。
+
 它负责：
 
 - durable `AgentRun`、turn、action-batch、intervention 与 tool-result state；
@@ -130,6 +132,7 @@ Universal API 不执行外部 caller tools，并不禁止 first-party Harness �
 
 高层 runtime Interface 保持分离：
 
+- Tokenless Harness API：AgentRun admission、state、intervention、cancellation，以及经过授权的 Harness-owned tool exchange；
 - Universal API：OpenAI-compatible `tools`、`tool_calls`、`role: tool`、Responses item、`tool_choice` 与 structured output；
 - Anthropic compatibility：把 Anthropic Messages framing 映射到同一个 Universal execution implementation；
 - Web Agent Harness：`AgentRun`、Skill、`action_batch`、`needs`、approval decision、MCP outcome、intervention 与 final-output policy。
@@ -150,11 +153,11 @@ API Adapter 不得调用 Harness mission queue、Tool Registry 或 MCP runtime�
 
 ## Provider runtime execution path
 
-所有正常的跨产品调用都经过 HTTP。目标 first-party agent 路径是：`Tokenless CLI → /v1/private/agent/* → Web Agent Harness → OpenAI-compatible API → provider runtime`；只有无法无损表达的 extension 才走 `/v1/private/provider-turn/*`。Daemon ready 后，job、provider inspection、profile/configuration、capability routing、output-savings 与 administration command 使用 bearer-authenticated `/v1/private/*` machine route。Daemon discovery、daemon install/start、setup-time browser provisioning、upgrade 与 offline diagnostic 是明确的 pre-daemon bootstrap 边界；正常产品命令不得把它们当作 in-process fallback。当不存在已验证 daemon 时，CLI 只可保留 request-local validation 与 read-only fail-fast capability/profile preflight，用于维持“无效请求在创建 daemon、token、SQLite 或 job 之前失败”的现有行为；可执行请求在实际执行前必须由 server 通过 authenticated HTTP 再次解析。
+所有正常的跨产品调用都经过 HTTP。目标 first-party agent 路径是：`Tokenless CLI → Tokenless Harness API (/v1/private/agent/*) → Web Agent Harness → Tokenless API → provider runtime`；只有无法无损表达的 extension 才走 `/v1/private/provider-turn/*`。Daemon ready 后，job、provider inspection、profile/configuration、capability routing、output-savings 与 administration command 使用 bearer-authenticated `/v1/private/*` machine route。Daemon discovery、daemon install/start、setup-time browser provisioning、upgrade 与 offline diagnostic 是明确的 pre-daemon bootstrap 边界；正常产品命令不得把它们当作 in-process fallback。当不存在已验证 daemon 时，CLI 只可保留 request-local validation 与 read-only fail-fast capability/profile preflight，用于维持“无效请求在创建 daemon、token、SQLite 或 job 之前失败”的现有行为；可执行请求在实际执行前必须由 server 通过 authenticated HTTP 再次解析。
 
 | Interface | Execution path | Tool 或 provider owner |
 | --- | --- | --- |
-| CLI agent run | CLI → `/v1/private/agent/*` → Web Agent Harness → OpenAI-compatible API/private extension → provider runtime | Web Agent Harness 负责 agent tools |
+| CLI agent run | CLI → Tokenless Harness API (`/v1/private/agent/*`) → Web Agent Harness → Tokenless API/private extension → provider runtime | Web Agent Harness 负责 agent tools |
 | Provider/control command | CLI → `/v1/private/*` → daemon → Playwright worker → managed profile → provider page | Private machine Interface 与 provider runtime |
 | Local dashboard | Browser → `/ui-api/v1` → daemon/shared services → managed profile → provider page | dashboard/control plane |
 | Machine API | Trusted local caller → bearer API → daemon → provider runtime | 调用方负责 API request contract |
