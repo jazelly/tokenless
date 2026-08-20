@@ -68,6 +68,8 @@ tokenless agent resume --run-id <run-id> --approve <call-id:digest> --json
 tokenless agent cancel --run-id <run-id> --json
 ```
 
+The package API is the SDK-like seam for local callers (`openWebAgentHarness`, `start`, `read`, `resume`, and `cancel`). The daemon exposes the same run contract at `/v1/private/agent/runs` for the CLI and at the UI-session-protected `/ui-api/v1/harness/runs` facade for Dashboard; the latter adds UI session and CSRF checks but does not create a second Harness implementation.
+
 A queued provider turn proves local staging and durable scheduling, not visible-provider acceptance. Provider authentication and verification stay external; resume continues the same durable turn after the user completes the handoff.
 
 Agent context is stored separately in `<TOKENLESS_HOME>/harness.sqlite3`. The ledger stores bounded IDs, canonical project identity, hashes, timestamps, provider mapping references, and job IDs. It does not store raw Codex prompts, transcripts, assistant messages, tool results, browser state, or credentials. The Web Provider API owns real provider Projects, conversations, and jobs; this package binds their returned opaque IDs to Harness conversations.

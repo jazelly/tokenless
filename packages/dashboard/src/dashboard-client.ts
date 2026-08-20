@@ -21,7 +21,12 @@ import type {
   UiSnapshot,
   UiJobSummary,
 } from 'tokenless-internal-shared/ui'
-import type { SnapshotResult } from './types.js'
+import type {
+  DashboardHarnessIntervention,
+  DashboardHarnessRunInput,
+  DashboardHarnessRunView,
+  SnapshotResult,
+} from './types.js'
 
 export class DashboardRequestError extends Error {
   readonly code: string
@@ -156,6 +161,31 @@ export class DashboardClient {
 
   async resumeJob(jobId: string): Promise<UiJobDetail> {
     return await this.requireResult(this.request<UiJobDetail>(`/jobs/${encodeURIComponent(jobId)}/resume`, { method: 'POST' }))
+  }
+
+  async startHarnessRun(input: DashboardHarnessRunInput): Promise<DashboardHarnessRunView> {
+    return await this.requireResult(this.request<DashboardHarnessRunView>('/harness/runs', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }))
+  }
+
+  async readHarnessRun(runId: string): Promise<DashboardHarnessRunView> {
+    return await this.requireResult(this.request<DashboardHarnessRunView>(`/harness/runs/${encodeURIComponent(runId)}`, { method: 'GET' }))
+  }
+
+  async resumeHarnessRun(runId: string, input: DashboardHarnessIntervention): Promise<DashboardHarnessRunView> {
+    return await this.requireResult(this.request<DashboardHarnessRunView>(`/harness/runs/${encodeURIComponent(runId)}/resume`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }))
+  }
+
+  async cancelHarnessRun(runId: string): Promise<DashboardHarnessRunView> {
+    return await this.requireResult(this.request<DashboardHarnessRunView>(`/harness/runs/${encodeURIComponent(runId)}/cancel`, {
+      method: 'POST',
+      body: '{}',
+    }))
   }
 
   async quiesceRuntime(): Promise<UiRuntimeStatus> {

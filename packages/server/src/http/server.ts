@@ -147,6 +147,7 @@ export async function serveHttp({
     services: applicationServices,
     sessions: new UiSessionManager(),
     origin,
+    resolveHarnessRunHandler: async () => resolveAgentRunHandler?.(origin()),
   })
   const privateProviderTurn = new PrivateProviderTurnV0Adapter(store)
   await privateProviderTurn.initializeCleanup()

@@ -17,7 +17,7 @@
 ## 概念与架构
 
 - [架构](architecture.zh-CN.md) — 稳定的两层设计：Universal API、Web Agent Harness、provider runtime、ownership 与 trust boundary。
-- [术语表](glossary.zh-CN.md) — execution、authentication 与 direct provider 的标准术语。
+- [术语表](glossary.zh-CN.md) — Harness model role、execution、authentication 与 direct provider 的标准术语。
 - [Provider Capability Census](provider-capability-census.zh-CN.md) — provider 产品调研与 evidence gaps；不代表 support 声明。
 - [Roadmaps](roadmaps/README.md) — active、backlog 与 archived delivery plans。
 

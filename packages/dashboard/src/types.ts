@@ -80,6 +80,27 @@ export type ReadinessJobs = { [providerId: string]: ReadinessJobState }
 
 export type DashboardOperation<Result> = () => Promise<Result>
 
+export type DashboardHarnessRunInput = {
+  admissionRef: string
+  provider: string
+  profileId: string
+  taskPrompt: string
+}
+
+export type DashboardHarnessRunView = {
+  protocol: string
+  admissionRef: string
+  runId: string
+  status: string
+  turn: number
+  providerTurnRef?: string | undefined
+  waiting?: { kind: string } | undefined
+  final?: { output: string; artifacts: readonly string[] } | undefined
+  error?: { code: string; message: string } | undefined
+}
+
+export type DashboardHarnessIntervention = Record<string, unknown>
+
 export type DashboardActions = {
   updateConfig: (input: UiConfigUpdate, announce?: boolean) => Promise<UiConfig>
   createProfile: (input: UiProfileCreate, announce?: boolean) => Promise<UiProfile>
@@ -91,6 +112,10 @@ export type DashboardActions = {
   getJob: (jobId: string) => Promise<UiJobDetail>
   cancelJob: (jobId: string, announce?: boolean) => Promise<UiJobDetail>
   resumeJob: (jobId: string, announce?: boolean) => Promise<UiJobDetail>
+  startHarnessRun: (input: DashboardHarnessRunInput, announce?: boolean) => Promise<DashboardHarnessRunView>
+  readHarnessRun: (runId: string) => Promise<DashboardHarnessRunView>
+  resumeHarnessRun: (runId: string, input: DashboardHarnessIntervention, announce?: boolean) => Promise<DashboardHarnessRunView>
+  cancelHarnessRun: (runId: string, announce?: boolean) => Promise<DashboardHarnessRunView>
   quiesceRuntime: (announce?: boolean) => Promise<UiRuntimeStatus>
   enableOutputSavings: (announce?: boolean) => Promise<UiOutputSavingsState>
   disableOutputSavings: (announce?: boolean) => Promise<UiOutputSavingsState>

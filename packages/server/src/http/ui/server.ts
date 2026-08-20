@@ -20,7 +20,15 @@ type UiServerOptions = {
   services: TokenlessApplicationServices
   sessions: UiSessionManager
   origin: () => string
+  resolveHarnessRunHandler?: () => Promise<UiHarnessRunHandler | undefined>
 }
+
+type UiHarnessRunHandler = (
+  request: IncomingMessage,
+  response: ServerResponse,
+  method: string,
+  url: URL,
+) => Promise<boolean>
 
 const UI_ROOT = fileURLToPath(new URL('../../../dashboard/', import.meta.url))
 
@@ -28,11 +36,13 @@ export class TokenlessUiServer {
   private readonly services: TokenlessApplicationServices
   private readonly sessions: UiSessionManager
   private readonly origin: () => string
+  private readonly resolveHarnessRunHandler: (() => Promise<UiHarnessRunHandler | undefined>) | undefined
 
   constructor(options: UiServerOptions) {
     this.services = options.services
     this.sessions = options.sessions
     this.origin = options.origin
+    this.resolveHarnessRunHandler = options.resolveHarnessRunHandler
   }
 
   consoleUrl(profileId?: string | null) {
@@ -91,6 +101,19 @@ export class TokenlessUiServer {
     }
 
     if (!url.pathname.startsWith('/ui-api/v1/')) return false
+    if (url.pathname.startsWith('/ui-api/v1/harness/')) {
+      if (method === 'GET') this.sessions.requireSession(request)
+      else this.sessions.requireMutation(request, requestOrigin)
+      const handler = await this.resolveHarnessRunHandler?.()
+      if (!handler) {
+        this.writeJson(response, 503, { error: { code: 'harness_unavailable', message: 'Harness API is unavailable.' } })
+        return true
+      }
+      const privateUrl = new URL(url.href)
+      privateUrl.pathname = url.pathname.replace('/ui-api/v1/harness', '/v1/private/agent')
+      this.securityHeaders(response)
+      if (await handler(request, response, method, privateUrl)) return true
+    }
     const session = method === 'GET'
       ? this.sessions.ensureSession(request, response)
       : this.sessions.requireMutation(request, requestOrigin)

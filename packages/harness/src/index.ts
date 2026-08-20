@@ -127,6 +127,7 @@ export {
 } from './http/provider-client.js'
 
 export {
+  HarnessSidecarError,
   createHarnessExitDoorSidecar,
   createHarnessFrontDoorSidecar,
 } from './sidecar/index.js'

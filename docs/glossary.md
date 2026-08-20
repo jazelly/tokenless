@@ -9,6 +9,16 @@ Canonical terms for how Tokenless interacts with AI provider web surfaces. This 
 | **Tokenless API** | The provider-facing HTTP/API layer of Tokenless, including the Universal API. It accepts API requests and owns provider-turn routing and lifecycle; it is separate from the Tokenless Harness. | Tokenless Harness, provider's official API |
 | **Tokenless Harness** | Tokenless's independent first-party agent runtime in `packages/harness/`. It owns AgentRun state, Skills, tool discovery and execution, MCP, approvals, continuation, and final output, and uses the Tokenless API over HTTP. | Tokenless API, external Harness |
 
+## Harness model roles
+
+| Term | Definition | Do not use as a synonym |
+|---|---|---|
+| **Harness AI Engine** | A model used internally by Tokenless Harness sidecars for bounded auxiliary inference, such as title generation, task classification, provider routing, result summaries, and labels; it does not execute the Harness task or replace the Tokenless API route. | Harness Task Model, provider route, Tokenless API |
+| **Harness Task Model** | The provider model that executes the Harness user's task through the Tokenless API and its selected provider route. | Harness AI Engine, sidecar model |
+| **AI Sidecar** | A Harness-owned auxiliary component that uses the Harness AI Engine outside the durable provider-execution loop. | Provider adapter, Harness task executor |
+| **Front Door** | The pre-run AI Sidecar that prepares conversation metadata and selects a concrete Tokenless API provider route before a Harness run starts. | Tokenless API router, Harness AI Engine |
+| **Exit Door** | The post-run AI Sidecar that summarizes and labels a terminal Harness result without changing that result. | Harness finalizer, Harness Task Model |
+
 ## Execution modes
 
 | Term | Definition | Do not use as a synonym |
@@ -49,6 +59,9 @@ Direct Provider Protocol
 - **Browser-Assisted HTTP Impersonation** uses the headless browser only where the protocol requires browser execution; the main request still travels through the impersonating HTTP client.
 - Daemon authentication and provider **Guest Mode** are separate: a caller may authenticate to Tokenless while the provider request remains guest.
 - **Browser Mode** and **Direct Mode** are values of one V1 API routing contract, not separate public APIs. The JSON request field is `tokenless.execution_mode`; internal TypeScript contracts use `executionMode`.
+- The **Harness AI Engine** serves **AI Sidecars** only; it never becomes the model route that executes the user's Harness task.
+- The **Harness Task Model** is always reached through the **Tokenless API**, whether the **Harness AI Engine** is local, browser-provided, or remote.
+- **Front Door** may select the provider route for a **Harness Task Model**, but its own inference still runs on the separate **Harness AI Engine**.
 
 ## Example dialogue
 
@@ -60,8 +73,14 @@ Direct Provider Protocol
 >
 > **Domain expert:** "Correct. No provider UI is exposed or controlled in that path."
 
+> **Developer:** "If Front Door uses a local Qwen model, does the Harness task also run on Qwen?"
+>
+> **Domain expert:** "No. Qwen is the **Harness AI Engine** for the **AI Sidecar**. The **Harness Task Model** still runs through the **Tokenless API** on the provider route selected by **Front Door**."
+
 ## Ambiguous terms to avoid
 
 - **Browser impersonation** is ambiguous. Say **HTTP Impersonation** when no browser process runs, or **Browser-Assisted HTTP Impersonation** when a headless browser supplies a prerequisite.
 - **Browser Mode** is the API selector. When discussing implementation, say **Visible Browser Automation** rather than using it as a synonym for every kind of browser execution.
 - **Direct Mode** is the API selector. When discussing implementation, also name the **Native Backend** or **G4F Backend** when that distinction matters.
+- **Harness model** is ambiguous. Say **Harness AI Engine** for sidecar inference and **Harness Task Model** for the provider model executing the user's task through the Tokenless API.
+- **Harness AI Engine** must not describe every model connected to the Harness; it names only the internal sidecar inference dependency.

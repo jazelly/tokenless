@@ -1,8 +1,9 @@
 <script lang="ts">
   import { untrack } from 'svelte'
   import { RefreshCw } from '@lucide/svelte'
-  import {
+import {
     CHROME_PROMPT_API_MIN_MAJOR,
+    createGeminiNanoAiEngine,
     createRouterEngine,
     RouterEngineError,
     type RouterBrowserBinding,
@@ -11,7 +12,12 @@
     type RouterProviderCandidate,
     type RouterResult,
   } from '../router-engine.js'
-  import type { DashboardActions, UiProvider, UiSnapshot } from '../types.js'
+  import {
+    createHarnessFrontDoorSidecar,
+    HarnessSidecarError,
+    type HarnessFrontDoorResult,
+  } from 'tokenless-internal-shared/harness-sidecar'
+  import type { DashboardActions, DashboardHarnessRunView, UiProvider, UiSnapshot } from '../types.js'
   import type { MessageKey } from '../i18n/index.js'
 
   let {
@@ -36,6 +42,9 @@
   let formError = $state('')
   let running = $state(false)
   let result = $state<RouterResult | null>(null)
+  let frontDoorResult = $state<HarnessFrontDoorResult | null>(null)
+  let harnessRun = $state<DashboardHarnessRunView | null>(null)
+  let startingHarnessRun = $state(false)
   let observation = $state<RouterEngineObservation | null>(null)
   let observationBindingKey = $state('')
   let observedAvailabilityContext = $state('')
@@ -81,6 +90,8 @@
     untrack(() => {
       running = false
       result = null
+      frontDoorResult = null
+      harnessRun = null
       formError = ''
     })
   })
@@ -251,46 +262,63 @@
     }
     formError = ''
     result = null
+    frontDoorResult = null
+    harnessRun = null
     running = true
     downloadProgress = null
     const binding = selectedBrowserBinding()
     const requestedBindingKey = bindingKey(binding)
     const requestedContext = semanticContext
-    const requestedAvailabilityContext = availabilityContext
     const invocationId = ++routeInvocationId
-    const availabilityId = ++availabilityInvocationId
     try {
-      const routedResult = await createRouterEngine(engine).route(task.trim(), candidates, binding, {
-        onObservation(value) {
-          if (!routeInvocationMatches(invocationId, requestedContext) || !availabilityInvocationMatches(availabilityId, requestedAvailabilityContext)) return
-          observation = value
-          observationBindingKey = requestedBindingKey
-        },
-        onAvailability(value) {
-          if (routeInvocationMatches(invocationId, requestedContext) && availabilityInvocationMatches(availabilityId, requestedAvailabilityContext)) availability = value
-        },
-        onDownloadProgress(value) {
-          if (routeInvocationMatches(invocationId, requestedContext) && availabilityInvocationMatches(availabilityId, requestedAvailabilityContext)) downloadProgress = value
-        },
+      const prepared = await createHarnessFrontDoorSidecar(createGeminiNanoAiEngine()).prepare({
+        taskPrompt: task.trim(),
+        providers: candidates,
+        browserBinding: binding,
       })
       if (!routeInvocationMatches(invocationId, requestedContext)) return
-      result = routedResult
+      frontDoorResult = prepared
+      result = prepared.route
     } catch (error) {
       if (!routeInvocationMatches(invocationId, requestedContext)) return
       if (error instanceof RouterEngineError) {
-        if (availabilityInvocationMatches(availabilityId, requestedAvailabilityContext)) {
-          if (error.observation) {
-            observation = error.observation
-            observationBindingKey = requestedBindingKey
-          }
-          availability = isBrowserBlock(error.code) ? 'blocked' : error.code === 'unavailable' ? 'unavailable' : 'unsupported'
+        if (error.observation) {
+          observation = error.observation
+          observationBindingKey = requestedBindingKey
         }
+        availability = isBrowserBlock(error.code) ? 'blocked' : error.code === 'unavailable' ? 'unavailable' : 'unsupported'
         formError = engineErrorMessage(error)
+      } else if (error instanceof HarnessSidecarError) {
+        formError = error.message
       } else {
         formError = error instanceof Error ? error.message : t('requestFailed')
       }
     } finally {
       if (routeInvocationMatches(invocationId, requestedContext)) running = false
+    }
+  }
+
+  async function startHarnessRun() {
+    if (!frontDoorResult || startingHarnessRun) return
+    const profile = selectedProfileState()
+    if (!profile) {
+      formError = t('harnessProfileRequired')
+      return
+    }
+    formError = ''
+    startingHarnessRun = true
+    try {
+      const started = await actions.startHarnessRun({
+        admissionRef: `admission:${crypto.randomUUID().replaceAll('-', '')}`,
+        provider: frontDoorResult.route.providerId,
+        profileId: profile.id,
+        taskPrompt: task.trim(),
+      })
+      harnessRun = await actions.readHarnessRun(started.runId)
+    } catch (error) {
+      formError = error instanceof Error ? error.message : t('requestFailed')
+    } finally {
+      startingHarnessRun = false
     }
   }
 </script>
@@ -352,6 +380,6 @@
     {#if enabledProviderCount === 0}<div class="inline-feedback error" data-testid="router-provider-block">{t('routerNeedsEnabledProviders')}</div>
     {:else if candidates.length === 0}<div class="inline-feedback warning" data-testid="router-provider-block">{t('routerNeedsProviderRules')}</div>{/if}
     <div class="form-actions"><button class="button primary" type="button" disabled={!enabled || running || busy || displayedAvailability === 'checking' || currentObservation?.supported === false || candidates.length === 0} onclick={run} data-testid="router-run">{running ? t('routerRunning') : t('runSemanticRouter')}</button></div>
-    {#if result}<div class="router-result" data-testid="router-result"><h3>{t('routerResult')}</h3><pre>{JSON.stringify(result, null, 2)}</pre></div>{/if}
+    {#if result}<div class="router-result" data-testid="router-result"><h3>{t('routerResult')}</h3><pre>{JSON.stringify(result, null, 2)}</pre><button class="button secondary" type="button" disabled={startingHarnessRun || busy} onclick={startHarnessRun} data-testid="harness-run">{startingHarnessRun ? t('harnessStarting') : t('startHarnessRun')}</button>{#if harnessRun}<p class="muted" data-testid="harness-run-status">{t('harnessRun')}: {harnessRun.runId} · {harnessRun.status}</p>{/if}</div>{/if}
   </section>
 </section>
