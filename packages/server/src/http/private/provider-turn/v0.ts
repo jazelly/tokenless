@@ -8,6 +8,13 @@ import { ManagedProfileRegistry } from '../../../browser/profiles/registry.js'
 import { checkpointIndicatesPromptSubmission } from '../../../browser/submission-certainty.js'
 import { getProviderInstanceById, resolveTaskCapabilityRoute, type TaskCapabilityId } from '../../../providers/registry.js'
 import { DEFAULT_MAX_VISIBLE_ATTACHMENT_BYTES, listMarkedWebAiStageBundles, removeStagedVisibleAttachmentBundle, stageVisibleAttachmentStream } from '../../../persistence/attachments.js'
+import {
+  dropEphemeralProviderBundle,
+  hasEphemeralProviderBundle,
+  hydrateEphemeralProviderJob,
+  registerEphemeralProviderJob,
+  stageEphemeralProviderAttachment,
+} from '../../../runtime/ephemeral-provider-payloads.js'
 import { invalidInput } from '../../../errors.js'
 import {
   WebAiRequestRefConflictError,
@@ -70,7 +77,14 @@ export class PrivateProviderTurnV0Adapter {
     return this.bindingDocument(binding)
   }
 
-  async stage(bindingRef: string, stream: IncomingMessage, contentType: string | undefined, name: string | undefined, bundleWith: string | undefined) {
+  async stage(
+    bindingRef: string,
+    stream: IncomingMessage,
+    contentType: string | undefined,
+    name: string | undefined,
+    bundleWith: string | undefined,
+    payloadLifetime: string | undefined,
+  ) {
     const binding = await this.requireConfiguredBinding(bindingRef)
     if (normalizeContentType(contentType) !== 'text/markdown') {
       throw invalidInput('web ai attachment content-type must be text/markdown')
@@ -84,14 +98,27 @@ export class PrivateProviderTurnV0Adapter {
       throw invalidInput('web ai attachment bundle reference is unavailable')
     }
     const reservedJobId = bundledAttachment?.bundle_id ?? randomUUID()
-    const descriptor = await stageVisibleAttachmentStream({
-      homeDir: this.store.homeDir,
-      stream,
-      bundleId: reservedJobId,
-      name,
-      type: 'text/markdown',
-      maxBytes: Math.min(DEFAULT_MAX_VISIBLE_ATTACHMENT_BYTES, SYSTEM_PROMPT_LIMIT_BYTES),
-    })
+    const ephemeral = payloadLifetime === 'ephemeral'
+    if (payloadLifetime !== undefined && !ephemeral) throw invalidInput('web ai payload lifetime is invalid')
+    if (bundledAttachment && hasEphemeralProviderBundle(reservedJobId) !== ephemeral) {
+      throw invalidInput('web ai attachment bundle lifetime does not match')
+    }
+    const descriptor = ephemeral
+      ? await stageEphemeralProviderAttachment({
+        stream,
+        bundleId: reservedJobId,
+        name,
+        type: 'text/markdown',
+        maxBytes: Math.min(DEFAULT_MAX_VISIBLE_ATTACHMENT_BYTES, SYSTEM_PROMPT_LIMIT_BYTES),
+      })
+      : await stageVisibleAttachmentStream({
+        homeDir: this.store.homeDir,
+        stream,
+        bundleId: reservedJobId,
+        name,
+        type: 'text/markdown',
+        maxBytes: Math.min(DEFAULT_MAX_VISIBLE_ATTACHMENT_BYTES, SYSTEM_PROMPT_LIMIT_BYTES),
+      })
     try {
       const attachment = this.store.createWebAiStagedAttachment({
         attachment_ref: opaqueRef('attachment'),
@@ -105,14 +132,16 @@ export class PrivateProviderTurnV0Adapter {
       return attachmentPublicView(attachment)
     } catch (error) {
       // The attachment helper already creates an isolated, no-follow bundle. A failed DB insert must not leave it reusable.
-      if (!bundledAttachment) {
+      if (ephemeral) {
+        dropEphemeralProviderBundle(descriptor.bundleId)
+      } else if (!bundledAttachment) {
         await removeStagedVisibleAttachmentBundle({ homeDir: this.store.homeDir, bundleId: descriptor.bundleId }).catch(() => undefined)
       }
       throw error
     }
   }
 
-  async start(bindingRef: string, input: unknown) {
+  async start(bindingRef: string, input: unknown, payloadLifetime: string | undefined) {
     const binding = await this.requireConfiguredBinding(bindingRef)
     let request: StartTurnRequest
     try {
@@ -133,7 +162,7 @@ export class PrivateProviderTurnV0Adapter {
       throw invalidInput('web ai request binding does not match the route')
     }
     if (request.conversation.mode === 'continue') {
-      return this.startContinuation(binding, request, requestSha256)
+      return this.startContinuation(binding, request, requestSha256, payloadLifetime)
     }
     const bootstrap = request.bootstrap!
     const attachments = bootstrap.attachments.map((requested) => {
@@ -148,6 +177,11 @@ export class PrivateProviderTurnV0Adapter {
     const attachment = attachments[0]!
     if (attachments.some((candidate) => candidate.bundle_id !== attachment.bundle_id)) {
       throw invalidInput('web ai request attachments must belong to one staged bundle')
+    }
+    const ephemeral = payloadLifetime === 'ephemeral'
+    if (payloadLifetime !== undefined && !ephemeral) throw invalidInput('web ai payload lifetime is invalid')
+    if (hasEphemeralProviderBundle(attachment.bundle_id) !== ephemeral) {
+      throw invalidInput('web ai request payload lifetime does not match its attachments')
     }
     const route = resolveTaskCapabilityRoute({
       requirements: REQUIRED_CAPABILITIES,
@@ -179,6 +213,9 @@ export class PrivateProviderTurnV0Adapter {
         createVisibleActionRequest({ provider: binding.provider, action: VISIBLE_ACTIONS.RESPONSE_READ, payload: {} }),
       ],
     })
+    const durableRequestJson = ephemeral
+      ? registerEphemeralProviderJob(attachment.bundle_id, requestJson)
+      : requestJson
     const turn = this.store.createWebAiTurn({
       turn_ref: turnRef,
       binding_ref: binding.binding_ref,
@@ -189,7 +226,7 @@ export class PrivateProviderTurnV0Adapter {
       job: {
         provider: binding.provider,
         action: MANAGED_PLAYWRIGHT_JOB_ACTION,
-        request_json: requestJson,
+        request_json: durableRequestJson,
         execution_backend: 'playwright',
         profile_id: binding.profile_id,
         job_id: attachment.bundle_id,
@@ -198,11 +235,11 @@ export class PrivateProviderTurnV0Adapter {
     return this.project(turn, this.store.getJob(turn.job_id))
   }
 
-  private startContinuation(binding: WebAiBinding, request: StartTurnRequest, requestSha256: string) {
+  private startContinuation(binding: WebAiBinding, request: StartTurnRequest, requestSha256: string, payloadLifetime: string | undefined) {
     if (request.conversation.mode !== 'continue' || !request.continuation) throw invalidInput('web ai continuation is invalid')
     const previous = this.store.getLatestWebAiTurnForConversation(request.conversation.conversationRef)
     if (!previous || previous.binding_ref !== binding.binding_ref) throw invalidInput('web ai continuation conversation was not found')
-    const previousJob = this.store.getJob(previous.job_id)
+    const previousJob = hydrateEphemeralProviderJob(this.store.getJob(previous.job_id))
     if (previousJob.status !== 'succeeded' || !successfulResult(previousJob.result_json)) throw invalidInput('web ai continuation source turn has not succeeded')
     const previousRequest = previousJob.request_json as { taskId?: unknown }
     if (typeof previousRequest.taskId !== 'string') throw invalidInput('web ai continuation task identity is unavailable')
@@ -218,6 +255,11 @@ export class PrivateProviderTurnV0Adapter {
     }
     const primary = attachments[0]!
     if (attachments.some((attachment) => attachment!.bundle_id !== primary.bundle_id)) throw invalidInput('web ai continuation attachments are not one staged bundle')
+    const ephemeral = payloadLifetime === 'ephemeral'
+    if (payloadLifetime !== undefined && !ephemeral) throw invalidInput('web ai payload lifetime is invalid')
+    if (hasEphemeralProviderBundle(primary.bundle_id) !== ephemeral) {
+      throw invalidInput('web ai request payload lifetime does not match its attachments')
+    }
     const route = resolveTaskCapabilityRoute({ requirements: REQUIRED_CAPABILITIES, candidates: [{ provider: binding.provider, runtimeEligibility: 'unchecked' }] })
     if (!route.ok) throw invalidInput('web ai provider does not have a static chat and upload route')
     const turnRef = opaqueRef('turn')
@@ -237,6 +279,9 @@ export class PrivateProviderTurnV0Adapter {
         createVisibleActionRequest({ provider: binding.provider, action: VISIBLE_ACTIONS.RESPONSE_READ, payload: {} }),
       ],
     })
+    const durableRequestJson = ephemeral
+      ? registerEphemeralProviderJob(primary.bundle_id, requestJson)
+      : requestJson
     const turn = this.store.createWebAiTurn({
       turn_ref: turnRef,
       binding_ref: binding.binding_ref,
@@ -244,7 +289,7 @@ export class PrivateProviderTurnV0Adapter {
       attachment_refs: attachments.map((attachment) => attachment!.attachment_ref),
       request_ref: request.requestRef,
       request_sha256: requestSha256,
-      job: { provider: binding.provider, action: MANAGED_PLAYWRIGHT_JOB_ACTION, request_json: requestJson, execution_backend: 'playwright', profile_id: binding.profile_id, job_id: primary.bundle_id },
+      job: { provider: binding.provider, action: MANAGED_PLAYWRIGHT_JOB_ACTION, request_json: durableRequestJson, execution_backend: 'playwright', profile_id: binding.profile_id, job_id: primary.bundle_id },
     })
     return this.project(turn, this.store.getJob(turn.job_id))
   }
@@ -268,7 +313,10 @@ export class PrivateProviderTurnV0Adapter {
     if (!turn) throw invalidInput('web ai turn was not found')
     if (before && turn.cancel_attachment_delivery === 'pending') {
       const attachment = this.store.getWebAiStagedAttachment(turn.attachment_ref)
-      if (attachment) await removeStagedVisibleAttachmentBundle({ homeDir: this.store.homeDir, bundleId: attachment.bundle_id }).catch(() => undefined)
+      if (attachment) {
+        dropEphemeralProviderBundle(attachment.bundle_id)
+        await removeStagedVisibleAttachmentBundle({ homeDir: this.store.homeDir, bundleId: attachment.bundle_id }).catch(() => undefined)
+      }
     }
     return this.project(turn, this.store.getJob(turn.job_id))
   }
@@ -280,7 +328,10 @@ export class PrivateProviderTurnV0Adapter {
     const turn = cancelled.turn
     if (turn.cancelled && turn.cancel_attachment_delivery === 'pending') {
       const attachment = this.store.getWebAiStagedAttachment(turn.attachment_ref)
-      if (attachment) await removeStagedVisibleAttachmentBundle({ homeDir: this.store.homeDir, bundleId: attachment.bundle_id }).catch(() => undefined)
+      if (attachment) {
+        dropEphemeralProviderBundle(attachment.bundle_id)
+        await removeStagedVisibleAttachmentBundle({ homeDir: this.store.homeDir, bundleId: attachment.bundle_id }).catch(() => undefined)
+      }
     }
     return { kind: 'turn' as const, turn: this.cancellationProjection(turn, this.store.getJob(turn.job_id)) }
   }
@@ -330,6 +381,7 @@ export class PrivateProviderTurnV0Adapter {
   }
 
   private project(turn: WebAiTurn, job: Job): TurnState {
+    job = hydrateEphemeralProviderJob(job)
     if (!turn.request_ref) throw invalidInput('web ai turn request identity is unavailable')
     const base = {
       protocol: WEB_AI_INTERACTION_PROTOCOL_V0,

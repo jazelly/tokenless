@@ -11,6 +11,7 @@ import {
   type AgentRunView,
   type HarnessActionBatch,
   type HarnessActionBatchResult,
+  type HarnessFinalResponse,
   type HarnessToolCatalogEntry,
   type HarnessToolRegistry,
   type JsonValue,
@@ -106,12 +107,14 @@ class InMemoryWebAgentHarness implements WebAgentHarness {
       history: [],
     }
     this.runs.set(runId, record)
+    this.tools.bindRun?.(runId, spec.toolBinding)
     return publicView(record)
   }
 
   async read(runId: string): Promise<AgentRunView | null> {
     let record = this.runs.get(runId)
     if (!record) return null
+    this.tools.bindRun?.(record.runId, record.spec.toolBinding)
     try {
       if (record.phase === 'discovering_tools') record = await this.discoverTools(record)
       else if (record.phase === 'submitting_provider') record = await this.submitPending(record)
@@ -128,6 +131,7 @@ class InMemoryWebAgentHarness implements WebAgentHarness {
 
   async resume(runId: string, intervention: AgentRunIntervention): Promise<AgentRunView> {
     let record = this.required(runId)
+    this.tools.bindRun?.(record.runId, record.spec.toolBinding)
     try {
       if (isTerminal(record.status)) return publicView(record)
       if (record.providerTurn?.lifecycle === 'waiting_for_user') {
@@ -190,6 +194,7 @@ class InMemoryWebAgentHarness implements WebAgentHarness {
 
   async cancel(runId: string): Promise<AgentRunView> {
     let record = this.required(runId)
+    this.tools.bindRun?.(record.runId, record.spec.toolBinding)
     if (isTerminal(record.status)) return publicView(record)
     try {
       if (record.phase === 'submitting_provider' && record.providerTurn?.requestRef !== record.requestRef) {
@@ -284,7 +289,7 @@ class InMemoryWebAgentHarness implements WebAgentHarness {
   }
 
   private async discoverTools(record: HarnessRunRecord) {
-    const catalog = await this.tools.catalog(record.spec.mcpServers ?? [])
+    const catalog = await this.tools.catalog(record.spec.mcpServers ?? [], { runId: record.runId })
     const pendingProviderRequest = providerRequest({ ...record, catalog })
     return this.update(record.runId, (current) => ({
       ...current,
@@ -332,16 +337,28 @@ class InMemoryWebAgentHarness implements WebAgentHarness {
     if (!response) throw new HarnessSkillError('harness_provider_response_missing', 'Provider turn succeeded without a validated Harness response.')
     assertModelResponseIdentity(record, response)
     if (response.kind === 'final') {
+      const storedFinal = this.tools.redactFinal?.(response, { runId: record.runId, turn: record.turn }) ?? response
+      const storedProviderTurn = storedFinal === response
+        ? providerTurn
+        : redactProviderFinalTurn(providerTurn, storedFinal)
       return this.update(record.runId, (current) => ({
         ...current,
-        providerTurn,
+        providerTurn: storedProviderTurn,
         status: 'succeeded',
         phase: 'terminal',
-        final: response,
+        final: storedFinal,
       }))
     }
     const batchId = sha256({ runId: record.runId, turn: record.turn, nonce: record.nonce, batch: response })
-    const resolved = resolveKnownDependencyFailures(response.calls.map((call) => harnessCall(record, batchId, call)))
+    const storedCalls = response.calls.map((call) => harnessCall(record, batchId, call, this.tools))
+    const storedBatch: HarnessActionBatch = {
+      ...response,
+      calls: response.calls.map((call, index) => ({ ...call, arguments: storedCalls[index]!.arguments })),
+    }
+    const storedProviderTurn = record.spec.toolBinding
+      ? redactProviderActionTurn(providerTurn, storedBatch)
+      : { ...providerTurn, modelResponse: storedBatch }
+    const resolved = resolveKnownDependencyFailures(storedCalls)
     const calls = resolved.calls
     const callResults = resolved.callResults
     const needs = response.needs.map((need) => ({ id: need.id, prompt: need.prompt, inputSchema: need.inputSchema }))
@@ -352,8 +369,8 @@ class InMemoryWebAgentHarness implements WebAgentHarness {
         : 'running'
     return this.update(record.runId, (current) => ({
       ...current,
-      providerTurn,
-      batch: response,
+      providerTurn: storedProviderTurn,
+      batch: storedBatch,
       batchId,
       calls,
       needs,
@@ -394,8 +411,15 @@ class InMemoryWebAgentHarness implements WebAgentHarness {
           progressed = true
           continue
         }
+        const executionContext = {
+          runId: record.runId,
+          callId: call.id,
+          argumentsDigest: call.argumentsDigest,
+        }
+        let executionArguments: JsonValue
         try {
-          validateHarnessArguments(entry, call.arguments)
+          executionArguments = this.tools.restoreArguments?.(entry, call.arguments, executionContext) ?? call.arguments
+          validateHarnessArguments(entry, executionArguments)
         } catch (error) {
           record = this.recordCallOutcome(record, call.id, 'failed', harnessArgumentFailure(error, call.tool))
           progressed = true
@@ -406,7 +430,12 @@ class InMemoryWebAgentHarness implements WebAgentHarness {
           calls: current.calls.map((candidate) => candidate.id === call.id ? { ...candidate, status: 'executing' } : candidate),
         }))
         try {
-          const outcome = await this.tools.execute(entry, call.arguments as Record<string, JsonValue>, record.spec.mcpServers ?? [])
+          const outcome = await this.tools.execute(
+            entry,
+            executionArguments as Record<string, JsonValue>,
+            record.spec.mcpServers ?? [],
+            executionContext,
+          )
           if (outcome.status === 'authentication_required') {
             record = this.update(record.runId, (current) => ({
               ...current,
@@ -479,8 +508,12 @@ class InMemoryWebAgentHarness implements WebAgentHarness {
   }
 
   private async submitPending(record: HarnessRunRecord): Promise<HarnessRunRecord> {
-    const request = record.pendingProviderRequest
-    if (!request) throw new HarnessSkillError('harness_provider_intent_missing', 'Harness provider submission intent is missing.')
+    const pendingRequest = record.pendingProviderRequest
+    if (!pendingRequest) throw new HarnessSkillError('harness_provider_intent_missing', 'Harness provider submission intent is missing.')
+    const request = this.tools.prepareProviderRequest?.(pendingRequest, {
+      runId: record.runId,
+      turn: record.turn,
+    }) ?? pendingRequest
     try {
       const providerTurn = request.continuation
         ? await this.provider.continue(request)
@@ -502,10 +535,19 @@ class InMemoryWebAgentHarness implements WebAgentHarness {
   }
 
   private recordCallOutcome(record: HarnessRunRecord, callId: string, status: 'succeeded' | 'failed', content: JsonValue) {
+    const call = record.calls.find((candidate) => candidate.id === callId)
+    const entry = call ? record.catalog.find((candidate) => candidate.name === call.tool) : undefined
+    const storedContent = call && entry
+      ? this.tools.redactResult?.(entry, content, {
+        runId: record.runId,
+        callId: call.id,
+        argumentsDigest: call.argumentsDigest,
+      }) ?? content
+      : content
     return this.update(record.runId, (current) => ({
       ...current,
-      calls: current.calls.map((call) => call.id === callId ? { ...call, status, outcome: content } : call),
-      callResults: [...current.callResults.filter((result) => result.id !== callId), { id: callId, status, content }],
+      calls: current.calls.map((currentCall) => currentCall.id === callId ? { ...currentCall, status, outcome: storedContent } : currentCall),
+      callResults: [...current.callResults.filter((result) => result.id !== callId), { id: callId, status, content: storedContent }],
     }))
   }
 
@@ -567,7 +609,31 @@ function providerRequest(record: HarnessRunRecord, result?: HarnessActionBatchRe
   }
 }
 
-function harnessCall(record: HarnessRunRecord, batchId: string, call: HarnessActionBatch['calls'][number]): HarnessCall {
+function redactProviderActionTurn(providerTurn: ProviderTurnState, batch: HarnessActionBatch): ProviderTurnState {
+  const { responseText: _responseText, ...redacted } = providerTurn
+  return { ...redacted, modelResponse: batch }
+}
+
+function redactProviderFinalTurn(providerTurn: ProviderTurnState, final: HarnessFinalResponse): ProviderTurnState {
+  const { responseText: _responseText, ...redacted } = providerTurn
+  return { ...redacted, modelResponse: final }
+}
+
+function harnessCall(
+  record: HarnessRunRecord,
+  batchId: string,
+  call: HarnessActionBatch['calls'][number],
+  tools: HarnessToolRegistry,
+): HarnessCall {
+  const argumentsDigest = sha256({
+    runId: record.runId,
+    turn: record.turn,
+    nonce: record.nonce,
+    batchId,
+    callId: call.id,
+    tool: call.tool,
+    arguments: call.arguments,
+  })
   const entry = record.catalog.find((tool) => tool.name === call.tool)
   if (!entry && call.validationError === undefined) {
     throw new HarnessSkillError('harness_tool_unknown', `Tool '${call.tool}' is absent from the frozen catalog.`)
@@ -576,16 +642,10 @@ function harnessCall(record: HarnessRunRecord, batchId: string, call: HarnessAct
     return {
       id: call.id,
       tool: call.tool,
-      arguments: call.arguments,
-      argumentsDigest: sha256({
-        runId: record.runId,
-        turn: record.turn,
-        nonce: record.nonce,
-        batchId,
-        callId: call.id,
-        tool: call.tool,
-        arguments: call.arguments,
-      }),
+      arguments: record.spec.toolBinding
+        ? { redacted: true, sha256: sha256(call.arguments) }
+        : call.arguments,
+      argumentsDigest,
       dependsOn: call.dependsOn ?? [],
       approval: 'not_required',
       status: 'failed',
@@ -597,20 +657,17 @@ function harnessCall(record: HarnessRunRecord, batchId: string, call: HarnessAct
     }
   }
   if (!entry) throw new HarnessSkillError('harness_tool_unknown', `Tool '${call.tool}' is absent from the frozen catalog.`)
+  const storedArguments = tools.redactArguments?.(entry, call.arguments, {
+    runId: record.runId,
+    callId: call.id,
+    argumentsDigest,
+  }) ?? call.arguments
   const requiresApproval = entry.approval === 'always' || !entry.readOnly
   return {
     id: call.id,
     tool: call.tool,
-    arguments: call.arguments,
-    argumentsDigest: sha256({
-      runId: record.runId,
-      turn: record.turn,
-      nonce: record.nonce,
-      batchId,
-      callId: call.id,
-      tool: call.tool,
-      arguments: call.arguments,
-    }),
+    arguments: storedArguments,
+    argumentsDigest,
     dependsOn: call.dependsOn ?? [],
     approval: requiresApproval ? 'pending' : 'not_required',
     status: 'pending',
@@ -723,7 +780,7 @@ function validateSpec(input: AgentRunSpec): AgentRunSpec {
   if (!isRecord(input)) throw new HarnessSkillError('harness_spec_invalid', 'Agent run spec must be a JSON object.')
   assertExactKeys(input, [
     'provider', 'profileId', 'taskPrompt', 'stagingRoot', 'selectedSkills',
-    'finalOutput', 'limits', 'maxTurns', 'mcpServers',
+    'finalOutput', 'limits', 'maxTurns', 'mcpServers', 'toolBinding',
   ], 'Agent run spec')
   if (typeof input.provider !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(input.provider)) {
     throw new HarnessSkillError('harness_spec_invalid', 'Agent run provider is invalid.')
@@ -736,6 +793,7 @@ function validateSpec(input: AgentRunSpec): AgentRunSpec {
   const finalOutput = sanitizeFinalOutput(input.finalOutput)
   const limits = sanitizeLimits(input.limits)
   const mcpServers = sanitizeMcpServers(input.mcpServers)
+  const toolBinding = sanitizeToolBinding(input.toolBinding)
   return {
     provider: input.provider,
     profileId: input.profileId,
@@ -746,7 +804,18 @@ function validateSpec(input: AgentRunSpec): AgentRunSpec {
     ...(limits ? { limits } : {}),
     ...(input.maxTurns === undefined ? {} : { maxTurns: input.maxTurns }),
     mcpServers,
+    ...(toolBinding ? { toolBinding } : {}),
   }
+}
+
+function sanitizeToolBinding(value: unknown): AgentRunSpec['toolBinding'] {
+  if (value === undefined) return undefined
+  if (!isRecord(value) || value.kind !== 'opaque' || typeof value.ref !== 'string' ||
+    !/^extension-session:[A-Za-z0-9_-]{16,128}$/u.test(value.ref)) {
+    throw new HarnessSkillError('harness_spec_invalid', 'Agent run toolBinding is invalid.')
+  }
+  assertExactKeys(value, ['kind', 'ref'], 'toolBinding')
+  return { kind: 'opaque', ref: value.ref }
 }
 
 function sanitizeSelectedSkills(value: unknown): AgentRunSpec['selectedSkills'] {
@@ -901,7 +970,7 @@ function assertProviderTurnIdentity(record: HarnessRunRecord, providerTurn: Prov
   if (providerTurn.protocol !== PROVIDER_TURN_PROTOCOL || providerTurn.requestRef !== record.requestRef ||
     providerTurn.runId !== record.runId || providerTurn.turn !== record.turn || providerTurn.nonce !== record.nonce ||
     providerTurn.provider !== record.spec.provider || providerTurn.profileId !== record.spec.profileId) {
-    throw new HarnessSkillError('harness_provider_identity_mismatch', 'Provider turn does not match the durable request identity.')
+    throw new HarnessSkillError('harness_provider_identity_mismatch', 'Provider turn does not match the request identity.')
   }
   const prior = record.providerTurn
   if (prior && (
@@ -917,13 +986,13 @@ function assertProviderTurnIdentity(record: HarnessRunRecord, providerTurn: Prov
 function assertProviderCancellationIdentity(requestRef: string, cancellation: import('../contracts.js').ProviderTurnCancellation) {
   if (cancellation.protocol !== PROVIDER_TURN_PROTOCOL || cancellation.requestRef !== requestRef ||
     (cancellation.kind === 'turn' && cancellation.turn.requestRef !== requestRef)) {
-    throw new HarnessSkillError('harness_provider_identity_mismatch', 'Provider cancellation does not match the durable request identity.')
+    throw new HarnessSkillError('harness_provider_identity_mismatch', 'Provider cancellation does not match the request identity.')
   }
 }
 
 function assertModelResponseIdentity(record: HarnessRunRecord, response: HarnessActionBatch | import('../contracts.js').HarnessFinalResponse) {
   if (response.runId !== record.runId || response.turn !== record.turn || response.nonce !== record.nonce) {
-    throw new HarnessSkillError('harness_provider_response_identity_mismatch', 'Provider response does not match the durable run turn and nonce.')
+    throw new HarnessSkillError('harness_provider_response_identity_mismatch', 'Provider response does not match the run turn and nonce.')
   }
 }
 

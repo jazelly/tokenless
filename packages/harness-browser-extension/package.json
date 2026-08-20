@@ -1,0 +1,21 @@
+{
+  "name": "tokenless-harness-browser-extension",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Deterministic unpacked Tokenless Harness Chrome extension candidate.",
+  "type": "module",
+  "license": "MIT",
+  "files": [
+    "dist/unpacked",
+    "README.md",
+    "README.zh-CN.md",
+    "package.json"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/build.mjs",
+    "lint": "tsc -p tsconfig.json --noEmit"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  }
+}

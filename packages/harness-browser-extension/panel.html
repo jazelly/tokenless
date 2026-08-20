@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Tokenless Harness / Tokenless Harness</title>
+    <link rel="stylesheet" href="panel.css">
+  </head>
+  <body>
+    <main>
+      <header class="title-row">
+        <div>
+          <p class="eyebrow">Tokenless Harness API / Tokenless Harness API</p>
+          <h1>Browser task / 浏览器任务</h1>
+        </div>
+      </header>
+
+      <section class="card">
+        <h2>Connection / 连接</h2>
+        <p id="connection" class="status">Not paired / 未配对</p>
+        <label>Daemon origin / Daemon origin<input id="daemon" value="http://127.0.0.1:7331" autocomplete="off"></label>
+        <p id="route" class="muted">Provider route is selected and approved in Dashboard. / Provider route 在 Dashboard 中选择并批准。</p>
+        <div class="button-row">
+          <button id="pair" type="button">Pair in Dashboard / 在 Dashboard 配对</button>
+          <button id="unpair" class="secondary" type="button">Unpair / 解除配对</button>
+          <button id="refresh" class="secondary" type="button">Refresh / 刷新</button>
+        </div>
+        <p id="pairing-help" class="muted">The credential is extension-scoped and revocable. It cannot control the daemon. / 凭证只属于本扩展且可撤销，不能控制 daemon。</p>
+      </section>
+
+      <section class="card">
+        <h2>Current tab / 当前标签页</h2>
+        <p id="page" class="status">No tab attached / 尚未附着标签页</p>
+        <p id="origin" class="muted">A bounded semantic page snapshot is sent through the selected Tokenless API provider route only after consent. / 只有在同意后，有界语义页面快照才会经所选 Tokenless API provider route 发送。</p>
+        <label class="checkbox"><input id="consent" type="checkbox"> I consent to send bounded page content to the selected Harness Task Model. / 我同意将有界页面内容发送给所选 Harness Task Model。</label>
+        <button id="attach" type="button">Attach or repair selected tab / 附着或修复当前标签页</button>
+        <pre id="inventory" class="inventory" aria-live="polite"></pre>
+      </section>
+
+      <section class="card">
+        <h2>Task / 任务</h2>
+        <label for="task">Natural-language task / 自然语言任务</label>
+        <textarea id="task" rows="3" placeholder="Fill the name field with Jazelly. / 将姓名字段填写为 Jazelly。"></textarea>
+        <div class="button-row">
+          <button id="run" type="button">Start Harness run / 启动 Harness run</button>
+          <button id="cancel" class="secondary" type="button">Cancel / 取消</button>
+        </div>
+        <p id="run-status" class="status">No run / 尚无 run</p>
+        <pre id="final" class="inventory" hidden></pre>
+      </section>
+
+      <section id="approval" class="card approval" hidden>
+        <h2>Approval required / 需要批准</h2>
+        <p id="proposal"></p>
+        <div class="button-row">
+          <button id="approve" type="button">Approve input / 批准填写</button>
+          <button id="reject" class="secondary" type="button">Reject / 拒绝</button>
+        </div>
+      </section>
+
+      <section class="disclosure">
+        <strong>Privacy / 隐私</strong>
+        <p>Page text is untrusted data. Raw DOM, cookies, storage, credentials, passwords, hidden fields, and arbitrary selectors are never sent. / 页面文字是不可信数据。不会发送 raw DOM、cookie、storage、凭证、密码、隐藏字段或任意 selector。</p>
+      </section>
+    </main>
+    <script type="module" src="panel.js"></script>
+  </body>
+</html>

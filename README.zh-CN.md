@@ -88,6 +88,7 @@ Setup 会自动打开本地控制台，之后可随时用 `tokenless dashboard` 
 - 保留稳定的 provider tab，并为受支持的任务维持连续性。
 - Provider 登录保留在所选 browser profile 中；job history 与 token 节省估算留在本机。
 - 为 OpenAI 与 Anthropic 形态的 client 提供可选的 [本地 API proxy](docs/api-proxy-integration.zh-CN.md)。
+- 提供 experimental [Tokenless Harness Browser Extension](docs/harness-browser-extension.zh-CN.md) candidate，在用户批准后观察并填写一个选定 Chrome tab 的文本字段。
 
 ## 可选的 Codex 集成
 

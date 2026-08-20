@@ -7,6 +7,12 @@ import type {
   DaemonJob,
   ManagedDaemonClient,
 } from '../browser/daemon-client.js'
+import {
+  dropEphemeralProviderBundle,
+  hydrateEphemeralProviderJob,
+  redactEphemeralProviderCheckpoint,
+  redactEphemeralProviderResult,
+} from './ephemeral-provider-payloads.js'
 
 export function createInProcessDaemonClient(store: JobStore): ManagedDaemonClient {
   return {
@@ -48,10 +54,19 @@ export function createInProcessDaemonClient(store: JobStore): ManagedDaemonClien
       store.markWaitingForUser(options.jobId, options.claimToken, options.blocker)
     )),
     checkpointJob: (options) => checkpointRequest(options, () => publicJobView(
-      store.checkpointJob(options.jobId, options.claimToken, options.checkpoint)
+      store.checkpointJob(
+        options.jobId,
+        options.claimToken,
+        redactEphemeralProviderCheckpoint(options.jobId, options.checkpoint),
+      )
     )),
     parkJob: (options) => parkRequest(options, () => publicJobView(
-      store.parkJob(options.jobId, options.claimToken, options.blocker, options.checkpoint)
+      store.parkJob(
+        options.jobId,
+        options.claimToken,
+        options.blocker,
+        redactEphemeralProviderCheckpoint(options.jobId, options.checkpoint),
+      )
     )),
     fallbackJob: (options) => fallbackRequest(options, () => publicJobView(store.fallbackJob({
       job_id: options.jobId,
@@ -67,16 +82,23 @@ export function createInProcessDaemonClient(store: JobStore): ManagedDaemonClien
       if (hasResult === hasError) {
         throw tokenlessError('invalid_daemon_completion', 'Pass exactly one of result or error when completing a daemon job.')
       }
-      return publicJobView(store.completeJob(
+      const persistedResult = hasResult
+        ? redactEphemeralProviderResult(options.jobId, options.result)
+        : undefined
+      const completed = store.completeJob(
         options.jobId,
         options.claimToken,
         hasResult
           ? {
-              result_json: options.result,
-              output_savings_work: options.outputSavingsWork,
+              result_json: persistedResult,
+              output_savings_work: persistedResult === options.result
+                ? options.outputSavingsWork
+                : [],
             }
           : { error_json: options.error }
-      ))
+      )
+      dropEphemeralProviderBundle(options.jobId)
+      return publicJobView(completed)
     }),
     upsertProviderProject: (options) => claimRequest(options, () => {
       assertCurrentClaim(store, options.jobId, options.claimToken)
@@ -193,7 +215,7 @@ function publicJobView(job: Job): DaemonJob {
 }
 
 function claimedView(job: Job): DaemonClaimedJob {
-  return withClaimToken(job)
+  return hydrateEphemeralProviderJob(withClaimToken(job))
 }
 
 function daemonStoreError(error: unknown) {

@@ -71,7 +71,7 @@ export function createLocalHttpClient(options: LocalHttpClientOptions) {
     async stage(
       providerBindingRef: string,
       bytes: Uint8Array,
-      options?: { name?: string | undefined; bundleWith?: string | undefined },
+      options?: { name?: string | undefined; bundleWith?: string | undefined; payloadLifetime?: 'ephemeral' | undefined },
     ): Promise<LocalHttpAttachment> {
       if (!(bytes instanceof Uint8Array) || bytes.byteLength === 0) throw new TypeError('bytes must be a nonempty Uint8Array.')
       const name = options?.name ?? 'system-prompt.md'
@@ -84,20 +84,27 @@ export function createLocalHttpClient(options: LocalHttpClientOptions) {
           'content-type': 'text/markdown',
           'x-tokenless-attachment-name': name,
           ...(bundleWith === undefined ? {} : { 'x-tokenless-bundle-with': bundleWith }),
+          ...(options?.payloadLifetime === undefined ? {} : { 'x-tokenless-payload-lifetime': options.payloadLifetime }),
         },
       })
       return parseAttachment(value)
     },
-    async start(providerBindingRef: string, requestValue: unknown): Promise<TurnState> {
+    async start(providerBindingRef: string, requestValue: unknown, options?: { payloadLifetime?: 'ephemeral' | undefined }): Promise<TurnState> {
       const start = parseStartTurnRequest(requestValue)
       if (start.providerBindingRef !== providerBindingRef) throw new TypeError('request providerBindingRef does not match the route.')
-      return parseTurnEnvelope(await call(`${PRIVATE_PROVIDER_TURN_PATH}/bindings/${encodeURIComponent(bindingRef(providerBindingRef, 'providerBindingRef'))}/turns`, jsonPost(start)))
+      return parseTurnEnvelope(await call(
+        `${PRIVATE_PROVIDER_TURN_PATH}/bindings/${encodeURIComponent(bindingRef(providerBindingRef, 'providerBindingRef'))}/turns`,
+        jsonPost(start, options?.payloadLifetime),
+      ))
     },
-    async continue(providerBindingRef: string, requestValue: unknown): Promise<TurnState> {
+    async continue(providerBindingRef: string, requestValue: unknown, options?: { payloadLifetime?: 'ephemeral' | undefined }): Promise<TurnState> {
       const start = parseStartTurnRequest(requestValue)
       if (start.conversation.mode !== 'continue') throw new TypeError('request must be a continuation.')
       if (start.providerBindingRef !== providerBindingRef) throw new TypeError('request providerBindingRef does not match the route.')
-      return parseTurnEnvelope(await call(`${PRIVATE_PROVIDER_TURN_PATH}/bindings/${encodeURIComponent(bindingRef(providerBindingRef, 'providerBindingRef'))}/turns`, jsonPost(start)))
+      return parseTurnEnvelope(await call(
+        `${PRIVATE_PROVIDER_TURN_PATH}/bindings/${encodeURIComponent(bindingRef(providerBindingRef, 'providerBindingRef'))}/turns`,
+        jsonPost(start, options?.payloadLifetime),
+      ))
     },
     async read(turnRef: string): Promise<TurnState> {
       return parseTurnEnvelope(await call(`${PRIVATE_PROVIDER_TURN_PATH}/turns/${encodeURIComponent(turnRefValue(turnRef))}`))
@@ -121,8 +128,15 @@ export class LocalHttpError extends Error {
   }
 }
 
-function jsonPost(value: unknown): RequestInit {
-  return { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(value) }
+function jsonPost(value: unknown, payloadLifetime?: 'ephemeral'): RequestInit {
+  return {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(payloadLifetime === undefined ? {} : { 'x-tokenless-payload-lifetime': payloadLifetime }),
+    },
+    body: JSON.stringify(value),
+  }
 }
 
 function normalizeBaseUrl(value: string) {

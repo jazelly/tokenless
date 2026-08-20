@@ -23,6 +23,8 @@ import type {
 } from 'tokenless-internal-shared/ui'
 import type {
   DashboardHarnessIntervention,
+  HarnessExtensionPairing,
+  HarnessExtensionPairingRequest,
   DashboardHarnessRunInput,
   DashboardHarnessRunView,
   SnapshotResult,
@@ -186,6 +188,23 @@ export class DashboardClient {
       method: 'POST',
       body: '{}',
     }))
+  }
+
+  async getHarnessExtensionPairing(pairingId: string): Promise<HarnessExtensionPairingRequest> {
+    return await this.requireResult(this.request<HarnessExtensionPairingRequest>(
+      `/harness/browser-extension/pairings/${encodeURIComponent(pairingId)}`,
+      { method: 'GET' },
+    ))
+  }
+
+  async approveHarnessExtensionPairing(
+    pairingId: string,
+    input: { provider: string; profileId: string },
+  ): Promise<HarnessExtensionPairing> {
+    return await this.requireResult(this.request<HarnessExtensionPairing>(
+      `/harness/browser-extension/pairings/${encodeURIComponent(pairingId)}/approve`,
+      { method: 'POST', body: JSON.stringify(input) },
+    ))
   }
 
   async quiesceRuntime(): Promise<UiRuntimeStatus> {

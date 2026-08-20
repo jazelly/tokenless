@@ -5,6 +5,8 @@ import { createLocalHttpProviderTurnClient } from './provider-client.js'
 import { createStdioMcpToolRegistry } from '../mcp/stdio.js'
 import { openWebAgentHarness } from '../run/web-agent-harness.js'
 import type { AgentRunSpec } from '../contracts.js'
+import { BrowserExtensionBroker } from '../browser-extension/broker.js'
+import { createBrowserExtensionHttpHandler } from '../browser-extension/http-handler.js'
 
 type JsonRecord = Record<string, unknown>
 
@@ -26,12 +28,21 @@ export function createAgentRunHttpHandler({
   baseUrl: string
   token: string
 }): AgentRunHttpHandler {
+  const broker = new BrowserExtensionBroker(tokenlessHome, baseUrl)
+  const toolRegistry = broker.registry(createStdioMcpToolRegistry())
   const harness = openWebAgentHarness({
     providerClient: createLocalHttpProviderTurnClient({ baseUrl, token }),
-    toolRegistry: createStdioMcpToolRegistry(),
+    toolRegistry,
+  })
+  const extensionHandler = createBrowserExtensionHttpHandler({
+    broker,
+    harness,
+    tokenlessHome,
+    baseUrl,
   })
 
   return async (request, response, method, url) => {
+    if (await extensionHandler(request, response, method, url)) return true
     const route = /^\/v1\/private\/agent\/runs(?:\/([^/]+)(?:\/(resume|cancel))?)?$/.exec(url.pathname)
     if (!route) return false
 

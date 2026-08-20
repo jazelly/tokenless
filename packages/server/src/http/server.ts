@@ -287,6 +287,13 @@ async function handleRequest(
       return
     }
 
+    if (url.pathname.startsWith('/v1/harness/browser-extension/')) {
+      const handler = await resolveAgentRunHandler?.(daemonOrigin)
+      const handled = handler ? await handler(request, response, method, url) : false
+      if (handled) return
+      throw invalidInput('Tokenless Harness browser extension route is invalid')
+    }
+
     requireControlAuth(store, request)
 
     if (method === 'GET' && url.pathname === '/v1/private/control/state') {
@@ -764,6 +771,7 @@ async function handlePrivateProviderTurnRequest(
           request.headers['content-type'] as string | undefined,
           request.headers['x-tokenless-attachment-name'] as string | undefined,
           request.headers['x-tokenless-bundle-with'] as string | undefined,
+          request.headers['x-tokenless-payload-lifetime'] as string | undefined,
         ) })
       } catch {
         throw invalidInput('web ai attachment could not be staged')
@@ -771,7 +779,11 @@ async function handlePrivateProviderTurnRequest(
       return true
     }
     if (method === 'POST' && action === 'turns') {
-      const turn = await providerTurn.start(bindingRef, await readJsonObject(request))
+      const turn = await providerTurn.start(
+        bindingRef,
+        await readJsonObject(request),
+        request.headers['x-tokenless-payload-lifetime'] as string | undefined,
+      )
       await runtimeController?.wake()
       writeJson(response, 200, { turn })
       return true

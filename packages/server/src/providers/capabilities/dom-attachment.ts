@@ -19,6 +19,7 @@ import type { VisibleActionRequest } from '../contracts.js'
 import type { ProviderExecutionContext } from '../execution-context.js'
 import type { ProviderDomDefinition } from '../provider-definition.js'
 import type { AttachmentInput, FileUploadResult, ProviderCapabilityInspection } from '../../browser/actions.js'
+import { readEphemeralProviderAttachment } from '../../runtime/ephemeral-provider-payloads.js'
 
 type AttachmentAction = typeof VISIBLE_ACTIONS.FILE_UPLOAD
 
@@ -547,6 +548,13 @@ async function waitForPageTimeout(page: Page, ms: number) {
 }
 
 async function resolveAttachmentPayloadUnsafe(attachmentRoot: string | undefined, attachment: AttachmentInput) {
+  const ephemeral = readEphemeralProviderAttachment(attachment.bundleId, attachment.attachmentId)
+  if (ephemeral) {
+    if (ephemeral.byteLength !== attachment.size || createHash('sha256').update(ephemeral).digest('hex') !== attachment.sha256) {
+      throw tokenlessError('invalid_visible_attachment', 'Ephemeral attachment does not match its descriptor.')
+    }
+    return { name: basename(attachment.name), mimeType: attachment.type, buffer: ephemeral }
+  }
   if (attachmentRoot === undefined) {
     throw tokenlessError('invalid_visible_attachment_root', 'Attachment root is required for visible file uploads.')
   }

@@ -99,6 +99,26 @@ export type DashboardHarnessRunView = {
 
 export type DashboardHarnessIntervention = Record<string, unknown>
 
+export type HarnessExtensionPairingRequest = {
+  pairingId: string
+  extensionId: string
+  extensionVersion: string
+  createdAt: string
+  expiresAt: string
+  state: 'pending' | 'approved'
+}
+
+export type HarnessExtensionPairing = {
+  pairingId: string
+  extensionId: string
+  extensionVersion: string
+  provider?: string
+  profileId?: string
+  status: 'active' | 'revoked'
+  createdAt: string
+  lastAttachedAt?: string
+}
+
 export type DashboardActions = {
   updateConfig: (input: UiConfigUpdate, announce?: boolean) => Promise<UiConfig>
   createProfile: (input: UiProfileCreate, announce?: boolean) => Promise<UiProfile>

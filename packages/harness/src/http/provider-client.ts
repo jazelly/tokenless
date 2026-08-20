@@ -38,6 +38,7 @@ export function createLocalHttpProviderTurnClient(options: { baseUrl: string; to
           ...(request.limits ? { limits: request.limits } : {}),
           taskPrompt: request.taskPrompt ?? '',
           nonce: request.nonce,
+          ...(request.payloadLifetime === undefined ? {} : { payloadLifetime: request.payloadLifetime }),
         })
         return project(request, turn, undefined, {
           providerRef: binding.capabilities.providerRef,
@@ -63,6 +64,7 @@ export function createLocalHttpProviderTurnClient(options: { baseUrl: string; to
           nonce: request.nonce,
           resultText: JSON.stringify(continuation.result),
           skillLoads: continuation.skillLoads,
+          ...(request.payloadLifetime === undefined ? {} : { payloadLifetime: request.payloadLifetime }),
         })
         return project(request, started.turnState, started.resultSha256, continuation)
       }, 'submission')

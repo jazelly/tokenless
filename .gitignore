@@ -23,6 +23,8 @@ docs/*
 !docs/g4f-direct-provider-service.zh-CN.md
 !docs/glossary.md
 !docs/glossary.zh-CN.md
+!docs/harness-browser-extension.md
+!docs/harness-browser-extension.zh-CN.md
 !docs/provider-capability-census.md
 !docs/provider-capability-census.zh-CN.md
 !docs/provider-rate-limits.md

@@ -1,0 +1,28 @@
+:root { color-scheme: light; font: 13px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f6f7fb; color: #18202d; }
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; }
+main { padding: 16px; display: grid; gap: 12px; }
+.title-row { display: flex; justify-content: space-between; align-items: start; gap: 8px; }
+.eyebrow { margin: 0 0 4px; color: #58647a; font-size: 11px; letter-spacing: .04em; }
+h1, h2 { margin: 0; }
+h1 { font-size: 20px; }
+h2 { font-size: 14px; margin-bottom: 8px; }
+.card { background: white; border: 1px solid #dce1eb; border-radius: 10px; padding: 12px; box-shadow: 0 2px 8px #1b2a4a0d; }
+.disclosure { color: #4f5d73; font-size: 11px; padding: 4px 2px 12px; }
+.disclosure p { margin: 4px 0 0; }
+label { display: grid; gap: 4px; margin-top: 8px; color: #4f5d73; }
+input, textarea { width: 100%; border: 1px solid #cbd3e1; border-radius: 6px; padding: 7px; font: inherit; background: #fff; color: inherit; }
+textarea { resize: vertical; }
+.checkbox { display: flex; grid-template-columns: auto 1fr; align-items: start; gap: 7px; }
+.checkbox input { width: auto; margin-top: 3px; }
+button { border: 0; border-radius: 6px; padding: 8px 10px; font: inherit; font-weight: 600; background: #2448cf; color: white; cursor: pointer; }
+button.secondary, button.quiet { background: #eef1f7; color: #25334b; }
+button.quiet { padding: 5px 7px; font-size: 11px; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+.button-row { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+.status { margin: 0; font-weight: 600; }
+.muted { color: #67758c; font-size: 11px; }
+.inventory { max-height: 180px; overflow: auto; background: #f3f5fa; border-radius: 6px; padding: 8px; white-space: pre-wrap; font-size: 11px; }
+.approval { border-color: #d3972c; background: #fffaf0; }
+.approval p { white-space: pre-wrap; word-break: break-word; }
+[hidden] { display: none; }

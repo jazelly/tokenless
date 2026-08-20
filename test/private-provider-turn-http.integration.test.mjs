@@ -85,6 +85,42 @@ test('oversize stage is bounded and sanitized', async () => {
   })
 })
 
+test('explicit ephemeral provider payload stays out of durable job and attachment bytes', async () => {
+  await withHome(async (homeDir) => {
+    const daemon = await startControlPlane(homeDir)
+    try {
+      const { client, binding } = await configuredClient(homeDir, daemon, 'chatgpt', 'ephemeral-payload')
+      const attachmentSecret = 'semantic-page-snapshot-secret'
+      const promptSecret = 'extension-task-prompt-secret'
+      const attachment = await client.stage(
+        binding.providerBindingRef,
+        new TextEncoder().encode(attachmentSecret),
+        { name: 'ephemeral.md', payloadLifetime: 'ephemeral' },
+      )
+      const request = requestFor(binding, attachment, 'e')
+      request.bootstrap.text = promptSecret
+      const turn = await client.start(
+        binding.providerBindingRef,
+        request,
+        { payloadLifetime: 'ephemeral' },
+      )
+      const mapping = daemon.store.getWebAiTurn(turn.turnRef)
+      assert.ok(mapping)
+      const job = daemon.store.getJob(mapping.job_id)
+      const durable = JSON.stringify(job.request_json)
+      assert.equal(durable.includes(promptSecret), false)
+      assert.equal(durable.includes(attachmentSecret), false)
+      assert.match(durable, /tokenless ephemeral provider payload/u)
+      const staged = daemon.store.getWebAiStagedAttachment(attachment.attachmentRef)
+      assert.ok(staged)
+      assert.equal(fs.existsSync(path.join(homeDir, 'attachments', staged.bundle_id, `${staged.attachment_id}.bin`)), false)
+      assert.equal((await client.read(turn.turnRef)).lifecycle, 'queued')
+    } finally {
+      await daemon.close()
+    }
+  })
+})
+
 test('durable failure projections preserve prompt submission certainty', async () => {
   await withHome(async (homeDir) => {
     const daemon = await startControlPlane(homeDir)

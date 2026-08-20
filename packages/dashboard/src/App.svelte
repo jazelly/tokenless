@@ -5,6 +5,7 @@
   import { translate } from './i18n/index.js'
   import { DEFAULT_TOKENLESS_LANGUAGE, normalizeTokenlessLanguage } from 'tokenless-internal-shared/i18n'
   import { createReadinessState } from './readiness-state.svelte.js'
+  import HarnessExtensionPairing from './components/HarnessExtensionPairing.svelte'
   import CapabilitiesView from './views/CapabilitiesView.svelte'
   import JobsView from './views/JobsView.svelte'
   import OverviewView from './views/OverviewView.svelte'
@@ -37,6 +38,7 @@
   let toast = $state('')
   let setupRoute = $state(isSetupPath(location.pathname))
   let selectedProfile = $state(new URL(location.href).searchParams.get('profile') ?? '')
+  let harnessPairingId = $state(new URL(location.href).searchParams.get('harnessPairing') ?? '')
   let section = $state<Section>(parseSection(location.hash))
   let toastTimer = 0
   let pollTimer = 0
@@ -229,6 +231,13 @@
     toastTimer = window.setTimeout(() => toast = '', 3200)
   }
 
+  function closeHarnessPairing() {
+    harnessPairingId = ''
+    const url = new URL(location.href)
+    url.searchParams.delete('harnessPairing')
+    history.replaceState(history.state, '', url)
+  }
+
   function t(key: Parameters<typeof translate>[1]) {
     return translate(language, key)
   }
@@ -340,5 +349,17 @@
 {/if}
 
 <div class="toast-region" aria-live="polite" aria-atomic="true">{#if toast}<div class="toast" role="status">{toast}</div>{/if}</div>
+
+{#if snapshot && harnessPairingId}
+  <HarnessExtensionPairing
+    {client}
+    pairingId={harnessPairingId}
+    {snapshot}
+    {selectedProfile}
+    {t}
+    onclose={closeHarnessPairing}
+    onapproved={() => showToast(t('harnessExtensionApproved'))}
+  />
+{/if}
 
 <svelte:head><meta name="theme-color" content="#f6f5f2" /></svelte:head>

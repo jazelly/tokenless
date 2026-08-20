@@ -60,6 +60,7 @@ export type StartHarnessLocalHttpBootstrapInput = Omit<PrepareHarnessBootstrapTu
   profileId: string
   selectedSkills?: readonly SkillSelection[] | undefined
   requestRef?: string | undefined
+  payloadLifetime?: 'ephemeral' | undefined
 }
 
 export type ReadHarnessLocalHttpTurnInput = {
@@ -81,6 +82,7 @@ export type ContinueHarnessLocalHttpTurnInput = {
   nonce: string
   resultText: string
   skillLoads?: readonly string[] | undefined
+  payloadLifetime?: 'ephemeral' | undefined
 }
 
 export type HarnessLocalHttpContinuationStart = {
@@ -340,6 +342,8 @@ export type AgentRunSpec = {
   limits?: HarnessSkillLimits | undefined
   maxTurns?: number | undefined
   mcpServers?: readonly AgentMcpServerSpec[] | undefined
+  /** Opaque first-party tool adapter binding; never exposed to the model. */
+  toolBinding?: HarnessToolBinding | undefined
 }
 
 export type ProviderTurnRequest = {
@@ -356,6 +360,7 @@ export type ProviderTurnRequest = {
   tools?: readonly HarnessToolDescriptor[] | undefined
   finalOutput?: HarnessFinalOutputContract | undefined
   limits?: HarnessSkillLimits | undefined
+  payloadLifetime?: 'ephemeral' | undefined
   continuation?: {
     providerRef: string
     providerBindingRef: string
@@ -439,13 +444,44 @@ export type HarnessToolExecution =
   | { status: 'succeeded' | 'failed'; content: JsonValue }
   | { status: 'authentication_required'; handoff: string }
 
+export type HarnessToolBinding = {
+  kind: 'opaque'
+  ref: string
+}
+
+export type HarnessToolExecutionContext = {
+  runId: string
+  callId: string
+  argumentsDigest: string
+}
+
+export type HarnessToolCatalogContext = {
+  runId: string
+}
+
+export type HarnessToolProviderContext = {
+  runId: string
+  turn: number
+}
+
 export type HarnessToolRegistry = {
-  catalog(servers: readonly AgentMcpServerSpec[]): Promise<readonly HarnessToolCatalogEntry[]>
+  catalog(
+    servers: readonly AgentMcpServerSpec[],
+    context?: HarnessToolCatalogContext,
+  ): Promise<readonly HarnessToolCatalogEntry[]>
   execute(
     entry: HarnessToolCatalogEntry,
     argumentsValue: Record<string, JsonValue>,
     servers: readonly AgentMcpServerSpec[],
+    context?: HarnessToolExecutionContext,
   ): Promise<HarnessToolExecution>
+  bindRun?(runId: string, binding: HarnessToolBinding | undefined): void
+  redactArguments?(entry: HarnessToolCatalogEntry, value: JsonValue, context: HarnessToolExecutionContext): JsonValue
+  restoreArguments?(entry: HarnessToolCatalogEntry, value: JsonValue, context: HarnessToolExecutionContext): JsonValue
+  redactResult?(entry: HarnessToolCatalogEntry, value: JsonValue, context: HarnessToolExecutionContext): JsonValue
+  restoreResult?(entry: HarnessToolCatalogEntry, value: JsonValue, context: HarnessToolExecutionContext): JsonValue
+  prepareProviderRequest?(request: ProviderTurnRequest, context: HarnessToolProviderContext): ProviderTurnRequest
+  redactFinal?(value: HarnessFinalResponse, context: HarnessToolProviderContext): HarnessFinalResponse
 }
 
 export type AgentRunStatus =

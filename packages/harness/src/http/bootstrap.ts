@@ -85,7 +85,12 @@ export async function startHarnessLocalHttpBootstrap(
   })
   assertV0BootstrapText(bootstrapText)
 
-  const attachments = await stageHarnessAttachments(client, binding.providerBindingRef, preparation.attachments)
+  const attachments = await stageHarnessAttachments(
+    client,
+    binding.providerBindingRef,
+    preparation.attachments,
+    input.payloadLifetime,
+  )
 
   const request = await canonicalStartRequest({
     requestRef: input.requestRef ?? `request:${randomBytes(16).toString('hex')}`,
@@ -94,7 +99,9 @@ export async function startHarnessLocalHttpBootstrap(
     text: bootstrapText,
     attachments,
   })
-  return providerPost(() => client.start(binding.providerBindingRef, request))
+  return providerPost(() => client.start(binding.providerBindingRef, request, {
+    ...(input.payloadLifetime === undefined ? {} : { payloadLifetime: input.payloadLifetime }),
+  }))
 }
 
 export async function readHarnessLocalHttpTurn(input: ReadHarnessLocalHttpTurnInput): Promise<TurnState> {
@@ -111,7 +118,10 @@ export async function continueHarnessLocalHttpTurn(input: ContinueHarnessLocalHt
   const bytes = Buffer.from(input.resultText, 'utf8')
   if (bytes.byteLength < 1 || bytes.byteLength > 1024 * 1024) throw new HarnessSkillError('harness_continuation_result_invalid', 'Harness continuation result must contain 1-1048576 UTF-8 bytes.')
   const name = `tokenless-tool-result--${createHash('sha256').update(bytes).digest('hex').slice(0, 12)}.md`
-  const staged = await client.stage(input.providerBindingRef, bytes, { name })
+  const staged = await client.stage(input.providerBindingRef, bytes, {
+    name,
+    ...(input.payloadLifetime === undefined ? {} : { payloadLifetime: input.payloadLifetime }),
+  })
   const skillDelivery = await prepareHarnessSkillTurn({
     runId: input.runId,
     stagingRoot: input.stagingRoot,
@@ -130,7 +140,11 @@ export async function continueHarnessLocalHttpTurn(input: ContinueHarnessLocalHt
     const skillBytes = await readFile(attachment.sourcePath)
     const skillDigest = createHash('sha256').update(skillBytes).digest('hex')
     if (skillBytes.byteLength !== attachment.size || skillDigest !== attachment.sha256) throw new HarnessSkillError('harness_context_source_changed', `Harness Skill source '${attachment.name}' changed after preparation.`)
-    const skill = await client.stage(input.providerBindingRef, skillBytes, { name: attachment.name, bundleWith: staged.attachmentRef })
+    const skill = await client.stage(input.providerBindingRef, skillBytes, {
+      name: attachment.name,
+      bundleWith: staged.attachmentRef,
+      ...(input.payloadLifetime === undefined ? {} : { payloadLifetime: input.payloadLifetime }),
+    })
     skillAttachments.push({ kind: 'skill' as const, name: attachment.name, ...skill })
   }
   const turnState = await providerPost(() => client.continue(input.providerBindingRef, {
@@ -148,6 +162,8 @@ export async function continueHarnessLocalHttpTurn(input: ContinueHarnessLocalHt
       }),
       attachments: [{ kind: 'tool_result', name, ...staged }, ...skillAttachments],
     },
+  }, {
+    ...(input.payloadLifetime === undefined ? {} : { payloadLifetime: input.payloadLifetime }),
   }))
   return { turnState, resultSha256: staged.sha256 }
 }
@@ -253,6 +269,7 @@ async function stageHarnessAttachments(
   sha256: string
   skillName?: string | undefined
   }[],
+  payloadLifetime?: 'ephemeral',
 ) {
   const staged = []
   let bundleWith: string | undefined
@@ -265,6 +282,7 @@ async function stageHarnessAttachments(
     const transport = await client.stage(providerBindingRef, bytes, {
       name: attachment.name,
       ...(bundleWith === undefined ? {} : { bundleWith }),
+      ...(payloadLifetime === undefined ? {} : { payloadLifetime }),
     })
     if (transport.byteLength !== bytes.byteLength || transport.sha256 !== attachment.sha256) {
       throw new HarnessSkillError('harness_attachment_stage_mismatch', `The local daemon staged Harness attachment '${attachment.name}' with an unexpected identity.`)

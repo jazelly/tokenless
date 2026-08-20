@@ -8,6 +8,7 @@
 - [CLI 命令](../COMMANDS.zh-CN.md) — 完整 command 与 option reference。
 - [Capability Matrix](capability-matrix.zh-CN.md) — canonical outcomes、当前 provider mappings、support states 与扩展规则。
 - [API Proxy 接入指南](api-proxy-integration.zh-CN.md) — 从既有项目调用 OpenAI/Anthropic 兼容的本地 proxy。
+- [Tokenless Harness Browser Extension](harness-browser-extension.zh-CN.md) — 安装、配对、支持的 input、approval 与实验性真实页面验收流程。
 - [HTTP API 参考](../packages/contracts/reference.zh-CN.html) — 生成的 OpenAI-compatible、Anthropic-compatible、private、Dashboard 与 readiness interface。
 - [Provider 访客访问](../PROVIDER_GUEST_ACCESS.zh-CN.md) — 已观察的登出行为与认证路由规则。
 - [Provider Rate Limits](provider-rate-limits.zh-CN.md) — 官方 Web provider 限额知识与 runtime 策略。

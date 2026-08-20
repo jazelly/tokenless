@@ -88,6 +88,7 @@ Setup opens the local dashboard. Reopen it anytime with `tokenless dashboard`.
 - Stable provider tabs and continuity for supported tasks.
 - Provider sign-in stays in the selected browser profile; job history and token-savings estimates remain local.
 - An optional [local API proxy](docs/api-proxy-integration.md) for OpenAI- and Anthropic-shaped clients.
+- An experimental [Tokenless Harness Browser Extension](docs/harness-browser-extension.md) candidate for user-approved observation and text input on one selected Chrome tab.
 
 ## Optional Codex integration
 

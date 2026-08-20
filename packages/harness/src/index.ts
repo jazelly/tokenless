@@ -67,6 +67,10 @@ export type {
   HarnessToolDescriptor,
   HarnessToolCatalogEntry,
   HarnessToolExecution,
+  HarnessToolBinding,
+  HarnessToolCatalogContext,
+  HarnessToolExecutionContext,
+  HarnessToolProviderContext,
   HarnessToolRegistry,
   ProviderTurnClient,
   ProviderTurnRequest,
@@ -158,3 +162,20 @@ export {
 export type {
   AgentRunHttpHandler,
 } from './http/agent-run-handler.js'
+
+export {
+  BROWSER_PAGE_INPUT_TOOL,
+  BROWSER_PAGE_OBSERVE_TOOL,
+  HARNESS_BROWSER_EXTENSION_PROTOCOL,
+} from './browser-extension/contracts.js'
+
+export type {
+  BrowserActionProposal,
+  BrowserExtensionPageBinding,
+  BrowserPageInputAction,
+  BrowserPageInputResult,
+  BrowserPageObservation,
+  BrowserPairingSummary,
+  BrowserSemanticControl,
+  BrowserSessionSummary,
+} from './browser-extension/contracts.js'
