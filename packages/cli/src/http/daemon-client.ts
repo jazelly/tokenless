@@ -298,20 +298,11 @@ export async function readDaemonToken({ homeDir = tokenlessHome() }: DaemonClien
 }
 
 export async function startAgentRun(options: AgentRunClientOptions) {
-  try {
-    return await agentRunRequest(options, '/v1/private/agent/runs', 'POST')
-  } catch (error) {
-    if (!(error as DaemonError)?.retryable) throw error
-    return agentRunRequest(options, '/v1/private/agent/runs', 'POST')
-  }
+  return agentRunRequest(options, '/v1/private/agent/runs', 'POST')
 }
 
 export async function readAgentRun(options: AgentRunClientOptions & { runId: string }) {
   return agentRunRequest(options, `/v1/private/agent/runs/${encodeURIComponent(options.runId)}`, 'GET')
-}
-
-export async function readAgentRunByAdmission(options: AgentRunClientOptions & { admissionRef: string }) {
-  return agentRunRequest(options, `/v1/private/agent/admissions/${encodeURIComponent(options.admissionRef)}`, 'GET')
 }
 
 export async function resumeAgentRun(options: AgentRunClientOptions & { runId: string }) {

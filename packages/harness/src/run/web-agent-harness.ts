@@ -21,27 +21,67 @@ import {
 } from '../contracts.js'
 import { canonicalJson } from '../internal/filesystem.js'
 import { validateJsonSchemaValue } from '../internal/json-schema.js'
-import {
-  HarnessRunStore,
-  type DurableCall,
-  type HarnessRunRecord,
-} from '../internal/run-store.js'
-
-export async function openWebAgentHarness(input: {
-  tokenlessHome: string
-  providerClient: ProviderTurnClient
-  toolRegistry: HarnessToolRegistry
-}): Promise<WebAgentHarness> {
-  return new DurableWebAgentHarness(
-    await HarnessRunStore.open(input.tokenlessHome),
-    input.providerClient,
-    input.toolRegistry,
-  )
+type HarnessCall = {
+  id: string
+  tool: string
+  arguments: JsonValue
+  argumentsDigest: string
+  dependsOn: readonly string[]
+  approval: 'not_required' | 'pending' | 'approved'
+  status: 'pending' | 'executing' | 'succeeded' | 'failed' | 'authentication_required'
+  outcome?: JsonValue | undefined
+  handoff?: string | undefined
 }
 
-class DurableWebAgentHarness implements WebAgentHarness {
+type HarnessNeed = {
+  id: string
+  prompt: string
+  inputSchema: JsonValue
+  answer?: JsonValue | undefined
+}
+
+type HarnessRunRecord = {
+  protocol: typeof HARNESS_RUN_PROTOCOL
+  runId: string
+  status: import('../contracts.js').AgentRunStatus
+  phase: import('../contracts.js').HarnessRunPhase
+  spec: AgentRunSpec
+  turn: number
+  nonce: string
+  requestRef: string
+  catalog: readonly HarnessToolCatalogEntry[]
+  pendingProviderRequest?: ProviderTurnRequest | undefined
+  pendingProviderOperation?: { kind: 'resume' | 'cancel'; requestRef: string; turnRef?: string | undefined } | undefined
+  providerTurn?: ProviderTurnState | undefined
+  batch?: HarnessActionBatch | undefined
+  batchId?: string | undefined
+  calls: readonly HarnessCall[]
+  needs: readonly HarnessNeed[]
+  callResults: readonly import('../contracts.js').HarnessToolCallResult[]
+  needResults: readonly import('../contracts.js').HarnessNeedResult[]
+  history: readonly {
+    batchId: string
+    batch: HarnessActionBatch
+    calls: readonly HarnessCall[]
+    needs: readonly HarnessNeed[]
+    callResults: readonly import('../contracts.js').HarnessToolCallResult[]
+    needResults: readonly import('../contracts.js').HarnessNeedResult[]
+  }[]
+  final?: import('../contracts.js').HarnessFinalResponse | undefined
+  error?: { code: string; message: string } | undefined
+}
+
+export function openWebAgentHarness(input: {
+  providerClient: ProviderTurnClient
+  toolRegistry: HarnessToolRegistry
+}): WebAgentHarness {
+  return new InMemoryWebAgentHarness(input.providerClient, input.toolRegistry)
+}
+
+class InMemoryWebAgentHarness implements WebAgentHarness {
+  private readonly runs = new Map<string, HarnessRunRecord>()
+
   constructor(
-    private readonly store: HarnessRunStore,
     private readonly provider: ProviderTurnClient,
     private readonly tools: HarnessToolRegistry,
   ) {}
@@ -49,32 +89,28 @@ class DurableWebAgentHarness implements WebAgentHarness {
   async start(input: AgentRunSpec): Promise<AgentRunView> {
     const spec = validateSpec(input)
     const runId = opaqueRef('run')
-    const now = new Date().toISOString()
-    const admitted = this.store.admit({
+    const record: HarnessRunRecord = {
       protocol: HARNESS_RUN_PROTOCOL,
       runId,
-      revision: 0,
       status: 'discovering_tools',
       phase: 'discovering_tools',
       spec,
       turn: 1,
       nonce: opaqueRef('nonce'),
       requestRef: opaqueRef('request'),
-      providerRetryCount: 0,
       catalog: [],
       calls: [],
       needs: [],
       callResults: [],
       needResults: [],
       history: [],
-      createdAt: now,
-      updatedAt: now,
-    }, sha256(spec))
-    return publicView(admitted.record)
+    }
+    this.runs.set(runId, record)
+    return publicView(record)
   }
 
   async read(runId: string): Promise<AgentRunView | null> {
-    let record = this.store.read(runId)
+    let record = this.runs.get(runId)
     if (!record) return null
     try {
       if (record.phase === 'discovering_tools') record = await this.discoverTools(record)
@@ -85,16 +121,9 @@ class DurableWebAgentHarness implements WebAgentHarness {
       else if (record.phase === 'executing_batch') record = await this.executeAndContinue(record)
       return publicView(record)
     } catch (error) {
-      if (error instanceof ProviderTurnDispatchError && error.dispatch === 'ambiguous') return publicView(record)
-      if (isRecoverableInterventionError(error)) throw error
-      if (isConflict(error)) return publicView(this.required(runId))
+      if (isInterventionRequiredError(error)) throw error
       return publicView(this.fail(record, error))
     }
-  }
-
-  async readAdmission(admissionRef: string): Promise<AgentRunView | null> {
-    const record = this.store.readByAdmission(admissionRef)
-    return record ? publicView(record) : null
   }
 
   async resume(runId: string, intervention: AgentRunIntervention): Promise<AgentRunView> {
@@ -103,20 +132,13 @@ class DurableWebAgentHarness implements WebAgentHarness {
       if (isTerminal(record.status)) return publicView(record)
       if (record.providerTurn?.lifecycle === 'waiting_for_user') {
         if (record.providerTurn.waitingReason === 'ambiguous_submission') {
-          if (record.phase === 'reconciliation_required') return publicView(record)
-          record = this.store.update(runId, record.revision, (current) => ({
-            ...current,
-            status: 'reconciliation_required',
-            phase: 'reconciliation_required',
-            error: {
-              code: 'harness_provider_submission_ambiguous',
-              message: 'Provider submission certainty is ambiguous; reconcile the same turn before resuming.',
-            },
-          }))
-          return publicView(record)
+          throw new HarnessSkillError(
+            'harness_provider_submission_ambiguous',
+            'Provider submission certainty is ambiguous; this in-memory run cannot resume.',
+          )
         }
         if (intervention.providerReady !== true) throw new HarnessSkillError('harness_provider_resume_invalid', 'Provider intervention must be explicitly confirmed.')
-        record = this.store.update(runId, record.revision, (current) => ({
+        record = this.update(runId, (current) => ({
           ...current,
           phase: 'resuming_provider',
           pendingProviderOperation: { kind: 'resume', requestRef: current.requestRef, turnRef: current.providerTurn!.turnRef },
@@ -132,7 +154,7 @@ class DurableWebAgentHarness implements WebAgentHarness {
           }
           return { ...call, approval: 'approved' as const }
         })
-        record = this.store.update(runId, record.revision, (current) => ({ ...current, status: 'running', phase: 'executing_batch', calls }))
+        record = this.update(runId, (current) => ({ ...current, status: 'running', phase: 'executing_batch', calls }))
       } else if (record.status === 'waiting_for_input') {
         const answers = intervention.answers ?? {}
         if (!isRecord(answers)) throw new HarnessSkillError('harness_input_invalid', 'Harness answers must be a JSON object.')
@@ -145,7 +167,7 @@ class DurableWebAgentHarness implements WebAgentHarness {
           validateJsonSchemaValue(need.inputSchema, answers[need.id], `Answer for need '${need.id}'`)
           return { ...need, answer: answers[need.id]! }
         })
-        record = this.store.update(runId, record.revision, (current) => ({ ...current, status: 'running', phase: 'executing_batch', needs }))
+        record = this.update(runId, (current) => ({ ...current, status: 'running', phase: 'executing_batch', needs }))
       } else if (record.status === 'waiting_for_authentication') {
         const completed = new Map((intervention.authenticationCompleted ?? []).map((item) => [item.callId, item.argumentsDigest]))
         const calls = record.calls.map((call) => {
@@ -155,14 +177,13 @@ class DurableWebAgentHarness implements WebAgentHarness {
           }
           return { ...call, status: 'pending' as const, handoff: undefined }
         })
-        record = this.store.update(runId, record.revision, (current) => ({ ...current, status: 'running', phase: 'executing_batch', calls }))
+        record = this.update(runId, (current) => ({ ...current, status: 'running', phase: 'executing_batch', calls }))
       } else {
         throw new HarnessSkillError('harness_run_not_resumable', 'Harness run is not waiting for a supported intervention.')
       }
       return publicView(record)
     } catch (error) {
-      if (isRecoverableInterventionError(error)) throw error
-      if (isConflict(error)) throw error
+      if (isInterventionRequiredError(error)) throw error
       return publicView(this.fail(record, error))
     }
   }
@@ -171,38 +192,30 @@ class DurableWebAgentHarness implements WebAgentHarness {
     let record = this.required(runId)
     if (isTerminal(record.status)) return publicView(record)
     try {
-      if (record.calls.some((call) => call.status === 'executing')) {
-        record = this.store.update(runId, record.revision, (current) => ({
-          ...current,
-          status: 'reconciliation_required',
-          phase: 'reconciliation_required',
-          error: { code: 'harness_cancel_outcome_ambiguous', message: 'A dispatched tool call requires reconciliation and was not reported cancelled.' },
-        }))
-      } else if (record.phase === 'submitting_provider' && record.providerTurn?.requestRef !== record.requestRef) {
-        record = this.store.update(runId, record.revision, (current) => ({
+      if (record.phase === 'submitting_provider' && record.providerTurn?.requestRef !== record.requestRef) {
+        record = this.update(runId, (current) => ({
           ...current,
           phase: 'cancelling_provider',
           pendingProviderOperation: { kind: 'cancel', requestRef: current.requestRef },
         }))
         record = await this.cancelProvider(record)
       } else if (record.providerTurn && ['queued', 'running', 'waiting_for_user'].includes(record.providerTurn.lifecycle)) {
-        record = this.store.update(runId, record.revision, (current) => ({
+        record = this.update(runId, (current) => ({
           ...current,
           phase: 'cancelling_provider',
           pendingProviderOperation: { kind: 'cancel', requestRef: current.requestRef, turnRef: current.providerTurn!.turnRef },
         }))
         record = await this.cancelProvider(record)
       } else {
-        record = this.store.update(runId, record.revision, (current) => ({ ...current, status: 'cancelled', phase: 'terminal' }))
+        record = this.update(runId, (current) => ({ ...current, status: 'cancelled', phase: 'terminal' }))
       }
       return publicView(record)
     } catch (error) {
-      if (isConflict(error)) throw error
       return publicView(this.fail(record, error))
     }
   }
 
-  close() { this.store.close() }
+  close() { this.runs.clear() }
 
   private async resumeProvider(record: HarnessRunRecord) {
     const turn = record.providerTurn
@@ -217,7 +230,7 @@ class DurableWebAgentHarness implements WebAgentHarness {
       })
       assertProviderTurnIdentity(record, providerTurn)
       const terminal = providerTurn.lifecycle === 'failed' || providerTurn.lifecycle === 'cancelled'
-      return this.store.update(record.runId, record.revision, (current) => ({
+      return this.update(record.runId, (current) => ({
         ...current,
         providerTurn,
         pendingProviderOperation: undefined,
@@ -228,7 +241,6 @@ class DurableWebAgentHarness implements WebAgentHarness {
           : {}),
       }))
     } catch (error) {
-      if (error instanceof ProviderTurnDispatchError && error.dispatch === 'ambiguous') return record
       return this.fail(record, error)
     }
   }
@@ -249,13 +261,13 @@ class DurableWebAgentHarness implements WebAgentHarness {
       })
       assertProviderCancellationIdentity(record.requestRef, cancellation)
       if (cancellation.kind === 'cancelled_before_start') {
-        return this.store.update(record.runId, record.revision, (current) => ({
+        return this.update(record.runId, (current) => ({
           ...current, status: 'cancelled', phase: 'terminal', pendingProviderRequest: undefined, pendingProviderOperation: undefined,
         }))
       }
       assertProviderTurnIdentity(record, cancellation.turn)
       const terminal = cancellation.turn.lifecycle === 'cancelled' || cancellation.turn.lifecycle === 'failed'
-      return this.store.update(record.runId, record.revision, (current) => ({
+      return this.update(record.runId, (current) => ({
         ...current,
         providerTurn: cancellation.turn,
         pendingProviderRequest: undefined,
@@ -267,7 +279,6 @@ class DurableWebAgentHarness implements WebAgentHarness {
           : {}),
       }))
     } catch (error) {
-      if (error instanceof ProviderTurnDispatchError && error.dispatch === 'ambiguous') return record
       return this.fail(record, error)
     }
   }
@@ -275,7 +286,7 @@ class DurableWebAgentHarness implements WebAgentHarness {
   private async discoverTools(record: HarnessRunRecord) {
     const catalog = await this.tools.catalog(record.spec.mcpServers ?? [])
     const pendingProviderRequest = providerRequest({ ...record, catalog })
-    return this.store.update(record.runId, record.revision, (current) => ({
+    return this.update(record.runId, (current) => ({
       ...current,
       catalog,
       status: 'submitting_provider',
@@ -305,7 +316,7 @@ class DurableWebAgentHarness implements WebAgentHarness {
     assertProviderTurnIdentity(record, providerTurn)
     if (providerTurn.lifecycle === 'succeeded') return this.acceptProviderResponse(record, providerTurn)
     const terminal = providerTurn.lifecycle === 'failed' || providerTurn.lifecycle === 'cancelled'
-    return this.store.update(record.runId, record.revision, (current) => ({
+    return this.update(record.runId, (current) => ({
       ...current,
       providerTurn,
       status: providerStatus(providerTurn.lifecycle),
@@ -321,7 +332,7 @@ class DurableWebAgentHarness implements WebAgentHarness {
     if (!response) throw new HarnessSkillError('harness_provider_response_missing', 'Provider turn succeeded without a validated Harness response.')
     assertModelResponseIdentity(record, response)
     if (response.kind === 'final') {
-      return this.store.update(record.runId, record.revision, (current) => ({
+      return this.update(record.runId, (current) => ({
         ...current,
         providerTurn,
         status: 'succeeded',
@@ -330,7 +341,7 @@ class DurableWebAgentHarness implements WebAgentHarness {
       }))
     }
     const batchId = sha256({ runId: record.runId, turn: record.turn, nonce: record.nonce, batch: response })
-    const resolved = resolveKnownDependencyFailures(response.calls.map((call) => durableCall(record, batchId, call)))
+    const resolved = resolveKnownDependencyFailures(response.calls.map((call) => harnessCall(record, batchId, call)))
     const calls = resolved.calls
     const callResults = resolved.callResults
     const needs = response.needs.map((need) => ({ id: need.id, prompt: need.prompt, inputSchema: need.inputSchema }))
@@ -339,7 +350,7 @@ class DurableWebAgentHarness implements WebAgentHarness {
       : calls.some((call) => call.approval === 'pending' && !hasFailedDependencyInResults(call, callResults))
         ? 'waiting_for_approval'
         : 'running'
-    return this.store.update(record.runId, record.revision, (current) => ({
+    return this.update(record.runId, (current) => ({
       ...current,
       providerTurn,
       batch: response,
@@ -354,67 +365,60 @@ class DurableWebAgentHarness implements WebAgentHarness {
   }
 
   private async executeAndContinue(record: HarnessRunRecord): Promise<HarnessRunRecord> {
-    if (!record.batch || !record.batchId) throw new HarnessSkillError('harness_batch_missing', 'Harness run has no durable action batch to resume.')
+    if (!record.batch || !record.batchId) throw new HarnessSkillError('harness_batch_missing', 'Harness run has no action batch to resume.')
     const batch = record.batch
     const batchId = record.batchId
     if (record.needs.some((need) => need.answer === undefined)) {
       return this.waitFor(record, 'waiting_for_input')
     }
 
-    for (const durable of record.calls.filter((call) => call.status === 'executing')) {
-      record = this.recordCallOutcome(record, durable.id, 'failed', {
-        code: 'harness_tool_outcome_ambiguous',
-        dispatched: true,
-      })
-    }
-
     let progressed: boolean
     do {
       progressed = false
-      for (const durable of record.calls) {
-        if (durable.status !== 'pending') continue
-        const dependencies = durable.dependsOn.map((id) => record.callResults.find((result) => result.id === id))
+      for (const call of record.calls) {
+        if (call.status !== 'pending') continue
+        const dependencies = call.dependsOn.map((id) => record.callResults.find((result) => result.id === id))
         if (dependencies.some((result) => result?.status === 'failed')) {
-          record = this.recordCallOutcome(record, durable.id, 'failed', { code: 'harness_tool_dependency_failed' })
+          record = this.recordCallOutcome(record, call.id, 'failed', { code: 'harness_tool_dependency_failed' })
           progressed = true
           continue
         }
         if (dependencies.some((result) => result === undefined)) continue
-        if (durable.approval === 'pending') continue
-        if (durable.approval !== 'approved' && durable.approval !== 'not_required') {
-          throw new HarnessSkillError('harness_approval_state_invalid', `Call '${durable.id}' is not authorized for execution.`)
+        if (call.approval === 'pending') continue
+        if (call.approval !== 'approved' && call.approval !== 'not_required') {
+          throw new HarnessSkillError('harness_approval_state_invalid', `Call '${call.id}' is not authorized for execution.`)
         }
-        const entry = record.catalog.find((tool) => tool.name === durable.tool)
+        const entry = record.catalog.find((tool) => tool.name === call.tool)
         if (!entry) {
-          record = this.recordCallOutcome(record, durable.id, 'failed', { code: 'harness_tool_not_in_frozen_catalog' })
+          record = this.recordCallOutcome(record, call.id, 'failed', { code: 'harness_tool_not_in_frozen_catalog' })
           progressed = true
           continue
         }
         try {
-          validateDurableArguments(entry, durable.arguments)
+          validateHarnessArguments(entry, call.arguments)
         } catch (error) {
-          record = this.recordCallOutcome(record, durable.id, 'failed', durableArgumentFailure(error, durable.tool))
+          record = this.recordCallOutcome(record, call.id, 'failed', harnessArgumentFailure(error, call.tool))
           progressed = true
           continue
         }
-        record = this.store.update(record.runId, record.revision, (current) => ({
+        record = this.update(record.runId, (current) => ({
           ...current,
-          calls: current.calls.map((call) => call.id === durable.id ? { ...call, status: 'executing' } : call),
+          calls: current.calls.map((candidate) => candidate.id === call.id ? { ...candidate, status: 'executing' } : candidate),
         }))
         try {
-          const outcome = await this.tools.execute(entry, durable.arguments as Record<string, JsonValue>, record.spec.mcpServers ?? [])
+          const outcome = await this.tools.execute(entry, call.arguments as Record<string, JsonValue>, record.spec.mcpServers ?? [])
           if (outcome.status === 'authentication_required') {
-            record = this.store.update(record.runId, record.revision, (current) => ({
+            record = this.update(record.runId, (current) => ({
               ...current,
-              calls: current.calls.map((call) => call.id === durable.id
-                ? { ...call, status: 'authentication_required', handoff: outcome.handoff }
-                : call),
+              calls: current.calls.map((candidate) => candidate.id === call.id
+                ? { ...candidate, status: 'authentication_required', handoff: outcome.handoff }
+                : candidate),
             }))
           } else {
-            record = this.recordCallOutcome(record, durable.id, outcome.status, outcome.content)
+            record = this.recordCallOutcome(record, call.id, outcome.status, outcome.content)
           }
         } catch {
-          record = this.recordCallOutcome(record, durable.id, 'failed', { code: 'harness_tool_execution_failed' })
+          record = this.recordCallOutcome(record, call.id, 'failed', { code: 'harness_tool_execution_failed' })
         }
         progressed = true
       }
@@ -426,8 +430,8 @@ class DurableWebAgentHarness implements WebAgentHarness {
     if (record.calls.some((call) => call.status === 'authentication_required')) {
       return this.waitFor(record, 'waiting_for_authentication')
     }
-    for (const durable of record.calls.filter((call) => call.status === 'pending')) {
-      record = this.recordCallOutcome(record, durable.id, 'failed', { code: 'harness_tool_dependency_unavailable' })
+    for (const call of record.calls.filter((candidate) => candidate.status === 'pending')) {
+      record = this.recordCallOutcome(record, call.id, 'failed', { code: 'harness_tool_dependency_unavailable' })
     }
 
     const needResults = record.needs.map((need) => {
@@ -441,7 +445,6 @@ class DurableWebAgentHarness implements WebAgentHarness {
       turn: record.turn + 1,
       nonce: opaqueRef('nonce'),
       requestRef: opaqueRef('request'),
-      providerRetryCount: 0,
       needResults,
       history: [...record.history, {
         batchId: record.batchId!, batch, calls: record.calls, needs: record.needs,
@@ -449,12 +452,11 @@ class DurableWebAgentHarness implements WebAgentHarness {
       }],
     }
     const pendingProviderRequest = providerRequest(next, result)
-    return this.store.update(record.runId, record.revision, (current) => ({
+    return this.update(record.runId, (current) => ({
       ...current,
       turn: next.turn,
       nonce: next.nonce,
       requestRef: next.requestRef,
-      providerRetryCount: 0,
       history: next.history,
       status: 'submitting_provider',
       phase: 'submitting_provider',
@@ -469,7 +471,7 @@ class DurableWebAgentHarness implements WebAgentHarness {
   }
 
   private waitFor(record: HarnessRunRecord, status: 'waiting_for_input' | 'waiting_for_approval' | 'waiting_for_authentication') {
-    return this.store.update(record.runId, record.revision, (current) => ({
+    return this.update(record.runId, (current) => ({
       ...current,
       status,
       phase: 'waiting_intervention',
@@ -484,9 +486,8 @@ class DurableWebAgentHarness implements WebAgentHarness {
         ? await this.provider.continue(request)
         : await this.provider.start(request)
       assertProviderTurnIdentity(record, providerTurn)
-      return this.store.update(record.runId, record.revision, (current) => ({
+      return this.update(record.runId, (current) => ({
         ...current,
-        providerRetryCount: 0,
         status: providerStatus(providerTurn.lifecycle),
         phase: providerTurn.lifecycle === 'failed' || providerTurn.lifecycle === 'cancelled' ? 'terminal' : 'awaiting_provider',
         providerTurn,
@@ -496,24 +497,12 @@ class DurableWebAgentHarness implements WebAgentHarness {
           : {}),
       }))
     } catch (error) {
-      if (error instanceof ProviderTurnDispatchError && error.dispatch === 'ambiguous') return record
-      if (error instanceof ProviderTurnDispatchError && error.dispatch === 'retryable') {
-        const retryCount = record.providerRetryCount ?? 0
-        if (retryCount < MAX_PROVIDER_REQUEST_RETRIES) {
-          const retried = this.store.update(record.runId, record.revision, (current) => ({
-            ...current,
-            providerRetryCount: retryCount + 1,
-          }))
-          await delay(providerRetryDelay(retryCount))
-          return this.submitPending(retried)
-        }
-      }
       return this.fail(record, error)
     }
   }
 
   private recordCallOutcome(record: HarnessRunRecord, callId: string, status: 'succeeded' | 'failed', content: JsonValue) {
-    return this.store.update(record.runId, record.revision, (current) => ({
+    return this.update(record.runId, (current) => ({
       ...current,
       calls: current.calls.map((call) => call.id === callId ? { ...call, status, outcome: content } : call),
       callResults: [...current.callResults.filter((result) => result.id !== callId), { id: callId, status, content }],
@@ -525,24 +514,25 @@ class DurableWebAgentHarness implements WebAgentHarness {
     const safe = error instanceof HarnessSkillError || error instanceof ProviderTurnDispatchError
       ? { code: error.code, message: error.message }
       : { code: 'harness_run_failed', message: 'Harness run failed.' }
-    try {
-      return this.store.update(record.runId, record.revision, (current) => ({
-        ...current,
-        status: 'failed',
-        phase: 'terminal',
-        pendingProviderRequest: undefined,
-        pendingProviderOperation: undefined,
-        error: safe,
-      }))
-    } catch (failure) {
-      if (isConflict(failure)) return this.required(record.runId)
-      throw failure
-    }
+    return this.update(record.runId, (current) => ({
+      ...current,
+      status: 'failed',
+      phase: 'terminal',
+      pendingProviderRequest: undefined,
+      pendingProviderOperation: undefined,
+      error: safe,
+    }))
   }
 
   private required(runId: string) {
-    const record = this.store.read(runId)
+    const record = this.runs.get(runId)
     if (!record) throw new HarnessSkillError('harness_run_missing', 'Harness run does not exist.')
+    return record
+  }
+
+  private update(runId: string, mutate: (current: HarnessRunRecord) => HarnessRunRecord) {
+    const record = { ...mutate(this.required(runId)), protocol: HARNESS_RUN_PROTOCOL, runId }
+    this.runs.set(runId, record)
     return record
   }
 }
@@ -577,7 +567,7 @@ function providerRequest(record: HarnessRunRecord, result?: HarnessActionBatchRe
   }
 }
 
-function durableCall(record: HarnessRunRecord, batchId: string, call: HarnessActionBatch['calls'][number]): DurableCall {
+function harnessCall(record: HarnessRunRecord, batchId: string, call: HarnessActionBatch['calls'][number]): HarnessCall {
   const entry = record.catalog.find((tool) => tool.name === call.tool)
   if (!entry && call.validationError === undefined) {
     throw new HarnessSkillError('harness_tool_unknown', `Tool '${call.tool}' is absent from the frozen catalog.`)
@@ -627,7 +617,7 @@ function durableCall(record: HarnessRunRecord, batchId: string, call: HarnessAct
   }
 }
 
-function resolveKnownDependencyFailures(calls: readonly DurableCall[]) {
+function resolveKnownDependencyFailures(calls: readonly HarnessCall[]) {
   const resolved = calls.map((call) => ({ ...call }))
   const callResults = resolved
     .filter((call) => call.status === 'failed' && call.outcome !== undefined)
@@ -654,14 +644,14 @@ function resolveKnownDependencyFailures(calls: readonly DurableCall[]) {
   }
 }
 
-function validateDurableArguments(entry: HarnessToolCatalogEntry, value: JsonValue) {
+function validateHarnessArguments(entry: HarnessToolCatalogEntry, value: JsonValue) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new HarnessSkillError('harness_tool_arguments_invalid', `Arguments for tool '${entry.name}' must be a JSON object.`)
   }
   validateJsonSchemaValue(entry.inputSchema, value, `Arguments for tool '${entry.name}'`)
 }
 
-function durableArgumentFailure(error: unknown, tool: string): JsonValue {
+function harnessArgumentFailure(error: unknown, tool: string): JsonValue {
   if (error instanceof HarnessSkillError) {
     return {
       code: 'harness_tool_arguments_invalid',
@@ -693,7 +683,6 @@ function publicView(record: HarnessRunRecord): AgentRunView {
           : undefined
   return {
     protocol: HARNESS_RUN_PROTOCOL,
-    admissionRef: record.spec.admissionRef,
     runId: record.runId,
     status: record.status,
     turn: record.turn,
@@ -704,7 +693,7 @@ function publicView(record: HarnessRunRecord): AgentRunView {
   }
 }
 
-function publicCall(call: DurableCall): {
+function publicCall(call: HarnessCall): {
   id: string
   tool: string
   arguments: Record<string, JsonValue>
@@ -718,12 +707,12 @@ function publicCall(call: DurableCall): {
   }
 }
 
-function hasFailedDependency(record: HarnessRunRecord, call: DurableCall) {
+function hasFailedDependency(record: HarnessRunRecord, call: HarnessCall) {
   return hasFailedDependencyInResults(call, record.callResults)
 }
 
 function hasFailedDependencyInResults(
-  call: Pick<DurableCall, 'dependsOn'>,
+  call: Pick<HarnessCall, 'dependsOn'>,
   results: readonly { id: string; status: 'succeeded' | 'failed' }[],
 ) {
   const statuses = new Map(results.map((result) => [result.id, result.status]))
@@ -733,12 +722,9 @@ function hasFailedDependencyInResults(
 function validateSpec(input: AgentRunSpec): AgentRunSpec {
   if (!isRecord(input)) throw new HarnessSkillError('harness_spec_invalid', 'Agent run spec must be a JSON object.')
   assertExactKeys(input, [
-    'admissionRef', 'provider', 'profileId', 'taskPrompt', 'stagingRoot', 'selectedSkills',
+    'provider', 'profileId', 'taskPrompt', 'stagingRoot', 'selectedSkills',
     'finalOutput', 'limits', 'maxTurns', 'mcpServers',
   ], 'Agent run spec')
-  if (!/^admission:[a-f0-9]{32,64}$/u.test(String(input.admissionRef))) {
-    throw new HarnessSkillError('harness_spec_invalid', 'Agent run admissionRef is invalid.')
-  }
   if (typeof input.provider !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(input.provider)) {
     throw new HarnessSkillError('harness_spec_invalid', 'Agent run provider is invalid.')
   }
@@ -751,7 +737,6 @@ function validateSpec(input: AgentRunSpec): AgentRunSpec {
   const limits = sanitizeLimits(input.limits)
   const mcpServers = sanitizeMcpServers(input.mcpServers)
   return {
-    admissionRef: input.admissionRef,
     provider: input.provider,
     profileId: input.profileId,
     taskPrompt: input.taskPrompt,
@@ -856,8 +841,6 @@ function providerStatus(lifecycle: string) {
 }
 
 const MAX_PROVIDER_RESULT_BYTES = 768 * 1024
-const MAX_PROVIDER_REQUEST_RETRIES = 2
-const PROVIDER_RETRY_BASE_DELAY_MS = 100
 
 function boundedActionBatchResult(
   batchId: string,
@@ -896,14 +879,6 @@ function digestProjection(value: JsonValue): JsonValue {
 }
 
 function jsonBytes(value: unknown) { return Buffer.byteLength(JSON.stringify(value), 'utf8') }
-
-function providerRetryDelay(retryCount: number) {
-  return Math.min(1_000, PROVIDER_RETRY_BASE_DELAY_MS * 2 ** retryCount)
-}
-
-async function delay(milliseconds: number) {
-  await new Promise<void>((resolve) => setTimeout(resolve, milliseconds))
-}
 
 function assertExactKeys(value: Record<string, unknown>, allowed: readonly string[], label: string) {
   if (Object.keys(value).some((key) => !allowed.includes(key))) {
@@ -953,8 +928,7 @@ function assertModelResponseIdentity(record: HarnessRunRecord, response: Harness
 }
 
 function isTerminal(status: string) { return status === 'succeeded' || status === 'failed' || status === 'cancelled' }
-function isConflict(error: unknown) { return error instanceof HarnessSkillError && error.code === 'harness_run_conflict' }
-function isRecoverableInterventionError(error: unknown) {
+function isInterventionRequiredError(error: unknown) {
   return error instanceof HarnessSkillError && [
     'harness_approval_invalid',
     'harness_input_missing',

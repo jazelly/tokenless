@@ -59,8 +59,6 @@ export type {
   HarnessLocalHttpContinuationCompletion,
   HarnessLocalHttpContinuationStart,
   HarnessLocalHttpFinalizedBootstrap,
-  HarnessMissionStatus,
-  HarnessMissionView,
   HarnessRunNeed,
   HarnessSkillLimits,
   HarnessSkillRunPreparation,
@@ -84,8 +82,6 @@ export type {
   WebAgentHarness,
   JsonPrimitive,
   JsonValue,
-  EnqueueSequentialHarnessMissionInput,
-  OpenSequentialHarnessMissionQueueInput,
   ParseHarnessModelResponseInput,
   FinalizeHarnessBootstrapTurnInput,
   PrepareHarnessBootstrapTurnInput,
@@ -102,7 +98,6 @@ export type {
   SkillRegistryRevision,
   SkillSelection,
   SkillSelectionSource,
-  SequentialHarnessMissionQueue,
 } from './contracts.js'
 
 export {
@@ -147,10 +142,6 @@ export type {
   HarnessSidecarJsonPrimitive,
   HarnessSidecarJsonValue,
 } from 'tokenless-internal-shared/harness-sidecar'
-
-export {
-  openSequentialHarnessMissionQueue,
-} from './run/mission-queue.js'
 
 export {
   openWebAgentHarness,

@@ -25,21 +25,17 @@ Skill preparation 与 visible response control：
 
 Provider transport 位于该 package 之外：所选 adapter 必须同时支持 `conversation.chat` 与 `file.upload`。用户自有 Skill 是 context input，不是 provider capability。Adapter 必须在调用 `finalizeHarnessBootstrapTurn` 前可见地接受 context；被拒绝的 Skill 会成为 soft `provider_upload_failed` omission，而被拒绝的 System Prompt 不会产生 prompt 或 task submission。一个 run 只有一个 writer；caller 不得并发 prepare 同一个 turn。
 
-### Sequential mission admission
-
-`openSequentialHarnessMissionQueue` 只是 durable local admission ledger：它在 `harness.sqlite3` 中冻结有界 private mission specification，暴露 redacted task projection，并原子地最多 admit 一个 `preparing` task。它不会启动 daemon、联系 provider、prepare bootstrap 或 finalize output。
-
 ### Local HTTP V0 bootstrap
 
 `startHarnessLocalHttpBootstrap` 是刻意收窄的 local-control-plane seam。它绑定配置好的 provider/profile，编译必需的 System Prompt 与冻结的 tool catalog，解析 caller 选择的 Skill，并将 context 暂存为有界的具名 Markdown 文件。`continueHarnessLocalHttpTurn` 保持已验证的 provider conversation，而 read、resume 与 cancel 操作不透明 turn reference。
 
 `completeHarnessLocalHttpBootstrap` 读取成功的 turn，针对必需 System Prompt digest 校验已交付的 atomic attachment batch，校验严格且可关联的 Harness envelope，然后使用所选 Skill finalize pending bootstrap。它只移除一个准确 envelope 周围有界的单行 provider chrome；无效输出绝不 finalize Harness state，重复 completion 是 idempotent 的。
 
-Durable `WebAgentHarness` 在 `<TOKENLESS_HOME>/harness.sqlite3` 中负责 MCP catalog discovery、approval-bound call、action batch、provider continuation 与 restart recovery。MCP server 是显式本地 stdio process；environment value 保留在 invoking process 中，每次 MCP call 都需要 digest-bound approval。
+`WebAgentHarness` 在 daemon 进程内保存 run，并负责 MCP catalog discovery、approval-bound call、action batch 与 provider continuation。Daemon 退出时 run 直接丢失；MCP server 是显式本地 stdio process，environment value 保留在 invoking process 中，所有 mutating MCP call 都需要 digest-bound approval。
 
 ### AI sidecars
 
-Front Door 与 Exit Door 是围绕 durable Harness loop 的 sidecar。它们不会向 provider execution 添加 phase：Front Door 在 `WebAgentHarness.start` 前准备 metadata 与具体 provider route，Exit Door 在 Harness run 完成后审查 terminal result。
+Front Door 与 Exit Door 是围绕 Harness loop 的 sidecar。它们不会向 provider execution 添加 phase：Front Door 在 `WebAgentHarness.start` 前准备 metadata 与具体 provider route，Exit Door 在 Harness run 完成后审查 terminal result。
 
 Sidecar 依赖很小的 `HarnessAiEngine` contract。第一个 adapter 是由 Gemini Nano 支持的 browser-side Chrome Prompt API implementation；以后 local 与 remote engine 可以实现同一 contract，而无需改变 Front Door 或 Exit Door。
 
@@ -53,7 +49,7 @@ const frontDoor = createHarnessFrontDoorSidecar(geminiNanoEngine)
 const exitDoor = createHarnessExitDoorSidecar(geminiNanoEngine)
 const prepared = await frontDoor.prepare({ taskPrompt, providers, browserBinding })
 const run = await harness.start({ ...spec, provider: prepared.route.providerId })
-// 通过正常 Harness interface 读取 durable run。
+// Daemon 存活期间，通过正常 Harness interface 读取 run。
 const postprocessed = run.final
   ? await exitDoor.finalize({ taskPrompt, output: run.final.output, artifacts: run.final.artifacts, browserBinding })
   : undefined
@@ -68,7 +64,7 @@ tokenless agent resume --run-id <run-id> --approve <call-id:digest> --json
 tokenless agent cancel --run-id <run-id> --json
 ```
 
-Queued provider turn 证明本地 staging 与 durable scheduling，不证明 visible-provider acceptance。Provider authentication 与 verification 保持在外部；用户完成 handoff 后，resume 继续同一个 durable turn。
+Queued provider turn 只证明本地 staging，不证明 visible-provider acceptance。Provider authentication 与 verification 保持在外部；用户完成 handoff 后，resume 继续同一个进程内 run。
 
 Agent context 单独存储在 `<TOKENLESS_HOME>/harness.sqlite3`。Ledger 存储有界 ID、canonical project identity、hash、timestamp、provider mapping reference 与 job ID。它不存储 raw Codex prompt、transcript、assistant message、tool result、browser state 或 credential。Web Provider API 负责真实 provider Project、conversation 与 job；该 package 将它们返回的不透明 ID 绑定到 Harness conversation。
 

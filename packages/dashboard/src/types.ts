@@ -81,7 +81,6 @@ export type ReadinessJobs = { [providerId: string]: ReadinessJobState }
 export type DashboardOperation<Result> = () => Promise<Result>
 
 export type DashboardHarnessRunInput = {
-  admissionRef: string
   provider: string
   profileId: string
   taskPrompt: string
@@ -89,7 +88,6 @@ export type DashboardHarnessRunInput = {
 
 export type DashboardHarnessRunView = {
   protocol: string
-  admissionRef: string
   runId: string
   status: string
   turn: number

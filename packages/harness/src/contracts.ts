@@ -331,7 +331,6 @@ export type AgentMcpServerSpec = {
 }
 
 export type AgentRunSpec = {
-  admissionRef: string
   provider: string
   profileId: string
   taskPrompt: string
@@ -398,7 +397,6 @@ export type ProviderTurnOperationRequest = Pick<
 }
 
 export type ProviderTurnClient = {
-  /** start and continue must return the original turn when requestRef is replayed. */
   start(request: ProviderTurnRequest): Promise<ProviderTurnState>
   read(request: ProviderTurnOperationRequest): Promise<ProviderTurnState>
   continue(request: ProviderTurnRequest): Promise<ProviderTurnState>
@@ -460,7 +458,6 @@ export type AgentRunStatus =
   | 'succeeded'
   | 'failed'
   | 'cancelled'
-  | 'reconciliation_required'
 
 export type HarnessRunPhase =
   | 'discovering_tools'
@@ -471,11 +468,9 @@ export type HarnessRunPhase =
   | 'waiting_intervention'
   | 'executing_batch'
   | 'terminal'
-  | 'reconciliation_required'
 
 export type AgentRunView = {
   protocol: typeof HARNESS_RUN_PROTOCOL
-  admissionRef: string
   runId: string
   status: AgentRunStatus
   turn: number
@@ -500,46 +495,8 @@ export type AgentRunIntervention = {
 export type WebAgentHarness = {
   start(spec: AgentRunSpec): Promise<AgentRunView>
   read(runId: string): Promise<AgentRunView | null>
-  readAdmission(admissionRef: string): Promise<AgentRunView | null>
   resume(runId: string, intervention: AgentRunIntervention): Promise<AgentRunView>
   cancel(runId: string): Promise<AgentRunView>
-  close(): void
-}
-
-/** Immutable admission input for one locally durable sequential Harness mission. */
-export type EnqueueSequentialHarnessMissionInput = {
-  provider: string
-  profileId: string
-  taskPrompt: string
-  finalOutput?: HarnessFinalOutputContract | undefined
-  maxTurns?: number | undefined
-  cooldownMs?: number | undefined
-}
-
-export type OpenSequentialHarnessMissionQueueInput = {
-  tokenlessHome: string
-  stagingRoot: string
-}
-
-export type HarnessMissionStatus = 'queued' | 'preparing' | 'canceled'
-
-/** Redacted admission state. The frozen prompt and profile identity stay private in SQLite. */
-export type HarnessMissionView = {
-  mode: 'sequential'
-  taskRef: string
-  status: HarnessMissionStatus
-  cancellationRequested: boolean
-  promptSha256: string
-  createdAt: string
-  updatedAt: string
-}
-
-export type SequentialHarnessMissionQueue = {
-  enqueue(input: EnqueueSequentialHarnessMissionInput): HarnessMissionView
-  read(taskRef: string): HarnessMissionView | null
-  list(): readonly HarnessMissionView[]
-  activateNext(): HarnessMissionView | null
-  cancel(taskRef: string): HarnessMissionView | null
   close(): void
 }
 

@@ -26,48 +26,22 @@ export function createAgentRunHttpHandler({
   baseUrl: string
   token: string
 }): AgentRunHttpHandler {
-  const activeRuns = new Map<string, Promise<void>>()
+  const harness = openWebAgentHarness({
+    providerClient: createLocalHttpProviderTurnClient({ baseUrl, token }),
+    toolRegistry: createStdioMcpToolRegistry(),
+  })
 
   return async (request, response, method, url) => {
     const route = /^\/v1\/private\/agent\/runs(?:\/([^/]+)(?:\/(resume|cancel))?)?$/.exec(url.pathname)
-    const admissionRoute = /^\/v1\/private\/agent\/admissions\/([^/]+)$/.exec(url.pathname)
-    if (!route && !admissionRoute) return false
-
-    const harness = await openWebAgentHarness({
-      tokenlessHome,
-      providerClient: createLocalHttpProviderTurnClient({ baseUrl, token }),
-      toolRegistry: createStdioMcpToolRegistry(),
-    })
-    const driveRun = async <T>(runId: string, operation: () => Promise<T>) => {
-      const previous = activeRuns.get(runId) ?? Promise.resolve()
-      const result = previous.then(operation, operation)
-      const active = result.then(() => undefined, () => undefined)
-      activeRuns.set(runId, active)
-      try {
-        return await result
-      } finally {
-        if (activeRuns.get(runId) === active) activeRuns.delete(runId)
-      }
-    }
+    if (!route) return false
 
     try {
-      if (method === 'GET' && admissionRoute) {
-        const admissionRef = decodeURIComponent(admissionRoute[1] ?? '')
-        const view = await harness.readAdmission(admissionRef)
-        if (!view) {
-          writeJson(response, 404, { error: { code: 'harness_admission_missing', message: 'Harness admission was not found.', retryable: false } })
-          return true
-        }
-        writeJson(response, 200, view)
-        return true
-      }
-      if (!route) return false
       const encodedRunId = route[1]
       const runId = encodedRunId ? decodeURIComponent(encodedRunId) : undefined
       const action = route[2]
       if (method === 'POST' && runId === undefined) {
         const body = await readJsonObject(request)
-        const allowed = new Set(['admissionRef', 'provider', 'profileId', 'taskPrompt', 'selectedSkills', 'finalOutput', 'limits', 'maxTurns', 'mcpServers'])
+        const allowed = new Set(['provider', 'profileId', 'taskPrompt', 'selectedSkills', 'finalOutput', 'limits', 'maxTurns', 'mcpServers'])
         if (Object.keys(body).some((key) => !allowed.has(key))) throw requestError('invalid_input', 'Harness run request contains an unknown field')
         writeJson(response, 200, await harness.start({
           ...body,
@@ -77,20 +51,20 @@ export function createAgentRunHttpHandler({
       }
       if (!runId) return false
       if (method === 'GET' && action === undefined) {
-        const view = await driveRun(runId, () => harness.read(runId))
+        const view = await harness.read(runId)
         if (!view) throw requestError('invalid_input', 'Harness run was not found')
         writeJson(response, 200, view)
         return true
       }
       if (method === 'POST' && action === 'resume') {
         const intervention = await readJsonObject(request)
-        writeJson(response, 200, await driveRun(runId, () => harness.resume(runId, intervention)))
+        writeJson(response, 200, await harness.resume(runId, intervention))
         return true
       }
       if (method === 'POST' && action === 'cancel') {
         const body = await readJsonObject(request)
         if (Object.keys(body).length > 0) throw requestError('invalid_input', 'Harness cancel body must be empty')
-        writeJson(response, 200, await driveRun(runId, () => harness.cancel(runId)))
+        writeJson(response, 200, await harness.cancel(runId))
         return true
       }
       return false
@@ -100,21 +74,17 @@ export function createAgentRunHttpHandler({
         : ''
       const status = code === 'harness_run_missing'
         ? 404
-        : code === 'harness_run_conflict' || code === 'harness_admission_conflict'
-          ? 409
-          : code.startsWith('harness_')
-            ? 400
-            : 500
+        : code.startsWith('harness_')
+          ? 400
+          : 500
       writeJson(response, status, {
         error: {
           code: code || 'harness_internal_error',
           message: status === 500 ? 'Harness operation failed.' : error instanceof Error ? error.message : 'Harness operation failed.',
-          retryable: status >= 500 || code === 'harness_run_conflict',
+          retryable: false,
         },
       })
       return true
-    } finally {
-      harness.close()
     }
   }
 }
