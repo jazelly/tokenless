@@ -56,12 +56,12 @@
         ]
       }
     },
-    "/ui-api/v1/config": {
+    "/dashboard-api/v1/config": {
       "patch": {
-        "operationId": "updateUiConfig",
+        "operationId": "updateDashboardConfig",
         "security": [
           {
-            "uiSession": [],
+            "dashboardSession": [],
             "csrf": []
           }
         ],
@@ -84,12 +84,12 @@
         ]
       }
     },
-    "/ui-api/v1/setup": {
+    "/dashboard-api/v1/setup": {
       "post": {
-        "operationId": "completeUiSetup",
+        "operationId": "completeDashboardSetup",
         "security": [
           {
-            "uiSession": [],
+            "dashboardSession": [],
             "csrf": []
           }
         ],
@@ -112,9 +112,9 @@
         ]
       }
     },
-    "/ui-api/v1/jobs/{jobId}": {
+    "/dashboard-api/v1/jobs/{jobId}": {
       "get": {
-        "operationId": "getUiJob",
+        "operationId": "getDashboardJob",
         "parameters": [
           {
             "$ref": "#/components/parameters/JobId"
@@ -134,12 +134,12 @@
         "security": []
       }
     },
-    "/ui-api/v1/jobs/{jobId}/cancel": {
+    "/dashboard-api/v1/jobs/{jobId}/cancel": {
       "post": {
-        "operationId": "cancelUiJob",
+        "operationId": "cancelDashboardJob",
         "security": [
           {
-            "uiSession": [],
+            "dashboardSession": [],
             "csrf": []
           }
         ],
@@ -161,12 +161,12 @@
         ]
       }
     },
-    "/ui-api/v1/jobs/{jobId}/resume": {
+    "/dashboard-api/v1/jobs/{jobId}/resume": {
       "post": {
-        "operationId": "resumeUiJob",
+        "operationId": "resumeDashboardJob",
         "security": [
           {
-            "uiSession": [],
+            "dashboardSession": [],
             "csrf": []
           }
         ],
@@ -188,12 +188,12 @@
         ]
       }
     },
-    "/ui-api/v1/output-savings/disable": {
+    "/dashboard-api/v1/output-savings/disable": {
       "post": {
-        "operationId": "disableUiOutputSavings",
+        "operationId": "disableDashboardOutputSavings",
         "security": [
           {
-            "uiSession": [],
+            "dashboardSession": [],
             "csrf": []
           }
         ],
@@ -210,12 +210,12 @@
         ]
       }
     },
-    "/ui-api/v1/output-savings/enable": {
+    "/dashboard-api/v1/output-savings/enable": {
       "post": {
-        "operationId": "enableUiOutputSavings",
+        "operationId": "enableDashboardOutputSavings",
         "security": [
           {
-            "uiSession": [],
+            "dashboardSession": [],
             "csrf": []
           }
         ],
@@ -235,12 +235,12 @@
         ]
       }
     },
-    "/ui-api/v1/output-savings/history/clear": {
+    "/dashboard-api/v1/output-savings/history/clear": {
       "post": {
-        "operationId": "clearUiOutputSavingsHistory",
+        "operationId": "clearDashboardOutputSavingsHistory",
         "security": [
           {
-            "uiSession": [],
+            "dashboardSession": [],
             "csrf": []
           }
         ],
@@ -260,12 +260,12 @@
         ]
       }
     },
-    "/ui-api/v1/output-savings/runtime/uninstall": {
+    "/dashboard-api/v1/output-savings/runtime/uninstall": {
       "post": {
-        "operationId": "uninstallUiOutputSavingsRuntime",
+        "operationId": "uninstallDashboardOutputSavingsRuntime",
         "security": [
           {
-            "uiSession": [],
+            "dashboardSession": [],
             "csrf": []
           }
         ],
@@ -285,12 +285,12 @@
         ]
       }
     },
-    "/ui-api/v1/profiles": {
+    "/dashboard-api/v1/profiles": {
       "post": {
-        "operationId": "createUiProfile",
+        "operationId": "createDashboardProfile",
         "security": [
           {
-            "uiSession": [],
+            "dashboardSession": [],
             "csrf": []
           }
         ],
@@ -310,17 +310,17 @@
         ]
       }
     },
-    "/ui-api/v1/profiles/{profileId}": {
+    "/dashboard-api/v1/profiles/{profileId}": {
       "parameters": [
         {
           "$ref": "#/components/parameters/ProfileId"
         }
       ],
       "patch": {
-        "operationId": "updateUiProfile",
+        "operationId": "updateDashboardProfile",
         "security": [
           {
-            "uiSession": [],
+            "dashboardSession": [],
             "csrf": []
           }
         ],
@@ -340,10 +340,10 @@
         ]
       },
       "delete": {
-        "operationId": "removeUiProfile",
+        "operationId": "removeDashboardProfile",
         "security": [
           {
-            "uiSession": [],
+            "dashboardSession": [],
             "csrf": []
           }
         ],
@@ -360,12 +360,12 @@
         ]
       }
     },
-    "/ui-api/v1/profiles/{profileId}/open": {
+    "/dashboard-api/v1/profiles/{profileId}/open": {
       "post": {
-        "operationId": "openUiProfile",
+        "operationId": "openDashboardProfile",
         "security": [
           {
-            "uiSession": [],
+            "dashboardSession": [],
             "csrf": []
           }
         ],
@@ -387,12 +387,12 @@
         ]
       }
     },
-    "/ui-api/v1/profiles/{profileId}/providers/{providerId}/actions/{action}": {
+    "/dashboard-api/v1/profiles/{profileId}/providers/{providerId}/actions/{action}": {
       "post": {
-        "operationId": "runUiProviderAction",
+        "operationId": "runDashboardProviderAction",
         "security": [
           {
-            "uiSession": [],
+            "dashboardSession": [],
             "csrf": []
           }
         ],
@@ -430,12 +430,12 @@
         ]
       }
     },
-    "/ui-api/v1/profiles/{profileId}/providers/{providerId}/selection": {
+    "/dashboard-api/v1/profiles/{profileId}/providers/{providerId}/selection": {
       "post": {
-        "operationId": "selectUiProviderControl",
+        "operationId": "selectDashboardProviderControl",
         "security": [
           {
-            "uiSession": [],
+            "dashboardSession": [],
             "csrf": []
           }
         ],
@@ -463,12 +463,12 @@
         ]
       }
     },
-    "/ui-api/v1/profiles/{profileId}/providers/actions/readiness": {
+    "/dashboard-api/v1/profiles/{profileId}/providers/actions/readiness": {
       "post": {
-        "operationId": "refreshUiProviderReadiness",
+        "operationId": "refreshDashboardProviderReadiness",
         "security": [
           {
-            "uiSession": [],
+            "dashboardSession": [],
             "csrf": []
           }
         ],
@@ -493,12 +493,12 @@
         ]
       }
     },
-    "/ui-api/v1/runtime/quiesce": {
+    "/dashboard-api/v1/runtime/quiesce": {
       "post": {
-        "operationId": "quiesceUiRuntime",
+        "operationId": "quiesceDashboardRuntime",
         "security": [
           {
-            "uiSession": [],
+            "dashboardSession": [],
             "csrf": []
           }
         ],
@@ -512,9 +512,9 @@
         ]
       }
     },
-    "/ui-api/v1/session": {
+    "/dashboard-api/v1/session": {
       "get": {
-        "operationId": "getUiSession",
+        "operationId": "getDashboardSession",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Session"
@@ -526,9 +526,9 @@
         "security": []
       }
     },
-    "/ui-api/v1/snapshot": {
+    "/dashboard-api/v1/snapshot": {
       "get": {
-        "operationId": "getUiSnapshot",
+        "operationId": "getDashboardSnapshot",
         "parameters": [
           {
             "name": "If-None-Match",
@@ -3401,11 +3401,11 @@
         "scheme": "bearer",
         "description": "Bearer token read from the daemon home control token file. /ready is a public challenge endpoint; /v1/private/control/shutdown uses bearer authentication after the CLI verifies /ready for the same home."
       },
-      "uiSession": {
+      "dashboardSession": {
         "type": "apiKey",
         "in": "cookie",
-        "name": "tokenless_ui_session",
-        "description": "Established automatically by an allowed UI GET request."
+        "name": "tokenless_dashboard_session",
+        "description": "Established automatically by an allowedDashboard GET request."
       },
       "csrf": {
         "type": "apiKey",
@@ -3676,11 +3676,11 @@
         }
       },
       "Session": {
-        "description": "Active in-memory UI session.",
+        "description": "Active in-memory Dashboard session.",
         "content": {
           "application/json": {
             "schema": {
-              "$ref": "#/components/schemas/UiSession"
+              "$ref": "#/components/schemas/DashboardSession"
             }
           }
         }
@@ -3690,7 +3690,7 @@
         "content": {
           "application/json": {
             "schema": {
-              "$ref": "#/components/schemas/UiSnapshot"
+              "$ref": "#/components/schemas/DashboardSnapshot"
             }
           }
         }
@@ -3700,7 +3700,7 @@
         "content": {
           "application/json": {
             "schema": {
-              "$ref": "#/components/schemas/UiConfig"
+              "$ref": "#/components/schemas/DashboardConfig"
             }
           }
         }
@@ -3863,7 +3863,7 @@
         "content": {
           "application/json": {
             "schema": {
-              "$ref": "#/components/schemas/UiSetupInput"
+              "$ref": "#/components/schemas/DashboardSetupInput"
             }
           }
         }
@@ -5511,7 +5511,7 @@
             "minLength": 1
           },
           "browserVisibility": {
-            "$ref": "#/components/schemas/UiBrowserVisibility"
+            "$ref": "#/components/schemas/DashboardBrowserVisibility"
           },
           "language": {
             "type": "string",
@@ -5526,7 +5526,7 @@
         },
         "additionalProperties": false
       },
-      "UiSetupInput": {
+      "DashboardSetupInput": {
         "type": "object",
         "properties": {
           "slug": {
@@ -5566,7 +5566,7 @@
             ]
           },
           "browserVisibility": {
-            "$ref": "#/components/schemas/UiBrowserVisibility"
+            "$ref": "#/components/schemas/DashboardBrowserVisibility"
           },
           "setDefault": {
             "type": "boolean"
@@ -7743,7 +7743,7 @@
             }
           },
           "browserVisibility": {
-            "$ref": "#/components/schemas/UiBrowserVisibility"
+            "$ref": "#/components/schemas/DashboardBrowserVisibility"
           },
           "proxy": {
             "$ref": "#/components/schemas/Proxy"
@@ -7802,7 +7802,7 @@
             }
           },
           "browserVisibility": {
-            "$ref": "#/components/schemas/UiBrowserVisibility"
+            "$ref": "#/components/schemas/DashboardBrowserVisibility"
           },
           "proxy": {
             "$ref": "#/components/schemas/Proxy"
@@ -7849,7 +7849,7 @@
             }
           },
           "browserVisibility": {
-            "$ref": "#/components/schemas/UiBrowserVisibility"
+            "$ref": "#/components/schemas/DashboardBrowserVisibility"
           },
           "proxy": {
             "$ref": "#/components/schemas/Proxy"
@@ -7912,7 +7912,7 @@
             }
           },
           "browserVisibility": {
-            "$ref": "#/components/schemas/UiBrowserVisibility"
+            "$ref": "#/components/schemas/DashboardBrowserVisibility"
           },
           "proxy": {
             "$ref": "#/components/schemas/Proxy"
@@ -8779,7 +8779,7 @@
             "format": "uuid"
           },
           "browserVisibility": {
-            "$ref": "#/components/schemas/UiBrowserVisibility"
+            "$ref": "#/components/schemas/DashboardBrowserVisibility"
           },
           "effectiveBrowserVisibility": {
             "type": "string",
@@ -8921,7 +8921,7 @@
           }
         }
       },
-      "UiBrowserVisibility": {
+      "DashboardBrowserVisibility": {
         "type": "string",
         "enum": [
           "auto",
@@ -8929,7 +8929,7 @@
           "headless"
         ]
       },
-      "UiConfig": {
+      "DashboardConfig": {
         "type": "object",
         "properties": {
           "updatedAt": {
@@ -8952,7 +8952,7 @@
             "type": "boolean"
           },
           "browserVisibility": {
-            "$ref": "#/components/schemas/UiBrowserVisibility"
+            "$ref": "#/components/schemas/DashboardBrowserVisibility"
           },
           "daemonUrl": {
             "type": [
@@ -9038,7 +9038,7 @@
         ],
         "additionalProperties": false
       },
-      "UiSession": {
+      "DashboardSession": {
         "type": "object",
         "properties": {
           "csrf": {
@@ -9056,7 +9056,7 @@
         ],
         "additionalProperties": false
       },
-      "UiBrowserCandidate": {
+      "DashboardBrowserCandidate": {
         "type": "object",
         "properties": {
           "browserId": {
@@ -9113,13 +9113,13 @@
         ],
         "additionalProperties": false
       },
-      "UiSetupSnapshot": {
+      "DashboardSetupSnapshot": {
         "type": "object",
         "properties": {
           "browserCandidates": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/UiBrowserCandidate"
+              "$ref": "#/components/schemas/DashboardBrowserCandidate"
             }
           },
           "defaultProfileSlug": {
@@ -9142,11 +9142,11 @@
         ],
         "additionalProperties": false
       },
-      "UiSnapshot": {
+      "DashboardSnapshot": {
         "type": "object",
         "properties": {
           "schema": {
-            "const": "tokenless.ui-snapshot.v1"
+            "const": "tokenless.dashboard-snapshot.v1"
           },
           "generatedAt": {
             "type": "string",
@@ -9163,10 +9163,10 @@
             "$ref": "#/components/schemas/RuntimeStatus"
           },
           "config": {
-            "$ref": "#/components/schemas/UiConfig"
+            "$ref": "#/components/schemas/DashboardConfig"
           },
           "setup": {
-            "$ref": "#/components/schemas/UiSetupSnapshot"
+            "$ref": "#/components/schemas/DashboardSetupSnapshot"
           },
           "outputSavings": {
             "$ref": "#/components/schemas/OutputSavingsState"
@@ -10422,7 +10422,7 @@
     },
     {
       "name": "Dashboard",
-      "description": "Browser Dashboard Interface using a UI session cookie and CSRF header."
+      "description": "Browser Dashboard Interface using a Dashboard session cookie and CSRF header."
     }
   ]
 }

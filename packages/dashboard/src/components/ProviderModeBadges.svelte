@@ -1,23 +1,23 @@
 <script lang="ts">
   import { Link2, Monitor } from '@lucide/svelte'
   import type { MessageKey } from '../i18n/index.js'
-  import type { UiProvider, UiProviderExecutionMode, UiProviderProfileState } from '../types.js'
+  import type { DashboardProvider, DashboardProviderExecutionMode, DashboardProviderProfileState } from '../types.js'
 
   let { provider, state, t }: {
-    provider: UiProvider
-    state: UiProviderProfileState | undefined
+    provider: DashboardProvider
+    state: DashboardProviderProfileState | undefined
     t: (key: MessageKey) => string
   } = $props()
 
-  function supported(mode: UiProviderExecutionMode) {
+  function supported(mode: DashboardProviderExecutionMode) {
     return provider.executionModes.includes(mode)
   }
 
-  function configured(mode: UiProviderExecutionMode) {
+  function configured(mode: DashboardProviderExecutionMode) {
     return state?.enabled === true && state.enabledModes.includes(mode)
   }
 
-  function status(mode: UiProviderExecutionMode) {
+  function status(mode: DashboardProviderExecutionMode) {
     return !supported(mode) ? t('notSupported') : configured(mode) ? t('configured') : t('notConfigured')
   }
 </script>

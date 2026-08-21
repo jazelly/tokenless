@@ -6,7 +6,7 @@ type Language = TokenlessLanguage
 
 const enMessages = {
     overview: 'Overview', profiles: 'Profiles', providers: 'Providers', capabilities: 'Capabilities', routing: 'Routing', jobs: 'Chat history', system: 'System',
-    localConsole: 'Local console', operationalSummary: 'Operational summary', overviewLede: 'The exact daemon, browser, provider, and job state on this machine.',
+    localDashboard: 'Local Dashboard', operationalSummary: 'Operational summary', overviewLede: 'The exact daemon, browser, provider, and job state on this machine.',
     daemon: 'Daemon', browser: 'Browser runtime', activeProfiles: 'Active profiles', waitingJobs: 'Waiting jobs', healthy: 'Healthy',
     actionRequired: 'Action required', recentJobs: 'Recent jobs', providerReadiness: 'Provider readiness', noJobs: 'No jobs yet', noJobsBody: 'Durable jobs will appear here when Tokenless starts work.',
     profileManagement: 'Tokenless profiles', profilesLede: 'Manage provider tabs, purpose, and provider scope in your connected Chrome.',
@@ -19,11 +19,11 @@ const enMessages = {
     capabilityCatalog: 'Capability catalog', capabilitiesLede: 'Start from caller outcomes, then see which evidence-backed provider routes can satisfy them.', noRoute: 'No evidenced route',
     durableJobs: 'Chat history', jobsLede: 'Review conversations handled through the Tokenless API.', allStatuses: 'All statuses', allProviders: 'All providers', allProfiles: 'All profiles', searchJobs: 'Search conversations…', details: 'Details', resume: 'Resume headed', backToChatHistory: 'Back to chat history', conversationDetails: 'Conversation details', provider: 'Provider', jobId: 'Job ID', messages: 'messages',
     settingsDiagnostics: 'System and diagnostics', systemLede: 'Shared preferences, runtime controls, compatibility, and redacted repair information.', language: 'Language', quiesce: 'Quiesce runtime', copyDiagnostics: 'Copy diagnostics', diagnostics: 'Diagnostics',
-    updateSaved: 'Changes saved.', requestFailed: 'Request failed.', offline: 'Console is offline', offlineBody: 'The daemon stopped responding. Polling will resume automatically.', sessionExpired: 'Dashboard session expired', reopen: 'Open the local console again to start a new session.',
+    updateSaved: 'Changes saved.', requestFailed: 'Request failed.', offline: 'Dashboard is offline', offlineBody: 'The daemon stopped responding. Polling will resume automatically.', sessionExpired: 'Dashboard session expired', reopen: 'Open the local Dashboard again to start a new session.',
     loading: 'Loading current state…', empty: 'Nothing to show', confirmRemove: 'Type the profile slug to confirm permanent removal:', create: 'Create', browserSelection: 'Browser for new profiles', browserExecutablePath: 'Browser executable path', browserExecutablePathPlaceholder: '/absolute/path/to/browser or Browser.app…', browserExecutablePathConfigured: 'A verified path is cached. Leave blank to keep it, or paste a replacement.', browserExecutablePathHelp: 'Paste an absolute executable path. On macOS, an application bundle such as Browser.app is also accepted.', defaultVisibility: 'Default visibility', proxy: 'Proxy server', proxyBypass: 'Proxy bypass (comma separated)', proxyRestartNote: 'Changing the proxy first quiesces active browser ownership and recreates this profile context.', none: 'None', openBrowser: 'Open browser', savedAt: 'Saved',
     stage: 'Stage', lifecycle: 'Lifecycle', evidence: 'Evidence', result: 'Result', error: 'Error', attempts: 'Provider attempts', created: 'Created', updated: 'Updated', untitledChat: 'Untitled conversation', estimatedTokensShort: 'estimated tokens', estimatedTokens: 'Estimated total tokens', conversation: 'Conversation', userPrompt: 'User', assistantReply: 'Assistant', noConversation: 'No conversation content is available.', openProviderChat: 'Open provider chat', technicalDetails: 'Technical details',
     primaryNavigation: 'Primary navigation', uptimeUnit: 'min uptime', activeUnit: 'active', configuredUnit: 'configured', durableUnit: 'durable',
-    documentTitle: 'Tokenless local console', skipToContent: 'Skip to content',
+    documentTitle: 'Tokenless local Dashboard', skipToContent: 'Skip to content',
     harnessExtensionPairing: 'Pair Tokenless Harness extension', harnessExtensionPairingLede: 'Approve this exact installed extension and freeze the Tokenless API provider route it may use.', harnessExtensionIdentity: 'Extension ID', harnessExtensionOrigin: 'Extension origin', harnessExtensionScope: 'This revocable credential can only attach extension sessions and control their own Harness runs. It cannot change configuration, access other runs, or use daemon control APIs.', harnessExtensionApprove: 'Approve extension', harnessExtensionApproving: 'Approving…', harnessExtensionApproved: 'Extension pairing approved. Return to the Chrome side panel.',
     configPersisted: 'Configuration is persisted.', setupIncomplete: 'Setup has not persisted configuration yet.', browserReady: 'The browser runtime is available.', browserUnavailable: 'The browser runtime is unavailable.', noManagedProfiles: 'No managed profile is configured.', profilesRegistered: 'managed profile(s) registered.', activeBrowserJobs: 'active browser job(s).',
     setup: 'Setup', setupTitle: 'Set up Tokenless', setupBody: 'Choose a detected browser runtime, or add a Chrome or Brave executable path.', nativeChromeConnectionHelp: 'Tokenless does not bundle or download Chrome or Brave. If automatic discovery fails, add an absolute executable path and enable Remote Debugging before the first browser action. CloakBrowser appears when its shipped runtime is installed.', googleChrome: 'My Google Chrome', braveBrowser: 'My Brave Browser', cloakBrowserHelp: 'CloakBrowser is a Tokenless-managed anti-detect runtime. Its verified executable path is shown here and its runtime binding is stored on the profile.', detected: 'Detected', detectedOnComputer: 'Detected on this computer', noBrowsersDetected: 'No supported browser runtime was detected yet.', addBrowser: 'Add browser', hideAddBrowser: 'Hide add browser', continue: 'Continue', finishSetup: 'Finish setup', back: 'Back',
@@ -38,7 +38,7 @@ const enMessages = {
     automatic: 'Automatic', available: 'Available', notFound: 'Not found', downloadRequired: 'Download required', scanningBrowsers: 'Scanning installed browsers…',
     managedByTokenless: 'Managed by Tokenless', systemBrowser: 'System browser', runtimeDownloadHelp: 'Download and verify this runtime before using it.', automaticBrowserHelp: 'Automatic selection resolves to the platform-pinned managed Chrome for Testing.', browserNotDetectedHelp: 'Choose another browser or add its executable path.',
     installRuntime: 'Install', repairRuntime: 'Repair runtime', addExecutablePath: 'Add executable path', replaceExecutablePath: 'Replace executable path', hideExecutablePath: 'Hide custom path', verifiedPathCached: 'Verified path cached', validate: 'Validate', clearExecutablePath: 'Use automatic discovery', browserValidated: 'Executable verified', runtimeInstalled: 'Browser runtime installed.', runtimeRepaired: 'Browser runtime repaired.',
-    languageHelp: 'Used by the local console and CLI.', confirmDelete: 'Enter the profile slug to remove it permanently.', unknown: 'Unknown',
+    languageHelp: 'Used by the local Dashboard and CLI.', confirmDelete: 'Enter the profile slug to remove it permanently.', unknown: 'Unknown',
     outputSavings: 'Output savings', outputSavingsLede: 'Estimate visible assistant output locally. Measurement is on by default; disabling pauses future measurements and keeps saved history.',
     estimatedTokensSaved: 'Estimated output tokens saved', measuredResponses: 'Measured responses', tokenizerRuntime: 'Tokenizer runtime', runtimeSize: 'Installed size',
     lazyTokenizerDownload: 'The pinned WASM tokenizer is downloaded only when the first visible response needs measurement or when you install it here. It uses CPU only during short measurements and never requires a GPU.',
@@ -59,7 +59,7 @@ const enMessages = {
 
 const zhMessages: Record<keyof typeof enMessages, string> = {
     overview: '概览', profiles: 'Profile', providers: 'Provider', capabilities: '能力', routing: '路由', jobs: '对话历史', system: '系统',
-    localConsole: '本地控制台', operationalSummary: '运行概览', overviewLede: '查看这台机器上 daemon、浏览器、provider 和任务的真实状态。',
+    localDashboard: '本地 Dashboard', operationalSummary: '运行概览', overviewLede: '查看这台机器上 daemon、浏览器、provider 和任务的真实状态。',
     daemon: 'Daemon', browser: '浏览器运行时', activeProfiles: '活跃 profile', waitingJobs: '等待任务', healthy: '健康',
     actionRequired: '需要处理', recentJobs: '最近任务', providerReadiness: 'Provider 就绪状态', noJobs: '还没有任务', noJobsBody: 'Tokenless 开始工作后，持久任务会显示在这里。',
     profileManagement: 'Tokenless profile', profilesLede: '管理已连接 Chrome 中的 provider tab、用途和 provider 范围。',
@@ -72,11 +72,11 @@ const zhMessages: Record<keyof typeof enMessages, string> = {
     capabilityCatalog: '能力目录', capabilitiesLede: '先看调用方需要的结果，再看哪些 provider 路由已有真实证据。', noRoute: '暂无证据路由',
     durableJobs: '对话历史', jobsLede: '查看由 Tokenless API 处理的对话。', allStatuses: '全部状态', allProviders: '全部 provider', allProfiles: '全部 profile', searchJobs: '搜索对话…', details: '详情', resume: '以 headed 恢复', backToChatHistory: '返回对话历史', conversationDetails: '对话详情', provider: 'Provider', jobId: '任务 ID', messages: '条消息',
     settingsDiagnostics: '系统与诊断', systemLede: '管理共享偏好、运行时控制、兼容性和已脱敏的修复信息。', language: '语言', quiesce: '静默浏览器运行时', copyDiagnostics: '复制诊断信息', diagnostics: '诊断',
-    updateSaved: '更改已保存。', requestFailed: '请求失败。', offline: '控制台已离线', offlineBody: 'Daemon 暂时没有响应；连接恢复后会自动继续轮询。', sessionExpired: '控制台会话已过期', reopen: '请重新打开本地控制台以建立新会话。',
+    updateSaved: '更改已保存。', requestFailed: '请求失败。', offline: 'Dashboard 已离线', offlineBody: 'Daemon 暂时没有响应；连接恢复后会自动继续轮询。', sessionExpired: 'Dashboard 会话已过期', reopen: '请重新打开本地 Dashboard 以建立新会话。',
     loading: '正在读取当前状态…', empty: '暂无内容', confirmRemove: '输入 profile slug 以确认永久移除：', create: '创建', browserSelection: '新 profile 使用的浏览器', browserExecutablePath: '浏览器 executable path', browserExecutablePathPlaceholder: '/浏览器的绝对路径或 Browser.app…', browserExecutablePathConfigured: '已缓存经过验证的路径。留空会保留，也可以粘贴新路径替换。', browserExecutablePathHelp: '粘贴 executable 的绝对路径；macOS 也可以直接填写 Browser.app 应用路径。', defaultVisibility: '默认可见性', proxy: 'Proxy server', proxyBypass: 'Proxy bypass（逗号分隔）', proxyRestartNote: '更改 proxy 会先让浏览器运行时进入静默状态，再重建该 profile 的 context。', none: '无', openBrowser: '打开浏览器', savedAt: '保存时间',
     stage: '阶段', lifecycle: '生命周期', evidence: '证据', result: '结果', error: '错误', attempts: 'Provider 尝试', created: '创建时间', updated: '更新时间', untitledChat: '未命名对话', estimatedTokensShort: '估算 token', estimatedTokens: '估算总 token', conversation: '对话内容', userPrompt: '用户', assistantReply: '助手', noConversation: '暂无可显示的对话内容。', openProviderChat: '打开 Provider 对话', technicalDetails: '技术详情',
     primaryNavigation: '主要导航', uptimeUnit: '分钟运行时间', activeUnit: '活跃', configuredUnit: '已配置', durableUnit: '持久任务',
-    documentTitle: 'Tokenless 本地控制台', skipToContent: '跳到主要内容',
+    documentTitle: 'Tokenless 本地 Dashboard', skipToContent: '跳到主要内容',
     harnessExtensionPairing: '配对 Tokenless Harness 扩展', harnessExtensionPairingLede: '批准这个确切的已安装扩展，并固定它可以使用的 Tokenless API provider route。', harnessExtensionIdentity: '扩展 ID', harnessExtensionOrigin: '扩展 origin', harnessExtensionScope: '这个可撤销凭证只能附着 extension session，并控制其自身的 Harness run；它不能修改配置、访问其他 run 或调用 daemon control API。', harnessExtensionApprove: '批准扩展', harnessExtensionApproving: '正在批准…', harnessExtensionApproved: '扩展配对已批准，请返回 Chrome side panel。',
     configPersisted: '配置已持久化。', setupIncomplete: 'Setup 尚未保存配置。', browserReady: '浏览器运行时可用。', browserUnavailable: '浏览器运行时不可用。', noManagedProfiles: '尚未配置 managed profile。', profilesRegistered: '个 managed profile 已注册。', activeBrowserJobs: '个浏览器任务正在运行。',
     setup: '设置', setupTitle: '设置 Tokenless', setupBody: '选择检测到的浏览器 runtime，或添加 Chrome/Brave executable path。', nativeChromeConnectionHelp: 'Tokenless 不会 bundle 或下载 Chrome/Brave。自动发现失败时，请添加浏览器的绝对 executable path，并在首次 browser action 前启用 Remote Debugging。已安装的 CloakBrowser 会显示在这里。', googleChrome: '我的 Google Chrome', braveBrowser: '我的 Brave Browser', cloakBrowserHelp: 'CloakBrowser 是由 Tokenless 管理的 anti-detect runtime。这里会显示经过验证的 executable path，runtime binding 会保存到 profile。', detected: '已检测', detectedOnComputer: '已在此电脑检测到', noBrowsersDetected: '暂未检测到受支持的浏览器 runtime。', addBrowser: '添加浏览器', hideAddBrowser: '收起添加浏览器', continue: '继续', finishSetup: '完成设置', back: '返回',
@@ -91,7 +91,7 @@ const zhMessages: Record<keyof typeof enMessages, string> = {
     automatic: '自动选择', available: '可用', notFound: '未找到', downloadRequired: '需要下载', scanningBrowsers: '正在扫描已安装的浏览器…',
     managedByTokenless: '由 Tokenless 管理', systemBrowser: '系统浏览器', runtimeDownloadHelp: '使用前需要下载并验证这个 runtime。', automaticBrowserHelp: '自动选择会解析为按平台固定版本的 managed Chrome for Testing。', browserNotDetectedHelp: '请选择其他浏览器，或添加它的 executable path。',
     installRuntime: '安装', repairRuntime: '修复 runtime', addExecutablePath: '添加 executable path', replaceExecutablePath: '替换 executable path', hideExecutablePath: '收起自定义路径', verifiedPathCached: '已缓存验证路径', validate: '验证', clearExecutablePath: '恢复自动发现', browserValidated: 'Executable 验证通过', runtimeInstalled: '浏览器 runtime 已安装。', runtimeRepaired: '浏览器 runtime 已修复。',
-    languageHelp: '用于本地控制台和 CLI。', confirmDelete: '输入 profile slug 以永久移除。', unknown: '未知',
+    languageHelp: '用于本地 Dashboard 和 CLI。', confirmDelete: '输入 profile slug 以永久移除。', unknown: '未知',
     outputSavings: '输出节省', outputSavingsLede: '在本机估算可见 assistant 输出。计量默认开启；停用后会暂停后续计量，但保留已保存的历史。',
     estimatedTokensSaved: '估算节省的 output token', measuredResponses: '已计量响应', tokenizerRuntime: 'Tokenizer 运行时', runtimeSize: '安装大小',
     lazyTokenizerDownload: '固定版本的 WASM tokenizer 只会在首次计量可见响应时，或你在此处主动安装时下载。它仅在短时计量期间使用 CPU，不需要 GPU。',
@@ -201,16 +201,16 @@ const stateZh: Record<string, string> = {
   signed_in_unknown: '已登录 · 方案未知',
 }
 
-const uiErrorZh = {
+const dashboardErrorZh = {
   ...ERROR_SUMMARIES_ZH,
-  ui_request_failed: '控制台请求失败。',
-  ui_route_not_found: '找不到请求的控制台接口。',
-  ui_session_required: '请重新打开本地控制台以建立新会话。',
-  ui_origin_rejected: '请求来源不受允许。',
-  ui_csrf_rejected: '请求安全令牌无效。',
-  ui_host_rejected: '请求 Host 不受允许。',
-  ui_body_too_large: '请求内容过大。',
-  ui_json_invalid: '请求内容必须是有效的 JSON object。',
+  dashboard_request_failed: 'Dashboard 请求失败。',
+  dashboard_route_not_found: '找不到请求的 Dashboard 接口。',
+  dashboard_session_required: '请重新打开本地 Dashboard 以建立新会话。',
+  dashboard_origin_rejected: '请求来源不受允许。',
+  dashboard_csrf_rejected: '请求安全令牌无效。',
+  dashboard_host_rejected: '请求 Host 不受允许。',
+  dashboard_body_too_large: '请求内容过大。',
+  dashboard_json_invalid: '请求内容必须是有效的 JSON object。',
   invalid_browser: '浏览器选择无效。',
   invalid_browser_executable_path: '浏览器 executable path 必须为空或使用绝对路径。',
   browser_executable_path_requires_system_browser: '只有明确选择 system browser 后才能设置 executable path。',
@@ -253,8 +253,8 @@ export function translate(language: Language, key: MessageKey, params: Readonly<
 
 export function translateError(language: Language, code: string, fallback?: string) {
   if (language === 'zh-CN') {
-    return Object.prototype.hasOwnProperty.call(uiErrorZh, code)
-      ? uiErrorZh[code as keyof typeof uiErrorZh]
+    return Object.prototype.hasOwnProperty.call(dashboardErrorZh, code)
+      ? dashboardErrorZh[code as keyof typeof dashboardErrorZh]
       : `${translate(language, 'requestFailed')}${code ? ` (${code})` : ''}`
   }
   return fallback ?? translate(language, 'requestFailed')

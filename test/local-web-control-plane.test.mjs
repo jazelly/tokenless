@@ -23,21 +23,21 @@ const validateProviderReadinessRefresh = uiSchemaValidator('ProviderReadinessRef
 test('local web control plane opens directly, establishes UI sessions, and enforces CSRF, Origin, Host, and bearer boundaries', async () => {
   await withDaemon(async ({ daemon, homeDir }) => {
     const token = fs.readFileSync(path.join(homeDir, 'daemon.token'), 'utf8').trim()
-    const directSession = await fetch(`${daemon.origin}/ui-api/v1/session`)
+    const directSession = await fetch(`${daemon.origin}/dashboard-api/v1/session`)
     assert.equal(directSession.status, 200)
-    assert.match(directSession.headers.get('set-cookie') ?? '', /^tokenless_ui_session=/)
+    assert.match(directSession.headers.get('set-cookie') ?? '', /^tokenless_dashboard_session=/)
 
-    const directSnapshot = await fetch(`${daemon.origin}/ui-api/v1/snapshot`)
+    const directSnapshot = await fetch(`${daemon.origin}/dashboard-api/v1/snapshot`)
     assert.equal(directSnapshot.status, 200)
 
     const localhostHost = `localhost:${daemon.port}`
     const localhostOrigin = `http://${localhostHost}`
-    const localhostSession = await fetch(`${localhostOrigin}/ui-api/v1/session`)
+    const localhostSession = await fetch(`${localhostOrigin}/dashboard-api/v1/session`)
     assert.equal(localhostSession.status, 200)
     const localhostCookie = localhostSession.headers.get('set-cookie')?.split(';')[0]
-    assert.match(localhostCookie ?? '', /^tokenless_ui_session=/)
+    assert.match(localhostCookie ?? '', /^tokenless_dashboard_session=/)
     const localhostSessionBody = await localhostSession.json()
-    const localhostMutation = await fetch(`${localhostOrigin}/ui-api/v1/config`, {
+    const localhostMutation = await fetch(`${localhostOrigin}/dashboard-api/v1/config`, {
       method: 'PATCH',
       headers: {
         cookie: localhostCookie,
@@ -52,13 +52,13 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
 
     const root = await fetch(`${daemon.origin}/`, { redirect: 'manual' })
     assert.equal(root.status, 303)
-    assert.equal(root.headers.get('location'), '/ui/')
+    assert.equal(root.headers.get('location'), '/dashboard/')
     const cookie = root.headers.get('set-cookie')?.split(';')[0]
-    assert.match(cookie ?? '', /^tokenless_ui_session=/)
+    assert.match(cookie ?? '', /^tokenless_dashboard_session=/)
     assert.match(root.headers.get('set-cookie') ?? '', /HttpOnly/)
     assert.match(root.headers.get('set-cookie') ?? '', /SameSite=Strict/)
 
-    const initialHtml = await fetch(`${daemon.origin}/ui/`, {
+    const initialHtml = await fetch(`${daemon.origin}/dashboard/`, {
       headers: { cookie, 'accept-language': 'zh-CN,zh;q=0.9' },
     })
     assert.equal(initialHtml.status, 200)
@@ -71,7 +71,7 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     assert.match(initialHtml.headers.get('content-security-policy') ?? '', /frame-ancestors 'none'/)
     assert.equal(initialHtml.headers.get('x-content-type-options'), 'nosniff')
 
-    for (const missingPath of ['/ui/not-found', '/ui/not-found.js']) {
+    for (const missingPath of ['/dashboard/not-found', '/dashboard/not-found.js']) {
       const missingUiAsset = await fetch(`${daemon.origin}${missingPath}`, { signal: AbortSignal.timeout(2000) })
       assert.equal(missingUiAsset.status, 404)
       assert.equal(missingUiAsset.headers.get('referrer-policy'), 'no-referrer')
@@ -79,7 +79,7 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
       assert.equal(missingUiAsset.headers.get('x-content-type-options'), 'nosniff')
     }
 
-    const session = await fetch(`${daemon.origin}/ui-api/v1/session`, { headers: { cookie } })
+    const session = await fetch(`${daemon.origin}/dashboard-api/v1/session`, { headers: { cookie } })
     assert.equal(session.status, 200)
     const sessionBody = await session.json()
     assert.equal(typeof sessionBody.csrf, 'string')
@@ -93,13 +93,13 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     })
     assert.equal(removedLegacyRoute.status, 404)
 
-    const snapshot = await fetch(`${daemon.origin}/ui-api/v1/snapshot`, { headers: { cookie } })
+    const snapshot = await fetch(`${daemon.origin}/dashboard-api/v1/snapshot`, { headers: { cookie } })
     assert.equal(snapshot.status, 200)
     const snapshotText = await snapshot.text()
     assert.equal(snapshotText.includes(token), false)
     assert.equal(/claim_token|checkpoint_json|browser-storage|cookie/i.test(snapshotText), false)
     const snapshotBody = JSON.parse(snapshotText)
-    assert.equal(snapshotBody.schema, 'tokenless.ui-snapshot.v1')
+    assert.equal(snapshotBody.schema, 'tokenless.dashboard-snapshot.v1')
     assert.equal(typeof snapshotBody.revision, 'string')
     assert.deepEqual(snapshotBody.outputSavings, {
       enabled: true,
@@ -132,7 +132,7 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     assert.deepEqual(snapshotBody.providers.find((provider) => provider.id === 'doubao')?.executionModes, ['browser'])
     const registry = new ManagedProfileRegistry(homeDir)
 
-    const setupHtml = await fetch(`${daemon.origin}/ui/setup/`, { headers: { cookie } })
+    const setupHtml = await fetch(`${daemon.origin}/dashboard/setup/`, { headers: { cookie } })
     assert.equal(setupHtml.status, 200)
     assert.match(await setupHtml.text(), /<script type="module"/)
     assert.equal(snapshotBody.setup.defaultProfileSlug, null)
@@ -149,7 +149,7 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     assert.ok(braveCandidate, 'real setup discovery must expose Brave Browser in this environment')
 
     const configBeforeSetupValidation = fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8')
-    const invalidPathSetup = await fetch(`${daemon.origin}/ui-api/v1/setup`, {
+    const invalidPathSetup = await fetch(`${daemon.origin}/dashboard-api/v1/setup`, {
       method: 'POST',
       headers: {
         cookie,
@@ -169,7 +169,7 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     assert.equal(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8'), configBeforeSetupValidation)
     assert.deepEqual(await registry.listProfiles(), [])
 
-    const invalidProviderSetup = await fetch(`${daemon.origin}/ui-api/v1/setup`, {
+    const invalidProviderSetup = await fetch(`${daemon.origin}/dashboard-api/v1/setup`, {
       method: 'POST',
       headers: {
         cookie,
@@ -189,7 +189,7 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     assert.equal(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8'), configBeforeSetupValidation)
     assert.deepEqual(await registry.listProfiles(), [])
 
-    const browserMismatchSetup = await fetch(`${daemon.origin}/ui-api/v1/setup`, {
+    const browserMismatchSetup = await fetch(`${daemon.origin}/dashboard-api/v1/setup`, {
       method: 'POST',
       headers: {
         cookie,
@@ -209,7 +209,7 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     assert.equal(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8'), configBeforeSetupValidation)
     assert.deepEqual(await registry.listProfiles(), [])
 
-    const setupProfile = await fetch(`${daemon.origin}/ui-api/v1/setup`, {
+    const setupProfile = await fetch(`${daemon.origin}/dashboard-api/v1/setup`, {
       method: 'POST',
       headers: {
         cookie,
@@ -231,7 +231,7 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     assert.equal(setupProfileBody.slug, 'setup-work')
     const setupProfileId = setupProfileBody.id
 
-    const repeatedSetupProfile = await fetch(`${daemon.origin}/ui-api/v1/setup`, {
+    const repeatedSetupProfile = await fetch(`${daemon.origin}/dashboard-api/v1/setup`, {
       method: 'POST',
       headers: {
         cookie,
@@ -254,10 +254,10 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     assert.deepEqual(repeatedSetupProfileBody.providerModes, setupProfileBody.providerModes)
     assert.deepEqual(repeatedSetupProfileBody.proxy, setupProfileBody.proxy)
     assert.equal((await registry.listProfiles()).length, 1)
-    const setupSnapshot = await fetch(`${daemon.origin}/ui-api/v1/snapshot`, { headers: { cookie } }).then((response) => response.json())
+    const setupSnapshot = await fetch(`${daemon.origin}/dashboard-api/v1/snapshot`, { headers: { cookie } }).then((response) => response.json())
     assert.equal(setupSnapshot.setup.defaultProfileSlug, 'setup-work')
     assert.deepEqual(setupSnapshot.setup.configuredProfileSlugs, ['setup-work'])
-    const deleteSetupProfile = await fetch(`${daemon.origin}/ui-api/v1/profiles/setup-work`, {
+    const deleteSetupProfile = await fetch(`${daemon.origin}/dashboard-api/v1/profiles/setup-work`, {
       method: 'DELETE',
       headers: {
         cookie,
@@ -267,27 +267,27 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     })
     assert.equal(deleteSetupProfile.status, 200)
     assert.deepEqual(await registry.listProfiles(), [])
-    const setupCleanupSnapshot = await fetch(`${daemon.origin}/ui-api/v1/snapshot`, { headers: { cookie } }).then((response) => response.json())
+    const setupCleanupSnapshot = await fetch(`${daemon.origin}/dashboard-api/v1/snapshot`, { headers: { cookie } }).then((response) => response.json())
 
-    const unchanged = await fetch(`${daemon.origin}/ui-api/v1/snapshot`, {
+    const unchanged = await fetch(`${daemon.origin}/dashboard-api/v1/snapshot`, {
       headers: { cookie, 'if-none-match': `"${setupCleanupSnapshot.revision}"` },
     })
     assert.equal(unchanged.status, 304)
 
-    const missingJob = await fetch(`${daemon.origin}/ui-api/v1/jobs/not-a-job`, { headers: { cookie } })
+    const missingJob = await fetch(`${daemon.origin}/dashboard-api/v1/jobs/not-a-job`, { headers: { cookie } })
     assert.equal(missingJob.status, 404)
     const missingJobBody = await missingJob.json()
     assert.equal(missingJobBody.error.code, 'job_not_found')
     assertUiSchema(validateUiError, missingJobBody)
 
-    const missingCsrf = await fetch(`${daemon.origin}/ui-api/v1/config`, {
+    const missingCsrf = await fetch(`${daemon.origin}/dashboard-api/v1/config`, {
       method: 'PATCH',
       headers: { cookie, origin: daemon.origin, 'content-type': 'application/json' },
       body: '{}',
     })
     assert.equal(missingCsrf.status, 403)
 
-    const wrongOrigin = await fetch(`${daemon.origin}/ui-api/v1/config`, {
+    const wrongOrigin = await fetch(`${daemon.origin}/dashboard-api/v1/config`, {
       method: 'PATCH',
       headers: {
         cookie,
@@ -299,7 +299,7 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     })
     assert.equal(wrongOrigin.status, 403)
 
-    const disabledProfileCopy = await fetch(`${daemon.origin}/ui-api/v1/profiles/import`, {
+    const disabledProfileCopy = await fetch(`${daemon.origin}/dashboard-api/v1/profiles/import`, {
       method: 'POST',
       headers: {
         cookie,
@@ -311,7 +311,7 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     })
     assert.equal(disabledProfileCopy.status, 404)
 
-    const changed = await fetch(`${daemon.origin}/ui-api/v1/config`, {
+    const changed = await fetch(`${daemon.origin}/dashboard-api/v1/config`, {
       method: 'PATCH',
       headers: {
         cookie,
@@ -324,7 +324,7 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     assert.equal(changed.status, 200)
     assert.equal((await changed.json()).language, 'zh-CN')
 
-    const disableSavings = await fetch(`${daemon.origin}/ui-api/v1/output-savings/disable`, {
+    const disableSavings = await fetch(`${daemon.origin}/dashboard-api/v1/output-savings/disable`, {
       method: 'POST',
       headers: {
         cookie,
@@ -337,7 +337,7 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     assert.equal(disableSavings.status, 200)
     assert.equal((await disableSavings.json()).enabled, false)
 
-    const unconfirmedClear = await fetch(`${daemon.origin}/ui-api/v1/output-savings/history/clear`, {
+    const unconfirmedClear = await fetch(`${daemon.origin}/dashboard-api/v1/output-savings/history/clear`, {
       method: 'POST',
       headers: {
         cookie,
@@ -349,7 +349,7 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     })
     assert.equal(unconfirmedClear.status, 400)
 
-    const clearSavings = await fetch(`${daemon.origin}/ui-api/v1/output-savings/history/clear`, {
+    const clearSavings = await fetch(`${daemon.origin}/dashboard-api/v1/output-savings/history/clear`, {
       method: 'POST',
       headers: {
         cookie,
@@ -362,7 +362,7 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     assert.equal(clearSavings.status, 200)
     assert.equal((await clearSavings.json()).summary.estimatedOutputTokens, 0)
 
-    const invalidProfile = await fetch(`${daemon.origin}/ui-api/v1/profiles`, {
+    const invalidProfile = await fetch(`${daemon.origin}/dashboard-api/v1/profiles`, {
       method: 'POST',
       headers: {
         cookie,
@@ -379,7 +379,7 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     assert.equal(invalidProfile.status, 400)
     assert.deepEqual(await registry.listProfiles(), [])
 
-    const createWorkProfile = await fetch(`${daemon.origin}/ui-api/v1/profiles`, {
+    const createWorkProfile = await fetch(`${daemon.origin}/dashboard-api/v1/profiles`, {
       method: 'POST',
       headers: {
         cookie,
@@ -406,7 +406,7 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     assert.equal(Object.hasOwn(await registry.resolveProfile('work'), 'label'), false)
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8')).profiles.work.enabledProviders, ['chatgpt'])
     const workProfile = await registry.resolveProfile('work')
-    const profileConsole = await fetch(`${daemon.origin}/ui/?profile=${encodeURIComponent(workProfile.id)}`, { headers: { cookie } })
+    const profileConsole = await fetch(`${daemon.origin}/dashboard/?profile=${encodeURIComponent(workProfile.id)}`, { headers: { cookie } })
     assert.equal(profileConsole.status, 200)
     const mappedJob = daemon.store.createJob({
       provider: 'chatgpt',
@@ -415,7 +415,7 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
       execution_backend: 'playwright',
       profile_id: workProfile.id,
     })
-    const mappedJobResponse = await fetch(`${daemon.origin}/ui-api/v1/jobs/${mappedJob.job_id}`, { headers: { cookie } })
+    const mappedJobResponse = await fetch(`${daemon.origin}/dashboard-api/v1/jobs/${mappedJob.job_id}`, { headers: { cookie } })
     assert.equal(mappedJobResponse.status, 200)
     assert.equal((await mappedJobResponse.json()).profileSlug, 'work')
     await daemon.store.cancelJob(mappedJob.job_id, { source: 'test-cleanup' })
@@ -468,7 +468,7 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     assert.equal(new URL(dashboardBody.dashboard.url).origin, daemon.origin)
     assert.equal(new URL(dashboardBody.dashboard.url).searchParams.get('profile'), workProfile.id)
 
-    const profileMutation = await fetch(`${daemon.origin}/ui-api/v1/profiles/work`, {
+    const profileMutation = await fetch(`${daemon.origin}/dashboard-api/v1/profiles/work`, {
       method: 'PATCH',
       headers: {
         cookie,
@@ -500,7 +500,7 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     assert.deepEqual(storedWorkProfile.enabledProviders, ['chatgpt', 'claude'])
     assert.deepEqual(storedWorkProfile.providerModes.chatgpt, ['browser'])
 
-    const afterProfile = await fetch(`${daemon.origin}/ui-api/v1/snapshot`, { headers: { cookie } }).then((response) => response.json())
+    const afterProfile = await fetch(`${daemon.origin}/dashboard-api/v1/snapshot`, { headers: { cookie } }).then((response) => response.json())
     assertUiSchema(validateUiSnapshot, afterProfile)
     assert.deepEqual(afterProfile.profiles[0].enabledProviders, ['chatgpt', 'claude'])
     assert.deepEqual(afterProfile.profiles[0].providerModes.chatgpt, ['browser'])
@@ -516,7 +516,7 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     assert.deepEqual(afterProfile.providers.find((provider) => provider.id === 'chatgpt').profiles[0].enabledModes, ['browser'])
     assert.equal(afterProfile.providers.find((provider) => provider.id === 'gemini').profiles[0].enabled, false)
 
-    const cloakProfile = await fetch(`${daemon.origin}/ui-api/v1/profiles`, {
+    const cloakProfile = await fetch(`${daemon.origin}/dashboard-api/v1/profiles`, {
       method: 'POST',
       headers: {
         cookie,
@@ -538,7 +538,7 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
       createdWithVersion: '145.0.7632.109.2',
       profileFormat: 1,
     })
-    const boundSnapshot = await fetch(`${daemon.origin}/ui-api/v1/snapshot`, { headers: { cookie } }).then((response) => response.json())
+    const boundSnapshot = await fetch(`${daemon.origin}/dashboard-api/v1/snapshot`, { headers: { cookie } }).then((response) => response.json())
     assertUiSchema(validateUiSnapshot, boundSnapshot)
     assert.deepEqual(boundSnapshot.profiles.find((profile) => profile.slug === 'cloak-bound').browserBinding, {
       browserId: 'cloak',
@@ -548,7 +548,7 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     })
     assert.equal(boundSnapshot.profiles.find((profile) => profile.slug === 'cloak-bound').browserMode, 'managed')
 
-    const readinessRefresh = await fetch(`${daemon.origin}/ui-api/v1/profiles/work/providers/actions/readiness`, {
+    const readinessRefresh = await fetch(`${daemon.origin}/dashboard-api/v1/profiles/work/providers/actions/readiness`, {
       method: 'POST',
       headers: {
         cookie,
@@ -577,7 +577,7 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
       daemon.store.cancelJob(job.jobId, { source: 'test-cleanup' }).catch(() => undefined)
     )))
 
-    const deleteProfile = await fetch(`${daemon.origin}/ui-api/v1/profiles/work`, {
+    const deleteProfile = await fetch(`${daemon.origin}/dashboard-api/v1/profiles/work`, {
       method: 'DELETE',
       headers: {
         cookie,
@@ -599,11 +599,11 @@ test('dashboard sessions are invalidated when the real daemon restarts', async (
   try {
     const root = await fetch(`${daemon.origin}/`, { redirect: 'manual' })
     const cookie = root.headers.get('set-cookie')?.split(';')[0]
-    assert.match(cookie ?? '', /^tokenless_ui_session=/)
+    assert.match(cookie ?? '', /^tokenless_dashboard_session=/)
     await daemon.close()
 
     daemon = await startDaemon({ homeDir, host: '127.0.0.1', port: 0 })
-    const staleMutation = await fetch(`${daemon.origin}/ui-api/v1/config`, {
+    const staleMutation = await fetch(`${daemon.origin}/dashboard-api/v1/config`, {
       method: 'PATCH',
       headers: {
         cookie,
@@ -615,9 +615,9 @@ test('dashboard sessions are invalidated when the real daemon restarts', async (
     })
     assert.equal(staleMutation.status, 401)
 
-    const replacementSession = await fetch(`${daemon.origin}/ui-api/v1/session`, { headers: { cookie } })
+    const replacementSession = await fetch(`${daemon.origin}/dashboard-api/v1/session`, { headers: { cookie } })
     assert.equal(replacementSession.status, 200)
-    assert.match(replacementSession.headers.get('set-cookie') ?? '', /^tokenless_ui_session=/)
+    assert.match(replacementSession.headers.get('set-cookie') ?? '', /^tokenless_dashboard_session=/)
   } finally {
     await daemon.close()
     fs.rmSync(homeDir, { recursive: true, force: true })
@@ -640,7 +640,7 @@ async function requestWithHost(port, host) {
     const request = http.request({
       host: '127.0.0.1',
       port,
-      path: '/ui/',
+      path: '/dashboard/',
       headers: { host },
     }, (response) => {
       response.resume()

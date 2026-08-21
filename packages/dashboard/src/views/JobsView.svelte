@@ -6,10 +6,10 @@
   import { formatNumber, formatTime } from '../formatting.js'
   import { stateLabel, translateError, type MessageKey } from '../i18n/index.js'
   import { createRouterEngine } from '../router-engine.js'
-  import type { DashboardActions, Language, UiJobDetail, UiJobSummary, UiSnapshot } from '../types.js'
+  import type { DashboardActions, Language, DashboardJobDetail, DashboardJobSummary, DashboardSnapshot } from '../types.js'
 
   let { snapshot, language, t, busy, actions }: {
-    snapshot: UiSnapshot
+    snapshot: DashboardSnapshot
     language: Language
     t: (key: MessageKey) => string
     busy: boolean
@@ -20,7 +20,7 @@
   let provider = $state('')
   let profile = $state('')
   let search = $state('')
-  let detail = $state<UiJobDetail | null>(null)
+  let detail = $state<DashboardJobDetail | null>(null)
   let error = $state('')
   let errorElement = $state<HTMLDivElement>()
   let filtersReady = $state(false)
@@ -118,7 +118,7 @@
     return snapshot.providers.find((entry) => entry.id === providerId)?.label ?? providerId
   }
 
-  function titleFor(job: UiJobSummary) {
+  function titleFor(job: DashboardJobSummary) {
     return job.chatTitle ?? generatedTitles[job.jobId] ?? fallbackTitle(job.titlePrompt) ?? t('untitledChat')
   }
 
@@ -133,7 +133,7 @@
     return normalized.length > 64 ? `${normalized.slice(0, 61).trimEnd()}…` : normalized
   }
 
-  async function generateTitle(job: UiJobSummary) {
+  async function generateTitle(job: DashboardJobSummary) {
     if (job.chatTitle || generatedTitles[job.jobId] || !job.titlePrompt || titleRequests.has(job.jobId)) return
     const profile = snapshot.profiles.find((entry) => entry.id === job.profileId)
     if (!profile) return

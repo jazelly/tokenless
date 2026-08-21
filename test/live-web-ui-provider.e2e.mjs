@@ -118,7 +118,7 @@ function observePage(page, failures) {
   })
   page.on('pageerror', (error) => failures.push(error.message))
   page.on('response', (response) => {
-    if (response.url().includes('/ui-api/') && response.status() >= 400) failures.push(`${response.status()} ${response.url()}`)
+    if (response.url().includes('/dashboard-api/') && response.status() >= 400) failures.push(`${response.status()} ${response.url()}`)
   })
 }
 

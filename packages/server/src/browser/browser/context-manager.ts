@@ -137,7 +137,6 @@ type ProviderPageState = {
   ownership: 'tokenless-owned' | 'borrowed'
   status: 'leased' | 'idle' | 'protected' | 'closing'
   idleSince: number | null
-  matchesProviderPage?: ((page: Page) => boolean) | undefined
 }
 
 
@@ -369,7 +368,7 @@ export class PersistentContextManager {
     await Promise.all([...this.contexts.entries()].map(async ([profileId, active]) => {
       active.closing = true
       clearProviderPageCleanup(active)
-      await closeReleasedBlankProviderPages(active)
+      await closeReleasedProviderPages(active)
       await active.detachBrowser()
       if (this.contexts.get(profileId) === active) this.contexts.delete(profileId)
     }))
@@ -469,7 +468,6 @@ export class PersistentContextManager {
               provider,
               pageRef,
               page: replacementPage,
-              matchesProviderPage: request.matchesExistingPage,
             })
             if (existing.ownership === 'tokenless-owned' && !existing.page.isClosed()) {
               await existing.page.close().catch(() => undefined)
@@ -510,7 +508,6 @@ export class PersistentContextManager {
             provider,
             pageRef,
             page,
-            matchesProviderPage: request.matchesExistingPage,
           })
           return providerPageLease(active, state, false)
         } finally {
@@ -609,7 +606,6 @@ function bindProviderPage(
     provider: string
     pageRef: string
     page: Page
-    matchesProviderPage?: ((page: Page) => boolean) | undefined
   },
 ) {
   const refKey = managedProviderPageRefKey(options.provider, options.pageRef)
@@ -627,7 +623,6 @@ function bindProviderPage(
     ownership: active.ownedPages.has(options.page) ? 'tokenless-owned' : 'borrowed',
     status: 'leased',
     idleSince: null,
-    matchesProviderPage: options.matchesProviderPage,
   }
   active.providerPages.set(options.page, state)
   active.providerPagesByRef.set(refKey, state)
@@ -710,14 +705,13 @@ function providerPageLease(
   }
 }
 
-async function closeReleasedBlankProviderPages(active: ActiveContext) {
-  const releasedBlankPages = [...active.providerPagesByRef.values()]
+async function closeReleasedProviderPages(active: ActiveContext) {
+  const releasedPages = [...active.providerPagesByRef.values()]
     .filter((state) => (
       state.status === 'idle' &&
-      state.ownership === 'tokenless-owned' &&
-      state.page.url() === 'about:blank'
+      state.ownership === 'tokenless-owned'
     ))
-  for (const state of releasedBlankPages) {
+  for (const state of releasedPages) {
     if (
       active.providerPagesByRef.get(state.refKey) !== state ||
       active.providerPages.get(state.page) !== state
@@ -727,8 +721,6 @@ async function closeReleasedBlankProviderPages(active: ActiveContext) {
       detachProviderPageBinding(active, state, state.generation)
       continue
     }
-    const livePages = active.browserContext.pages().filter((candidate) => !candidate.isClosed())
-    if (livePages.length <= 1) return
     state.status = 'closing'
     detachProviderPageBinding(active, state, state.generation)
     await page.close().catch(() => undefined)
@@ -748,10 +740,9 @@ async function closeExpiredProviderPages(active: ActiveContext) {
       detachProviderPageBinding(active, state, state.generation)
       continue
     }
-    const providerPages = liveProviderPages(active, state)
     state.status = 'closing'
     detachProviderPageBinding(active, state, state.generation)
-    if (state.ownership === 'borrowed' || providerPages.length <= 1) continue
+    if (state.ownership === 'borrowed') continue
     await page.close().catch(() => undefined)
   }
   scheduleProviderPageCleanup(active)
@@ -773,22 +764,6 @@ function scheduleProviderPageCleanup(active: ActiveContext) {
   active.providerPageCleanupTimer.unref?.()
 }
 
-function liveProviderPages(active: ActiveContext, state: ProviderPageState) {
-  const boundProviderPages = new Set(
-    [...active.providerPages.values()]
-      .filter((candidate) => candidate.provider === state.provider)
-      .map((candidate) => candidate.page),
-  )
-  return active.browserContext.pages().filter((page) => (
-    !page.isClosed() &&
-    !active.unavailablePages.has(page) &&
-    (
-      page === state.page ||
-      boundProviderPages.has(page) ||
-      state.matchesProviderPage?.(page) === true
-    )
-  ))
-}
 function clearProviderPageCleanup(active: ActiveContext) {
   if (active.providerPageCleanupTimer === undefined) return
   clearTimeout(active.providerPageCleanupTimer)

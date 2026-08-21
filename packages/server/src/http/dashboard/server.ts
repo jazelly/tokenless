@@ -5,68 +5,68 @@ import { fileURLToPath } from 'node:url'
 import { hasConfiguredTokenlessLanguage, readTokenlessConfig } from '../../persistence/config.js'
 import { TokenlessApplicationServices } from '../../application/services.js'
 import type {
-  UiConfigUpdate,
-  UiConfirmedDeletion,
-  UiProfileCreate,
-  UiProfileUpdate,
-  UiProviderSelection,
-  UiSetupInput,
-} from 'tokenless-internal-shared/ui'
+  DashboardConfigUpdate,
+  DashboardConfirmedDeletion,
+  DashboardProfileCreate,
+  DashboardProfileUpdate,
+  DashboardProviderSelection,
+  DashboardSetupInput,
+} from 'tokenless-internal-shared/dashboard'
 import { DaemonError, daemonErrorCodeRetryable, daemonErrorStatus } from '../../errors.js'
-import { UiSessionManager } from './session.js'
+import { DashboardSessionManager } from './session.js'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
-type UiServerOptions = {
+type DashboardServerOptions = {
   services: TokenlessApplicationServices
-  sessions: UiSessionManager
+  sessions: DashboardSessionManager
   origin: () => string
-  resolveHarnessRunHandler?: () => Promise<UiHarnessRunHandler | undefined>
+  resolveHarnessRunHandler?: () => Promise<DashboardHarnessRunHandler | undefined>
 }
 
-type UiHarnessRunHandler = (
+type DashboardHarnessRunHandler = (
   request: IncomingMessage,
   response: ServerResponse,
   method: string,
   url: URL,
 ) => Promise<boolean>
 
-const UI_ROOT = fileURLToPath(new URL('../../../dashboard/', import.meta.url))
+const DASHBOARD_ROOT = fileURLToPath(new URL('../../../dashboard/', import.meta.url))
 
-export class TokenlessUiServer {
+export class TokenlessDashboardServer {
   private readonly services: TokenlessApplicationServices
-  private readonly sessions: UiSessionManager
+  private readonly sessions: DashboardSessionManager
   private readonly origin: () => string
-  private readonly resolveHarnessRunHandler: (() => Promise<UiHarnessRunHandler | undefined>) | undefined
+  private readonly resolveHarnessRunHandler: (() => Promise<DashboardHarnessRunHandler | undefined>) | undefined
 
-  constructor(options: UiServerOptions) {
+  constructor(options: DashboardServerOptions) {
     this.services = options.services
     this.sessions = options.sessions
     this.origin = options.origin
     this.resolveHarnessRunHandler = options.resolveHarnessRunHandler
   }
 
-  consoleUrl(profileId?: string | null) {
-    const url = new URL(profileId ? '/ui/' : '/ui/setup/', this.origin())
+  dashboardUrl(profileId?: string | null) {
+    const url = new URL(profileId ? '/dashboard/' : '/dashboard/setup/', this.origin())
     if (profileId) url.searchParams.set('profile', profileId)
     return url.toString()
   }
 
-  redirectToConsole(request: IncomingMessage, response: ServerResponse) {
+  redirectToDashboard(request: IncomingMessage, response: ServerResponse) {
     this.requireOrigin(request)
     this.sessions.ensureSession(request, response)
     this.securityHeaders(response)
-    response.writeHead(303, { location: '/ui/' })
+    response.writeHead(303, { location: '/dashboard/' })
     response.end()
   }
 
   async handle(request: IncomingMessage, response: ServerResponse, url: URL) {
     const requestOrigin = this.requireOrigin(request)
     const method = request.method ?? 'GET'
-    if (method === 'GET' && (url.pathname === '/ui' || url.pathname === '/ui/' || url.pathname === '/ui/setup' || url.pathname === '/ui/setup/')) {
+    if (method === 'GET' && (url.pathname === '/dashboard' || url.pathname === '/dashboard/' || url.pathname === '/dashboard/setup' || url.pathname === '/dashboard/setup/')) {
       this.sessions.ensureSession(request, response)
       const language = await this.initialLanguage(request)
       const shellMessages = DASHBOARD_SHELL_MESSAGES[language]
-      const template = await fs.readFile(path.join(UI_ROOT, 'index.html'), 'utf8')
+      const template = await fs.readFile(path.join(DASHBOARD_ROOT, 'index.html'), 'utf8')
       const body = template
         .replaceAll('__TOKENLESS_LANG__', language)
         .replaceAll('__TOKENLESS_TITLE__', shellMessages.title)
@@ -77,31 +77,31 @@ export class TokenlessUiServer {
       this.writeAsset(response, 200, body, 'text/html; charset=utf-8')
       return
     }
-    if (method === 'GET' && url.pathname === '/ui/styles.css') {
-      this.writeAsset(response, 200, await fs.readFile(path.join(UI_ROOT, 'styles.css')), 'text/css; charset=utf-8')
+    if (method === 'GET' && url.pathname === '/dashboard/styles.css') {
+      this.writeAsset(response, 200, await fs.readFile(path.join(DASHBOARD_ROOT, 'styles.css')), 'text/css; charset=utf-8')
       return
     }
-    if (method === 'GET' && url.pathname === '/ui/mark.png') {
-      this.writeAsset(response, 200, await fs.readFile(path.join(UI_ROOT, 'mark.png')), 'image/png')
+    if (method === 'GET' && url.pathname === '/dashboard/mark.png') {
+      this.writeAsset(response, 200, await fs.readFile(path.join(DASHBOARD_ROOT, 'mark.png')), 'image/png')
       return
     }
-    const modulePath = method === 'GET' ? uiModulePath(url.pathname) : null
+    const modulePath = method === 'GET' ? dashboardModulePath(url.pathname) : null
     if (modulePath) {
       try {
-        this.writeAsset(response, 200, await fs.readFile(path.join(UI_ROOT, modulePath)), 'text/javascript; charset=utf-8')
+        this.writeAsset(response, 200, await fs.readFile(path.join(DASHBOARD_ROOT, modulePath)), 'text/javascript; charset=utf-8')
       } catch (error) {
         if (!isMissingFile(error)) throw error
         this.writeAsset(response, 404, 'Not found.', 'text/plain; charset=utf-8')
       }
       return
     }
-    if (url.pathname.startsWith('/ui/')) {
+    if (url.pathname.startsWith('/dashboard/')) {
       this.writeAsset(response, 404, 'Not found.', 'text/plain; charset=utf-8')
       return true
     }
 
-    if (!url.pathname.startsWith('/ui-api/v1/')) return false
-    if (url.pathname.startsWith('/ui-api/v1/harness/')) {
+    if (!url.pathname.startsWith('/dashboard-api/v1/')) return false
+    if (url.pathname.startsWith('/dashboard-api/v1/harness/')) {
       if (method === 'GET') this.sessions.requireSession(request)
       else this.sessions.requireMutation(request, requestOrigin)
       const handler = await this.resolveHarnessRunHandler?.()
@@ -110,21 +110,21 @@ export class TokenlessUiServer {
         return true
       }
       const privateUrl = new URL(url.href)
-      privateUrl.pathname = url.pathname.replace('/ui-api/v1/harness', '/v1/private/agent')
+      privateUrl.pathname = url.pathname.replace('/dashboard-api/v1/harness', '/v1/private/agent')
       this.securityHeaders(response)
       if (await handler(request, response, method, privateUrl)) return true
     }
     const session = method === 'GET'
       ? this.sessions.ensureSession(request, response)
       : this.sessions.requireMutation(request, requestOrigin)
-    if (method === 'GET' && url.pathname === '/ui-api/v1/session') {
+    if (method === 'GET' && url.pathname === '/dashboard-api/v1/session') {
       this.writeJson(response, 200, {
         csrf: session.csrf,
         expiresAt: new Date(session.expiresAt).toISOString(),
       })
       return true
     }
-    if (method === 'GET' && url.pathname === '/ui-api/v1/snapshot') {
+    if (method === 'GET' && url.pathname === '/dashboard-api/v1/snapshot') {
       const snapshot = await this.services.snapshot()
       const etag = `"${snapshot.revision}"`
       if (request.headers['if-none-match'] === etag) {
@@ -136,7 +136,7 @@ export class TokenlessUiServer {
       this.writeJson(response, 200, snapshot, { etag })
       return true
     }
-    const jobMatch = /^\/ui-api\/v1\/jobs\/([^/]+)(?:\/(cancel|resume))?$/.exec(url.pathname)
+    const jobMatch = /^\/dashboard-api\/v1\/jobs\/([^/]+)(?:\/(cancel|resume))?$/.exec(url.pathname)
     if (jobMatch && method === 'GET' && !jobMatch[2]) {
       this.writeJson(response, 200, await this.services.job(decodeURIComponent(jobMatch[1] ?? '')))
       return true
@@ -149,41 +149,41 @@ export class TokenlessUiServer {
       this.writeJson(response, 200, await this.services.resumeJob(decodeURIComponent(jobMatch[1] ?? '')))
       return true
     }
-    if (method === 'PATCH' && url.pathname === '/ui-api/v1/config') {
-      this.writeJson(response, 200, await this.services.updateConfig(await readJson<UiConfigUpdate>(request)))
+    if (method === 'PATCH' && url.pathname === '/dashboard-api/v1/config') {
+      this.writeJson(response, 200, await this.services.updateConfig(await readJson<DashboardConfigUpdate>(request)))
       return true
     }
-    if (method === 'POST' && url.pathname === '/ui-api/v1/setup') {
-      this.writeJson(response, 200, await this.services.setup(await readJson<UiSetupInput>(request)))
+    if (method === 'POST' && url.pathname === '/dashboard-api/v1/setup') {
+      this.writeJson(response, 200, await this.services.setup(await readJson<DashboardSetupInput>(request)))
       return true
     }
-    if (method === 'POST' && url.pathname === '/ui-api/v1/output-savings/enable') {
+    if (method === 'POST' && url.pathname === '/dashboard-api/v1/output-savings/enable') {
       await requireEmptyJson(request)
       this.writeJson(response, 200, await this.services.enableOutputSavings())
       return true
     }
-    if (method === 'POST' && url.pathname === '/ui-api/v1/output-savings/disable') {
+    if (method === 'POST' && url.pathname === '/dashboard-api/v1/output-savings/disable') {
       await requireEmptyJson(request)
       this.writeJson(response, 200, await this.services.disableOutputSavings())
       return true
     }
-    if (method === 'POST' && url.pathname === '/ui-api/v1/output-savings/runtime/uninstall') {
-      this.writeJson(response, 200, await this.services.uninstallOutputSavings(await readJson<UiConfirmedDeletion>(request)))
+    if (method === 'POST' && url.pathname === '/dashboard-api/v1/output-savings/runtime/uninstall') {
+      this.writeJson(response, 200, await this.services.uninstallOutputSavings(await readJson<DashboardConfirmedDeletion>(request)))
       return true
     }
-    if (method === 'POST' && url.pathname === '/ui-api/v1/output-savings/history/clear') {
-      this.writeJson(response, 200, await this.services.clearOutputSavings(await readJson<UiConfirmedDeletion>(request)))
+    if (method === 'POST' && url.pathname === '/dashboard-api/v1/output-savings/history/clear') {
+      this.writeJson(response, 200, await this.services.clearOutputSavings(await readJson<DashboardConfirmedDeletion>(request)))
       return true
     }
-    if (method === 'POST' && url.pathname === '/ui-api/v1/profiles') {
-      this.writeJson(response, 201, await this.services.createProfile(await readJson<UiProfileCreate>(request)))
+    if (method === 'POST' && url.pathname === '/dashboard-api/v1/profiles') {
+      this.writeJson(response, 201, await this.services.createProfile(await readJson<DashboardProfileCreate>(request)))
       return true
     }
-    const profileMatch = /^\/ui-api\/v1\/profiles\/([^/]+)(?:\/(open))?$/.exec(url.pathname)
+    const profileMatch = /^\/dashboard-api\/v1\/profiles\/([^/]+)(?:\/(open))?$/.exec(url.pathname)
     if (profileMatch && method === 'PATCH' && !profileMatch[2]) {
       this.writeJson(response, 200, await this.services.updateProfile(
         decodeURIComponent(profileMatch[1] ?? ''),
-        await readJson<UiProfileUpdate>(request),
+        await readJson<DashboardProfileUpdate>(request),
       ))
       return true
     }
@@ -195,14 +195,14 @@ export class TokenlessUiServer {
       this.writeJson(response, 200, await this.services.openProfile(decodeURIComponent(profileMatch[1] ?? '')))
       return true
     }
-    const profileReadinessMatch = /^\/ui-api\/v1\/profiles\/([^/]+)\/providers\/actions\/readiness$/.exec(url.pathname)
+    const profileReadinessMatch = /^\/dashboard-api\/v1\/profiles\/([^/]+)\/providers\/actions\/readiness$/.exec(url.pathname)
     if (profileReadinessMatch && method === 'POST') {
       this.writeJson(response, 202, await this.services.refreshProviderReadiness(
         decodeURIComponent(profileReadinessMatch[1] ?? ''),
       ))
       return true
     }
-    const providerMatch = /^\/ui-api\/v1\/profiles\/([^/]+)\/providers\/([^/]+)\/actions\/(open|readiness|controls)$/.exec(url.pathname)
+    const providerMatch = /^\/dashboard-api\/v1\/profiles\/([^/]+)\/providers\/([^/]+)\/actions\/(open|readiness|controls)$/.exec(url.pathname)
     if (providerMatch && method === 'POST') {
       this.writeJson(response, 202, await this.services.providerAction(
         decodeURIComponent(providerMatch[1] ?? ''),
@@ -211,20 +211,20 @@ export class TokenlessUiServer {
       ))
       return true
     }
-    const selectionMatch = /^\/ui-api\/v1\/profiles\/([^/]+)\/providers\/([^/]+)\/selection$/.exec(url.pathname)
+    const selectionMatch = /^\/dashboard-api\/v1\/profiles\/([^/]+)\/providers\/([^/]+)\/selection$/.exec(url.pathname)
     if (selectionMatch && method === 'POST') {
       this.writeJson(response, 202, await this.services.providerSelection(
         decodeURIComponent(selectionMatch[1] ?? ''),
         decodeURIComponent(selectionMatch[2] ?? ''),
-        await readJson<UiProviderSelection>(request),
+        await readJson<DashboardProviderSelection>(request),
       ))
       return true
     }
-    if (method === 'POST' && url.pathname === '/ui-api/v1/runtime/quiesce') {
+    if (method === 'POST' && url.pathname === '/dashboard-api/v1/runtime/quiesce') {
       this.writeJson(response, 200, await this.services.quiesceRuntime())
       return true
     }
-    this.writeJson(response, 404, { error: { code: 'ui_route_not_found', message: 'Not found.' } })
+    this.writeJson(response, 404, { error: { code: 'dashboard_route_not_found', message: 'Not found.' } })
     return true
   }
 
@@ -242,7 +242,7 @@ export class TokenlessUiServer {
     const isPublicError = Number.isInteger(value.status) && (value.status ?? 0) >= 400 && (value.status ?? 0) < 600
     this.writeJson(response, isPublicError ? value.status! : 400, {
       error: {
-        code: value.code ?? 'ui_request_failed',
+        code: value.code ?? 'dashboard_request_failed',
         message: isPublicError && value.message ? value.message : 'The dashboard request failed.',
       },
     })
@@ -265,7 +265,7 @@ export class TokenlessUiServer {
     } else if (expected.hostname === 'localhost') {
       allowedHosts.add(`127.0.0.1${expected.port ? `:${expected.port}` : ''}`)
     }
-    if (!allowedHosts.has(host)) throw uiError('ui_host_rejected', 'The request Host is not allowed.', 403)
+    if (!allowedHosts.has(host)) throw dashboardError('dashboard_host_rejected', 'The request Host is not allowed.', 403)
     return `${expected.protocol}//${host}`
   }
 
@@ -300,19 +300,19 @@ export class TokenlessUiServer {
 
 const DASHBOARD_SHELL_MESSAGES = {
   en: {
-    title: 'Tokenless local console',
+    title: 'Tokenless local Dashboard',
     skip: 'Skip to content',
     language: 'Language',
   },
   'zh-CN': {
-    title: 'Tokenless 本地控制台',
+    title: 'Tokenless 本地 Dashboard',
     skip: '跳到主要内容',
     language: '语言',
   },
 } as const
 
-function uiModulePath(pathname: string) {
-  const match = /^\/ui\/([a-z0-9-]+(?:\/[a-z0-9-]+)*)\.js$/.exec(pathname)
+function dashboardModulePath(pathname: string) {
+  const match = /^\/dashboard\/([a-z0-9-]+(?:\/[a-z0-9-]+)*)\.js$/.exec(pathname)
   return match ? `${match[1]}.js` : null
 }
 
@@ -326,7 +326,7 @@ async function readJson<T>(request: IncomingMessage): Promise<T> {
   for await (const chunk of request) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
     total += buffer.length
-    if (total > 1024 * 1024) throw uiError('ui_body_too_large', 'Request body is too large.', 413)
+    if (total > 1024 * 1024) throw dashboardError('dashboard_body_too_large', 'Request body is too large.', 413)
     chunks.push(buffer)
   }
   const raw = Buffer.concat(chunks).toString('utf8')
@@ -335,10 +335,10 @@ async function readJson<T>(request: IncomingMessage): Promise<T> {
   try {
     value = JSON.parse(raw)
   } catch {
-    throw uiError('ui_json_invalid', 'Request body must be valid JSON.', 400)
+    throw dashboardError('dashboard_json_invalid', 'Request body must be valid JSON.', 400)
   }
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw uiError('ui_json_invalid', 'Request body must be a JSON object.', 400)
+    throw dashboardError('dashboard_json_invalid', 'Request body must be a JSON object.', 400)
   }
   return value as T
 }
@@ -346,10 +346,10 @@ async function readJson<T>(request: IncomingMessage): Promise<T> {
 async function requireEmptyJson(request: IncomingMessage) {
   const value = await readJson<object>(request)
   if (Object.keys(value).length > 0) {
-    throw uiError('invalid_fields', 'Request contains unsupported fields.', 400)
+    throw dashboardError('invalid_fields', 'Request contains unsupported fields.', 400)
   }
 }
 
-function uiError(code: string, message: string, status: number) {
+function dashboardError(code: string, message: string, status: number) {
   return Object.assign(new Error(message), { code, status })
 }

@@ -18,8 +18,8 @@
     DashboardOperation,
     Language,
     Section,
-    UiSetupInput,
-    UiSnapshot,
+    DashboardSetupInput,
+    DashboardSnapshot,
   } from './types.js'
 
   const sections = new Set<Section>(['overview', 'profiles', 'providers', 'capabilities', 'jobs', 'system'])
@@ -31,7 +31,7 @@
   }
 
   let language = $state<Language>(initialLanguage)
-  let snapshot = $state<UiSnapshot | null>(null)
+  let snapshot = $state<DashboardSnapshot | null>(null)
   let offline = $state(false)
   let busy = $state(false)
   let fatal = $state('')
@@ -160,9 +160,9 @@
 
   function synchronizeSnapshot() {
     if (!snapshot) return
-    if (snapshot.profiles.length === 0 && !setupRoute && isConsolePath(location.pathname)) {
+    if (snapshot.profiles.length === 0 && !setupRoute && isDashboardPath(location.pathname)) {
       const url = new URL(location.href)
-      url.pathname = '/ui/setup/'
+      url.pathname = '/dashboard/setup/'
       url.hash = ''
       history.replaceState(history.state, '', url)
       setupRoute = true
@@ -211,14 +211,14 @@
     }
   }
 
-  async function setup(input: UiSetupInput) {
+  async function setup(input: DashboardSetupInput) {
     const profile = await perform(() => client.setup(input), false)
     selectedProfile = profile.slug
     readiness.reset(profile.slug)
     setupRoute = false
     section = 'profiles'
     const url = new URL(location.href)
-    url.pathname = '/ui/'
+    url.pathname = '/dashboard/'
     url.searchParams.set('profile', profile.slug)
     url.hash = '#profiles'
     history.replaceState(history.state, '', url)
@@ -243,24 +243,24 @@
   }
 
   function isSetupPath(pathname: string) {
-    return pathname === '/ui/setup' || pathname === '/ui/setup/'
+    return pathname === '/dashboard/setup' || pathname === '/dashboard/setup/'
   }
 
-  function isConsolePath(pathname: string) {
-    return pathname === '/ui' || pathname === '/ui/'
+  function isDashboardPath(pathname: string) {
+    return pathname === '/dashboard' || pathname === '/dashboard/'
   }
 </script>
 
 {#if fatal}
   <main id="main" tabindex="-1" class="fatal-state" data-testid="fatal-state">
-    <img src="/ui/mark.png" alt="" width="42" height="42" />
+    <img src="/dashboard/mark.png" alt="" width="42" height="42" />
     <h1>{t('sessionExpired')}</h1>
     <p>{fatal}</p>
     <p>{t('reopen')}</p>
   </main>
 {:else if !snapshot}
   <main id="main" tabindex="-1" class="loading-state" aria-live="polite">
-    <img src="/ui/mark.png" alt="" width="42" height="42" />
+    <img src="/dashboard/mark.png" alt="" width="42" height="42" />
     <span class="spinner"></span>
     <p>{t('loading')}</p>
   </main>
@@ -275,7 +275,7 @@
 {:else}
   <div class:profiles-active={section === 'profiles'} class="app-shell" data-testid="app-shell">
     <aside class="rail">
-      <div class="rail-brand"><img src="/ui/mark.png" alt="Tokenless" width="28" height="28" translate="no" /></div>
+      <div class="rail-brand"><img src="/dashboard/mark.png" alt="Tokenless" width="28" height="28" translate="no" /></div>
       <nav aria-label={t('primaryNavigation')}>
         {#each navigation as item (item.id)}
           {@const Icon = item.icon}
@@ -297,7 +297,7 @@
     </aside>
 
     <header class="mobile-header">
-      <div><img src="/ui/mark.png" alt="" width="24" height="24" /><strong translate="no">Tokenless</strong></div>
+      <div><img src="/dashboard/mark.png" alt="" width="24" height="24" /><strong translate="no">Tokenless</strong></div>
       <label class="mobile-profile-select">
         <span class="sr-only">{t('selectProfile')}</span>
         <select name="activeProfile" value={selectedProfile} onchange={(event) => selectProfile(event.currentTarget.value)}>{#each snapshot.profiles as profile}<option value={profile.slug}>{profile.slug}</option>{/each}</select>

@@ -26,8 +26,8 @@ import {
 } from '../errors.js'
 import { JobStore, WebAiRequestCancelledError, WebAiRequestRefConflictError, publicView, type ExecutionBackend, type JobStatus } from '../jobs/store.js'
 import { TokenlessApplicationServices } from '../application/services.js'
-import { TokenlessUiServer } from './ui/server.js'
-import { UiSessionManager } from './ui/session.js'
+import { TokenlessDashboardServer } from './dashboard/server.js'
+import { DashboardSessionManager } from './dashboard/session.js'
 import { OutputSavingsProcessor } from '../output-savings/processor.js'
 import { PrivateProviderTurnV0Adapter } from './private/provider-turn/v0.js'
 import {
@@ -143,9 +143,9 @@ export async function serveHttp({
     origin,
     startedAt,
   })
-  const uiServer = new TokenlessUiServer({
+  const dashboardServer = new TokenlessDashboardServer({
     services: applicationServices,
-    sessions: new UiSessionManager(),
+    sessions: new DashboardSessionManager(),
     origin,
     resolveHarnessRunHandler: async () => resolveAgentRunHandler?.(origin()),
   })
@@ -154,7 +154,7 @@ export async function serveHttp({
   const apiProxy = new ApiProxyAdapter(store, async () => await runtimeController?.wake(), g4fService?.client)
   const imageGeneration = new ImageGenerationAdapter(store, async () => await runtimeController?.wake(), g4fService?.client)
   server = http.createServer((request, response) => {
-    void handleRequest(store, close, () => active, deactivate, runtimeController, g4fService, applicationServices, uiServer, privateProviderTurn, apiProxy, imageGeneration, featureBench, resolveAgentRunHandler, origin(), request, response)
+    void handleRequest(store, close, () => active, deactivate, runtimeController, g4fService, applicationServices, dashboardServer, privateProviderTurn, apiProxy, imageGeneration, featureBench, resolveAgentRunHandler, origin(), request, response)
   })
   await new Promise<void>((resolve, reject) => {
     const onError = (error: Error) => {
@@ -220,7 +220,7 @@ async function handleRequest(
   runtimeController: BrowserRuntimeController | undefined,
   g4fService: G4fServiceProcess | undefined,
   applicationServices: TokenlessApplicationServices,
-  uiServer: TokenlessUiServer,
+  dashboardServer: TokenlessDashboardServer,
   privateProviderTurn: PrivateProviderTurnV0Adapter,
   apiProxy: ApiProxyAdapter,
   imageGeneration: ImageGenerationAdapter,
@@ -262,27 +262,27 @@ async function handleRequest(
 
     if (method === 'GET' && url.pathname === '/') {
       try {
-        uiServer.redirectToConsole(request, response)
+        dashboardServer.redirectToDashboard(request, response)
       } catch (error) {
-        uiServer.writeError(response, error)
+        dashboardServer.writeError(response, error)
       }
       return
     }
 
-    if (url.pathname === '/ui' || url.pathname.startsWith('/ui/')) {
+    if (url.pathname === '/dashboard' || url.pathname.startsWith('/dashboard/')) {
       try {
-        await uiServer.handle(request, response, url)
+        await dashboardServer.handle(request, response, url)
       } catch (error) {
-        uiServer.writeError(response, error)
+        dashboardServer.writeError(response, error)
       }
       return
     }
 
-    if (url.pathname.startsWith('/ui-api/v1/')) {
+    if (url.pathname.startsWith('/dashboard-api/v1/')) {
       try {
-        await uiServer.handle(request, response, url)
+        await dashboardServer.handle(request, response, url)
       } catch (error) {
-        uiServer.writeError(response, error)
+        dashboardServer.writeError(response, error)
       }
       return
     }
@@ -518,7 +518,7 @@ async function handleRequest(
         throw invalidInput('request body must be valid JSON: unknown field')
       }
       const profileId = optionalString(body.profile_id)
-      const url = uiServer.consoleUrl(profileId)
+      const url = dashboardServer.dashboardUrl(profileId)
       const opened = body.open === true && profileId
         ? await runtimeController?.openControlPlane(profileId, url)
         : null

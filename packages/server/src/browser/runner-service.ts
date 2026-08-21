@@ -266,7 +266,11 @@ export class ManagedPlaywrightRunnerService {
       throw tokenlessError('profile_not_found', 'Managed profile is not registered or is not ready.')
     }
     const managedContext = await this.contextManager.ensureContext(profile, browserVisibility)
-    const pages = managedContext.browserContext.pages()
+    let pages = managedContext.browserContext.pages()
+    if (pages.length === 0) {
+      await managedContext.acquirePage({ key: `tokenless:profile-open:${profile.id}` })
+      pages = managedContext.browserContext.pages()
+    }
     if (pages[0] && managedContext.effectiveBrowserVisibility === 'headed') {
       await bringToFrontForUserHandoff(pages[0])
     }

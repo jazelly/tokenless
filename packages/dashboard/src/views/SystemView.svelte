@@ -4,7 +4,7 @@
   import PageHeader from '../components/PageHeader.svelte'
   import { formatNumber, formatTime } from '../formatting.js'
   import { stateLabel, type MessageKey } from '../i18n/index.js'
-  import type { DashboardActions, Language, UiConfigUpdate, UiDiagnostic, UiSnapshot } from '../types.js'
+  import type { DashboardActions, Language, DashboardConfigUpdate, DashboardDiagnostic, DashboardSnapshot } from '../types.js'
 
   let {
     snapshot,
@@ -14,7 +14,7 @@
     actions,
     ontoast,
   }: {
-    snapshot: UiSnapshot
+    snapshot: DashboardSnapshot
     language: Language
     t: (key: MessageKey) => string
     busy: boolean
@@ -37,7 +37,7 @@
   async function save(event: SubmitEvent) {
     event.preventDefault()
     formError = ''
-    const body: UiConfigUpdate = {
+    const body: DashboardConfigUpdate = {
       language: selectedLanguage,
       browser: selectedBrowser,
       ...(browserExecutablePath.trim() ? { browserExecutablePath: browserExecutablePath.trim() } : {}),
@@ -105,7 +105,7 @@
     return `${new Intl.NumberFormat(language, { maximumFractionDigits: 1 }).format(bytes / 1024 / 1024)} MB`
   }
 
-  function diagnosticMessage(item: UiDiagnostic) {
+  function diagnosticMessage(item: DashboardDiagnostic) {
     if (item.id === 'configuration') return snapshot.config.updatedAt ? t('configPersisted') : t('setupIncomplete')
     if (item.id === 'browser-runtime') return item.state === 'ok' ? t('browserReady') : t('browserUnavailable')
     if (item.id === 'profiles') {

@@ -2,18 +2,18 @@ import type { DashboardClient } from './dashboard-client.js'
 import type { MessageKey } from './i18n/index.js'
 import type {
   ReadinessJobs,
-  UiJobStatus,
-  UiJobSummary,
-  UiSnapshot,
+  DashboardJobStatus,
+  DashboardJobSummary,
+  DashboardSnapshot,
 } from './types.js'
 
 const READINESS_TIMEOUT_MS = 120_000
 const READINESS_POLL_MS = 750
-const ACTIVE_JOB_STATUSES = new Set<UiJobStatus>(['queued', 'claimed', 'running'])
+const ACTIVE_JOB_STATUSES = new Set<DashboardJobStatus>(['queued', 'claimed', 'running'])
 
 type ReadinessDependencies = {
   client: DashboardClient
-  snapshot: () => UiSnapshot | null
+  snapshot: () => DashboardSnapshot | null
   refreshSnapshot: () => Promise<void>
   notify: (message: string) => void
   t: (key: MessageKey) => string
@@ -92,7 +92,7 @@ export function createReadinessState(dependencies: ReadinessDependencies) {
   return { state, refresh, reset }
 }
 
-function optimisticJobs(snapshot: UiSnapshot | null, profileSlug: string): ReadinessJobs {
+function optimisticJobs(snapshot: DashboardSnapshot | null, profileSlug: string): ReadinessJobs {
   const profile = snapshot?.profiles.find((entry) => entry.slug === profileSlug)
   const enabledProviderIds = snapshot?.providers
     .filter((provider) => provider.profiles.find((entry) => entry.profileId === profile?.slug)?.enabled)
@@ -100,6 +100,6 @@ function optimisticJobs(snapshot: UiSnapshot | null, profileSlug: string): Readi
   return Object.fromEntries(enabledProviderIds.map((providerId) => [providerId, { status: 'running' as const }]))
 }
 
-function jobsByProvider(jobs: UiJobSummary[]): ReadinessJobs {
+function jobsByProvider(jobs: DashboardJobSummary[]): ReadinessJobs {
   return Object.fromEntries(jobs.map((job) => [job.provider, { jobId: job.jobId, status: job.status }]))
 }

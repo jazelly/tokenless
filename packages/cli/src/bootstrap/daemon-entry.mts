@@ -8,10 +8,14 @@ async function main() {
     console.log(JSON.stringify(daemonBuildInfo('tokenless-daemon')))
     return
   }
-  await startDaemon({
+  const daemon = await startDaemon({
     ...parseArgs(args),
     agentRunHandlerFactory: await loadAgentRunHandlerFactory(),
   })
+  if (process.stdout.isTTY) {
+    const dashboardUrl = new URL('/dashboard/', daemon.origin).toString()
+    console.log(`Tokenless Dashboard is running at ${dashboardUrl} / Tokenless Dashboard 已运行于 ${dashboardUrl}`)
+  }
 }
 
 async function loadAgentRunHandlerFactory(): Promise<AgentRunHttpHandlerFactory> {

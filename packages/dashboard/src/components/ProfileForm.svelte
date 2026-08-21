@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick, untrack } from 'svelte'
   import type { MessageKey } from '../i18n/index.js'
-  import type { UiProfile, UiProfileCreate, UiProfileUpdate, UiSnapshot } from '../types.js'
+  import type { DashboardProfile, DashboardProfileCreate, DashboardProfileUpdate, DashboardSnapshot } from '../types.js'
 
   let {
     snapshot,
@@ -11,12 +11,12 @@
     oncancel,
     onsubmit,
   }: {
-    snapshot: UiSnapshot
-    profile?: UiProfile | undefined
+    snapshot: DashboardSnapshot
+    profile?: DashboardProfile | undefined
     t: (key: MessageKey) => string
     busy: boolean
     oncancel: () => void
-    onsubmit: (value: UiProfileCreate | UiProfileUpdate) => Promise<void>
+    onsubmit: (value: DashboardProfileCreate | DashboardProfileUpdate) => Promise<void>
   } = $props()
 
   let slug = $state(untrack(() => profile?.slug ?? ''))

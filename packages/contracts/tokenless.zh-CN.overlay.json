@@ -11,7 +11,7 @@
     { "target": "$[\"servers\"][0][\"description\"]", "update": "本地 Tokenless server" },
     { "target": "$[\"paths\"][\"/ready\"][\"get\"][\"summary\"]", "update": "无需认证读取 token-bound daemon readiness proof" },
     { "target": "$[\"paths\"][\"/ready\"][\"get\"][\"responses\"][\"200\"][\"description\"]", "update": "Daemon readiness proof" },
-    { "target": "$[\"paths\"][\"/ui-api/v1/snapshot\"][\"get\"][\"responses\"][\"304\"][\"description\"]", "update": "Snapshot revision 未改变。" },
+    { "target": "$[\"paths\"][\"/dashboard-api/v1/snapshot\"][\"get\"][\"responses\"][\"304\"][\"description\"]", "update": "Snapshot revision 未改变。" },
     { "target": "$[\"paths\"][\"/v1/anthropic/messages\"][\"post\"][\"summary\"]", "update": "通过可见 provider 页面运行 Anthropic-compatible message" },
     { "target": "$[\"paths\"][\"/v1/anthropic/messages\"][\"post\"][\"description\"]", "update": "接受 Anthropic messages request shape，并返回可见 provider response。由于可见页面没有等价 control，tools 与 structured-output contract 会被拒绝。Streaming response 将已记录的 event sequence replay 为一个 terminal chunk。" },
     { "target": "$[\"paths\"][\"/v1/anthropic/messages\"][\"post\"][\"responses\"][\"200\"][\"description\"]", "update": "Anthropic message shape 的可见 provider response" },
@@ -211,7 +211,7 @@
     { "target": "$[\"paths\"][\"/v1/responses\"][\"post\"][\"responses\"][\"502\"][\"description\"]", "update": "Provider 或 protocol failure" },
     { "target": "$[\"paths\"][\"/v1/responses\"][\"post\"][\"responses\"][\"503\"][\"description\"]", "update": "Proxy 或 provider 不可用" },
     { "target": "$[\"components\"][\"securitySchemes\"][\"controlBearer\"][\"description\"]", "update": "从 daemon home control token file 读取的 bearer token。/ready 是 public challenge endpoint；CLI 为同一个 home 验证 /ready 后，/v1/private/control/shutdown 使用 bearer authentication。" },
-    { "target": "$[\"components\"][\"securitySchemes\"][\"uiSession\"][\"description\"]", "update": "由允许的 UI GET request 自动建立。" },
+    { "target": "$[\"components\"][\"securitySchemes\"][\"dashboardSession\"][\"description\"]", "update": "由允许的Dashboard GET request 自动建立。" },
     { "target": "$[\"components\"][\"securitySchemes\"][\"featureBenchBearer\"][\"description\"]", "update": "创建 private FeatureBench channel 时返回的 short-lived bearer token。" },
     { "target": "$[\"components\"][\"responses\"][\"PublicJob\"][\"description\"]", "update": "Public job view" },
     { "target": "$[\"components\"][\"responses\"][\"BadRequest\"][\"description\"]", "update": "Request body、path、query 或 daemon input 无效" },
@@ -225,7 +225,7 @@
     { "target": "$[\"components\"][\"responses\"][\"BadGateway\"][\"description\"]", "update": "所选 image provider 失败或返回无效 result" },
     { "target": "$[\"components\"][\"responses\"][\"ServiceUnavailable\"][\"description\"]", "update": "没有 eligible image route 或 direct image service 可用" },
     { "target": "$[\"components\"][\"responses\"][\"GatewayTimeout\"][\"description\"]", "update": "Image generation 未在 deadline 前产生 terminal persisted artifact" },
-    { "target": "$[\"components\"][\"responses\"][\"Session\"][\"description\"]", "update": "Active in-memory UI session。" },
+    { "target": "$[\"components\"][\"responses\"][\"Session\"][\"description\"]", "update": "Active in-memory Dashboard session。" },
     { "target": "$[\"components\"][\"responses\"][\"Snapshot\"][\"description\"]", "update": "已脱敏的 aggregate Dashboard state。" },
     { "target": "$[\"components\"][\"responses\"][\"Config\"][\"description\"]", "update": "已持久化的 public configuration。" },
     { "target": "$[\"components\"][\"responses\"][\"OutputSavingsState\"][\"description\"]", "update": "可选的本地 output savings measurement state。" },
@@ -276,6 +276,6 @@
     { "target": "$[\"tags\"][8][\"description\"]", "update": "使用 bearer authentication 的 generated asset readback。" },
     { "target": "$[\"tags\"][9][\"description\"]", "update": "使用 bearer authentication 的 durable outcome replay。" },
     { "target": "$[\"tags\"][10][\"description\"]", "update": "使用 bearer authentication 的 benchmark channel 与 bridge operation。" },
-    { "target": "$[\"tags\"][11][\"description\"]", "update": "使用 UI session cookie 与 CSRF header 的 browser Dashboard interface。" }
+    { "target": "$[\"tags\"][11][\"description\"]", "update": "使用 Dashboard session cookie 与 CSRF header 的 browser Dashboard interface。" }
   ]
 }

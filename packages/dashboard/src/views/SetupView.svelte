@@ -2,7 +2,7 @@
   import { Check, ChevronRight, Globe2, Monitor, UserRound } from '@lucide/svelte'
   import { tick, untrack } from 'svelte'
   import type { MessageKey } from '../i18n/index.js'
-  import type { Language, UiSetupBrowserId, UiSetupInput, UiSnapshot } from '../types.js'
+  import type { Language, DashboardSetupBrowserId, DashboardSetupInput, DashboardSnapshot } from '../types.js'
 
   let {
     snapshot,
@@ -11,11 +11,11 @@
     busy,
     onsetup,
   }: {
-    snapshot: UiSnapshot
+    snapshot: DashboardSnapshot
     language: Language
     t: (key: MessageKey) => string
     busy: boolean
-    onsetup: (input: UiSetupInput) => Promise<void>
+    onsetup: (input: DashboardSetupInput) => Promise<void>
   } = $props()
 
   const setupSnapshot = untrack(() => snapshot.setup)
@@ -35,11 +35,11 @@
   let errorElement = $state<HTMLDivElement>()
   let slug = $state(setupSnapshot?.defaultProfileSlug ?? configuredSlug ?? 'default')
   let roleLabel = $state(defaultProfile?.roleLabel ?? '')
-  let selectedBrowser = $state<UiSetupBrowserId>(initialBrowser)
+  let selectedBrowser = $state<DashboardSetupBrowserId>(initialBrowser)
   let manualBrowser = $state<'chrome' | 'brave'>(untrack(() => selectedBrowser === 'brave' ? 'brave' : 'chrome'))
   let manualMode = $state(candidates.length === 0)
   let browserExecutablePath = $state(candidates.find((candidate) => candidate.browserId === initialBrowser)?.executablePath ?? '')
-  let detectedBrowserBeforeManual = $state<UiSetupBrowserId | null>(
+  let detectedBrowserBeforeManual = $state<DashboardSetupBrowserId | null>(
     candidates.some((candidate) => candidate.browserId === initialBrowser) ? initialBrowser : null,
   )
   let enabledProviders = $state<string[]>(untrack(() => defaultProfile?.enabledProviders
@@ -47,11 +47,11 @@
       .filter((provider) => provider.stage !== 'disabled' && provider.id !== 'gemini')
       .map((provider) => provider.id)))
 
-  function candidateFor(browserId: UiSetupBrowserId) {
+  function candidateFor(browserId: DashboardSetupBrowserId) {
     return candidates.find((candidate) => candidate.browserId === browserId) ?? null
   }
 
-  function selectDetectedBrowser(browserId: UiSetupBrowserId) {
+  function selectDetectedBrowser(browserId: DashboardSetupBrowserId) {
     detectedBrowserBeforeManual = browserId
     selectedBrowser = browserId
     manualMode = false
@@ -118,7 +118,7 @@
 
 <main id="main" tabindex="-1" class="setup-shell" data-testid="setup-view">
   <div class="setup-brand">
-    <img src="/ui/mark.png" alt="" width="26" height="26" />
+    <img src="/dashboard/mark.png" alt="" width="26" height="26" />
     <span translate="no">Tokenless</span>
   </div>
   <section class="setup-card">
@@ -146,7 +146,7 @@
           <label class="field">
             <span>{t('profileBrowser')}</span>
             {#if candidates.length > 0}
-              <select name="browser" value={selectedBrowser} onchange={(event) => selectDetectedBrowser(event.currentTarget.value as UiSetupBrowserId)} data-testid="setup-browser">
+              <select name="browser" value={selectedBrowser} onchange={(event) => selectDetectedBrowser(event.currentTarget.value as DashboardSetupBrowserId)} data-testid="setup-browser">
                 {#each candidates as candidate (candidate.runtimeId)}
                   <option value={candidate.browserId}>{candidate.label} · {candidate.version}</option>
                 {/each}

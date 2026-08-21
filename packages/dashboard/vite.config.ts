@@ -8,7 +8,7 @@ const packageRoot = path.dirname(fileURLToPath(import.meta.url))
 
 export default defineConfig({
   root: path.join(packageRoot, 'src'),
-  base: '/ui/',
+  base: '/dashboard/',
   plugins: [svelte()],
   build: {
     target: 'es2022',

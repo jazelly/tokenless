@@ -1,79 +1,79 @@
 import type {
-  UiConfig,
-  UiConfigUpdate,
-  UiJobDetail,
-  UiJobStatus,
-  UiJobSummary,
-  UiLanguage,
-  UiOutputSavingsState,
-  UiProfile,
-  UiProfileCreate,
-  UiProfileRemoval,
-  UiProfileUpdate,
-  UiProviderAction,
-  UiProviderSelection,
-  UiRuntimeOpenResult,
-  UiRuntimeStatus,
-  UiSetupInput,
-  UiSetupSnapshot,
-  UiSnapshot,
-} from 'tokenless-internal-shared/ui'
+  DashboardConfig,
+  DashboardConfigUpdate,
+  DashboardJobDetail,
+  DashboardJobStatus,
+  DashboardJobSummary,
+  DashboardLanguage,
+  DashboardOutputSavingsState,
+  DashboardProfile,
+  DashboardProfileCreate,
+  DashboardProfileRemoval,
+  DashboardProfileUpdate,
+  DashboardProviderAction,
+  DashboardProviderSelection,
+  DashboardRuntimeOpenResult,
+  DashboardRuntimeStatus,
+  DashboardSetupInput,
+  DashboardSetupSnapshot,
+  DashboardSnapshot,
+} from 'tokenless-internal-shared/dashboard'
 
 export type {
-  UiBrowserBinding,
-  UiBrowserSelection,
-  UiBrowserVisibility,
-  UiCapability,
-  UiConfig,
-  UiConfigUpdate,
-  UiConfirmedDeletion,
-  UiDaemonStatus,
-  UiDiagnostic,
-  UiErrorEnvelope,
-  UiJobDetail,
-  UiJobOutputSavings,
-  UiJobStatus,
-  UiJobSummary,
-  UiLanguage,
-  UiOutputSavingsEvent,
-  UiOutputSavingsRuntime,
-  UiOutputSavingsState,
-  UiOutputSavingsSummary,
-  UiProfile,
-  UiProfileConfig,
-  UiProfileCreate,
-  UiProfileRemoval,
-  UiProfileUpdate,
-  UiProvider,
-  UiProviderAccess,
-  UiProviderAccount,
-  UiProviderAction,
-  UiProviderChoice,
-  UiProviderControls,
-  UiProviderExecutionMode,
-  UiProviderObservation,
-  UiProviderProfileState,
-  UiProviderReadinessRefresh,
-  UiProviderSelection,
-  UiProxy,
-  UiRouterConfig,
-  UiRouterProviderRule,
-  UiRuntimeOpenResult,
-  UiRuntimeStatus,
-  UiSetupBrowserId,
-  UiSetupInput,
-  UiSetupSnapshot,
-  UiSession,
-  UiSnapshot,
-} from 'tokenless-internal-shared/ui'
+  DashboardBrowserBinding,
+  DashboardBrowserSelection,
+  DashboardBrowserVisibility,
+  DashboardCapability,
+  DashboardConfig,
+  DashboardConfigUpdate,
+  DashboardConfirmedDeletion,
+  DashboardDaemonStatus,
+  DashboardDiagnostic,
+  DashboardErrorEnvelope,
+  DashboardJobDetail,
+  DashboardJobOutputSavings,
+  DashboardJobStatus,
+  DashboardJobSummary,
+  DashboardLanguage,
+  DashboardOutputSavingsEvent,
+  DashboardOutputSavingsRuntime,
+  DashboardOutputSavingsState,
+  DashboardOutputSavingsSummary,
+  DashboardProfile,
+  DashboardProfileConfig,
+  DashboardProfileCreate,
+  DashboardProfileRemoval,
+  DashboardProfileUpdate,
+  DashboardProvider,
+  DashboardProviderAccess,
+  DashboardProviderAccount,
+  DashboardProviderAction,
+  DashboardProviderChoice,
+  DashboardProviderControls,
+  DashboardProviderExecutionMode,
+  DashboardProviderObservation,
+  DashboardProviderProfileState,
+  DashboardProviderReadinessRefresh,
+  DashboardProviderSelection,
+  DashboardProxy,
+  DashboardRouterConfig,
+  DashboardRouterProviderRule,
+  DashboardRuntimeOpenResult,
+  DashboardRuntimeStatus,
+  DashboardSetupBrowserId,
+  DashboardSetupInput,
+  DashboardSetupSnapshot,
+  DashboardSession,
+  DashboardSnapshot,
+} from 'tokenless-internal-shared/dashboard'
 
-export type Language = UiLanguage
+export type Language = DashboardLanguage
 
 export type Section = 'overview' | 'profiles' | 'providers' | 'capabilities' | 'routing' | 'jobs' | 'system'
 
 export type ReadinessJobState = {
   jobId?: string
-  status: UiJobStatus
+  status: DashboardJobStatus
 }
 
 export type ReadinessJobs = { [providerId: string]: ReadinessJobState }
@@ -120,25 +120,25 @@ export type HarnessExtensionPairing = {
 }
 
 export type DashboardActions = {
-  updateConfig: (input: UiConfigUpdate, announce?: boolean) => Promise<UiConfig>
-  createProfile: (input: UiProfileCreate, announce?: boolean) => Promise<UiProfile>
-  updateProfile: (slug: string, input: UiProfileUpdate, announce?: boolean) => Promise<UiProfile>
-  removeProfile: (slug: string, announce?: boolean) => Promise<UiProfileRemoval>
-  openProfile: (slug: string, announce?: boolean) => Promise<UiRuntimeOpenResult>
-  runProviderAction: (profileSlug: string, providerId: string, action: UiProviderAction, announce?: boolean) => Promise<UiJobSummary>
-  selectProviderControl: (profileSlug: string, providerId: string, input: UiProviderSelection, announce?: boolean) => Promise<UiJobSummary>
-  getJob: (jobId: string) => Promise<UiJobDetail>
-  cancelJob: (jobId: string, announce?: boolean) => Promise<UiJobDetail>
-  resumeJob: (jobId: string, announce?: boolean) => Promise<UiJobDetail>
+  updateConfig: (input: DashboardConfigUpdate, announce?: boolean) => Promise<DashboardConfig>
+  createProfile: (input: DashboardProfileCreate, announce?: boolean) => Promise<DashboardProfile>
+  updateProfile: (slug: string, input: DashboardProfileUpdate, announce?: boolean) => Promise<DashboardProfile>
+  removeProfile: (slug: string, announce?: boolean) => Promise<DashboardProfileRemoval>
+  openProfile: (slug: string, announce?: boolean) => Promise<DashboardRuntimeOpenResult>
+  runProviderAction: (profileSlug: string, providerId: string, action: DashboardProviderAction, announce?: boolean) => Promise<DashboardJobSummary>
+  selectProviderControl: (profileSlug: string, providerId: string, input: DashboardProviderSelection, announce?: boolean) => Promise<DashboardJobSummary>
+  getJob: (jobId: string) => Promise<DashboardJobDetail>
+  cancelJob: (jobId: string, announce?: boolean) => Promise<DashboardJobDetail>
+  resumeJob: (jobId: string, announce?: boolean) => Promise<DashboardJobDetail>
   startHarnessRun: (input: DashboardHarnessRunInput, announce?: boolean) => Promise<DashboardHarnessRunView>
   readHarnessRun: (runId: string) => Promise<DashboardHarnessRunView>
   resumeHarnessRun: (runId: string, input: DashboardHarnessIntervention, announce?: boolean) => Promise<DashboardHarnessRunView>
   cancelHarnessRun: (runId: string, announce?: boolean) => Promise<DashboardHarnessRunView>
-  quiesceRuntime: (announce?: boolean) => Promise<UiRuntimeStatus>
-  enableOutputSavings: (announce?: boolean) => Promise<UiOutputSavingsState>
-  disableOutputSavings: (announce?: boolean) => Promise<UiOutputSavingsState>
-  clearOutputSavings: (announce?: boolean) => Promise<UiOutputSavingsState>
-  uninstallOutputSavings: (announce?: boolean) => Promise<UiOutputSavingsState>
+  quiesceRuntime: (announce?: boolean) => Promise<DashboardRuntimeStatus>
+  enableOutputSavings: (announce?: boolean) => Promise<DashboardOutputSavingsState>
+  disableOutputSavings: (announce?: boolean) => Promise<DashboardOutputSavingsState>
+  clearOutputSavings: (announce?: boolean) => Promise<DashboardOutputSavingsState>
+  uninstallOutputSavings: (announce?: boolean) => Promise<DashboardOutputSavingsState>
 }
 
 export type DashboardState = {
@@ -146,10 +146,10 @@ export type DashboardState = {
   offline: boolean
   section: Section
   selectedProfile: string
-  snapshot: UiSnapshot
+  snapshot: DashboardSnapshot
 }
 
 export type SnapshotResult = {
   changed: boolean
-  snapshot?: UiSnapshot
+  snapshot?: DashboardSnapshot
 }

@@ -50,7 +50,7 @@ function validateOpenApiDocument(artifactPath, parsed) {
     }
   }
 
-  for (const name of ['controlBearer', 'uiSession', 'csrf', 'featureBenchBearer']) {
+  for (const name of ['controlBearer', 'dashboardSession', 'csrf', 'featureBenchBearer']) {
     if (!isRecord(parsed.components?.securitySchemes?.[name])) {
       throw new Error(`${artifactPath} must define ${name} security scheme`)
     }
@@ -63,14 +63,14 @@ function validateOpenApiDocument(artifactPath, parsed) {
     throw new Error(`${artifactPath} /ready must explicitly opt out of bearer auth`)
   }
   const controlSecurity = JSON.stringify([{ controlBearer: [] }])
-  const uiMutationSecurity = JSON.stringify([{ uiSession: [], csrf: [] }])
+  const dashboardMutationSecurity = JSON.stringify([{ dashboardSession: [], csrf: [] }])
   const featureBenchSecurity = JSON.stringify([{ featureBenchBearer: [] }])
   for (const [route, pathItem] of Object.entries(parsed.paths)) {
     for (const [method, operation] of Object.entries(pathItem)) {
       if (!HTTP_METHODS.has(method)) continue
       if (route === '/ready') continue
-      if (route.startsWith('/ui-api/v1/')) {
-        const expected = method === 'get' ? '[]' : uiMutationSecurity
+      if (route.startsWith('/dashboard-api/v1/')) {
+        const expected = method === 'get' ? '[]' : dashboardMutationSecurity
         if (JSON.stringify(operation.security) !== expected) {
           throw new Error(`${artifactPath} ${method.toUpperCase()} ${route} has invalid Dashboard security`)
         }

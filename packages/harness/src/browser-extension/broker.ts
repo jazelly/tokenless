@@ -121,7 +121,7 @@ export class BrowserExtensionBroker {
       createdAt: new Date().toISOString(),
       expiresAt,
     })
-    const dashboard = new URL('/ui/', this.#baseUrl)
+    const dashboard = new URL('/dashboard/', this.#baseUrl)
     dashboard.searchParams.set('harnessPairing', pairingId)
     return { pairingId, secret, dashboardUrl: dashboard.toString(), expiresAt }
   }

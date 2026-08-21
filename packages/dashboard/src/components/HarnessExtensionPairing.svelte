@@ -2,13 +2,13 @@
   import { onMount } from 'svelte'
   import type { DashboardClient } from '../dashboard-client.js'
   import type { MessageKey } from '../i18n/index.js'
-  import type { HarnessExtensionPairingRequest, UiSnapshot } from '../types.js'
+  import type { HarnessExtensionPairingRequest, DashboardSnapshot } from '../types.js'
   import Modal from './Modal.svelte'
 
   let { client, pairingId, snapshot, selectedProfile, t, onclose, onapproved }: {
     client: DashboardClient
     pairingId: string
-    snapshot: UiSnapshot
+    snapshot: DashboardSnapshot
     selectedProfile: string
     t: (key: MessageKey) => string
     onclose: () => void

@@ -17,7 +17,7 @@ import {
     HarnessSidecarError,
     type HarnessFrontDoorResult,
   } from 'tokenless-internal-shared/harness-sidecar'
-  import type { DashboardActions, DashboardHarnessRunView, UiProvider, UiSnapshot } from '../types.js'
+  import type { DashboardActions, DashboardHarnessRunView, DashboardProvider, DashboardSnapshot } from '../types.js'
   import type { MessageKey } from '../i18n/index.js'
 
   let {
@@ -27,7 +27,7 @@ import {
     busy,
     actions,
   }: {
-    snapshot: UiSnapshot
+    snapshot: DashboardSnapshot
     selectedProfile: string
     t: (key: MessageKey) => string
     busy: boolean
@@ -203,12 +203,12 @@ import {
     return snapshot.profiles.find((profile) => profile.slug === selectedProfile || profile.id === selectedProfile)
   }
 
-  function providerState(provider: UiProvider) {
+  function providerState(provider: DashboardProvider) {
     const profile = selectedProfileState()
     return provider.profiles.find((state) => state.profileId === profile?.slug)
   }
 
-  function selectedModel(provider: UiProvider) {
+  function selectedModel(provider: DashboardProvider) {
     const choices = providerState(provider)?.controls?.model
     return choices?.find((choice) => choice.selected)?.label ?? null
   }

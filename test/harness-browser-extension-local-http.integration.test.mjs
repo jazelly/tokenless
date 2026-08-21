@@ -54,15 +54,15 @@ test('built daemon pairs and revokes one extension-scoped Harness credential wit
     assert.equal(new URL(created.dashboardUrl).origin, daemon.origin)
     assert.equal(new URL(created.dashboardUrl).searchParams.get('harnessPairing'), created.pairingId)
 
-    const dashboard = await fetch(`${daemon.origin}/ui/`)
+    const dashboard = await fetch(`${daemon.origin}/dashboard/`)
     assert.equal(dashboard.status, 200)
     const cookie = dashboard.headers.get('set-cookie')?.split(';')[0]
     assert.ok(cookie)
-    const session = await jsonFetch(`${daemon.origin}/ui-api/v1/session`, {
+    const session = await jsonFetch(`${daemon.origin}/dashboard-api/v1/session`, {
       headers: { cookie },
     })
     const dashboardPairing = await jsonFetch(
-      `${daemon.origin}/ui-api/v1/harness/browser-extension/pairings/${encodeURIComponent(created.pairingId)}`,
+      `${daemon.origin}/dashboard-api/v1/harness/browser-extension/pairings/${encodeURIComponent(created.pairingId)}`,
       { headers: { cookie } },
     )
     assert.deepEqual({
@@ -78,7 +78,7 @@ test('built daemon pairs and revokes one extension-scoped Harness credential wit
       'x-tokenless-csrf': session.csrf,
     }
     const approved = await jsonFetch(
-      `${daemon.origin}/ui-api/v1/harness/browser-extension/pairings/${encodeURIComponent(created.pairingId)}/approve`,
+      `${daemon.origin}/dashboard-api/v1/harness/browser-extension/pairings/${encodeURIComponent(created.pairingId)}/approve`,
       {
         method: 'POST',
         headers: mutationHeaders,
@@ -118,7 +118,7 @@ test('built daemon pairs and revokes one extension-scoped Harness credential wit
     assert.equal(daemonControl.status, 403)
 
     const revoked = await jsonFetch(
-      `${daemon.origin}/ui-api/v1/harness/browser-extension/pairings/${encodeURIComponent(created.pairingId)}/revoke`,
+      `${daemon.origin}/dashboard-api/v1/harness/browser-extension/pairings/${encodeURIComponent(created.pairingId)}/revoke`,
       { method: 'POST', headers: mutationHeaders, body: '{}' },
     )
     assert.equal(revoked.status, 'revoked')

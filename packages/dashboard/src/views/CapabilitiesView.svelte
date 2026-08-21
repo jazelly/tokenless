@@ -4,24 +4,24 @@
   import PageHeader from '../components/PageHeader.svelte'
   import { formatNumber } from '../formatting.js'
   import { capabilityFamilyLabel, capabilityText, stateLabel, type MessageKey } from '../i18n/index.js'
-  import type { Language, UiCapability, UiSnapshot } from '../types.js'
+  import type { Language, DashboardCapability, DashboardSnapshot } from '../types.js'
 
   let { snapshot, selectedProfile, language, t, onselect }: {
-    snapshot: UiSnapshot
+    snapshot: DashboardSnapshot
     selectedProfile: string
     language: Language
     t: (key: MessageKey) => string
     onselect: (slug: string) => void
   } = $props()
 
-  let selected = $state<UiCapability | null>(null)
+  let selected = $state<DashboardCapability | null>(null)
   let profile = $derived(snapshot.profiles.find((entry) => entry.slug === selectedProfile) ?? snapshot.profiles[0])
-  let groups = $derived(Object.entries(snapshot.capabilities.reduce((result: { [family: string]: UiCapability[] }, capability) => {
+  let groups = $derived(Object.entries(snapshot.capabilities.reduce((result: { [family: string]: DashboardCapability[] }, capability) => {
     ;(result[capability.family] ??= []).push(capability)
     return result
   }, {})))
 
-  function providerSummary(capability: UiCapability) {
+  function providerSummary(capability: DashboardCapability) {
     if (!capability.providers.length) return t('noRoute')
     return capability.providers.map((route) => {
       const provider = snapshot.providers.find((entry) => entry.id === route.provider)

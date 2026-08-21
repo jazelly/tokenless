@@ -45,8 +45,8 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       })
       page.on('pageerror', (error) => consoleFailures.push(error.message))
       page.on('response', (response) => {
-        if (new URL(response.url()).pathname === '/ui-api/v1/snapshot') snapshotStatuses.push(response.status())
-        if (response.url().includes('/ui-api/') && response.status() >= 500) consoleFailures.push(`${response.status()} ${response.url()}`)
+        if (new URL(response.url()).pathname === '/dashboard-api/v1/snapshot') snapshotStatuses.push(response.status())
+        if (response.url().includes('/dashboard-api/') && response.status() >= 500) consoleFailures.push(`${response.status()} ${response.url()}`)
       })
 
       await page.goto(`${consoleOrigin}/`, { waitUntil: 'networkidle' })
@@ -106,13 +106,13 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       assert.equal(await readinessRefresh.evaluate((element) => element.tagName), 'BUTTON')
       assert.match(await page.getByTestId('overview-readiness-summary').textContent(), /^0\/\d+ signed in$/)
       await page.context().addCookies([{
-        name: 'tokenless_ui_session',
+        name: 'tokenless_dashboard_session',
         value: 'expired-dashboard-session',
         url: consoleOrigin,
         httpOnly: true,
         sameSite: 'Strict',
       }])
-      assert.equal(await page.evaluate(async () => (await fetch('/ui-api/v1/snapshot')).status), 200)
+      assert.equal(await page.evaluate(async () => (await fetch('/dashboard-api/v1/snapshot')).status), 200)
       await readinessRefresh.click()
       await page.getByTestId('overview-readiness-status').waitFor()
       assert.equal(await readinessRefresh.getAttribute('aria-busy'), 'true')
@@ -151,7 +151,7 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       await page.getByTestId('profiles-view').waitFor()
       assert.equal(await page.getByTestId('profile-item-personal').getAttribute('class').then((value) => value.includes('active')), true)
       const personalProfile = await new ManagedProfileRegistry(homeDir).resolveProfile('personal')
-      await page.goto(`${consoleOrigin}/ui/?profile=${encodeURIComponent(personalProfile.id)}`, { waitUntil: 'networkidle' })
+      await page.goto(`${consoleOrigin}/dashboard/?profile=${encodeURIComponent(personalProfile.id)}`, { waitUntil: 'networkidle' })
       await page.getByTestId('app-shell').waitFor()
       await page.waitForFunction(() => new URL(location.href).searchParams.get('profile') === 'personal')
       await activateNavigation(page, 'profiles')
@@ -253,7 +253,7 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       await activateNavigation(bindingConfigPage, 'system')
       await bindingConfigPage.getByTestId('config-browser').selectOption('brave')
       const braveConfigSaved = bindingConfigPage.waitForResponse((response) => (
-        new URL(response.url()).pathname === '/ui-api/v1/config' &&
+        new URL(response.url()).pathname === '/dashboard-api/v1/config' &&
         response.request().method() === 'PATCH'
       ))
       await bindingConfigPage.getByTestId('config-save').click()
@@ -267,7 +267,7 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       await activateNavigation(bindingConfigPage, 'providers')
       await bindingConfigPage.getByTestId('routing-view').waitFor()
       const routerEnabledSaved = bindingConfigPage.waitForResponse((response) => (
-        new URL(response.url()).pathname === '/ui-api/v1/config' &&
+        new URL(response.url()).pathname === '/dashboard-api/v1/config' &&
         response.request().method() === 'PATCH'
       ))
       await bindingConfigPage.getByTestId('router-enabled-control').click()
@@ -277,7 +277,7 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       await activateNavigation(bindingConfigPage, 'system')
       await bindingConfigPage.getByTestId('config-browser').selectOption('chrome')
       const chromeConfigSaved = bindingConfigPage.waitForResponse((response) => (
-        new URL(response.url()).pathname === '/ui-api/v1/config' &&
+        new URL(response.url()).pathname === '/dashboard-api/v1/config' &&
         response.request().method() === 'PATCH'
       ))
       await bindingConfigPage.getByTestId('config-save').click()
@@ -301,7 +301,7 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
 
       await activateNavigation(bindingConfigPage, 'providers')
       const routerDisabledSaved = bindingConfigPage.waitForResponse((response) => (
-        new URL(response.url()).pathname === '/ui-api/v1/config' &&
+        new URL(response.url()).pathname === '/dashboard-api/v1/config' &&
         response.request().method() === 'PATCH'
       ))
       await bindingConfigPage.getByTestId('router-enabled-control').click()
@@ -312,7 +312,7 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       assert.equal(await page.getByTestId('router-run').isDisabled(), true)
 
       const routerReenabledSaved = bindingConfigPage.waitForResponse((response) => (
-        new URL(response.url()).pathname === '/ui-api/v1/config' &&
+        new URL(response.url()).pathname === '/dashboard-api/v1/config' &&
         response.request().method() === 'PATCH'
       ))
       await bindingConfigPage.getByTestId('router-enabled-control').click()
@@ -324,7 +324,7 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       await bindingConfigPage.getByTestId('provider-details-chatgpt').click()
       await bindingConfigPage.getByTestId('provider-role-chatgpt').fill('Externally configured writing tasks')
       const externalRoleSaved = bindingConfigPage.waitForResponse((response) => (
-        new URL(response.url()).pathname === '/ui-api/v1/config' &&
+        new URL(response.url()).pathname === '/dashboard-api/v1/config' &&
         response.request().method() === 'PATCH'
       ))
       await bindingConfigPage.getByTestId('provider-role-save-chatgpt').click()
@@ -339,7 +339,7 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       assert.equal(await page.getByTestId('provider-role-chatgpt').isEnabled(), true)
       await page.getByTestId('provider-role-chatgpt').fill('Writing, editing, and tone-sensitive content')
       const chatgptRoleSaved = page.waitForResponse((response) => (
-        new URL(response.url()).pathname === '/ui-api/v1/config' &&
+        new URL(response.url()).pathname === '/dashboard-api/v1/config' &&
         response.request().method() === 'PATCH'
       ))
       await page.getByTestId('provider-role-save-chatgpt').click()
@@ -357,7 +357,7 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       await page.getByTestId('provider-detail-claude').waitFor()
       await page.getByTestId('provider-role-claude').fill('Coding and complex analysis')
       const claudeRoleSaved = page.waitForResponse((response) => (
-        new URL(response.url()).pathname === '/ui-api/v1/config' &&
+        new URL(response.url()).pathname === '/dashboard-api/v1/config' &&
         response.request().method() === 'PATCH'
       ))
       await page.getByTestId('provider-role-save-claude').click()
@@ -383,7 +383,7 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
 
       while (await page.locator('.provider-card .switch:has(input:checked)').count() > 0) {
         const providerUpdated = page.waitForResponse((response) => (
-          new URL(response.url()).pathname === '/ui-api/v1/profiles/work' &&
+          new URL(response.url()).pathname === '/dashboard-api/v1/profiles/work' &&
           response.request().method() === 'PATCH'
         ))
         await page.locator('.provider-card .switch:has(input:checked)').first().click()
@@ -422,7 +422,7 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       })
       assert.notEqual(providerPage, page)
       assert.equal(page.isClosed(), false)
-      assert.equal(new URL(page.url()).pathname, '/ui/')
+      assert.equal(new URL(page.url()).pathname, '/dashboard/')
       assert.deepEqual(consoleFailures, [])
     } finally {
       await bindingConfigPage?.goto('about:blank').catch(() => undefined)

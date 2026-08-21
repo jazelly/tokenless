@@ -1,26 +1,26 @@
 import { translate, translateError } from './i18n/index.js'
 import type {
-  UiConfirmedDeletion,
-  UiConfig,
-  UiConfigUpdate,
-  UiErrorEnvelope,
-  UiJobDetail,
-  UiLanguage,
-  UiOutputSavingsState,
-  UiProfile,
-  UiProfileCreate,
-  UiProfileRemoval,
-  UiProfileUpdate,
-  UiProviderAction,
-  UiProviderReadinessRefresh,
-  UiProviderSelection,
-  UiRuntimeOpenResult,
-  UiRuntimeStatus,
-  UiSetupInput,
-  UiSession,
-  UiSnapshot,
-  UiJobSummary,
-} from 'tokenless-internal-shared/ui'
+  DashboardConfirmedDeletion,
+  DashboardConfig,
+  DashboardConfigUpdate,
+  DashboardErrorEnvelope,
+  DashboardJobDetail,
+  DashboardLanguage,
+  DashboardOutputSavingsState,
+  DashboardProfile,
+  DashboardProfileCreate,
+  DashboardProfileRemoval,
+  DashboardProfileUpdate,
+  DashboardProviderAction,
+  DashboardProviderReadinessRefresh,
+  DashboardProviderSelection,
+  DashboardRuntimeOpenResult,
+  DashboardRuntimeStatus,
+  DashboardSetupInput,
+  DashboardSession,
+  DashboardSnapshot,
+  DashboardJobSummary,
+} from 'tokenless-internal-shared/dashboard'
 import type {
   DashboardHarnessIntervention,
   HarnessExtensionPairing,
@@ -50,119 +50,119 @@ export class DashboardClient {
   private csrf = ''
   private snapshotEtag = ''
 
-  constructor(private readonly currentLanguage: () => UiLanguage) {}
+  constructor(private readonly currentLanguage: () => DashboardLanguage) {}
 
-  async authenticate(): Promise<UiSession> {
-    const session = await this.request<UiSession>('/session', { method: 'GET' })
+  async authenticate(): Promise<DashboardSession> {
+    const session = await this.request<DashboardSession>('/session', { method: 'GET' })
     if (!session) throw new DashboardRequestError(translate(this.currentLanguage(), 'requestFailed'))
     this.csrf = session.csrf
     return session
   }
 
   async snapshot(): Promise<SnapshotResult> {
-    const result = await this.request<UiSnapshot>('/snapshot', { method: 'GET' }, true)
+    const result = await this.request<DashboardSnapshot>('/snapshot', { method: 'GET' }, true)
     return result === null ? { changed: false } : { changed: true, snapshot: result }
   }
 
-  async updateConfig(input: UiConfigUpdate): Promise<UiConfig> {
-    return await this.requireResult(this.request<UiConfig>('/config', {
+  async updateConfig(input: DashboardConfigUpdate): Promise<DashboardConfig> {
+    return await this.requireResult(this.request<DashboardConfig>('/config', {
       method: 'PATCH',
       body: JSON.stringify(input),
     }))
   }
 
-  async setup(input: UiSetupInput): Promise<UiProfile> {
-    return await this.requireResult(this.request<UiProfile>('/setup', {
+  async setup(input: DashboardSetupInput): Promise<DashboardProfile> {
+    return await this.requireResult(this.request<DashboardProfile>('/setup', {
       method: 'POST',
       body: JSON.stringify(input),
     }))
   }
 
-  async enableOutputSavings(): Promise<UiOutputSavingsState> {
-    return await this.requireResult(this.request<UiOutputSavingsState>('/output-savings/enable', {
+  async enableOutputSavings(): Promise<DashboardOutputSavingsState> {
+    return await this.requireResult(this.request<DashboardOutputSavingsState>('/output-savings/enable', {
       method: 'POST',
       body: '{}',
     }))
   }
 
-  async disableOutputSavings(): Promise<UiOutputSavingsState> {
-    return await this.requireResult(this.request<UiOutputSavingsState>('/output-savings/disable', {
+  async disableOutputSavings(): Promise<DashboardOutputSavingsState> {
+    return await this.requireResult(this.request<DashboardOutputSavingsState>('/output-savings/disable', {
       method: 'POST',
       body: '{}',
     }))
   }
 
-  async clearOutputSavings(): Promise<UiOutputSavingsState> {
-    return await this.requireResult(this.request<UiOutputSavingsState>('/output-savings/history/clear', {
+  async clearOutputSavings(): Promise<DashboardOutputSavingsState> {
+    return await this.requireResult(this.request<DashboardOutputSavingsState>('/output-savings/history/clear', {
       method: 'POST',
-      body: JSON.stringify({ confirmDelete: true } satisfies UiConfirmedDeletion),
+      body: JSON.stringify({ confirmDelete: true } satisfies DashboardConfirmedDeletion),
     }))
   }
 
-  async uninstallOutputSavings(): Promise<UiOutputSavingsState> {
-    return await this.requireResult(this.request<UiOutputSavingsState>('/output-savings/runtime/uninstall', {
+  async uninstallOutputSavings(): Promise<DashboardOutputSavingsState> {
+    return await this.requireResult(this.request<DashboardOutputSavingsState>('/output-savings/runtime/uninstall', {
       method: 'POST',
-      body: JSON.stringify({ confirmDelete: true } satisfies UiConfirmedDeletion),
+      body: JSON.stringify({ confirmDelete: true } satisfies DashboardConfirmedDeletion),
     }))
   }
 
-  async createProfile(input: UiProfileCreate): Promise<UiProfile> {
-    return await this.requireResult(this.request<UiProfile>('/profiles', {
+  async createProfile(input: DashboardProfileCreate): Promise<DashboardProfile> {
+    return await this.requireResult(this.request<DashboardProfile>('/profiles', {
       method: 'POST',
       body: JSON.stringify(input),
     }))
   }
 
-  async updateProfile(slug: string, input: UiProfileUpdate): Promise<UiProfile> {
-    return await this.requireResult(this.request<UiProfile>(`/profiles/${encodeURIComponent(slug)}`, {
+  async updateProfile(slug: string, input: DashboardProfileUpdate): Promise<DashboardProfile> {
+    return await this.requireResult(this.request<DashboardProfile>(`/profiles/${encodeURIComponent(slug)}`, {
       method: 'PATCH',
       body: JSON.stringify(input),
     }))
   }
 
-  async removeProfile(slug: string): Promise<UiProfileRemoval> {
-    return await this.requireResult(this.request<UiProfileRemoval>(`/profiles/${encodeURIComponent(slug)}`, {
+  async removeProfile(slug: string): Promise<DashboardProfileRemoval> {
+    return await this.requireResult(this.request<DashboardProfileRemoval>(`/profiles/${encodeURIComponent(slug)}`, {
       method: 'DELETE',
     }))
   }
 
-  async openProfile(slug: string): Promise<UiRuntimeOpenResult> {
-    return await this.requireResult(this.request<UiRuntimeOpenResult>(`/profiles/${encodeURIComponent(slug)}/open`, {
+  async openProfile(slug: string): Promise<DashboardRuntimeOpenResult> {
+    return await this.requireResult(this.request<DashboardRuntimeOpenResult>(`/profiles/${encodeURIComponent(slug)}/open`, {
       method: 'POST',
     }))
   }
 
-  async runProviderAction(profileSlug: string, providerId: string, action: UiProviderAction): Promise<UiJobSummary> {
-    return await this.requireResult(this.request<UiJobSummary>(
+  async runProviderAction(profileSlug: string, providerId: string, action: DashboardProviderAction): Promise<DashboardJobSummary> {
+    return await this.requireResult(this.request<DashboardJobSummary>(
       `/profiles/${encodeURIComponent(profileSlug)}/providers/${encodeURIComponent(providerId)}/actions/${action}`,
       { method: 'POST' },
     ))
   }
 
-  async selectProviderControl(profileSlug: string, providerId: string, input: UiProviderSelection): Promise<UiJobSummary> {
-    return await this.requireResult(this.request<UiJobSummary>(
+  async selectProviderControl(profileSlug: string, providerId: string, input: DashboardProviderSelection): Promise<DashboardJobSummary> {
+    return await this.requireResult(this.request<DashboardJobSummary>(
       `/profiles/${encodeURIComponent(profileSlug)}/providers/${encodeURIComponent(providerId)}/selection`,
       { method: 'POST', body: JSON.stringify(input) },
     ))
   }
 
-  async refreshProviderReadiness(profileSlug: string): Promise<UiProviderReadinessRefresh> {
-    return await this.requireResult(this.request<UiProviderReadinessRefresh>(
+  async refreshProviderReadiness(profileSlug: string): Promise<DashboardProviderReadinessRefresh> {
+    return await this.requireResult(this.request<DashboardProviderReadinessRefresh>(
       `/profiles/${encodeURIComponent(profileSlug)}/providers/actions/readiness`,
       { method: 'POST', body: '{}' },
     ))
   }
 
-  async getJob(jobId: string): Promise<UiJobDetail> {
-    return await this.requireResult(this.request<UiJobDetail>(`/jobs/${encodeURIComponent(jobId)}`, { method: 'GET' }))
+  async getJob(jobId: string): Promise<DashboardJobDetail> {
+    return await this.requireResult(this.request<DashboardJobDetail>(`/jobs/${encodeURIComponent(jobId)}`, { method: 'GET' }))
   }
 
-  async cancelJob(jobId: string): Promise<UiJobDetail> {
-    return await this.requireResult(this.request<UiJobDetail>(`/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' }))
+  async cancelJob(jobId: string): Promise<DashboardJobDetail> {
+    return await this.requireResult(this.request<DashboardJobDetail>(`/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' }))
   }
 
-  async resumeJob(jobId: string): Promise<UiJobDetail> {
-    return await this.requireResult(this.request<UiJobDetail>(`/jobs/${encodeURIComponent(jobId)}/resume`, { method: 'POST' }))
+  async resumeJob(jobId: string): Promise<DashboardJobDetail> {
+    return await this.requireResult(this.request<DashboardJobDetail>(`/jobs/${encodeURIComponent(jobId)}/resume`, { method: 'POST' }))
   }
 
   async startHarnessRun(input: DashboardHarnessRunInput): Promise<DashboardHarnessRunView> {
@@ -207,8 +207,8 @@ export class DashboardClient {
     ))
   }
 
-  async quiesceRuntime(): Promise<UiRuntimeStatus> {
-    return await this.requireResult(this.request<UiRuntimeStatus>('/runtime/quiesce', { method: 'POST' }))
+  async quiesceRuntime(): Promise<DashboardRuntimeStatus> {
+    return await this.requireResult(this.request<DashboardRuntimeStatus>('/runtime/quiesce', { method: 'POST' }))
   }
 
   private async requireResult<T>(result: Promise<T | null>): Promise<T> {
@@ -221,7 +221,7 @@ export class DashboardClient {
     const method = options.method ?? 'GET'
     for (let attempt = 0; ; attempt += 1) {
       if (method !== 'GET') await this.authenticate()
-      const response = await fetch(`/ui-api/v1${path}`, {
+      const response = await fetch(`/dashboard-api/v1${path}`, {
         ...options,
         headers: {
           'content-type': 'application/json',
@@ -236,8 +236,8 @@ export class DashboardClient {
       if (response.status === 304 && allowNotModified) return null
       const body: unknown = await response.json().catch(() => null)
       if (!response.ok) {
-        const error = uiErrorEnvelope(body)?.error
-        if (method !== 'GET' && error?.code === 'ui_csrf_rejected' && attempt === 0) continue
+        const error = dashboardErrorEnvelope(body)?.error
+        if (method !== 'GET' && error?.code === 'dashboard_csrf_rejected' && attempt === 0) continue
         const code = error?.code ?? ''
         const language = this.currentLanguage()
         const summary = translateError(language, code, error?.message)
@@ -256,7 +256,7 @@ export class DashboardClient {
   }
 }
 
-function uiErrorEnvelope(value: unknown): UiErrorEnvelope | null {
+function dashboardErrorEnvelope(value: unknown): DashboardErrorEnvelope | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const error = (value as { error?: unknown }).error
   if (!error || typeof error !== 'object' || Array.isArray(error)) return null

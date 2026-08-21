@@ -7,10 +7,10 @@
   import type {
     DashboardActions,
     Language,
-    UiProfileCreate,
-    UiProfileUpdate,
-    UiProvider,
-    UiSnapshot,
+    DashboardProfileCreate,
+    DashboardProfileUpdate,
+    DashboardProvider,
+    DashboardSnapshot,
   } from '../types.js'
 
   let {
@@ -22,7 +22,7 @@
     onselect,
     actions,
   }: {
-    snapshot: UiSnapshot
+    snapshot: DashboardSnapshot
     selectedProfile: string
     language: Language
     t: (key: MessageKey) => string
@@ -47,7 +47,7 @@
     menuOpen = false
   }
 
-  async function saveProfile(value: UiProfileCreate | UiProfileUpdate) {
+  async function saveProfile(value: DashboardProfileCreate | DashboardProfileUpdate) {
     if (!('slug' in value) && !profile) return
     const result = 'slug' in value
       ? await actions.createProfile(value)
@@ -129,7 +129,7 @@
     if (menuOpen && event.target instanceof Node && !actionContainer?.contains(event.target)) menuOpen = false
   }
 
-  function stateFor(provider: UiProvider) {
+  function stateFor(provider: DashboardProvider) {
     return provider.profiles.find((entry) => entry.profileId === profile?.slug)
   }
 </script>

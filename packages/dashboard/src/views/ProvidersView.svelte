@@ -4,10 +4,10 @@
   import ProviderModeBadges from '../components/ProviderModeBadges.svelte'
   import { stateLabel, type MessageKey } from '../i18n/index.js'
   import RoutingView from './RoutingView.svelte'
-  import type { DashboardActions, Language, UiProvider, UiProviderExecutionMode, UiSnapshot } from '../types.js'
+  import type { DashboardActions, Language, DashboardProvider, DashboardProviderExecutionMode, DashboardSnapshot } from '../types.js'
 
   let { snapshot, selectedProfile, language, t, busy, onselect, actions }: {
-    snapshot: UiSnapshot
+    snapshot: DashboardSnapshot
     selectedProfile: string
     language: Language
     t: (key: MessageKey) => string
@@ -22,11 +22,11 @@
   let profile = $derived(snapshot.profiles.find((entry) => entry.slug === selectedProfile) ?? snapshot.profiles[0]!)
   let detailProvider = $derived(snapshot.providers.find((provider) => provider.id === selectedProviderId))
 
-  function stateFor(provider: UiProvider) {
+  function stateFor(provider: DashboardProvider) {
     return provider.profiles.find((entry) => entry.profileId === profile.slug)
   }
 
-  function directOnly(provider: UiProvider) {
+  function directOnly(provider: DashboardProvider) {
     return provider.executionModes.length === 1 && provider.executionModes[0] === 'direct'
   }
 
@@ -34,7 +34,7 @@
     return snapshot.config.router.providers.find((candidate) => candidate.id === providerId)?.suitableTasks ?? ''
   }
 
-  function openDetails(provider: UiProvider) {
+  function openDetails(provider: DashboardProvider) {
     selectedProviderId = provider.id
     routingRole = routingRoleFor(provider.id)
     roleError = ''
@@ -46,7 +46,7 @@
     roleError = ''
   }
 
-  async function toggle(provider: UiProvider, input: HTMLInputElement) {
+  async function toggle(provider: DashboardProvider, input: HTMLInputElement) {
     const enabled = input.checked
     const next = new Set<string>(profile.enabledProviders)
     if (enabled) next.add(provider.id)
@@ -58,7 +58,7 @@
     }
   }
 
-  async function toggleMode(provider: UiProvider, mode: UiProviderExecutionMode, input: HTMLInputElement) {
+  async function toggleMode(provider: DashboardProvider, mode: DashboardProviderExecutionMode, input: HTMLInputElement) {
     const enabled = input.checked
     const modes = new Set(profile.providerModes[provider.id] ?? [])
     if (enabled) modes.add(mode)
@@ -70,7 +70,7 @@
     }
   }
 
-  async function choose(provider: UiProvider, kind: 'model' | 'effort', label: string) {
+  async function choose(provider: DashboardProvider, kind: 'model' | 'effort', label: string) {
     if (!label) return
     try {
       await actions.selectProviderControl(profile.slug, provider.id, { kind, label }, false)
@@ -79,7 +79,7 @@
     }
   }
 
-  async function action(provider: UiProvider, value: 'open' | 'readiness' | 'controls') {
+  async function action(provider: DashboardProvider, value: 'open' | 'readiness' | 'controls') {
     try {
       await actions.runProviderAction(profile.slug, provider.id, value, false)
     } catch {
@@ -87,7 +87,7 @@
     }
   }
 
-  async function saveRoutingRole(event: SubmitEvent, provider: UiProvider) {
+  async function saveRoutingRole(event: SubmitEvent, provider: DashboardProvider) {
     event.preventDefault()
     if (stateFor(provider)?.enabled !== true) return
     roleError = ''

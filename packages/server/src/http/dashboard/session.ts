@@ -3,23 +3,23 @@ import { randomBytes } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 const SESSION_TTL_MS = 30 * 60_000
-const COOKIE_NAME = 'tokenless_ui_session'
+const COOKIE_NAME = 'tokenless_dashboard_session'
 
-type UiSession = {
+type DashboardSession = {
   id: string
   csrf: string
   expiresAt: number
 }
 
-export class UiSessionManager {
-  private readonly sessions = new Map<string, UiSession>()
+export class DashboardSessionManager {
+  private readonly sessions = new Map<string, DashboardSession>()
 
   ensureSession(request: IncomingMessage, response: ServerResponse) {
     this.prune()
     const id = parseCookie(request.headers.cookie ?? '')[COOKIE_NAME]
     const existing = id ? this.sessions.get(id) : undefined
     if (existing && existing.expiresAt > Date.now()) return existing
-    const session: UiSession = {
+    const session: DashboardSession = {
       id: secret(),
       csrf: secret(),
       expiresAt: Date.now() + SESSION_TTL_MS,
@@ -34,7 +34,7 @@ export class UiSessionManager {
     const id = parseCookie(request.headers.cookie ?? '')[COOKIE_NAME]
     const session = id ? this.sessions.get(id) : undefined
     if (!session || session.expiresAt <= Date.now()) {
-      throw uiAuthError('ui_session_required', 'Open the local console again to start a new session.', 401)
+      throw dashboardAuthError('dashboard_session_required', 'Open the local Dashboard again to start a new session.', 401)
     }
     return session
   }
@@ -42,12 +42,12 @@ export class UiSessionManager {
   requireMutation(request: IncomingMessage, expectedOrigin: string) {
     const session = this.requireSession(request)
     if (request.headers.origin !== expectedOrigin) {
-      throw uiAuthError('ui_origin_rejected', 'The request origin is not allowed.', 403)
+      throw dashboardAuthError('dashboard_origin_rejected', 'The request origin is not allowed.', 403)
     }
     const csrf = request.headers['x-tokenless-csrf']
     const value = Array.isArray(csrf) ? csrf[0] : csrf
     if (!value || value !== session.csrf) {
-      throw uiAuthError('ui_csrf_rejected', 'The request CSRF token is invalid.', 403)
+      throw dashboardAuthError('dashboard_csrf_rejected', 'The request CSRF token is invalid.', 403)
     }
     return session
   }
@@ -60,7 +60,7 @@ export class UiSessionManager {
   }
 }
 
-function serializeCookie(session: UiSession) {
+function serializeCookie(session: DashboardSession) {
   const maxAge = Math.floor((session.expiresAt - Date.now()) / 1000)
   return `${COOKIE_NAME}=${session.id}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}`
 }
@@ -77,6 +77,6 @@ function secret() {
   return randomBytes(32).toString('base64url')
 }
 
-function uiAuthError(code: string, message: string, status: number) {
+function dashboardAuthError(code: string, message: string, status: number) {
   return Object.assign(new Error(message), { code, status })
 }

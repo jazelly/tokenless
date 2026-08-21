@@ -7,13 +7,13 @@
   import type {
     Language,
     ReadinessJobs,
-    UiProvider,
-    UiProviderProfileState,
-    UiSnapshot,
+    DashboardProvider,
+    DashboardProviderProfileState,
+    DashboardSnapshot,
   } from '../types.js'
 
   let { snapshot, selectedProfile, language, t, readinessBusy, readinessJobs, onrefreshreadiness }: {
-    snapshot: UiSnapshot
+    snapshot: DashboardSnapshot
     selectedProfile: string
     language: Language
     t: (key: MessageKey) => string
@@ -30,11 +30,11 @@
   let savingsEnabled = $derived(snapshot.outputSavings.enabled === true)
   let savingsReady = $derived(savingsEnabled && snapshot.outputSavings.collection === 'enabled')
 
-  function profileState(provider: UiProvider) {
+  function profileState(provider: DashboardProvider) {
     return provider.profiles.find((entry) => entry.profileId === profile?.slug)
   }
 
-  function readinessLabel(provider: UiProvider, state: UiProviderProfileState | undefined) {
+  function readinessLabel(provider: DashboardProvider, state: DashboardProviderProfileState | undefined) {
     const readiness = readinessJobs[provider.id]
     if (readiness?.status === 'queued' || readiness?.status === 'claimed' || readiness?.status === 'running') return t('checkingProviderReadiness')
     const observedAccess = state?.observation?.access ? stateLabel(language, state.observation.access) : null
@@ -44,7 +44,7 @@
     return observedAccess ?? (readiness?.status ? stateLabel(language, readiness.status) : t('neverChecked'))
   }
 
-  function readinessStatus(provider: UiProvider) {
+  function readinessStatus(provider: DashboardProvider) {
     const readiness = readinessJobs[provider.id]
     return readiness?.status ?? ''
   }

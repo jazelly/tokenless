@@ -237,7 +237,7 @@ tokenless dashboard --profile work
 tokenless dashboard --profile work --no-open --json
 ```
 
-`--no-open` 不启动浏览器，只输出可直接访问的 loopback 控制台 URL。打开 `/` 会跳转到 `/ui/`，并建立短期有效的 `HttpOnly`、`SameSite=Strict` session cookie；所有 mutation 仍会校验 exact Origin 和 CSRF。控制台不会收到 daemon bearer token、provider cookies、browser storage、Keychain 数据、raw DOM、claim token、checkpoint 或私有文件路径。
+`--no-open` 不启动浏览器，只输出可直接访问的 loopback 控制台 URL。打开 `/` 会跳转到 `/dashboard/`，并建立短期有效的 `HttpOnly`、`SameSite=Strict` session cookie；所有 mutation 仍会校验 exact Origin 和 CSRF。控制台不会收到 daemon bearer token、provider cookies、browser storage、Keychain 数据、raw DOM、claim token、checkpoint 或私有文件路径。
 
 控制台包含 Overview、Profiles、Providers、Capabilities、Jobs 和 System/Diagnostics。Provider membership、visibility、role label，以及不带凭据的 HTTP/HTTPS/SOCKS5 proxy 都按 profile 配置。CLI 恢复入口仍然完整保留：
 

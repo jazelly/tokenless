@@ -47,29 +47,29 @@ import { OUTPUT_SAVINGS_ESTIMATOR } from '../output-savings/catalog.js'
 import type { OutputSavingsProcessor } from '../output-savings/processor.js'
 import { OutputSavingsRuntimeManager } from '../output-savings/runtime-manager.js'
 import type {
-  UiConfig,
-  UiConfigUpdate,
-  UiConfirmedDeletion,
-  UiDiagnostic,
-  UiJobDetail,
-  UiJobSummary,
-  UiOutputSavingsState,
-  UiProfile,
-  UiProfileCreate,
-  UiProfileRemoval,
-  UiProfileUpdate,
-  UiProviderAction,
-  UiProviderExecutionMode,
-  UiProviderReadinessRefresh,
-  UiProviderSelection,
-  UiRuntimeOpenResult,
-  UiRuntimeStatus,
-  UiSetupInput,
-  UiSetupSnapshot,
-  UiSnapshot,
-} from 'tokenless-internal-shared/ui'
+  DashboardConfig,
+  DashboardConfigUpdate,
+  DashboardConfirmedDeletion,
+  DashboardDiagnostic,
+  DashboardJobDetail,
+  DashboardJobSummary,
+  DashboardOutputSavingsState,
+  DashboardProfile,
+  DashboardProfileCreate,
+  DashboardProfileRemoval,
+  DashboardProfileUpdate,
+  DashboardProviderAction,
+  DashboardProviderExecutionMode,
+  DashboardProviderReadinessRefresh,
+  DashboardProviderSelection,
+  DashboardRuntimeOpenResult,
+  DashboardRuntimeStatus,
+  DashboardSetupInput,
+  DashboardSetupSnapshot,
+  DashboardSnapshot,
+} from 'tokenless-internal-shared/dashboard'
 
-export type UiApplicationServicesOptions = {
+export type DashboardApplicationServicesOptions = {
   store: JobStore
   runtimeController?: BrowserRuntimeController | undefined
   outputSavingsProcessor?: OutputSavingsProcessor | undefined
@@ -88,7 +88,7 @@ export class TokenlessApplicationServices {
   private readonly origin: () => string
   private readonly startedAt: number
 
-  constructor(options: UiApplicationServicesOptions) {
+  constructor(options: DashboardApplicationServicesOptions) {
     this.store = options.store
     this.profiles = new ManagedProfileRegistry(options.store.homeDir)
     this.runtimeManager = new BrowserRuntimeManager({ homeDir: options.store.homeDir })
@@ -99,7 +99,7 @@ export class TokenlessApplicationServices {
     this.startedAt = options.startedAt
   }
 
-  async snapshot(): Promise<UiSnapshot> {
+  async snapshot(): Promise<DashboardSnapshot> {
     await this.reconcileProviderObservations()
     const [config, profileData, jobs] = await Promise.all([
       this.migratedConfig(),
@@ -132,7 +132,7 @@ export class TokenlessApplicationServices {
       this.setupSnapshot(config, profileData.defaultProfile),
     ])
     const body = {
-      schema: 'tokenless.ui-snapshot.v1' as const,
+      schema: 'tokenless.dashboard-snapshot.v1' as const,
       generatedAt: new Date().toISOString(),
       daemon: {
         version: tokenlessPackageVersion(),
@@ -195,7 +195,7 @@ export class TokenlessApplicationServices {
     }
   }
 
-  async job(jobId: string): Promise<UiJobDetail> {
+  async job(jobId: string): Promise<DashboardJobDetail> {
     const job = this.store.getJob(jobId)
     return publicJobDetail(
       job,
@@ -480,7 +480,7 @@ export class TokenlessApplicationServices {
     })
   }
 
-  async enableOutputSavings(): Promise<UiOutputSavingsState> {
+  async enableOutputSavings(): Promise<DashboardOutputSavingsState> {
     await this.outputSavingsRuntimeManager.ensureInstalled()
     const config = await writeTokenlessConfig({
       homeDir: this.store.homeDir,
@@ -506,7 +506,7 @@ export class TokenlessApplicationServices {
     return state
   }
 
-  async disableOutputSavings(): Promise<UiOutputSavingsState> {
+  async disableOutputSavings(): Promise<DashboardOutputSavingsState> {
     const config = await writeTokenlessConfig({
       homeDir: this.store.homeDir,
       outputSavings: { enabled: false },
@@ -515,7 +515,7 @@ export class TokenlessApplicationServices {
     return await this.outputSavingsState(config)
   }
 
-  async uninstallOutputSavings(input: UiConfirmedDeletion): Promise<UiOutputSavingsState> {
+  async uninstallOutputSavings(input: DashboardConfirmedDeletion): Promise<DashboardOutputSavingsState> {
     requireKnownFields(input, ['confirmDelete'])
     if (input.confirmDelete !== true) {
       throw applicationError(
@@ -532,7 +532,7 @@ export class TokenlessApplicationServices {
     return await this.outputSavingsState(config)
   }
 
-  async clearOutputSavings(input: UiConfirmedDeletion): Promise<UiOutputSavingsState> {
+  async clearOutputSavings(input: DashboardConfirmedDeletion): Promise<DashboardOutputSavingsState> {
     requireKnownFields(input, ['confirmDelete'])
     if (input.confirmDelete !== true) {
       throw applicationError(
@@ -556,7 +556,7 @@ export class TokenlessApplicationServices {
     this.store.discardOutputSavingsWork()
   }
 
-  async updateConfig(input: UiConfigUpdate): Promise<UiConfig> {
+  async updateConfig(input: DashboardConfigUpdate): Promise<DashboardConfig> {
     requireKnownFields(input, ['browser', 'browserExecutablePath', 'browserVisibility', 'language', 'router'])
     const current = await this.migratedConfig()
     const browserVisibility = input.browserVisibility === undefined
@@ -613,7 +613,7 @@ export class TokenlessApplicationServices {
     return publicConfig(saved)
   }
 
-  async setup(input: UiSetupInput): Promise<UiProfile> {
+  async setup(input: DashboardSetupInput): Promise<DashboardProfile> {
     requireKnownFields(input, [
       'slug',
       'roleLabel',
@@ -728,7 +728,7 @@ export class TokenlessApplicationServices {
     )
   }
 
-  async createProfile(input: UiProfileCreate): Promise<UiProfile> {
+  async createProfile(input: DashboardProfileCreate): Promise<DashboardProfile> {
     requireKnownFields(input, ['slug', 'roleLabel', 'enabledProviders', 'providerModes', 'browserVisibility', 'setDefault'])
     const slug = requiredSlug(input.slug)
     const browserVisibility = input.browserVisibility === undefined
@@ -760,7 +760,7 @@ export class TokenlessApplicationServices {
     }
   }
 
-  async updateProfile(slug: string, input: UiProfileUpdate): Promise<UiProfile> {
+  async updateProfile(slug: string, input: DashboardProfileUpdate): Promise<DashboardProfile> {
     requireKnownFields(input, ['roleLabel', 'enabledProviders', 'providerModes', 'browserVisibility', 'setDefault'])
     let profile = await this.profiles.resolveProfile(slug)
     const current = profileConfig(await this.migratedConfig(), profile.slug)
@@ -784,7 +784,7 @@ export class TokenlessApplicationServices {
     return publicProfile(profile, (await this.profiles.read()).defaultProfile, profileConfig(config, profile.slug), config.browser, browser.runtime?.actualVersion ?? null)
   }
 
-  async removeProfile(slug: string): Promise<UiProfileRemoval> {
+  async removeProfile(slug: string): Promise<DashboardProfileRemoval> {
     const status = this.runtimeController?.status()
     if (status?.activeJobCount) {
       throw applicationError('profile_mutation_unsafe', 'A profile cannot be removed while browser jobs are active.')
@@ -795,7 +795,7 @@ export class TokenlessApplicationServices {
     return { slug: profile.slug, removed: true }
   }
 
-  async providerAction(slug: string, providerValue: string, action: UiProviderAction): Promise<UiJobSummary> {
+  async providerAction(slug: string, providerValue: string, action: DashboardProviderAction): Promise<DashboardJobSummary> {
     const profile = await this.profiles.resolveProfile(slug)
     const provider = listProviderInstances().find((candidate) => candidate.id === providerValue)
     if (!provider || provider.descriptor.stage === 'disabled') {
@@ -812,7 +812,7 @@ export class TokenlessApplicationServices {
     return job
   }
 
-  async refreshProviderReadiness(slug: string): Promise<UiProviderReadinessRefresh> {
+  async refreshProviderReadiness(slug: string): Promise<DashboardProviderReadinessRefresh> {
     const profile = await this.profiles.resolveProfile(slug)
     const configured = profileConfig(await this.migratedConfig(), profile.slug)
     const enabled = new Set(configured.enabledProviders)
@@ -869,8 +869,8 @@ export class TokenlessApplicationServices {
   async providerSelection(
     slug: string,
     providerValue: string,
-    input: UiProviderSelection,
-  ): Promise<UiJobSummary> {
+    input: DashboardProviderSelection,
+  ): Promise<DashboardJobSummary> {
     requireKnownFields(input, ['kind', 'label'])
     const kind = input.kind
     if (kind !== 'model' && kind !== 'effort') {
@@ -909,23 +909,23 @@ export class TokenlessApplicationServices {
     return publicJobSummary(job, [profile])
   }
 
-  async openProfile(slug: string): Promise<UiRuntimeOpenResult> {
+  async openProfile(slug: string): Promise<DashboardRuntimeOpenResult> {
     const profile = await this.profiles.resolveProfile(slug)
     if (!this.runtimeController) throw applicationError('browser_runtime_unavailable', 'Browser runtime is unavailable.')
     return await this.runtimeController.openProfile(profile.id, 'headed')
   }
 
-  async quiesceRuntime(): Promise<UiRuntimeStatus> {
+  async quiesceRuntime(): Promise<DashboardRuntimeStatus> {
     return await this.runtimeController?.quiesce() ?? {
       status: 'stopped', activeProfileCount: 0, activeJobCount: 0, pid: process.pid,
     }
   }
 
-  async cancelJob(jobId: string): Promise<UiJobDetail> {
+  async cancelJob(jobId: string): Promise<DashboardJobDetail> {
     return publicJobDetail(await this.store.cancelJob(jobId, { source: 'ui' }), await this.profiles.listProfiles())
   }
 
-  async resumeJob(jobId: string): Promise<UiJobDetail> {
+  async resumeJob(jobId: string): Promise<DashboardJobDetail> {
     const job = this.store.resumeJob(jobId, { browser_visibility: 'headed' })
     await this.runtimeController?.wake()
     return publicJobDetail(job, await this.profiles.listProfiles())
@@ -944,7 +944,7 @@ export class TokenlessApplicationServices {
   private async setupSnapshot(
     config: TokenlessConfig,
     defaultProfileSlug: string | null,
-  ): Promise<UiSetupSnapshot> {
+  ): Promise<DashboardSetupSnapshot> {
     const candidates = await Promise.all((['chrome', 'brave', 'cloak'] as const).map(async (selection) => {
       const inspection = await this.runtimeManager.inspect(selection, {
         allowDownload: false,
@@ -989,7 +989,7 @@ export class TokenlessApplicationServices {
     runtime: ReturnType<BrowserRuntimeController['status']>,
     outputSavings: Awaited<ReturnType<TokenlessApplicationServices['outputSavingsState']>>,
     browser: Awaited<ReturnType<BrowserRuntimeManager['inspect']>>,
-  ): Promise<UiDiagnostic[]> {
+  ): Promise<DashboardDiagnostic[]> {
     return [
       {
         id: 'configuration',
@@ -1426,7 +1426,7 @@ function configurableProviderIds(): ProviderId[] {
     .map((provider) => provider.id)
 }
 
-function defaultProviderModes(): Record<string, UiProviderExecutionMode[]> {
+function defaultProviderModes(): Record<string, DashboardProviderExecutionMode[]> {
   return Object.fromEntries(listProviderDescriptors()
     .filter((provider) => provider.stage !== 'disabled')
     .map((provider) => [provider.id, [...provider.executionModes]]))
@@ -1444,7 +1444,7 @@ function assertBrowserProviderActionAllowed(provider: ProviderId) {
   )
 }
 
-function assertProviderModeEnabled(configured: ManagedProfileConfig, provider: ProviderId, mode: UiProviderExecutionMode) {
+function assertProviderModeEnabled(configured: ManagedProfileConfig, provider: ProviderId, mode: DashboardProviderExecutionMode) {
   if (configured.providerModes[provider]?.includes(mode)) return
   throw applicationError('provider_mode_disabled', `${mode === 'browser' ? 'Browser' : 'Direct'} mode is disabled for this provider and profile.`)
 }
@@ -1462,7 +1462,7 @@ function providerList(value: unknown): string[] {
   return providers
 }
 
-function providerModes(value: unknown): Record<string, UiProviderExecutionMode[]> {
+function providerModes(value: unknown): Record<string, DashboardProviderExecutionMode[]> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw applicationError('invalid_provider_modes', 'Provider modes must be an object.')
   }
@@ -1479,7 +1479,7 @@ function providerModes(value: unknown): Record<string, UiProviderExecutionMode[]
     if (modes.some((mode) => ((mode !== 'browser' && mode !== 'direct') || !descriptor.executionModes.includes(mode)))) {
       throw applicationError('invalid_provider_modes', 'Provider modes include an unsupported execution mode.')
     }
-    result[providerId] = modes as UiProviderExecutionMode[]
+    result[providerId] = modes as DashboardProviderExecutionMode[]
   }
   return result
 }
