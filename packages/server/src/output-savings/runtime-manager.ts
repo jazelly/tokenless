@@ -8,7 +8,6 @@ import { Readable, Transform } from 'node:stream'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import { tokenlessError } from '../browser/errors.js'
-import { withPrivateSqliteWriterLock } from '../browser/profiles/sqlite-lock.js'
 import {
   OUTPUT_SAVINGS_RUNTIME_CATALOG,
   OUTPUT_SAVINGS_RUNTIME_LICENSE_FILE,
@@ -58,7 +57,6 @@ export class OutputSavingsRuntimeManager {
   readonly tokenizerRoot: string
   readonly runtimesRoot: string
   readonly runtimeDirectory: string
-  readonly installLockFile: string
   private verifiedReadyCache: { fingerprint: string; inspection: OutputSavingsRuntimeInspection } | undefined
 
   constructor(homeDir: string) {
@@ -66,7 +64,6 @@ export class OutputSavingsRuntimeManager {
     this.tokenizerRoot = path.join(this.homeDir, 'tokenizers')
     this.runtimesRoot = path.join(this.tokenizerRoot, 'runtimes')
     this.runtimeDirectory = path.join(this.runtimesRoot, OUTPUT_SAVINGS_RUNTIME_CATALOG.runtimeId)
-    this.installLockFile = path.join(this.tokenizerRoot, 'install.writer.sqlite')
   }
 
   async inspect(): Promise<OutputSavingsRuntimeInspection> {
@@ -125,24 +122,22 @@ export class OutputSavingsRuntimeManager {
     throwIfRuntimeOperationAborted(options.signal)
     await fs.mkdir(this.tokenizerRoot, { recursive: true, mode: 0o700 })
     await fs.chmod(this.tokenizerRoot, 0o700).catch(() => undefined)
-    return await withPrivateSqliteWriterLock(this.installLockFile, async () => {
-      throwIfRuntimeOperationAborted(options.signal)
-      const afterLock = await this.inspect()
-      if (afterLock.state === 'ready') return afterLock
-      if (afterLock.state === 'invalid') {
-        await fs.rm(this.runtimeDirectory, { recursive: true, force: true })
-      }
-      throwIfRuntimeOperationAborted(options.signal)
-      await this.install(options.signal)
-      const installed = await this.inspect()
-      if (installed.state !== 'ready') {
-        throw tokenlessError(
-          'output_savings_runtime_install_invalid',
-          'The output savings runtime did not pass installed-state verification.',
-        )
-      }
-      return installed
-    }, options.signal ? { signal: options.signal } : {})
+    throwIfRuntimeOperationAborted(options.signal)
+    const afterWrite = await this.inspect()
+    if (afterWrite.state === 'ready') return afterWrite
+    if (afterWrite.state === 'invalid') {
+      await fs.rm(this.runtimeDirectory, { recursive: true, force: true })
+    }
+    throwIfRuntimeOperationAborted(options.signal)
+    await this.install(options.signal)
+    const installed = await this.inspect()
+    if (installed.state !== 'ready') {
+      throw tokenlessError(
+        'output_savings_runtime_install_invalid',
+        'The output savings runtime did not pass installed-state verification.',
+      )
+    }
+    return installed
   }
 
   async remove(): Promise<OutputSavingsRuntimeInspection> {

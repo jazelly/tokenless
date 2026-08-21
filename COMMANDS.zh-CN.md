@@ -14,6 +14,7 @@
 | `tokenless setup` | 配置 skills、浏览器、profiles、daemon，并执行一次 provider 登录检查。 | 是 |
 | `tokenless agents <install\|status\|inspect\|uninstall> codex` | 管理可选的 Codex guidance、native hooks 和精确 Harness context binding。 | 否 |
 | `tokenless dashboard` | 打开本地 Web Dashboard，或输出可直接访问的 loopback URL。 | 否 |
+| `tokenless menubar status` | 为原生 macOS 菜单栏客户端输出同一 Tokenless home 的 menu bar snapshot。 | 否 |
 | `tokenless doctor` | 只读检查本地配置和 runtime 健康状态，不刷新 provider。 | 否 |
 | `tokenless config` | 读取或更新 Tokenless 持久化配置。 | 否 |
 | `tokenless upgrade` | 升级全局 CLI、skills、本地 runtime，并运行 doctor。 | 否 |
@@ -235,9 +236,12 @@ Delegated run 会获得以 `--workspace-root` 为根的有界 `workspace.read` �
 tokenless dashboard
 tokenless dashboard --profile work
 tokenless dashboard --profile work --no-open --json
+tokenless dashboard --job-id <job-id>
 ```
 
 `--no-open` 不启动浏览器，只输出可直接访问的 loopback Dashboard URL。打开 `/` 会跳转到 `/dashboard/`，并建立短期有效的 `HttpOnly`、`SameSite=Strict` session cookie；所有 mutation 仍会校验 exact Origin 和 CSRF。Dashboard 可以在任意浏览器中运行；provider action 仍会在所选 profile 绑定的 browser runtime 中执行。Dashboard 不会收到 daemon bearer token、provider cookies、browser storage、Keychain 数据、raw DOM、claim token、checkpoint 或私有文件路径。
+
+`--job-id` 会打开 Jobs view，并自动加载该 job 的详情。`tokenless menubar status --json` 会启动或发现同一 Tokenless home 的 daemon，然后返回 daemon/runtime status、Dashboard URL、active job 数量，以及最多十条按 `updatedAt` 降序排列的 conversation 摘要。摘要只包含安全标题和公开标识符，不包含 prompt、transcript、credentials 或私有路径。
 
 Dashboard 包含 Overview、Profiles、Providers、Capabilities、Jobs 和 System/Diagnostics。Provider membership、visibility、role label，以及不带凭据的 HTTP/HTTPS/SOCKS5 proxy 都按 profile 配置。CLI 恢复入口仍然完整保留：
 
@@ -303,7 +307,7 @@ tokenless config \
 
 Provider membership 只属于 `profiles` 中选定的 entry。路由必须读到该 entry，绝不会 fallback 到全局 provider list。
 
-Tokenless 会把具体的旧 per-profile side table 与 `browser/profiles.json` 合并并迁移一次。旧表中缺失的 registered profile 会把旧 root provider list 物化为自己的 `enabledProviders`；canonical config 不再保留任一旧 key。未写入文档的旧 `--preferred-providers` flag 仍作为 CLI alias 接受。
+Tokenless API 会把具体的旧 per-profile side table 与已登记的 browser profiles 合并并迁移一次。旧表中缺失的 registered profile 会把旧 root provider list 物化为自己的 `enabledProviders`；canonical config 不再保留任一旧 key。未写入文档的旧 `--preferred-providers` flag 仍作为 CLI alias 接受。
 
 完整 config shape 如下：
 
@@ -341,9 +345,10 @@ Tokenless 始终通过 CDP 控制 managed Chromium，内部仍使用 Playwright 
 ```bash
 tokenless upgrade
 tokenless upgrade --json
+tokenless upgrade --check --json
 ```
 
-接受的选项为 `--json`、`--home`、`--daemon-url`、`--browser`、`--browsers` 和 `--daemon-start-timeout-ms`。
+接受的选项为 `--check`、`--json`、`--home`、`--daemon-url`、`--browser`、`--browsers` 和 `--daemon-start-timeout-ms`。`--check` 只查询 npm 最新发布版本，不修改 CLI、runtime 或 daemon。
 
 ### `tokenless daemon stop`
 
@@ -372,6 +377,8 @@ tokenless profiles add -P work --set-default --json
 ### `tokenless profiles list`
 
 读取 profile registry，并返回全部 managed profiles。
+
+Registry 存储在 `<TOKENLESS_HOME>/tokenless.sqlite3` 中。首次打开该存储时，会一次性导入已有的 `<TOKENLESS_HOME>/browser/profiles.json` registry。
 
 ```bash
 tokenless profiles list

@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import fsSync from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { DatabaseSync, type SQLInputValue } from 'node:sqlite'
+import { DatabaseSync } from 'node:sqlite'
 
 import {
   AGENT_CONTEXT_PROTOCOL,
@@ -13,7 +13,58 @@ import {
   type CodexContextInspection,
 } from './contracts.js'
 
-const DATABASE_FILE = 'harness.sqlite3'
+const DATABASE_FILE = 'tokenless.sqlite3'
+const RECORD_KIND = 'codex-chat'
+
+type StoredTurn = {
+  turnId: string
+  promptSha256: string | null
+  startedAt: string
+  lastSeenAt: string
+  completedAt: string | null
+}
+
+type StoredInvocation = {
+  bindingId: string
+  hookSessionId: string | null
+  agentKind: 'codex'
+  agentChatId: string
+  agentTurnId: string
+  agentToolCallId: string
+  toolName: string
+  toolInputSha256: string
+  status: string
+  provider: string | null
+  profile: string | null
+  jobId: string | null
+  providerTaskId: string
+  createdAt: string
+  updatedAt: string
+}
+
+type StoredProviderBinding = {
+  provider: string
+  profile: string | null
+  providerTaskId: string
+  lastJobId: string | null
+  providerProjectId: string | null
+  providerConversationRef: string | null
+  firstSeenAt: string
+  lastSeenAt: string
+}
+
+type StoredContext = {
+  conversation: AgentConversationContext
+  turns: StoredTurn[]
+  invocations: StoredInvocation[]
+  providerBindings: StoredProviderBinding[]
+}
+
+type StoredContextRow = {
+  agentChatId: string
+  context: StoredContext
+  updatedAt: string
+}
 
 export class AgentContextStore {
   readonly homeDir: string
@@ -45,94 +96,67 @@ export class AgentContextStore {
     this.#db.close()
   }
 
-  observeCodexSession({
-    chatId,
-    cwd,
-    model,
-    sessionTreeId,
-    appServerThread,
-  }: {
+  observeCodexSession({ chatId, cwd, model, sessionTreeId, appServerThread }: {
     chatId: string
     cwd: string
     model?: string | undefined
     sessionTreeId?: string | null | undefined
     appServerThread?: CodexAppServerThread | null | undefined
   }) {
-    this.transaction(() => this.upsertCodexSession({
-      chatId,
-      cwd,
-      model,
-      sessionTreeId,
-      appServerThread,
-    }))
+    this.transaction(() => this.upsertCodexSession({ chatId, cwd, model, sessionTreeId, appServerThread }))
     return this.conversation(chatId)
   }
 
-  observeCodexTurn({
-    chatId,
-    turnId,
-    cwd,
-    model,
-    prompt,
-  }: {
+  observeCodexTurn({ chatId, turnId, cwd, model, prompt }: {
     chatId: string
     turnId: string
     cwd: string
     model?: string | undefined
     prompt?: string | undefined
   }) {
-    this.observeCodexSession({ chatId, cwd, model })
     const now = new Date().toISOString()
-    this.run(
-      `INSERT INTO harness_agent_turns (
-        agent_kind, agent_chat_id, agent_turn_id, prompt_sha256, started_at, last_seen_at, completed_at
-      ) VALUES ('codex', ?, ?, ?, ?, ?, NULL)
-      ON CONFLICT(agent_kind, agent_chat_id, agent_turn_id) DO UPDATE SET
-        prompt_sha256 = COALESCE(excluded.prompt_sha256, harness_agent_turns.prompt_sha256),
-        last_seen_at = excluded.last_seen_at`,
-      chatId,
-      turnId,
-      prompt === undefined ? null : sha256(prompt),
-      now,
-      now,
-    )
+    this.transaction(() => {
+      this.upsertCodexSession({ chatId, cwd, model })
+      const state = this.requireContext(chatId)
+      const existing = state.context.turns.find((turn) => turn.turnId === turnId)
+      if (existing) {
+        existing.promptSha256 = prompt === undefined ? existing.promptSha256 : sha256(prompt)
+        existing.lastSeenAt = now
+      } else {
+        state.context.turns.push({
+          turnId,
+          promptSha256: prompt === undefined ? null : sha256(prompt),
+          startedAt: now,
+          lastSeenAt: now,
+          completedAt: null,
+        })
+      }
+      state.updatedAt = now
+      this.writeContext(state)
+    })
   }
 
   completeCodexTurn(chatId: string, turnId: string) {
     const now = new Date().toISOString()
     this.transaction(() => {
-      this.run(
-        `UPDATE harness_agent_turns
-         SET completed_at = COALESCE(completed_at, ?), last_seen_at = ?
-         WHERE agent_kind = 'codex' AND agent_chat_id = ? AND agent_turn_id = ?`,
-        now,
-        now,
-        chatId,
-        turnId,
-      )
-      this.run(
-        `UPDATE harness_tool_invocations
-         SET status = 'completed_without_result', updated_at = ?
-         WHERE agent_kind = 'codex' AND agent_chat_id = ? AND agent_turn_id = ?
-           AND status = 'pending'`,
-        now,
-        chatId,
-        turnId,
-      )
+      const state = this.requireContext(chatId)
+      const turn = state.context.turns.find((candidate) => candidate.turnId === turnId)
+      if (turn) {
+        turn.completedAt ??= now
+        turn.lastSeenAt = now
+      }
+      for (const invocation of state.context.invocations) {
+        if (invocation.agentTurnId === turnId && invocation.status === 'pending') {
+          invocation.status = 'completed_without_result'
+          invocation.updatedAt = now
+        }
+      }
+      state.updatedAt = now
+      this.writeContext(state)
     })
   }
 
-  createCodexInvocation({
-    chatId,
-    turnId,
-    toolCallId,
-    toolName,
-    toolInput,
-    cwd,
-    model,
-    sessionTreeId,
-    appServerThread,
-  }: {
+  createCodexInvocation({ chatId, turnId, toolCallId, toolName, toolInput, cwd, model, sessionTreeId, appServerThread }: {
     chatId: string
     turnId: string
     toolCallId: string
@@ -143,69 +167,43 @@ export class AgentContextStore {
     sessionTreeId?: string | null | undefined
     appServerThread?: CodexAppServerThread | null | undefined
   }): AgentInvocationContext {
-    const conversation = this.observeCodexSession({ chatId, cwd, model, sessionTreeId, appServerThread })
-    this.observeCodexTurn({ chatId, turnId, cwd, model })
-    const existing = this.get(
-      `SELECT binding_id
-       FROM harness_tool_invocations
-       WHERE agent_kind = 'codex' AND agent_chat_id = ? AND agent_tool_call_id = ?`,
-      chatId,
-      toolCallId,
-    )
-    const bindingId = existing ? String(existing.binding_id) : `binding_${randomUUID()}`
     const now = new Date().toISOString()
-    this.run(
-      `INSERT INTO harness_tool_invocations (
-        binding_id, hook_session_id, agent_kind, agent_chat_id, agent_turn_id, agent_tool_call_id,
-        tool_name, tool_input_sha256, status, provider, profile, job_id,
-        provider_task_id, created_at, updated_at
-      ) VALUES (?, ?, 'codex', ?, ?, ?, ?, ?, 'pending', NULL, NULL, NULL, ?, ?, ?)
-      ON CONFLICT(agent_kind, agent_chat_id, agent_tool_call_id) DO UPDATE SET
-        hook_session_id = COALESCE(harness_tool_invocations.hook_session_id, excluded.hook_session_id),
-        agent_turn_id = excluded.agent_turn_id,
-        tool_name = excluded.tool_name,
-        tool_input_sha256 = excluded.tool_input_sha256,
-        updated_at = excluded.updated_at`,
-      bindingId,
-      chatId,
-      chatId,
-      turnId,
-      toolCallId,
-      toolName,
-      sha256(canonicalJson(toolInput)),
-      conversation.providerTaskId,
-      now,
-      now,
-    )
-    return {
-      protocol: AGENT_CONTEXT_PROTOCOL,
-      bindingId,
-      hookSessionId: chatId,
-      agentKind: 'codex',
-      agentChatId: chatId,
-      agentTurnId: turnId,
-      agentToolCallId: toolCallId,
-      agentSessionTreeId: conversation.agentSessionTreeId,
-      conversationId: conversation.conversationId,
-      providerTaskId: conversation.providerTaskId,
-      project: conversation.project,
-      activeProvider: conversation.activeProvider,
-      activeProfile: conversation.activeProfile,
-    }
+    this.transaction(() => {
+      this.upsertCodexSession({ chatId, cwd, model, sessionTreeId, appServerThread })
+      const state = this.requireContext(chatId)
+      const turn = state.context.turns.find((candidate) => candidate.turnId === turnId)
+      if (turn) turn.lastSeenAt = now
+      else state.context.turns.push({ turnId, promptSha256: null, startedAt: now, lastSeenAt: now, completedAt: null })
+      const previous = state.context.invocations.find((invocation) => invocation.agentToolCallId === toolCallId)
+      const invocation: StoredInvocation = {
+        bindingId: previous?.bindingId ?? `binding_${randomUUID()}`,
+        hookSessionId: previous?.hookSessionId ?? chatId,
+        agentKind: 'codex',
+        agentChatId: chatId,
+        agentTurnId: turnId,
+        agentToolCallId: toolCallId,
+        toolName,
+        toolInputSha256: sha256(canonicalJson(toolInput)),
+        status: previous?.status ?? 'pending',
+        provider: previous?.provider ?? null,
+        profile: previous?.profile ?? null,
+        jobId: previous?.jobId ?? null,
+        providerTaskId: state.context.conversation.providerTaskId,
+        createdAt: previous?.createdAt ?? now,
+        updatedAt: now,
+      }
+      if (previous) state.context.invocations[state.context.invocations.indexOf(previous)] = invocation
+      else state.context.invocations.push(invocation)
+      state.updatedAt = now
+      this.writeContext(state)
+    })
+    const state = this.requireContext(chatId)
+    const invocation = state.context.invocations.find((candidate) => candidate.agentToolCallId === toolCallId)
+    if (!invocation) throw new Error('Codex invocation was not registered.')
+    return invocationContext(this.conversation(chatId), invocation.bindingId, invocation.hookSessionId, invocation.agentTurnId, invocation.agentToolCallId)
   }
 
-  resolveCodexThreadInvocation({
-    chatId,
-    cwd,
-    sessionTreeId,
-    bindingId,
-    turnId,
-    toolCallId,
-    toolName,
-    toolInput,
-    model,
-    appServerThread,
-  }: {
+  resolveCodexThreadInvocation({ chatId, cwd, sessionTreeId, bindingId, turnId, toolCallId, toolName, toolInput, model, appServerThread }: {
     chatId: string
     cwd: string
     sessionTreeId?: string | null | undefined
@@ -221,484 +219,248 @@ export class AgentContextStore {
     let resolvedHookSessionId: string | null = null
     let resolvedTurnId = ''
     let resolvedToolCallId = ''
-
     this.transaction(() => {
-      const targetProject = resolveProject(cwd)
-      const registeredProject = this.get(
-        `SELECT project_id
-         FROM harness_agent_conversations
-         WHERE agent_kind = 'codex' AND agent_chat_id = ?`,
-        chatId,
-      )
-      if (registeredProject && String(registeredProject.project_id) !== targetProject.projectId) {
+      const project = resolveProject(cwd)
+      const registered = this.readContext(chatId)
+      if (registered && registered.context.conversation.project.projectId !== project.projectId) {
         throw new Error('Codex thread is already bound to a different canonical project.')
       }
-      const identity = this.upsertCodexSession({
-        chatId,
-        cwd,
-        model,
-        sessionTreeId,
-        appServerThread,
-      })
-      const existing = bindingId
-        ? this.get(
-            `SELECT i.*, c.agent_session_tree_id
-             FROM harness_tool_invocations i
-             JOIN harness_agent_conversations c
-               ON c.agent_kind = i.agent_kind AND c.agent_chat_id = i.agent_chat_id
-             WHERE i.binding_id = ?`,
-            bindingId,
-          )
-        : undefined
-
-      if (bindingId && !existing) {
-        throw new Error('Codex hook binding was not found.')
-      }
-
+      const identity = this.upsertCodexSession({ chatId, cwd, model, sessionTreeId, appServerThread })
+      const matches = bindingId
+        ? this.readContexts().flatMap((state) => state.context.invocations
+          .filter((invocation) => invocation.bindingId === bindingId)
+          .map((invocation) => ({ state, invocation })))
+        : []
+      if (matches.length > 1) throw new Error('Codex hook binding is ambiguous.')
+      if (bindingId && matches.length === 0) throw new Error('Codex hook binding was not found.')
+      const target = this.requireContext(chatId)
+      const existing = matches[0]
       if (existing) {
-        const hookSessionId = nullableString(existing.hook_session_id)
-        const existingTreeId = hookSessionId ?? nullableString(existing.agent_session_tree_id)
-        if (!hookSessionId) {
-          throw new Error('Codex hook binding is missing immutable Hook provenance.')
+        const hookSessionId = existing.invocation.hookSessionId
+        if (!hookSessionId) throw new Error('Codex hook binding is missing immutable Hook provenance.')
+        const existingTreeId = existing.state.context.conversation.agentSessionTreeId ?? hookSessionId
+        if (sessionTreeId && existingTreeId !== sessionTreeId) throw new Error('Codex hook binding belongs to a different session tree.')
+        const sourceTurn = existing.state.context.turns.find((turn) => turn.turnId === existing.invocation.agentTurnId)
+        if (!sourceTurn) throw new Error('Codex Hook binding references a missing turn.')
+        if (!target.context.turns.some((turn) => turn.turnId === sourceTurn.turnId)) target.context.turns.push({ ...sourceTurn })
+        existing.state.context.invocations = existing.state.context.invocations.filter((invocation) => invocation.bindingId !== existing.invocation.bindingId)
+        const now = new Date().toISOString()
+        const moved = { ...existing.invocation, agentChatId: chatId, providerTaskId: identity.providerTaskId, updatedAt: now }
+        target.context.invocations = target.context.invocations.filter((invocation) => invocation.bindingId !== moved.bindingId)
+        target.context.invocations.push(moved)
+        target.updatedAt = now
+        if (existing.state.agentChatId !== target.agentChatId) {
+          existing.state.updatedAt = now
+          this.writeContext(existing.state)
         }
-        if (sessionTreeId && existingTreeId !== sessionTreeId) {
-          throw new Error('Codex hook binding belongs to a different session tree.')
-        }
-        resolvedBindingId = String(existing.binding_id)
+        this.writeContext(target)
+        resolvedBindingId = moved.bindingId
         resolvedHookSessionId = hookSessionId
-        resolvedTurnId = String(existing.agent_turn_id)
-        resolvedToolCallId = String(existing.agent_tool_call_id)
-        this.copyCodexTurn({
-          fromChatId: String(existing.agent_chat_id),
-          toChatId: chatId,
-          turnId: resolvedTurnId,
-        })
-        this.run(
-          `UPDATE harness_tool_invocations
-           SET agent_chat_id = ?, provider_task_id = ?, updated_at = ?
-           WHERE binding_id = ?`,
-          chatId,
-          identity.providerTaskId,
-          new Date().toISOString(),
-          resolvedBindingId,
-        )
+        resolvedTurnId = moved.agentTurnId
+        resolvedToolCallId = moved.agentToolCallId
         return
       }
-
       resolvedBindingId = `binding_direct_${randomUUID()}`
       resolvedHookSessionId = null
       resolvedTurnId = turnId ?? `turn_direct_${randomUUID()}`
       resolvedToolCallId = toolCallId ?? `tool_direct_${randomUUID()}`
-      this.upsertCodexTurn({ chatId, turnId: resolvedTurnId })
       const now = new Date().toISOString()
-      this.run(
-        `INSERT INTO harness_tool_invocations (
-          binding_id, hook_session_id, agent_kind, agent_chat_id, agent_turn_id, agent_tool_call_id,
-          tool_name, tool_input_sha256, status, provider, profile, job_id,
-          provider_task_id, created_at, updated_at
-        ) VALUES (?, NULL, 'codex', ?, ?, ?, ?, ?, 'pending', NULL, NULL, NULL, ?, ?, ?)`,
-        resolvedBindingId,
-        chatId,
-        resolvedTurnId,
-        resolvedToolCallId,
-        toolName ?? 'tokenless.direct',
-        sha256(canonicalJson(toolInput)),
-        identity.providerTaskId,
-        now,
-        now,
-      )
+      if (!target.context.turns.some((turn) => turn.turnId === resolvedTurnId)) {
+        target.context.turns.push({ turnId: resolvedTurnId, promptSha256: null, startedAt: now, lastSeenAt: now, completedAt: null })
+      }
+      target.context.invocations.push({
+        bindingId: resolvedBindingId,
+        hookSessionId: null,
+        agentKind: 'codex',
+        agentChatId: chatId,
+        agentTurnId: resolvedTurnId,
+        agentToolCallId: resolvedToolCallId,
+        toolName: toolName ?? 'tokenless.direct',
+        toolInputSha256: sha256(canonicalJson(toolInput)),
+        status: 'pending',
+        provider: null,
+        profile: null,
+        jobId: null,
+        providerTaskId: identity.providerTaskId,
+        createdAt: now,
+        updatedAt: now,
+      })
+      target.updatedAt = now
+      this.writeContext(target)
     })
-
-    return invocationContext(
-      this.conversation(chatId),
-      resolvedBindingId,
-      resolvedHookSessionId,
-      resolvedTurnId,
-      resolvedToolCallId,
-    )
+    return invocationContext(this.conversation(chatId), resolvedBindingId, resolvedHookSessionId, resolvedTurnId, resolvedToolCallId)
   }
 
-  completeCodexInvocation({
-    chatId,
-    toolCallId,
-    outcome,
-  }: {
+  completeCodexInvocation({ chatId, toolCallId, outcome }: {
     chatId: string
     toolCallId: string
     outcome: AgentInvocationOutcome
   }) {
-    const rows = this.all(
-      `SELECT i.binding_id, i.agent_chat_id, c.conversation_id, i.provider_task_id
-       FROM harness_tool_invocations i
-       JOIN harness_agent_conversations c
-         ON c.agent_kind = i.agent_kind AND c.agent_chat_id = i.agent_chat_id
-       WHERE i.agent_kind = 'codex'
-         AND i.agent_tool_call_id = ?
-         AND (
-           i.hook_session_id = ?
-           OR (i.hook_session_id IS NULL AND i.agent_chat_id = ?)
-         )`,
-      toolCallId,
-      chatId,
-      chatId,
-    )
-    if (rows.length !== 1) {
-      throw new Error(rows.length === 0
-        ? 'Codex Hook invocation was not registered.'
-        : 'Codex Hook invocation provenance is ambiguous.')
-    }
-    this.completeInvocationRecord(rows[0], outcome)
+    const rows = this.readContexts().flatMap((state) => state.context.invocations
+      .filter((invocation) => invocation.agentKind === 'codex' && invocation.agentToolCallId === toolCallId)
+      .filter((invocation) => invocation.hookSessionId === chatId || (invocation.hookSessionId === null && invocation.agentChatId === chatId))
+      .map((invocation) => ({ state, invocation })))
+    if (rows.length !== 1) throw new Error(rows.length === 0 ? 'Codex Hook invocation was not registered.' : 'Codex Hook invocation provenance is ambiguous.')
+    const row = rows[0]
+    if (!row) throw new Error('Codex Hook invocation was not registered.')
+    this.completeInvocationRecord(row.invocation, outcome)
   }
 
   completeBoundInvocation(bindingId: string, outcome: AgentInvocationOutcome) {
-    const row = this.get(
-      `SELECT i.binding_id, i.agent_chat_id, c.conversation_id, i.provider_task_id
-       FROM harness_tool_invocations i
-       JOIN harness_agent_conversations c
-         ON c.agent_kind = i.agent_kind AND c.agent_chat_id = i.agent_chat_id
-       WHERE i.binding_id = ?`,
-      bindingId,
-    )
-    this.completeInvocationRecord(row, outcome)
+    const rows = this.readContexts().flatMap((state) => state.context.invocations
+      .filter((invocation) => invocation.bindingId === bindingId)
+      .map((invocation) => ({ state, invocation })))
+    if (rows.length !== 1) throw new Error('Codex invocation binding was not registered.')
+    const row = rows[0]
+    if (!row) throw new Error('Codex invocation binding was not registered.')
+    this.completeInvocationRecord(row.invocation, outcome)
   }
 
-  private completeInvocationRecord(row: Record<string, unknown> | undefined, outcome: AgentInvocationOutcome) {
-    if (!row) throw new Error('Codex invocation binding was not registered.')
-    const providerTaskId = String(row.provider_task_id)
-    if (outcome.taskId && outcome.taskId !== providerTaskId) {
-      throw new Error('Tokenless provider result belongs to a different bound task.')
-    }
-    const chatId = String(row.agent_chat_id)
+  private completeInvocationRecord(invocation: StoredInvocation, outcome: AgentInvocationOutcome) {
+    if (outcome.taskId && outcome.taskId !== invocation.providerTaskId) throw new Error('Tokenless provider result belongs to a different bound task.')
     const now = new Date().toISOString()
     this.transaction(() => {
-      this.run(
-        `UPDATE harness_tool_invocations
-         SET status = ?, provider = ?, profile = ?, job_id = ?, updated_at = ?
-         WHERE binding_id = ?`,
-        outcome.ok === true ? 'succeeded' : outcome.ok === false ? 'failed' : 'completed',
-        outcome.provider,
-        outcome.profile,
-        outcome.jobId,
-        now,
-        String(row.binding_id),
-      )
+      const state = this.requireContext(invocation.agentChatId)
+      const current = state.context.invocations.find((candidate) => candidate.bindingId === invocation.bindingId)
+      if (!current) throw new Error('Codex invocation binding was not registered.')
+      current.status = outcome.ok === true ? 'succeeded' : outcome.ok === false ? 'failed' : 'completed'
+      current.provider = outcome.provider
+      current.profile = outcome.profile
+      current.jobId = outcome.jobId
+      current.updatedAt = now
       if (outcome.provider) {
-        this.run(
-          `INSERT INTO harness_provider_bindings (
-            conversation_id, provider, profile, provider_task_id, last_job_id,
-            provider_project_id, provider_conversation_ref, first_seen_at, last_seen_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(conversation_id, provider, profile) DO UPDATE SET
-            provider_task_id = excluded.provider_task_id,
-            last_job_id = COALESCE(excluded.last_job_id, harness_provider_bindings.last_job_id),
-            provider_project_id = COALESCE(excluded.provider_project_id, harness_provider_bindings.provider_project_id),
-            provider_conversation_ref = COALESCE(excluded.provider_conversation_ref, harness_provider_bindings.provider_conversation_ref),
-            last_seen_at = excluded.last_seen_at`,
-          String(row.conversation_id),
-          outcome.provider,
-          outcome.profile ?? '',
-          providerTaskId,
-          outcome.jobId,
-          outcome.providerProjectId,
-          outcome.providerConversationRef,
-          now,
-          now,
-        )
-        this.run(
-          `UPDATE harness_agent_conversations
-           SET active_provider = ?, active_profile = ?, last_seen_at = ?
-           WHERE agent_kind = 'codex' AND agent_chat_id = ?`,
-          outcome.provider,
-          outcome.profile,
-          now,
-          chatId,
-        )
+        const existing = state.context.providerBindings.find((binding) => binding.provider === outcome.provider && binding.profile === outcome.profile)
+        const next: StoredProviderBinding = {
+          provider: outcome.provider,
+          profile: outcome.profile,
+          providerTaskId: current.providerTaskId,
+          lastJobId: outcome.jobId,
+          providerProjectId: outcome.providerProjectId,
+          providerConversationRef: outcome.providerConversationRef,
+          firstSeenAt: existing?.firstSeenAt ?? now,
+          lastSeenAt: now,
+        }
+        if (existing) {
+          Object.assign(existing, next)
+          existing.lastJobId ??= outcome.jobId
+          existing.providerProjectId ??= outcome.providerProjectId
+          existing.providerConversationRef ??= outcome.providerConversationRef
+        } else state.context.providerBindings.push(next)
+        state.context.conversation = { ...state.context.conversation, activeProvider: outcome.provider, activeProfile: outcome.profile }
       }
+      state.updatedAt = now
+      this.writeContext(state)
     })
   }
 
-  conversation(chatId: string): AgentConversationContext {
-    const row = this.get(
-      `SELECT c.*, p.canonical_root, p.provider_project_name
-       FROM harness_agent_conversations c
-       JOIN harness_projects p ON p.project_id = c.project_id
-       WHERE c.agent_kind = 'codex' AND c.agent_chat_id = ?`,
-      chatId,
-    )
-    if (!row) throw new Error(`Codex conversation is not registered: ${chatId}`)
-    return rowToConversation(row)
+  conversation(chatId: string) {
+    return this.requireContext(chatId).context.conversation
   }
 
   inspectCodexConversation(chatId: string): CodexContextInspection {
-    const conversation = this.conversation(chatId)
-    const turns = this.all(
-      `SELECT agent_turn_id, prompt_sha256, started_at, completed_at
-       FROM harness_agent_turns
-       WHERE agent_kind = 'codex' AND agent_chat_id = ?
-       ORDER BY started_at ASC, agent_turn_id ASC`,
-      chatId,
-    ).map((row) => ({
-      turnId: String(row.agent_turn_id),
-      promptSha256: nullableString(row.prompt_sha256),
-      startedAt: String(row.started_at),
-      completedAt: nullableString(row.completed_at),
+    const context = this.requireContext(chatId).context
+    const turns = [...context.turns].sort((a, b) => a.startedAt.localeCompare(b.startedAt) || a.turnId.localeCompare(b.turnId)).map((turn) => ({
+      turnId: turn.turnId, promptSha256: turn.promptSha256, startedAt: turn.startedAt, completedAt: turn.completedAt,
     }))
-    const invocations = this.all(
-      `SELECT binding_id, hook_session_id, agent_turn_id, agent_tool_call_id, tool_name, status,
-              provider, profile, job_id, provider_task_id, created_at, updated_at
-       FROM harness_tool_invocations
-       WHERE agent_kind = 'codex' AND agent_chat_id = ?
-       ORDER BY created_at ASC, binding_id ASC`,
-      chatId,
-    ).map((row) => ({
-      bindingId: String(row.binding_id),
-      hookSessionId: nullableString(row.hook_session_id),
-      turnId: String(row.agent_turn_id),
-      toolCallId: String(row.agent_tool_call_id),
-      toolName: String(row.tool_name),
-      status: String(row.status),
-      provider: nullableString(row.provider),
-      profile: nullableString(row.profile),
-      jobId: nullableString(row.job_id),
-      providerTaskId: String(row.provider_task_id),
-      createdAt: String(row.created_at),
-      updatedAt: String(row.updated_at),
+    const invocations = [...context.invocations].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.bindingId.localeCompare(b.bindingId)).map((invocation) => ({
+      bindingId: invocation.bindingId, hookSessionId: invocation.hookSessionId, turnId: invocation.agentTurnId,
+      toolCallId: invocation.agentToolCallId, toolName: invocation.toolName, status: invocation.status,
+      provider: invocation.provider, profile: invocation.profile, jobId: invocation.jobId,
+      providerTaskId: invocation.providerTaskId, createdAt: invocation.createdAt, updatedAt: invocation.updatedAt,
     }))
-    const providerBindings = this.all(
-      `SELECT provider, profile, provider_task_id, provider_project_id,
-              provider_conversation_ref, last_job_id, first_seen_at, last_seen_at
-       FROM harness_provider_bindings
-       WHERE conversation_id = ?
-       ORDER BY last_seen_at ASC, provider ASC, profile ASC`,
-      conversation.conversationId,
-    ).map((row) => ({
-      provider: String(row.provider),
-      profile: nullableString(row.profile),
-      providerTaskId: String(row.provider_task_id),
-      providerProjectId: nullableString(row.provider_project_id),
-      providerConversationRef: nullableString(row.provider_conversation_ref),
-      lastJobId: nullableString(row.last_job_id),
-      firstSeenAt: String(row.first_seen_at),
-      lastSeenAt: String(row.last_seen_at),
+    const providerBindings = [...context.providerBindings].sort((a, b) => a.lastSeenAt.localeCompare(b.lastSeenAt) || a.provider.localeCompare(b.provider)).map((binding) => ({
+      provider: binding.provider, profile: binding.profile, providerTaskId: binding.providerTaskId,
+      providerProjectId: binding.providerProjectId, providerConversationRef: binding.providerConversationRef,
+      lastJobId: binding.lastJobId, firstSeenAt: binding.firstSeenAt, lastSeenAt: binding.lastSeenAt,
     }))
-    return { protocol: AGENT_CONTEXT_PROTOCOL, conversation, turns, invocations, providerBindings }
+    return { protocol: AGENT_CONTEXT_PROTOCOL, conversation: context.conversation, turns, invocations, providerBindings }
   }
 
   counts() {
+    const rows = this.readContexts()
     return {
-      projects: this.count('harness_projects'),
-      conversations: this.count('harness_agent_conversations'),
-      turns: this.count('harness_agent_turns'),
-      invocations: this.count('harness_tool_invocations'),
+      projects: new Set(rows.map((row) => row.context.conversation.project.projectId)).size,
+      conversations: rows.length,
+      turns: rows.reduce((total, row) => total + row.context.turns.length, 0),
+      invocations: rows.reduce((total, row) => total + row.context.invocations.length, 0),
     }
   }
 
-  private upsertCodexSession({
-    chatId,
-    cwd,
-    model,
-    sessionTreeId,
-    appServerThread,
-  }: {
+  private upsertCodexSession({ chatId, cwd, model: _model, sessionTreeId, appServerThread }: {
     chatId: string
     cwd: string
     model?: string | undefined
     sessionTreeId?: string | null | undefined
     appServerThread?: CodexAppServerThread | null | undefined
   }) {
-    if (sessionTreeId && appServerThread && sessionTreeId !== appServerThread.sessionId) {
-      throw new Error('Codex App Server session tree does not match the explicit Hook session tree.')
-    }
+    if (sessionTreeId && appServerThread && sessionTreeId !== appServerThread.sessionId) throw new Error('Codex App Server session tree does not match the explicit Hook session tree.')
     const project = resolveProject(cwd)
-    const identity = conversationIdentity(chatId, project)
+    const existing = this.readContext(chatId)
+    if (existing && existing.context.conversation.project.projectId !== project.projectId) throw new Error('Codex thread is already bound to a different canonical project.')
+    const identity = existing?.context.conversation ?? {
+      ...conversationIdentity(chatId, project),
+      agentKind: 'codex' as const,
+      agentChatId: chatId,
+      agentSessionTreeId: null,
+      parentChatId: null,
+      forkedFromChatId: null,
+      activeProvider: null,
+      activeProfile: null,
+    }
+    const conversation: AgentConversationContext = {
+      ...identity,
+      agentSessionTreeId: sessionTreeId ?? appServerThread?.sessionId ?? identity.agentSessionTreeId,
+      parentChatId: appServerThread?.parentThreadId ?? identity.parentChatId,
+      forkedFromChatId: appServerThread?.forkedFromId ?? identity.forkedFromChatId,
+    }
     const now = new Date().toISOString()
-    this.run(
-      `INSERT INTO harness_projects (
-        project_id, canonical_root, provider_project_name, first_seen_at, last_seen_at
-      ) VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT(project_id) DO UPDATE SET
-        canonical_root = excluded.canonical_root,
-        provider_project_name = excluded.provider_project_name,
-        last_seen_at = excluded.last_seen_at`,
-      project.projectId,
-      project.canonicalRoot,
-      project.providerProjectName,
-      now,
-      now,
-    )
-    this.run(
-      `INSERT INTO harness_agent_conversations (
-        agent_kind, agent_chat_id, conversation_id, project_id, provider_task_id,
-        agent_session_tree_id, parent_chat_id, forked_from_chat_id, model,
-        app_server_status, first_seen_at, last_seen_at
-      ) VALUES ('codex', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(agent_kind, agent_chat_id) DO UPDATE SET
-        agent_session_tree_id = COALESCE(excluded.agent_session_tree_id, harness_agent_conversations.agent_session_tree_id),
-        parent_chat_id = COALESCE(excluded.parent_chat_id, harness_agent_conversations.parent_chat_id),
-        forked_from_chat_id = COALESCE(excluded.forked_from_chat_id, harness_agent_conversations.forked_from_chat_id),
-        model = COALESCE(excluded.model, harness_agent_conversations.model),
-        app_server_status = CASE
-          WHEN excluded.app_server_status = 'resolved' THEN 'resolved'
-          ELSE harness_agent_conversations.app_server_status
-        END,
-        last_seen_at = excluded.last_seen_at`,
-      chatId,
-      identity.conversationId,
-      project.projectId,
-      identity.providerTaskId,
-      sessionTreeId ?? appServerThread?.sessionId ?? null,
-      appServerThread?.parentThreadId ?? null,
-      appServerThread?.forkedFromId ?? null,
-      normalizeOptional(model),
-      appServerThread ? 'resolved' : 'not_resolved',
-      now,
-      now,
-    )
-    return identity
+    const state: StoredContextRow = existing ?? { agentChatId: chatId, context: { conversation, turns: [], invocations: [], providerBindings: [] }, updatedAt: now }
+    state.context.conversation = conversation
+    state.updatedAt = now
+    this.writeContext(state)
+    return { conversationId: conversation.conversationId, providerTaskId: conversation.providerTaskId, project: conversation.project }
   }
 
-  private upsertCodexTurn({ chatId, turnId }: { chatId: string; turnId: string }) {
-    const now = new Date().toISOString()
-    this.run(
-      `INSERT INTO harness_agent_turns (
-        agent_kind, agent_chat_id, agent_turn_id, prompt_sha256, started_at, last_seen_at, completed_at
-      ) VALUES ('codex', ?, ?, NULL, ?, ?, NULL)
-      ON CONFLICT(agent_kind, agent_chat_id, agent_turn_id) DO UPDATE SET
-        last_seen_at = excluded.last_seen_at`,
-      chatId,
-      turnId,
-      now,
-      now,
-    )
+  private requireContext(chatId: string) {
+    const state = this.readContext(chatId)
+    if (!state) throw new Error(`Codex conversation is not registered: ${chatId}`)
+    return state
   }
 
-  private copyCodexTurn({
-    fromChatId,
-    toChatId,
-    turnId,
-  }: {
-    fromChatId: string
-    toChatId: string
-    turnId: string
-  }) {
-    this.run(
-      `INSERT INTO harness_agent_turns (
-        agent_kind, agent_chat_id, agent_turn_id, prompt_sha256, started_at, last_seen_at, completed_at
-      )
-      SELECT 'codex', ?, agent_turn_id, prompt_sha256, started_at, last_seen_at, completed_at
-      FROM harness_agent_turns
-      WHERE agent_kind = 'codex' AND agent_chat_id = ? AND agent_turn_id = ?
-      ON CONFLICT(agent_kind, agent_chat_id, agent_turn_id) DO UPDATE SET
-        prompt_sha256 = COALESCE(excluded.prompt_sha256, harness_agent_turns.prompt_sha256),
-        last_seen_at = excluded.last_seen_at,
-        completed_at = COALESCE(excluded.completed_at, harness_agent_turns.completed_at)`,
-      toChatId,
-      fromChatId,
-      turnId,
-    )
-    const copied = this.get(
-      `SELECT 1 AS present
-       FROM harness_agent_turns
-       WHERE agent_kind = 'codex' AND agent_chat_id = ? AND agent_turn_id = ?`,
-      toChatId,
-      turnId,
-    )
-    if (!copied) throw new Error('Codex Hook binding references a missing turn.')
+  private readContext(chatId: string): StoredContextRow | undefined {
+    const row = this.#db.prepare(
+      `SELECT data_json, updated_at FROM harness_context_records WHERE kind = ? AND record_key = ?`,
+    ).get(RECORD_KIND, chatId) as Record<string, unknown> | undefined
+    if (!row) return undefined
+    return { agentChatId: chatId, context: parseStoredContext(row.data_json), updatedAt: String(row.updated_at) }
   }
 
-  private count(table: string) {
-    const row = this.#db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as Record<string, unknown>
-    return Number(row.count)
+  private readContexts() {
+    return (this.#db.prepare(
+      `SELECT record_key, data_json, updated_at FROM harness_context_records WHERE kind = ?`,
+    ).all(RECORD_KIND) as Record<string, unknown>[]).map((row) => ({
+      agentChatId: String(row.record_key), context: parseStoredContext(row.data_json), updatedAt: String(row.updated_at),
+    }))
+  }
+
+  private writeContext(state: StoredContextRow) {
+    this.#db.prepare(
+      `INSERT INTO harness_context_records (kind, record_key, data_json, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(kind, record_key) DO UPDATE SET data_json = excluded.data_json, updated_at = excluded.updated_at`,
+    ).run(RECORD_KIND, state.agentChatId, JSON.stringify(state.context), state.updatedAt)
   }
 
   private initialize() {
     this.#db.exec(`
       PRAGMA journal_mode = WAL;
-      CREATE TABLE IF NOT EXISTS harness_projects (
-        project_id TEXT PRIMARY KEY NOT NULL,
-        canonical_root TEXT NOT NULL UNIQUE,
-        provider_project_name TEXT NOT NULL,
-        first_seen_at TEXT NOT NULL,
-        last_seen_at TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS harness_agent_conversations (
-        agent_kind TEXT NOT NULL,
-        agent_chat_id TEXT NOT NULL,
-        conversation_id TEXT NOT NULL UNIQUE,
-        project_id TEXT NOT NULL REFERENCES harness_projects(project_id),
-        provider_task_id TEXT NOT NULL UNIQUE,
-        agent_session_tree_id TEXT,
-        parent_chat_id TEXT,
-        forked_from_chat_id TEXT,
-        model TEXT,
-        app_server_status TEXT NOT NULL,
-        active_provider TEXT,
-        active_profile TEXT,
-        first_seen_at TEXT NOT NULL,
-        last_seen_at TEXT NOT NULL,
-        PRIMARY KEY (agent_kind, agent_chat_id)
-      );
-      CREATE TABLE IF NOT EXISTS harness_agent_turns (
-        agent_kind TEXT NOT NULL,
-        agent_chat_id TEXT NOT NULL,
-        agent_turn_id TEXT NOT NULL,
-        prompt_sha256 TEXT,
-        started_at TEXT NOT NULL,
-        last_seen_at TEXT NOT NULL,
-        completed_at TEXT,
-        PRIMARY KEY (agent_kind, agent_chat_id, agent_turn_id),
-        FOREIGN KEY (agent_kind, agent_chat_id)
-          REFERENCES harness_agent_conversations(agent_kind, agent_chat_id)
-          ON DELETE CASCADE
-      );
-      CREATE TABLE IF NOT EXISTS harness_tool_invocations (
-        binding_id TEXT PRIMARY KEY NOT NULL,
-        hook_session_id TEXT,
-        agent_kind TEXT NOT NULL,
-        agent_chat_id TEXT NOT NULL,
-        agent_turn_id TEXT NOT NULL,
-        agent_tool_call_id TEXT NOT NULL,
-        tool_name TEXT NOT NULL,
-        tool_input_sha256 TEXT NOT NULL,
-        status TEXT NOT NULL,
-        provider TEXT,
-        profile TEXT,
-        job_id TEXT,
-        provider_task_id TEXT NOT NULL,
-        created_at TEXT NOT NULL,
+      CREATE TABLE IF NOT EXISTS harness_context_records (
+        kind TEXT NOT NULL,
+        record_key TEXT NOT NULL,
+        data_json TEXT NOT NULL,
         updated_at TEXT NOT NULL,
-        UNIQUE (agent_kind, agent_chat_id, agent_tool_call_id),
-        FOREIGN KEY (agent_kind, agent_chat_id, agent_turn_id)
-          REFERENCES harness_agent_turns(agent_kind, agent_chat_id, agent_turn_id)
-          ON DELETE CASCADE
+        PRIMARY KEY (kind, record_key)
       );
-      CREATE TABLE IF NOT EXISTS harness_provider_bindings (
-        conversation_id TEXT NOT NULL,
-        provider TEXT NOT NULL,
-        profile TEXT NOT NULL,
-        provider_task_id TEXT NOT NULL,
-        last_job_id TEXT,
-        provider_project_id TEXT,
-        provider_conversation_ref TEXT,
-        first_seen_at TEXT NOT NULL,
-        last_seen_at TEXT NOT NULL,
-        PRIMARY KEY (conversation_id, provider, profile),
-        FOREIGN KEY (conversation_id)
-          REFERENCES harness_agent_conversations(conversation_id)
-          ON DELETE CASCADE
-      );
-      CREATE INDEX IF NOT EXISTS harness_turns_chat_idx
-        ON harness_agent_turns(agent_kind, agent_chat_id, started_at);
-      CREATE INDEX IF NOT EXISTS harness_invocations_chat_idx
-        ON harness_tool_invocations(agent_kind, agent_chat_id, created_at);
-    `)
-    this.ensureColumn('harness_provider_bindings', 'provider_project_id', 'TEXT')
-    this.ensureColumn('harness_provider_bindings', 'provider_conversation_ref', 'TEXT')
-    this.ensureColumn('harness_tool_invocations', 'hook_session_id', 'TEXT')
-    this.#db.exec(`
-      CREATE UNIQUE INDEX IF NOT EXISTS harness_invocations_hook_idx
-        ON harness_tool_invocations(agent_kind, hook_session_id, agent_tool_call_id)
-        WHERE hook_session_id IS NOT NULL;
     `)
     if (process.platform !== 'win32') fsSync.chmodSync(this.databasePath, 0o600)
   }
@@ -714,34 +476,13 @@ export class AgentContextStore {
       throw error
     }
   }
-
-  private ensureColumn(table: string, column: string, definition: string) {
-    const columns = this.#db.prepare(`PRAGMA table_info(${table})`).all() as Record<string, unknown>[]
-    if (columns.some((entry) => entry.name === column)) return
-    this.#db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
-  }
-
-  private run(sql: string, ...parameters: SQLInputValue[]) {
-    return this.#db.prepare(sql).run(...parameters)
-  }
-
-  private get(sql: string, ...parameters: SQLInputValue[]) {
-    return this.#db.prepare(sql).get(...parameters) as Record<string, unknown> | undefined
-  }
-
-  private all(sql: string, ...parameters: SQLInputValue[]) {
-    return this.#db.prepare(sql).all(...parameters) as Record<string, unknown>[]
-  }
 }
 
 function resolveProject(cwd: string) {
   let canonicalRoot = fsSync.realpathSync(path.resolve(cwd))
   let cursor = canonicalRoot
   while (true) {
-    if (fsSync.existsSync(path.join(cursor, '.git'))) {
-      canonicalRoot = cursor
-      break
-    }
+    if (fsSync.existsSync(path.join(cursor, '.git'))) { canonicalRoot = cursor; break }
     const parent = path.dirname(cursor)
     if (parent === cursor) break
     cursor = parent
@@ -749,86 +490,36 @@ function resolveProject(cwd: string) {
   const digest = sha256(canonicalRoot)
   const projectId = `project_${digest.slice(0, 24)}`
   const basename = path.basename(canonicalRoot) || 'project'
-  return {
-    projectId,
-    canonicalRoot,
-    providerProjectName: `${basename}-${digest.slice(0, 8)}`,
-  }
+  return { projectId, canonicalRoot, providerProjectName: `${basename}-${digest.slice(0, 8)}` }
 }
 
 function conversationIdentity(chatId: string, project: ReturnType<typeof resolveProject>) {
   const digest = sha256(`codex\0${chatId}`)
+  return { conversationId: `conversation_${digest.slice(0, 24)}`, providerTaskId: `agent:codex:${digest.slice(0, 40)}`, project }
+}
+
+function invocationContext(conversation: AgentConversationContext, bindingId: string, hookSessionId: string | null, turnId: string, toolCallId: string): AgentInvocationContext {
   return {
-    conversationId: `conversation_${digest.slice(0, 24)}`,
-    providerTaskId: `agent:codex:${digest.slice(0, 40)}`,
-    project,
+    protocol: AGENT_CONTEXT_PROTOCOL, bindingId, hookSessionId, agentKind: 'codex', agentChatId: conversation.agentChatId,
+    agentTurnId: turnId, agentToolCallId: toolCallId, agentSessionTreeId: conversation.agentSessionTreeId,
+    conversationId: conversation.conversationId, providerTaskId: conversation.providerTaskId, project: conversation.project,
+    activeProvider: conversation.activeProvider, activeProfile: conversation.activeProfile,
   }
 }
 
-function invocationContext(
-  conversation: AgentConversationContext,
-  bindingId: string,
-  hookSessionId: string | null,
-  turnId: string,
-  toolCallId: string,
-): AgentInvocationContext {
-  return {
-    protocol: AGENT_CONTEXT_PROTOCOL,
-    bindingId,
-    hookSessionId,
-    agentKind: 'codex',
-    agentChatId: conversation.agentChatId,
-    agentTurnId: turnId,
-    agentToolCallId: toolCallId,
-    agentSessionTreeId: conversation.agentSessionTreeId,
-    conversationId: conversation.conversationId,
-    providerTaskId: conversation.providerTaskId,
-    project: conversation.project,
-    activeProvider: conversation.activeProvider,
-    activeProfile: conversation.activeProfile,
-  }
+function parseStoredContext(value: unknown): StoredContext {
+  const parsed = JSON.parse(String(value)) as Partial<StoredContext>
+  if (!parsed.conversation || !Array.isArray(parsed.turns) || !Array.isArray(parsed.invocations) || !Array.isArray(parsed.providerBindings)) throw new Error('Harness context database row is malformed.')
+  return parsed as StoredContext
 }
 
-function rowToConversation(row: Record<string, unknown>): AgentConversationContext {
-  return {
-    conversationId: String(row.conversation_id),
-    agentKind: 'codex',
-    agentChatId: String(row.agent_chat_id),
-    agentSessionTreeId: nullableString(row.agent_session_tree_id),
-    parentChatId: nullableString(row.parent_chat_id),
-    forkedFromChatId: nullableString(row.forked_from_chat_id),
-    providerTaskId: String(row.provider_task_id),
-    project: {
-      projectId: String(row.project_id),
-      canonicalRoot: String(row.canonical_root),
-      providerProjectName: String(row.provider_project_name),
-    },
-    activeProvider: nullableString(row.active_provider),
-    activeProfile: nullableString(row.active_profile),
-  }
-}
-
-function sha256(value: string) {
-  return createHash('sha256').update(value).digest('hex')
-}
+function sha256(value: string) { return createHash('sha256').update(value).digest('hex') }
 
 function canonicalJson(value: unknown) {
-  try {
-    return JSON.stringify(value, objectKeySorter) ?? 'null'
-  } catch {
-    return JSON.stringify(String(value))
-  }
+  try { return JSON.stringify(value, objectKeySorter) ?? 'null' } catch { return JSON.stringify(String(value)) }
 }
 
 function objectKeySorter(_key: string, value: unknown) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value
   return Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)))
-}
-
-function normalizeOptional(value: unknown) {
-  return typeof value === 'string' && value.trim() ? value.trim().slice(0, 256) : null
-}
-
-function nullableString(value: unknown) {
-  return typeof value === 'string' && value ? value : null
 }

@@ -411,11 +411,6 @@ test('local web control plane opens directly, establishes Dashboard sessions, an
     assert.deepEqual(createdProfileBody.enabledProviders, ['chatgpt'])
     assert.equal(Object.hasOwn(createdProfileBody, 'label'), false)
     assert.equal(Object.hasOwn(createdProfileBody, 'preferences'), false)
-    const storedRegistry = JSON.parse(fs.readFileSync(path.join(homeDir, 'browser', 'profiles.json'), 'utf8'))
-    assert.equal(Object.hasOwn(storedRegistry.profiles.work, 'label'), false)
-    storedRegistry.profiles.work.label = 'Legacy Work'
-    storedRegistry.profiles.work.labelOrigin = 'user'
-    fs.writeFileSync(path.join(homeDir, 'browser', 'profiles.json'), `${JSON.stringify(storedRegistry, null, 2)}\n`)
     assert.equal(Object.hasOwn(await registry.resolveProfile('work'), 'label'), false)
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8')).profiles.work.enabledProviders, ['chatgpt'])
     const workProfile = await registry.resolveProfile('work')
@@ -481,6 +476,97 @@ test('local web control plane opens directly, establishes Dashboard sessions, an
     assert.equal(new URL(dashboardBody.dashboard.url).origin, daemon.origin)
     assert.equal(new URL(dashboardBody.dashboard.url).searchParams.get('profile'), workProfile.id)
 
+    const olderMenuJob = daemon.store.createJob({
+      provider: 'chatgpt',
+      action: 'menu-bar-older',
+      request_json: {
+        chatName: 'Menu older conversation',
+        actions: [{ action: 'prompt.input', payload: { text: '[User] raw prompt must not be returned' } }],
+      },
+      execution_backend: 'playwright',
+      profile_id: workProfile.id,
+    })
+    const pathMenuJob = daemon.store.createJob({
+      provider: 'chatgpt',
+      action: 'menu-bar-paths',
+      request_json: {
+        chatName: '/private/var/tokenless /tmp/tokenless /Volumes/Secret /opt/secret C:\\Users\\secret',
+        actions: [{ action: 'prompt.input', payload: { text: '[User] path title' } }],
+      },
+      execution_backend: 'playwright',
+      profile_id: workProfile.id,
+    })
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    const newerMenuJob = daemon.store.createJob({
+      provider: 'claude',
+      action: 'menu-bar-newer',
+      request_json: {
+        chatName: 'Menu newer conversation',
+        actions: [{ action: 'prompt.input', payload: { text: '[User] newer raw prompt must not be returned' } }],
+      },
+      execution_backend: 'playwright',
+      profile_id: workProfile.id,
+    })
+    const nonConversationMenuJob = daemon.store.createJob({
+      provider: 'chatgpt',
+      action: 'menu-bar-non-conversation',
+      request_json: { taskId: 'menu-bar-non-conversation' },
+      execution_backend: 'playwright',
+      profile_id: workProfile.id,
+    })
+    const eligibleMenuJobs = daemon.store.listJobs({ limit: 1, order_by: 'updated_at', conversation_only: true })
+    assert.equal(eligibleMenuJobs[0].job_id, newerMenuJob.job_id)
+    assert.notEqual(eligibleMenuJobs[0].job_id, nonConversationMenuJob.job_id)
+    const unauthenticatedMenuBar = await fetch(`${daemon.origin}/v1/private/control/menu-bar`)
+    assert.equal(unauthenticatedMenuBar.status, 401)
+    const menuBarResponse = await fetch(`${daemon.origin}/v1/private/control/menu-bar`, {
+      headers: { authorization: `Bearer ${token}` },
+    })
+    assert.equal(menuBarResponse.status, 200)
+    const menuBarBody = await menuBarResponse.json()
+    assert.equal(menuBarBody.schema, 'tokenless.menu-bar-snapshot.v1')
+    assert.equal(menuBarBody.activeJobCount, menuBarBody.runtime.activeJobCount)
+    assert.equal(new URL(menuBarBody.dashboardUrl).searchParams.get('profile'), workProfile.id)
+    assert.ok(menuBarBody.conversations.length <= 10)
+    assert.deepEqual(menuBarBody.conversations.slice(0, 2).map((conversation) => conversation.jobId), [newerMenuJob.job_id, pathMenuJob.job_id])
+    assert.ok(menuBarBody.conversations.some((conversation) => conversation.jobId === olderMenuJob.job_id))
+    const pathConversation = menuBarBody.conversations.find((conversation) => conversation.jobId === pathMenuJob.job_id)
+    assert.match(pathConversation.title, /\[redacted path\]/)
+    assert.equal(pathConversation.title.includes('/private/var/tokenless'), false)
+    assert.equal(pathConversation.title.includes('C:\\Users\\secret'), false)
+    assert.deepEqual(Object.keys(menuBarBody.conversations[0]).sort(), [
+      'jobId', 'profileId', 'profileSlug', 'provider', 'providers', 'status', 'title', 'updatedAt',
+    ].sort())
+    assert.equal(JSON.stringify(menuBarBody).includes('raw prompt must not be returned'), false)
+
+    const menuBarCommand = await execFileAsync(process.execPath, [
+      cliEntry,
+      'menubar',
+      'status',
+      '--home', homeDir,
+      '--daemon-url', daemon.origin,
+      '--json',
+    ])
+    const menuBarCommandBody = JSON.parse(menuBarCommand.stdout)
+    assert.equal(menuBarCommandBody.command, 'menubar status')
+    assert.equal(menuBarCommandBody.schema, 'tokenless.menu-bar-snapshot.v1')
+    assert.equal(menuBarCommandBody.conversations[0].jobId, newerMenuJob.job_id)
+
+    const deepLinkCommand = await execFileAsync(process.execPath, [
+      cliEntry,
+      'dashboard',
+      '--home', homeDir,
+      '--daemon-url', daemon.origin,
+      '--profile', 'work',
+      '--job-id', newerMenuJob.job_id,
+      '--no-open',
+      '--json',
+    ])
+    const deepLinkBody = JSON.parse(deepLinkCommand.stdout)
+    const deepLinkUrl = new URL(deepLinkBody.dashboard.url)
+    assert.equal(deepLinkUrl.searchParams.get('job'), newerMenuJob.job_id)
+    assert.equal(deepLinkUrl.hash, '#jobs')
+
     const profileMutation = await fetch(`${daemon.origin}/dashboard-api/v1/profiles/work`, {
       method: 'PATCH',
       headers: {
@@ -540,9 +626,6 @@ test('local web control plane opens directly, establishes Dashboard sessions, an
       body: JSON.stringify({ slug: 'cloak-bound', enabledProviders: ['chatgpt'] }),
     })
     assert.equal(cloakProfile.status, 201)
-    const rewrittenRegistry = JSON.parse(fs.readFileSync(path.join(homeDir, 'browser', 'profiles.json'), 'utf8'))
-    assert.equal(Object.hasOwn(rewrittenRegistry.profiles.work, 'label'), false)
-    assert.equal(Object.hasOwn(rewrittenRegistry.profiles.work, 'labelOrigin'), false)
     await new ManagedProfileRegistry(homeDir).bindRuntime('cloak-bound', {
       runtimeId: 'cloak:darwin-arm64:145.0.7632.109.2',
       family: 'cloak',

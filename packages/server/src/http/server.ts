@@ -301,6 +301,19 @@ async function handleRequest(
       return
     }
 
+    if (method === 'GET' && url.pathname === '/v1/private/control/menu-bar') {
+      const snapshot = await applicationServices.menuBarSnapshot()
+      const controlState = await applicationServices.controlState()
+      const defaultProfileId = controlState.defaultProfile === null
+        ? null
+        : controlState.profiles.find((profile) => profile.slug === controlState.defaultProfile)?.id ?? null
+      writeJson(response, 200, {
+        ...snapshot,
+        dashboardUrl: dashboardServer.dashboardUrl(defaultProfileId),
+      })
+      return
+    }
+
     if (method === 'GET' && url.pathname === '/v1/private/control/capabilities') {
       writeJson(response, 200, applicationServices.controlCapabilities())
       return
@@ -514,11 +527,12 @@ async function handleRequest(
     if (method === 'POST' && url.pathname === '/v1/private/control/dashboard') {
       const rawBody = await readBody(request)
       const body = rawBody ? parseJsonObject(rawBody) : {}
-      if (Object.keys(body).some((key) => key !== 'profile_id')) {
+      if (Object.keys(body).some((key) => key !== 'profile_id' && key !== 'job_id')) {
         throw invalidInput('request body must be valid JSON: unknown field')
       }
       const profileId = optionalString(body.profile_id)
-      const url = dashboardServer.dashboardUrl(profileId)
+      const jobId = optionalString(body.job_id)
+      const url = dashboardServer.dashboardUrl(profileId, jobId)
       writeJson(response, 200, { url, opened: null })
       return
     }

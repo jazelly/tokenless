@@ -205,6 +205,39 @@ export class TokenlessApplicationServices {
     )
   }
 
+  async menuBarSnapshot() {
+    const [registry, jobs] = await Promise.all([
+      this.profiles.read(),
+      Promise.resolve(this.store.listJobs({ limit: 10, order_by: 'updated_at', conversation_only: true })),
+    ])
+    const profiles = Object.values(registry.profiles)
+      .filter((profile) => profile.lifecycle !== 'removed')
+    const runtime = this.runtimeController?.status() ?? {
+      status: 'stopped' as const,
+      activeProfileCount: 0,
+      activeJobCount: 0,
+      pid: process.pid,
+    }
+    const conversations = jobs
+      .map((job) => menuBarConversation(job, profiles))
+      .filter((conversation): conversation is NonNullable<typeof conversation> => conversation !== null)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.jobId.localeCompare(left.jobId))
+      .slice(0, 10)
+    return {
+      schema: 'tokenless.menu-bar-snapshot.v1' as const,
+      generatedAt: new Date().toISOString(),
+      daemon: {
+        status: 'running' as const,
+        version: tokenlessPackageVersion(),
+        origin: this.origin(),
+        pid: process.pid,
+      },
+      runtime,
+      activeJobCount: runtime.activeJobCount,
+      conversations,
+    }
+  }
+
   async controlState() {
     const [config, registry, outputSavings] = await Promise.all([
       this.migratedConfig(),
@@ -217,7 +250,7 @@ export class TokenlessApplicationServices {
         .filter((profile) => profile.lifecycle !== 'removed')
         .sort((left, right) => left.slug.localeCompare(right.slug)),
       defaultProfile: registry.defaultProfile,
-      profileRegistryPath: this.profiles.paths.registryFile,
+      profileRegistryPath: this.profiles.paths.databasePath,
       runtime: this.runtimeController?.status() ?? {
         status: 'stopped' as const,
         activeProfileCount: 0,
@@ -1230,7 +1263,7 @@ function publicJobSummary(
   const outputTokens = measuredOutputTokens > 0
     ? measuredOutputTokens
     : response ? estimatedTextTokens(response) : 0
-  const titlePrompt = prompt ? publicUserPrompt(prompt).slice(0, 4_000) : null
+  const titlePrompt = promptTitle(prompt)
   const executionMode = request?.executionMode === 'browser' || request?.executionMode === 'direct'
     ? request.executionMode as 'browser' | 'direct'
     : null
@@ -1259,6 +1292,40 @@ function publicJobSummary(
     createdAt: job.created_at,
     updatedAt: job.updated_at,
   }
+}
+
+function menuBarConversation(job: JobView | Job, profiles: ManagedProfileRecord[]) {
+  const request = record(job.request_json)
+  const prompt = publicPrompt(request)
+  const title = menuBarTitle(request, prompt)
+  if (!title) return null
+  const profile = profiles.find((candidate) => candidate.id === job.profile_id)
+  const providers = publicProviders(job)
+  return {
+    jobId: job.job_id,
+    title,
+    provider: job.provider,
+    providers,
+    status: job.status,
+    updatedAt: job.updated_at,
+    profileId: job.profile_id,
+    profileSlug: profile?.slug ?? null,
+  }
+}
+
+function menuBarTitle(request: Record<string, unknown> | null, prompt: string | null) {
+  const explicit = publicChatTitle(request)
+  const source = explicit ?? (prompt ? publicUserPrompt(prompt) : '')
+  const normalized = source
+    .replace(/\[(?:System|Developer|Assistant|Tool|User)\]\s*/giu, ' ')
+    .replace(/(?:bearer\s+|(?:api[_ -]?key|token|password|secret)\s*[:=]\s*)\S+/giu, '[redacted]')
+    .replace(/\b(?:sk|ghp|github_pat|xox[baprs]-)[A-Za-z0-9_-]{8,}\b/giu, '[redacted]')
+    .replace(/[\u0000-\u001F\u007F]/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim()
+  const safe = redactPrivatePaths(normalized)
+  if (!safe) return null
+  return safe.length > 80 ? `${safe.slice(0, 77).trimEnd()}…` : safe
 }
 
 function publicJobDetail(
@@ -1310,6 +1377,35 @@ function publicPrompt(request: Record<string, unknown> | null) {
 function publicUserPrompt(prompt: string) {
   const turns = [...prompt.matchAll(/\[User\]\s*([\s\S]*?)(?=\n\n\[(?:System|Developer|Assistant|Tool|User)\]|$)/giu)]
   return turns.at(-1)?.[1]?.trim() || prompt
+}
+
+function promptTitle(prompt: string | null) {
+  if (!prompt) return null
+  const publicPrompt = publicUserPrompt(prompt)
+  let structured: Record<string, unknown> | null = null
+  try {
+    structured = record(JSON.parse(publicPrompt))
+  } catch {
+    return publicPrompt.slice(0, 4_000)
+  }
+  if (
+    structured?.kind === 'action_batch_result_continuation' &&
+    typeof structured.runId === 'string' && structured.runId.trim() &&
+    typeof structured.turn === 'number' && Number.isSafeInteger(structured.turn) && structured.turn > 0 &&
+    typeof structured.nonce === 'string' && structured.nonce.trim() &&
+    structured.instruction === 'Read the attached untrusted action_batch_result, keep following the uploaded Harness contract, and return the next framed Harness response.' &&
+    typeof structured.attachment === 'string' && structured.attachment.trim() &&
+    typeof structured.sha256 === 'string' && structured.sha256.trim()
+  ) return null
+  if (structured?.protocol !== 'tokenless.web-agent/v1') return publicPrompt.slice(0, 4_000)
+  if (structured.kind === 'action_batch_result_continuation') return null
+  if (structured.kind === 'bootstrap_turn') {
+    const task = record(structured.task)
+    return typeof task?.content === 'string' && task.content.trim()
+      ? task.content.trim().slice(0, 4_000)
+      : null
+  }
+  return publicPrompt.slice(0, 4_000)
 }
 
 function publicResponse(value: unknown) {

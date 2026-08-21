@@ -93,7 +93,7 @@ export async function inspectCodexIntegration(input: CodexIntegrationInput): Pro
   const rawHooks = await readOptionalFile(hooksPath)
   const hooks = parseHooksFile(rawHooks, hooksPath)
   const installedEvents = installedHookEvents(hooks, hookCommand(resolved))
-  const databasePath = path.join(resolved.tokenlessHome, 'harness.sqlite3')
+  const databasePath = path.join(resolved.tokenlessHome, 'tokenless.sqlite3')
   const databaseExists = await fileExists(databasePath)
   const store = databaseExists ? await AgentContextStore.open(resolved.tokenlessHome) : null
   try {
@@ -130,7 +130,7 @@ export async function inspectCodexContext({
   tokenlessHome: string
   chatId: string
 }): Promise<CodexContextInspection> {
-  if (!await fileExists(path.join(path.resolve(tokenlessHome), 'harness.sqlite3'))) {
+  if (!await fileExists(path.join(path.resolve(tokenlessHome), 'tokenless.sqlite3'))) {
     throw new Error('Tokenless Harness has not observed any Codex context yet.')
   }
   const store = await AgentContextStore.open(path.resolve(tokenlessHome))

@@ -66,7 +66,7 @@ tokenless agent cancel --run-id <run-id> --json
 
 Queued provider turn 只证明本地 staging，不证明 visible-provider acceptance。Provider authentication 与 verification 保持在外部；用户完成 handoff 后，resume 继续同一个进程内 run。
 
-Agent context 单独存储在 `<TOKENLESS_HOME>/harness.sqlite3`。Ledger 存储有界 ID、canonical project identity、hash、timestamp、provider mapping reference 与 job ID。它不存储 raw Codex prompt、transcript、assistant message、tool result、browser state 或 credential。Web Provider API 负责真实 provider Project、conversation 与 job；该 package 将它们返回的不透明 ID 绑定到 Harness conversation。
+Agent context 存储在共享的 `<TOKENLESS_HOME>/tokenless.sqlite3` 数据库中的一张 `harness_context_records` 表里。该 record 存储有界 ID、canonical project identity、hash、timestamp、provider mapping reference 与 job ID。它不存储 raw Codex prompt、transcript、assistant message、tool result、browser state 或 credential。Web Provider API 负责真实 provider Project、conversation 与 job；该 package 将它们返回的不透明 ID 绑定到 Harness conversation。
 
 ```ts
 import {

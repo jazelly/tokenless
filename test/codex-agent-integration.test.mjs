@@ -310,7 +310,8 @@ test('Codex hooks bind exact chat, turn, tool call, project, and provider contin
       'https://chatgpt.com/c/provider-conversation-one',
     )
 
-    const databaseBytes = fs.readFileSync(path.join(fixture.tokenlessHome, 'harness.sqlite3'))
+    assert.equal(fs.existsSync(path.join(fixture.tokenlessHome, 'harness.sqlite3')), false)
+    const databaseBytes = fs.readFileSync(path.join(fixture.tokenlessHome, 'tokenless.sqlite3'))
     assert.equal(databaseBytes.includes(Buffer.from(secretPrompt)), false)
 
     const conflict = runCli([

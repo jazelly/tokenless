@@ -23,7 +23,6 @@ import { daemonReadyProof } from '#tokenless-server/runtime/ready-proof.js'
 import { BrowserRuntimeManager } from '#tokenless-server/browser/runtime/manager.js'
 import {
   DaemonRuntimeState,
-  createStartupOwnerToken,
   type DaemonRuntimeEndpoint,
 } from '#tokenless-server/runtime/state.js'
 import type {
@@ -345,10 +344,7 @@ export async function ensureDaemonReady({
   await fs.mkdir(homeDir, { recursive: true, mode: 0o700 })
   const preferredUrl = normalizeDaemonUrl(daemonUrl)
   const runtimeState = await DaemonRuntimeState.open(homeDir)
-  const ownerToken = createStartupOwnerToken()
   const deadline = Date.now() + timeoutMs
-  let acquiredStartup = false
-  let startupGeneration: number | undefined
   try {
     const initial = await probeDaemonEndpointCandidates({ runtimeState, preferredUrl, homeDir })
     if (initial.ready) {
@@ -358,59 +354,18 @@ export async function ensureDaemonReady({
       await stopDaemon({ homeDir, daemonUrl: initial.replaceable.url, timeoutMs })
     }
 
-    while (!acquiredStartup) {
-      const beforeAcquire = await probeDaemonEndpointCandidates({ runtimeState, preferredUrl, homeDir })
-      if (beforeAcquire.ready) {
-        return daemonReadyResult(beforeAcquire.ready, false, null, await readDaemonPid(homeDir))
-      }
-      if (beforeAcquire.replaceable) {
-        await stopDaemon({ homeDir, daemonUrl: beforeAcquire.replaceable.url, timeoutMs })
-      }
-      const lease = runtimeState.tryAcquireStartupLease({
-        ownerToken,
-        leaseMs: Math.max(1_000, Math.min(timeoutMs, DEFAULT_DAEMON_START_TIMEOUT_MS)),
-        ...(beforeAcquire.failedRunningEndpoint === null ? {} : { takeoverRunning: beforeAcquire.failedRunningEndpoint }),
-      })
-      if (lease.acquired) {
-        acquiredStartup = true
-        startupGeneration = lease.lease?.generation
-        break
-      }
-      if (Date.now() >= deadline) {
-        throw runtimeError(
-          'daemon_start_locked',
-          `Timed out waiting for another Tokenless daemon startup in ${homeDir}.`,
-          true
-        )
-      }
-      await delay(Math.min(100, Math.max(1, deadline - Date.now())))
-    }
-
-    const afterLease = await probeDaemonEndpointCandidates({ runtimeState, preferredUrl, homeDir })
-    if (afterLease.ready) {
-      return daemonReadyResult(afterLease.ready, false, null, await readDaemonPid(homeDir))
-    }
-    if (afterLease.replaceable) {
-      await stopDaemon({ homeDir, daemonUrl: afterLease.replaceable.url, timeoutMs })
-    }
-
     const daemonEntryPath = binaryPath ?? bundledTypeScriptDaemonEntryPath(bundledRoot)
     await assertDaemonEntryRunnable(daemonEntryPath)
     const parsedUrl = new URL(preferredUrl)
     const host = daemonBindHost(parsedUrl.hostname)
     const port = parsedUrl.port ? Number(parsedUrl.port) : 80
     const logPath = path.join(homeDir, DAEMON_LOG_FILE)
-    if (startupGeneration === undefined) {
-      throw runtimeError('daemon_start_failed', 'Tokenless daemon startup lease did not return a generation.', true)
-    }
     const child = await spawnDaemon({
       daemonEntryPath,
       homeDir,
       host,
       port,
       logPath,
-      startupOwnerToken: ownerToken,
-      startupGeneration,
     })
     const pidPayload = {
       protocol: DAEMON_PROCESS_SCHEMA_ID,
@@ -425,7 +380,7 @@ export async function ensureDaemonReady({
     await writeJsonAtomic(path.join(homeDir, DAEMON_PID_FILE), pidPayload, 0o600)
 
     try {
-      let lastProbe = afterLease.lastProbe
+      let lastProbe = initial.lastProbe
       while (Date.now() < deadline) {
         const candidate = await probeDaemonEndpointCandidates({ runtimeState, preferredUrl, homeDir })
         if (candidate.ready) {
@@ -464,7 +419,6 @@ export async function ensureDaemonReady({
       throw error
     }
   } finally {
-    if (acquiredStartup) runtimeState.releaseStartupLease(ownerToken)
     runtimeState.close()
   }
 }
@@ -582,7 +536,7 @@ export async function stopDaemon({
     )
   }
   if (pid !== undefined) await removePidIfOwned(ready.actualHome ?? expectedHome, pid)
-  await clearPersistedEndpointIfOwned(homeDir, { url, pid }, stopTimeoutMs)
+  await clearPersistedEndpointIfOwned(homeDir, { url, pid })
   return {
     ok: true,
     status: 'stopped',
@@ -753,16 +707,12 @@ async function spawnDaemon({
   host,
   port,
   logPath,
-  startupOwnerToken,
-  startupGeneration,
 }: {
   daemonEntryPath: string
   homeDir: string
   host: string
   port: number
   logPath: string
-  startupOwnerToken: string
-  startupGeneration: number
 }) {
   const logFd = fsSync.openSync(logPath, 'a', 0o600)
   const child = spawn(process.execPath, [
@@ -774,10 +724,6 @@ async function spawnDaemon({
     host,
     '--port',
     String(port),
-    '--startup-owner-token',
-    startupOwnerToken,
-    '--startup-generation',
-    String(startupGeneration),
   ], {
     detached: process.platform !== 'win32',
     env: { ...process.env, TOKENLESS_HOME: homeDir },
@@ -899,26 +845,16 @@ async function probeDaemonEndpointCandidates({
   const endpoint = runtimeState.endpoint()
   const candidates = daemonEndpointCandidates(endpoint, preferredUrl)
   let replaceable: DaemonReadyProbe | null = null
-  let failedRunningEndpoint: DaemonRuntimeEndpoint | null = null
   let lastProbe: DaemonReadyProbe | null = null
   for (const candidateUrl of candidates) {
     const probe = await probeDaemonReady({ daemonUrl: candidateUrl, homeDir })
     lastProbe = probe
-    if (probe.ok) return { ready: probe, replaceable: null, failedRunningEndpoint: null, lastProbe: probe }
+    if (probe.ok) return { ready: probe, replaceable: null, lastProbe: probe }
     if (!replaceable && isReplaceableDaemonCompatibilityMismatch(probe)) replaceable = probe
-    if (
-      !failedRunningEndpoint &&
-      endpoint &&
-      candidateUrl === endpoint.origin &&
-      shouldTakeOverFailedRunningEndpoint(probe)
-    ) {
-      failedRunningEndpoint = endpoint
-    }
   }
   return {
     ready: null,
     replaceable,
-    failedRunningEndpoint,
     lastProbe: lastProbe ?? await probeDaemonReady({ daemonUrl: preferredUrl, homeDir }),
   }
 }
@@ -928,13 +864,6 @@ function daemonEndpointCandidates(endpoint: DaemonRuntimeEndpoint | null, prefer
   if (endpoint?.origin) urls.push(endpoint.origin)
   urls.push(preferredUrl)
   return [...new Set(urls)]
-}
-
-function shouldTakeOverFailedRunningEndpoint(probe: DaemonReadyProbe) {
-  if (probe.ok) return false
-  if (isReplaceableDaemonCompatibilityMismatch(probe)) return false
-  if (probe.reachable && probe.code === 'daemon_not_ready') return false
-  return true
 }
 
 function daemonReadyResult(
@@ -954,22 +883,13 @@ function daemonReadyResult(
 async function clearPersistedEndpointIfOwned(
   homeDir: string,
   { url, pid }: { url: string; pid?: number | undefined },
-  timeoutMs = 1_000
 ) {
-  const deadline = Date.now() + timeoutMs
-  do {
-    let runtimeState: DaemonRuntimeState | null = null
-    try {
-      runtimeState = await DaemonRuntimeState.openIfExists(homeDir)
-      runtimeState?.clearEndpoint({ origin: url, pid })
-      return
-    } catch (error) {
-      if (!isTransientRuntimeStateConflict(error) || Date.now() >= deadline) throw error
-      await delay(25)
-    } finally {
-      runtimeState?.close()
-    }
-  } while (true)
+  const runtimeState = await DaemonRuntimeState.openIfExists(homeDir)
+  try {
+    runtimeState?.clearEndpoint({ origin: url, pid })
+  } finally {
+    runtimeState?.close()
+  }
 }
 
 function daemonPidFromReady(probe: DaemonReadyProbe) {
@@ -1022,16 +942,6 @@ function pidIsAlive(pid: number) {
     if (code === 'ESRCH') return false
     return false
   }
-}
-
-function isTransientRuntimeStateConflict(error: unknown) {
-  const code = (error as { code?: unknown }).code
-  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase()
-  return code === 'daemon_runtime_state_sqlite_failed' && (
-    message.includes('database is locked') ||
-    message.includes('database table is locked') ||
-    message.includes('busy')
-  )
 }
 
 function isReplaceableDaemonCompatibilityMismatch(probe: DaemonReadyProbe) {

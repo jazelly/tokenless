@@ -14,6 +14,7 @@ This document is the public inventory of the `tokenless` command-line interface.
 | `tokenless setup` | Configure skills, browser, profiles, daemon, and one-time provider sign-in checks. | Yes |
 | `tokenless agents <install\|status\|inspect\|uninstall> codex` | Manage the optional Codex guidance, native hooks, and exact Harness context binding. | None |
 | `tokenless dashboard` | Open the local web control plane, or print its direct loopback URL. | None |
+| `tokenless menubar status` | Print the same-home menu bar snapshot for a native macOS client. | None |
 | `tokenless doctor` | Read local configuration and runtime health without refreshing providers. | None |
 | `tokenless config` | Read or update persistent Tokenless configuration. | None |
 | `tokenless upgrade` | Upgrade the global CLI, skills, local runtime, and run doctor. | None |
@@ -235,9 +236,12 @@ Starts or discovers the same-home daemon and opens the Dashboard URL in your ope
 tokenless dashboard
 tokenless dashboard --profile work
 tokenless dashboard --profile work --no-open --json
+tokenless dashboard --job-id <job-id>
 ```
 
 `--no-open` prints the direct loopback Dashboard URL without launching a browser. Opening `/` redirects to `/dashboard/` and establishes a short-lived `HttpOnly`, `SameSite=Strict` session cookie. Dashboard mutations continue to require exact-Origin and CSRF checks. The Dashboard can run in any browser; provider actions still execute in the selected profile's bound browser runtime. The dashboard never receives the daemon bearer token, provider cookies, browser storage, Keychain data, raw DOM, claim tokens, checkpoints, or private filesystem paths.
+
+`--job-id` opens the Jobs view and loads that job's detail automatically. `tokenless menubar status --json` starts or discovers the same-home daemon, then returns the daemon/runtime status, dashboard URL, active job count, and up to ten conversation summaries ordered by `updatedAt` descending. Conversation summaries contain only safe titles and public identifiers; they do not include prompts, transcripts, credentials, or private paths.
 
 The dashboard provides Overview, Profiles, Providers, Capabilities, Jobs, and System/Diagnostics areas. Provider membership, visibility, role label, and an optional credential-free HTTP/HTTPS/SOCKS5 proxy are profile scoped. CLI recovery equivalents remain available:
 
@@ -303,7 +307,7 @@ Configurable values:
 
 Provider membership belongs only to the selected entry in `profiles`. Routing requires that entry and never falls back to a global provider list.
 
-Tokenless migrates the concrete legacy per-profile side table once by combining it with `browser/profiles.json`. A registered profile missing from the old table receives the old root provider list as its explicit `enabledProviders`; canonical config never retains either legacy key. The undocumented legacy `--preferred-providers` flag remains accepted as a CLI alias.
+Tokenless API migrates the concrete legacy per-profile side table once by combining it with the registered browser profiles. A registered profile missing from the old table receives the old root provider list as its explicit `enabledProviders`; canonical config never retains either legacy key. The undocumented legacy `--preferred-providers` flag remains accepted as a CLI alias.
 
 The config shape is:
 
@@ -341,9 +345,10 @@ Runs the canonical user-facing maintenance pipeline. It updates the global npm C
 ```bash
 tokenless upgrade
 tokenless upgrade --json
+tokenless upgrade --check --json
 ```
 
-Accepted options are `--json`, `--home`, `--daemon-url`, `--browser`, `--browsers`, and `--daemon-start-timeout-ms`.
+Accepted options are `--check`, `--json`, `--home`, `--daemon-url`, `--browser`, `--browsers`, and `--daemon-start-timeout-ms`. `--check` only queries npm for the latest published version and does not mutate the CLI, runtime, or daemon.
 
 ### `tokenless daemon stop`
 
@@ -372,6 +377,8 @@ tokenless profiles add -P work --set-default --json
 ### `tokenless profiles list`
 
 Reads the profile registry and returns every managed profile.
+
+The registry is stored in `<TOKENLESS_HOME>/tokenless.sqlite3`. An existing `<TOKENLESS_HOME>/browser/profiles.json` registry is imported once when this storage is first opened.
 
 ```bash
 tokenless profiles list

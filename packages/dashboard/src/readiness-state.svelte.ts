@@ -35,15 +35,35 @@ export function createReadinessState(dependencies: ReadinessDependencies) {
   }
 
   async function refresh(profileSlug: string) {
+    await runRefresh(
+      profileSlug,
+      optimisticJobs(dependencies.snapshot(), profileSlug),
+      () => dependencies.client.refreshProviderReadiness(profileSlug),
+    )
+  }
+
+  async function refreshProvider(profileSlug: string, providerId: string) {
+    await runRefresh(
+      profileSlug,
+      { [providerId]: { status: 'running' } },
+      async () => ({ jobs: [await dependencies.client.runProviderAction(profileSlug, providerId, 'readiness')] }),
+    )
+  }
+
+  async function runRefresh(
+    profileSlug: string,
+    optimistic: ReadinessJobs,
+    submit: () => Promise<{ jobs: DashboardJobSummary[] }>,
+  ) {
     if (state.busy) return
     state.busy = true
     activeProfile = profileSlug
     const currentRun = ++runId
     let submitted = false
-    state.jobs = optimisticJobs(dependencies.snapshot(), profileSlug)
+    state.jobs = optimistic
 
     try {
-      const result = await dependencies.client.refreshProviderReadiness(profileSlug)
+      const result = await submit()
       if (!isCurrent(currentRun, profileSlug)) return
       const jobIds = result.jobs.map((job) => job.jobId)
       if (jobIds.length === 0) {
@@ -89,7 +109,7 @@ export function createReadinessState(dependencies: ReadinessDependencies) {
     return currentRun === runId && profileSlug === activeProfile
   }
 
-  return { state, refresh, reset }
+  return { state, refresh, refreshProvider, reset }
 }
 
 function optimisticJobs(snapshot: DashboardSnapshot | null, profileSlug: string): ReadinessJobs {

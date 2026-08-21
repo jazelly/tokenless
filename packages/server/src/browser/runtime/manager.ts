@@ -8,7 +8,6 @@ import { pipeline } from 'node:stream/promises'
 import { Readable, Transform } from 'node:stream'
 import { chromium } from 'playwright-core'
 import { tokenlessError } from '../errors.js'
-import { withPrivateSqliteWriterLock } from '../profiles/sqlite-lock.js'
 import {
   allManagedBrowserCatalogEntries,
   currentBrowserRuntimePlatform,
@@ -70,14 +69,12 @@ export class BrowserRuntimeManager {
   readonly homeDir: string
   readonly browserRoot: string
   readonly runtimesRoot: string
-  readonly installLockFile: string
   readonly installedIndexFile: string
 
   constructor(options: BrowserRuntimeManagerOptions) {
     this.homeDir = path.resolve(options.homeDir)
     this.browserRoot = path.join(this.homeDir, 'browser')
     this.runtimesRoot = path.join(this.browserRoot, 'runtimes')
-    this.installLockFile = path.join(this.browserRoot, 'install.writer.sqlite')
     this.installedIndexFile = path.join(this.browserRoot, INSTALLED_INDEX_FILE)
   }
 
@@ -216,17 +213,17 @@ export class BrowserRuntimeManager {
         `${entry.displayName} ${entry.artifactVersion} is not installed. Run tokenless setup with browser downloads enabled.`,
       )
     }
-    return await withPrivateSqliteWriterLock(this.installLockFile, async () => {
-      if (options.repair !== true) {
-        const afterLock = await this.resolveCachedManagedRuntime(entry).catch((error) => {
-          if (errorCode(error) === 'browser_runtime_not_installed') return null
-          throw error
-        })
-        if (afterLock) return afterLock
-        return await this.installManagedRuntime(entry, options)
-      }
-      return await this.reinstallManagedRuntime(entry, options)
-    }, options.signal ? { signal: options.signal } : {})
+    await fs.mkdir(this.browserRoot, { recursive: true, mode: 0o700 })
+    await fs.chmod(this.browserRoot, 0o700).catch(() => undefined)
+    if (options.repair !== true) {
+      const afterWrite = await this.resolveCachedManagedRuntime(entry).catch((error) => {
+        if (errorCode(error) === 'browser_runtime_not_installed') return null
+        throw error
+      })
+      if (afterWrite) return afterWrite
+      return await this.installManagedRuntime(entry, options)
+    }
+    return await this.reinstallManagedRuntime(entry, options)
   }
 
   private async reinstallManagedRuntime(

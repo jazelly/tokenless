@@ -197,6 +197,7 @@ export const ERROR_SUMMARIES_ZH = {
   profile_not_found: '找不到该 profile。',
   profile_open_provider_required: '使用 --target-url 打开 profile 时必须提供 --provider。',
   profiles_command_invalid: '请使用有效的 profiles 子命令。',
+  menubar_command_invalid: '请使用 `tokenless menubar status`。',
   conversation_continue_mapping_required: '继续对话需要当前 task 已存在精确的 provider conversation mapping。',
   conversation_continue_target_mismatch: '继续对话的 target 必须与当前 task 的精确 provider conversation mapping 一致。',
   conversation_continue_task_identity_required: '继续对话需要稳定的 task identity。',

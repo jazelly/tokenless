@@ -171,12 +171,69 @@ test('new profiles are logical native Chrome profiles and do not provision a bro
     ], { cwd: root, encoding: 'utf8' })
     assert.equal(result.status, 0, result.stderr || result.stdout)
     assert.equal(JSON.parse(result.stdout).profile.browserMode, 'native')
-    assert.equal(fs.existsSync(path.join(homeDir, 'browser', 'profiles.json')), true)
+    assert.equal(fs.existsSync(path.join(homeDir, 'tokenless.sqlite3')), true)
+    assert.equal(fs.existsSync(path.join(homeDir, 'browser', 'profiles.json')), false)
     const config = JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8'))
     assert.deepEqual(Object.keys(config.profiles), ['default'])
     assert.ok(config.profiles.default.enabledProviders.includes('chatgpt'))
     assert.equal(Object.hasOwn(config, 'profilePreferences'), false)
     assert.equal(fs.existsSync(path.join(homeDir, 'browser', 'runtimes')), false)
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('existing JSON profile registry is imported once with its complete browser identity', async () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-profile-sqlite-import-')))
+  const profileId = '11111111-1111-4111-8111-111111111111'
+  const profilesRoot = path.join(homeDir, 'browser', 'profiles')
+  const profileDirectory = path.join(profilesRoot, profileId)
+  const legacyRegistryPath = path.join(homeDir, 'browser', 'profiles.json')
+  const now = '2026-08-21T00:00:00.000Z'
+  fs.mkdirSync(profileDirectory, { recursive: true, mode: 0o700 })
+  fs.writeFileSync(legacyRegistryPath, `${JSON.stringify({
+    version: 1,
+    defaultProfile: 'web-ai',
+    profiles: {
+      'web-ai': {
+        slug: 'web-ai',
+        id: profileId,
+        directory: profileDirectory,
+        lifecycle: 'ready',
+        createdAt: now,
+        updatedAt: now,
+        runtimeBinding: {
+          runtimeId: 'test:node',
+          family: 'test',
+          browserId: 'node',
+          executablePath: process.execPath,
+          createdWithVersion: '1.2.3.4',
+          profileFormat: 1,
+        },
+        lastObservedAuth: {
+          chatgpt: {
+            provider: 'chatgpt',
+            auth: 'authenticated',
+            access: 'signed_in_paid',
+            checkedAt: now,
+            account: { name: 'Local User', subscription: 'Plus', tier: 'paid' },
+          },
+        },
+      },
+    },
+  }, null, 2)}\n`, { mode: 0o600 })
+
+  try {
+    const { ManagedProfileRegistry } = await import('../packages/server/dist/src/browser/profiles/registry.js')
+    const imported = await new ManagedProfileRegistry(homeDir).resolveProfile()
+    assert.equal(imported.slug, 'web-ai')
+    assert.equal(imported.id, profileId)
+    assert.equal(imported.directory, profileDirectory)
+    assert.equal(imported.runtimeBinding.runtimeId, 'test:node')
+    assert.equal(imported.lastObservedAuth.chatgpt.account.subscription, 'Plus')
+
+    fs.writeFileSync(legacyRegistryPath, '{}\n', { mode: 0o600 })
+    assert.equal((await new ManagedProfileRegistry(homeDir).resolveProfile()).id, profileId)
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
@@ -938,7 +995,7 @@ test('built CLI reads managed profile registries without enforcing POSIX mode bi
     const { ManagedProfileRegistry } = await import('../packages/server/dist/src/browser/profiles/registry.js')
     const registry = new ManagedProfileRegistry(homeDir)
     await registry.addProfile({ slug: 'mode-visible', lifecycle: 'ready' })
-    fs.chmodSync(registry.paths.registryFile, 0o644)
+    fs.chmodSync(registry.paths.databasePath, 0o644)
 
     const listed = spawnSync(process.execPath, [
       cliEntry,

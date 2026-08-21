@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import fsSync from 'node:fs'
+import { mkdir, rm, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { dirname, isAbsolute, join, resolve, sep } from 'node:path'
+import { isAbsolute, join, resolve, sep } from 'node:path'
+import { DatabaseSync, type SQLInputValue } from 'node:sqlite'
 import { getProviderDescriptorById } from '../../providers/registry.js'
-import { tokenlessError } from '../errors.js'
-import { withPrivateSqliteWriterLock } from './sqlite-lock.js'
+import { TokenlessPlaywrightError, tokenlessError } from '../errors.js'
 import type {
   ProviderAccessClass,
   ProviderAccountTier,
@@ -53,8 +54,8 @@ export type ProfileRegistryPaths = {
   tokenlessHome: string
   browserDir: string
   profilesRoot: string
-  registryFile: string
-  writerLockFile: string
+  databasePath: string
+  legacyRegistryFile: string
 }
 
 export class ManagedProfileRegistry {
@@ -66,16 +67,16 @@ export class ManagedProfileRegistry {
       tokenlessHome: resolvedHome,
       browserDir: join(resolvedHome, 'browser'),
       profilesRoot: join(resolvedHome, 'browser', 'profiles'),
-      registryFile: join(resolvedHome, 'browser', 'profiles.json'),
-      writerLockFile: join(resolvedHome, 'browser', 'profiles.writer.sqlite'),
+      databasePath: join(resolvedHome, 'tokenless.sqlite3'),
+      legacyRegistryFile: join(resolvedHome, 'browser', 'profiles.json'),
     }
   }
 
   async addProfile(options: AddProfileOptions): Promise<ManagedProfileRecord> {
-    return await this.withWriteLock(async () => {
+    return await this.withDatabase(async (db) => {
       const slug = normalizeSlug(options.slug)
       const now = new Date().toISOString()
-      const data = await this.readUnlocked()
+      const data = readRegistryFromDatabase(db, this.paths.profilesRoot)
       if (data.profiles[slug]) {
         throw tokenlessError('profile_already_exists', `Managed profile '${slug}' already exists.`)
       }
@@ -93,10 +94,22 @@ export class ManagedProfileRegistry {
         lastObservedAuth: {},
       }
       await mkdir(directory, { recursive: true, mode: 0o700 })
-      data.profiles[slug] = record
-      if (options.setDefault || !data.defaultProfile) data.defaultProfile = slug
-      await this.writeUnlocked(data)
-      return record
+      try {
+        return transaction(db, () => {
+          const current = readRegistryFromDatabase(db, this.paths.profilesRoot)
+          if (current.profiles[slug]) {
+            throw tokenlessError('profile_already_exists', `Managed profile '${slug}' already exists.`)
+          }
+          insertProfile(db, record)
+          if (options.setDefault || !current.defaultProfile) {
+            updateDefaultProfile(db, slug)
+          }
+          return record
+        })
+      } catch (error) {
+        await rm(directory, { recursive: true, force: true }).catch(() => undefined)
+        throw error
+      }
     })
   }
 
@@ -119,16 +132,17 @@ export class ManagedProfileRegistry {
   }
 
   async setDefault(slug: string): Promise<ManagedProfileRecord> {
-    return await this.withWriteLock(async () => {
+    return await this.withDatabase(async (db) => {
       const normalized = normalizeSlug(slug)
-      const data = await this.readUnlocked()
-      const record = data.profiles[normalized]
-      if (!record || record.lifecycle === 'removed') {
-        throw tokenlessError('profile_not_found', `Managed profile '${normalized}' is not registered.`)
-      }
-      data.defaultProfile = normalized
-      await this.writeUnlocked(data)
-      return record
+      return transaction(db, () => {
+        const data = readRegistryFromDatabase(db, this.paths.profilesRoot)
+        const record = data.profiles[normalized]
+        if (!record || record.lifecycle === 'removed') {
+          throw tokenlessError('profile_not_found', `Managed profile '${normalized}' is not registered.`)
+        }
+        updateDefaultProfile(db, normalized)
+        return record
+      })
     })
   }
 
@@ -136,92 +150,115 @@ export class ManagedProfileRegistry {
     if (!options.confirmDelete) {
       throw tokenlessError('profile_delete_confirmation_required', 'Profile removal requires explicit delete confirmation.')
     }
-    return await this.withWriteLock(async () => {
+    return await this.withDatabase(async (db) => {
       const normalized = normalizeSlug(slug)
-      const data = await this.readUnlocked()
-      const record = data.profiles[normalized]
-      if (!record) {
-        throw tokenlessError('profile_not_found', `Managed profile '${normalized}' is not registered.`)
+      db.exec('BEGIN IMMEDIATE')
+      try {
+        const data = readRegistryFromDatabase(db, this.paths.profilesRoot)
+        const record = data.profiles[normalized]
+        if (!record) {
+          throw tokenlessError('profile_not_found', `Managed profile '${normalized}' is not registered.`)
+        }
+        await rm(this.safeProfileDirectory(record.id), { recursive: true, force: true })
+        const deleted = db.prepare(
+          'DELETE FROM browser_profiles WHERE slug = ? AND id = ?',
+        ).run(normalized, record.id)
+        if (deleted.changes !== 1) {
+          throw tokenlessError('profile_not_found', `Managed profile '${normalized}' changed during removal.`)
+        }
+        if (data.defaultProfile === normalized) {
+          updateDefaultProfile(db, Object.keys(data.profiles)
+            .filter((candidate) => candidate !== normalized)
+            .sort()[0] ?? null)
+        }
+        db.exec('COMMIT')
+        return {
+          ...record,
+          lifecycle: 'removed',
+          updatedAt: new Date().toISOString(),
+        }
+      } catch (error) {
+        try {
+          db.exec('ROLLBACK')
+        } catch {
+          // Preserve the removal failure.
+        }
+        throw error
       }
-      const directory = this.safeProfileDirectory(record.id)
-      await rm(directory, { recursive: true, force: true })
-      const removed: ManagedProfileRecord = {
-        ...record,
-        lifecycle: 'removed',
-        updatedAt: new Date().toISOString(),
-      }
-      delete data.profiles[normalized]
-      if (data.defaultProfile === normalized) data.defaultProfile = Object.keys(data.profiles).sort()[0] ?? null
-      await this.writeUnlocked(data)
-      return removed
     })
   }
 
   async updateLifecycle(slug: string, lifecycle: ProfileLifecycleState): Promise<ManagedProfileRecord> {
-    return await this.withWriteLock(async () => {
-      const data = await this.readUnlocked()
-      const record = data.profiles[normalizeSlug(slug)]
-      if (!record) throw tokenlessError('profile_not_found', 'Managed profile is not registered.')
-      const updated = {
-        ...record,
-        lifecycle,
-        updatedAt: new Date().toISOString(),
-      }
-      data.profiles[updated.slug] = updated
-      await this.writeUnlocked(data)
-      return updated
+    return await this.withDatabase(async (db) => {
+      return transaction(db, () => {
+        const data = readRegistryFromDatabase(db, this.paths.profilesRoot)
+        const record = data.profiles[normalizeSlug(slug)]
+        if (!record) throw tokenlessError('profile_not_found', 'Managed profile is not registered.')
+        const updated = {
+          ...record,
+          lifecycle,
+          updatedAt: new Date().toISOString(),
+        }
+        updateProfile(db, updated)
+        return updated
+      })
     })
   }
 
   async updateProviderStatus(slug: string, status: ProviderStatus): Promise<ManagedProfileRecord> {
-    return await this.withWriteLock(async () => {
-      const data = await this.readUnlocked()
-      const record = data.profiles[normalizeSlug(slug)]
-      if (!record) throw tokenlessError('profile_not_found', 'Managed profile is not registered.')
-      const updated = {
-        ...record,
-        updatedAt: new Date().toISOString(),
-        lastObservedAuth: {
-          ...record.lastObservedAuth,
-          [status.provider]: status,
-        },
-      }
-      data.profiles[updated.slug] = updated
-      await this.writeUnlocked(data)
-      return updated
+    return await this.withDatabase(async (db) => {
+      return transaction(db, () => {
+        const data = readRegistryFromDatabase(db, this.paths.profilesRoot)
+        const record = data.profiles[normalizeSlug(slug)]
+        if (!record) throw tokenlessError('profile_not_found', 'Managed profile is not registered.')
+        const updated = {
+          ...record,
+          updatedAt: new Date().toISOString(),
+          lastObservedAuth: {
+            ...record.lastObservedAuth,
+            [status.provider]: status,
+          },
+        }
+        updateProfile(db, updated)
+        return updated
+      })
     })
   }
 
   async bindRuntime(slug: string, runtimeBinding: BrowserRuntimeBinding): Promise<ManagedProfileRecord> {
-    return await this.withWriteLock(async () => {
-      const data = await this.readUnlocked()
-      const record = data.profiles[normalizeSlug(slug)]
-      if (!record) throw tokenlessError('profile_not_found', 'Managed profile is not registered.')
-      const binding = validateRuntimeBinding(runtimeBinding)
-      if (record.runtimeBinding && !sameRuntimeBinding(record.runtimeBinding, binding)) {
-        throw tokenlessError(
-          'profile_runtime_rebind_blocked',
-          `Managed profile '${record.slug}' is already bound to ${record.runtimeBinding.runtimeId}; create a clean profile for ${binding.runtimeId}.`,
-        )
-      }
-      const updated: ManagedProfileRecord = {
-        ...record,
-        runtimeBinding: binding,
-        updatedAt: new Date().toISOString(),
-      }
-      data.profiles[updated.slug] = updated
-      await this.writeUnlocked(data)
-      return updated
+    return await this.withDatabase(async (db) => {
+      return transaction(db, () => {
+        const data = readRegistryFromDatabase(db, this.paths.profilesRoot)
+        const record = data.profiles[normalizeSlug(slug)]
+        if (!record) throw tokenlessError('profile_not_found', 'Managed profile is not registered.')
+        const binding = validateRuntimeBinding(runtimeBinding)
+        if (record.runtimeBinding && !sameRuntimeBinding(record.runtimeBinding, binding)) {
+          throw tokenlessError(
+            'profile_runtime_rebind_blocked',
+            `Managed profile '${record.slug}' is already bound to ${record.runtimeBinding.runtimeId}; create a clean profile for ${binding.runtimeId}.`,
+          )
+        }
+        const updated: ManagedProfileRecord = {
+          ...record,
+          runtimeBinding: binding,
+          updatedAt: new Date().toISOString(),
+        }
+        updateProfile(db, updated)
+        return updated
+      })
     })
   }
 
   async read(): Promise<ManagedProfileRegistryData> {
-    return await this.readUnlocked()
+    return await this.withDatabase((db) => readRegistryFromDatabase(db, this.paths.profilesRoot))
   }
 
   async write(data: ManagedProfileRegistryData): Promise<void> {
-    await this.withWriteLock(async () => {
-      await this.writeUnlocked(data)
+    await this.withDatabase((db) => {
+      const parsed = parseRegistry(data, this.paths.profilesRoot)
+      transaction(db, () => {
+        writeRegistryToDatabase(db, parsed)
+      })
     })
   }
 
@@ -229,28 +266,19 @@ export class ManagedProfileRegistry {
     return this.safeProfileDirectory(id)
   }
 
-  private async readUnlocked(): Promise<ManagedProfileRegistryData> {
+  private async withDatabase<T>(operation: (db: DatabaseSync) => Promise<T> | T): Promise<T> {
     await this.ensureDirectories()
+    let db: DatabaseSync | undefined
     try {
-      const parsed = JSON.parse(await readFile(this.paths.registryFile, 'utf8')) as unknown
-      return parseRegistry(parsed, this.paths.profilesRoot)
-    } catch (error) {
-      if (isMissingFile(error)) return emptyRegistry()
-      throw error
+      db = new DatabaseSync(this.paths.databasePath)
+      db.exec('PRAGMA busy_timeout = 30000;')
+      initializeProfileSchema(db)
+      migrateLegacyRegistry(db, this.paths)
+      await chmodFile(this.paths.databasePath, 0o600)
+      return await operation(db)
+    } finally {
+      db?.close()
     }
-  }
-
-  private async writeUnlocked(data: ManagedProfileRegistryData): Promise<void> {
-    await this.ensureDirectories()
-    const tmp = join(dirname(this.paths.registryFile), `.profiles.${process.pid}.${Date.now()}.${randomUUID()}.tmp`)
-    const payload = `${JSON.stringify(data, null, 2)}\n`
-    await writeFile(tmp, payload, { mode: 0o600 })
-    await rename(tmp, this.paths.registryFile)
-    await chmodFile(this.paths.registryFile, 0o600)
-  }
-
-  private async withWriteLock<T>(operation: () => Promise<T>): Promise<T> {
-    return await withPrivateSqliteWriterLock(this.paths.writerLockFile, operation)
   }
 
   private async ensureDirectories() {
@@ -273,13 +301,31 @@ export class ManagedProfileRegistry {
 
 export async function readManagedProfileRegistryReadOnly(tokenlessHome = tokenlessHomeFromEnv()): Promise<ManagedProfileRegistryData> {
   const registry = new ManagedProfileRegistry(tokenlessHome)
-  try {
-    const parsed = JSON.parse(await readFile(registry.paths.registryFile, 'utf8')) as unknown
-    return parseRegistry(parsed, registry.paths.profilesRoot)
-  } catch (error) {
-    if (isMissingFile(error)) return emptyRegistry()
-    throw error
+  if (!fsSync.existsSync(registry.paths.databasePath)) {
+    return fsSync.existsSync(registry.paths.legacyRegistryFile)
+      ? await registry.read()
+      : emptyRegistry()
   }
+
+  const db = new DatabaseSync(registry.paths.databasePath, { readOnly: true })
+  try {
+    db.exec('PRAGMA query_only = ON;')
+    const stateTable = db.prepare(
+      `SELECT name FROM sqlite_schema
+       WHERE type = 'table' AND name = 'browser_profile_registry_state'`,
+    ).get()
+    const initialized = stateTable
+      ? db.prepare(
+        'SELECT singleton FROM browser_profile_registry_state WHERE singleton = 1',
+      ).get()
+      : undefined
+    if (initialized) return readRegistryFromDatabase(db, registry.paths.profilesRoot)
+  } finally {
+    db.close()
+  }
+  return fsSync.existsSync(registry.paths.legacyRegistryFile)
+    ? await registry.read()
+    : emptyRegistry()
 }
 
 export function tokenlessHomeFromEnv() {
@@ -298,6 +344,204 @@ export function isPathInside(root: string, candidate: string) {
   const normalizedRoot = resolve(root)
   const normalizedCandidate = resolve(candidate)
   return normalizedCandidate === normalizedRoot || normalizedCandidate.startsWith(`${normalizedRoot}${sep}`)
+}
+
+const PROFILE_SCHEMA_VERSION = 1
+
+function initializeProfileSchema(db: DatabaseSync) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS browser_profiles (
+      slug TEXT PRIMARY KEY NOT NULL,
+      id TEXT NOT NULL UNIQUE,
+      directory TEXT NOT NULL,
+      lifecycle TEXT NOT NULL CHECK (lifecycle IN ('created', 'ready', 'removed', 'failed')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      runtime_binding_json TEXT,
+      last_observed_auth_json TEXT NOT NULL DEFAULT '{}'
+    );
+    CREATE TABLE IF NOT EXISTS browser_profile_registry_state (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+      version INTEGER NOT NULL CHECK (version = 1),
+      default_profile TEXT
+    );
+  `)
+}
+
+function migrateLegacyRegistry(db: DatabaseSync, paths: ProfileRegistryPaths) {
+  const existing = db.prepare(
+    'SELECT singleton FROM browser_profile_registry_state WHERE singleton = 1',
+  ).get()
+  if (existing) return
+
+  const legacy = readLegacyRegistry(paths.legacyRegistryFile, paths.profilesRoot)
+  transaction(db, () => {
+    const current = db.prepare(
+      'SELECT singleton FROM browser_profile_registry_state WHERE singleton = 1',
+    ).get()
+    if (current) return
+    if (legacy) writeRegistryToDatabase(db, legacy, false)
+    db.prepare(
+      `INSERT INTO browser_profile_registry_state (singleton, version, default_profile)
+       VALUES (1, ?, ?)`,
+    ).run(PROFILE_SCHEMA_VERSION, legacy?.defaultProfile ?? null)
+  })
+}
+
+function readLegacyRegistry(registryFile: string, profilesRoot: string): ManagedProfileRegistryData | undefined {
+  let payload: string
+  try {
+    payload = fsSync.readFileSync(registryFile, 'utf8')
+  } catch (error) {
+    if (isMissingFile(error)) return undefined
+    throw error
+  }
+  return parseRegistry(JSON.parse(payload) as unknown, profilesRoot)
+}
+
+function readRegistryFromDatabase(db: DatabaseSync, profilesRoot: string): ManagedProfileRegistryData {
+  const state = db.prepare(
+    `SELECT version, default_profile
+     FROM browser_profile_registry_state
+     WHERE singleton = 1`,
+  ).get() as SqliteRow | undefined
+  if (!state || Number(state.version) !== PROFILE_SCHEMA_VERSION) {
+    throw tokenlessError('invalid_profile_registry', 'Managed profile registry database is not initialized.')
+  }
+
+  const profiles: Record<string, ManagedProfileRecord> = {}
+  const rows = db.prepare(
+    `SELECT slug, id, directory, lifecycle, created_at, updated_at,
+            runtime_binding_json, last_observed_auth_json
+     FROM browser_profiles`,
+  ).all() as SqliteRow[]
+  for (const row of rows) {
+    const slug = typeof row.slug === 'string' ? normalizeSlug(row.slug) : null
+    const id = typeof row.id === 'string' ? row.id : null
+    const directory = typeof row.directory === 'string' ? resolve(row.directory) : null
+    if (!slug || !id || !isUuid(id) || !directory || directory !== resolve(profilesRoot, id) || !isPathInside(profilesRoot, directory)) {
+      throw tokenlessError('invalid_profile_registry', 'Managed profile database record is malformed.')
+    }
+    const runtimeBinding = row.runtime_binding_json === null || row.runtime_binding_json === undefined
+      ? {}
+      : parseRuntimeBindingJson(row.runtime_binding_json)
+    const lastObservedAuth = parseProviderStatusesJson(row.last_observed_auth_json)
+    profiles[slug] = {
+      slug,
+      id,
+      directory,
+      lifecycle: parseLifecycle(row.lifecycle),
+      createdAt: parseIso(row.created_at),
+      updatedAt: parseIso(row.updated_at),
+      ...runtimeBinding,
+      lastObservedAuth,
+    }
+  }
+  const defaultValue = state.default_profile
+  const defaultProfile = defaultValue === null || defaultValue === undefined
+    ? null
+    : typeof defaultValue === 'string'
+      ? normalizeSlug(defaultValue)
+      : null
+  if (defaultProfile && !profiles[defaultProfile]) {
+    throw tokenlessError('invalid_profile_registry', 'Default managed profile is not registered.')
+  }
+  return { version: 1, defaultProfile, profiles }
+}
+
+type SqliteRow = Record<string, unknown>
+
+function insertProfile(db: DatabaseSync, profile: ManagedProfileRecord) {
+  db.prepare(
+    `INSERT INTO browser_profiles
+       (slug, id, directory, lifecycle, created_at, updated_at, runtime_binding_json, last_observed_auth_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    profile.slug,
+    profile.id,
+    profile.directory,
+    profile.lifecycle,
+    profile.createdAt,
+    profile.updatedAt,
+    profile.runtimeBinding ? JSON.stringify(profile.runtimeBinding) : null,
+    JSON.stringify(profile.lastObservedAuth),
+  )
+}
+
+function updateProfile(db: DatabaseSync, profile: ManagedProfileRecord) {
+  db.prepare(
+    `UPDATE browser_profiles
+     SET id = ?, directory = ?, lifecycle = ?, created_at = ?, updated_at = ?,
+         runtime_binding_json = ?, last_observed_auth_json = ?
+     WHERE slug = ?`,
+  ).run(
+    profile.id,
+    profile.directory,
+    profile.lifecycle,
+    profile.createdAt,
+    profile.updatedAt,
+    profile.runtimeBinding ? JSON.stringify(profile.runtimeBinding) : null,
+    JSON.stringify(profile.lastObservedAuth),
+    profile.slug,
+  )
+}
+
+function updateDefaultProfile(db: DatabaseSync, defaultProfile: string | null) {
+  db.prepare(
+    `UPDATE browser_profile_registry_state
+     SET default_profile = ?
+     WHERE singleton = 1`,
+  ).run(defaultProfile)
+}
+
+function writeRegistryToDatabase(db: DatabaseSync, data: ManagedProfileRegistryData, clearExisting = true) {
+  if (clearExisting) db.exec('DELETE FROM browser_profiles')
+  for (const profile of Object.values(data.profiles)) insertProfile(db, profile)
+  updateDefaultProfile(db, data.defaultProfile)
+}
+
+function parseRuntimeBindingJson(value: unknown): Pick<ManagedProfileRecord, 'runtimeBinding'> | Record<string, never> {
+  if (typeof value !== 'string') {
+    throw tokenlessError('invalid_profile_registry', 'Managed profile runtime binding database value is malformed.')
+  }
+  try {
+    return parseRuntimeBinding(JSON.parse(value) as unknown)
+  } catch (error) {
+    if (isTokenlessProfileError(error)) throw error
+    throw tokenlessError('invalid_profile_registry', 'Managed profile runtime binding database value is malformed.', { cause: error })
+  }
+}
+
+function parseProviderStatusesJson(value: unknown): Partial<Record<ProviderId, ProviderStatus>> {
+  if (typeof value !== 'string') {
+    throw tokenlessError('invalid_profile_registry', 'Managed profile provider status database value is malformed.')
+  }
+  try {
+    return parseProviderStatuses(JSON.parse(value) as unknown)
+  } catch (error) {
+    if (isTokenlessProfileError(error)) throw error
+    throw tokenlessError('invalid_profile_registry', 'Managed profile provider status database value is malformed.', { cause: error })
+  }
+}
+
+function isTokenlessProfileError(error: unknown): error is TokenlessPlaywrightError {
+  return error instanceof TokenlessPlaywrightError
+}
+
+function transaction<T>(db: DatabaseSync, callback: () => T): T {
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    const result = callback()
+    db.exec('COMMIT')
+    return result
+  } catch (error) {
+    try {
+      db.exec('ROLLBACK')
+    } catch {
+      // Preserve the original database or validation failure.
+    }
+    throw error
+  }
 }
 
 function parseRegistry(value: unknown, profilesRoot: string): ManagedProfileRegistryData {

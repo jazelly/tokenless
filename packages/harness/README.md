@@ -68,7 +68,7 @@ The package API is the SDK-like seam for local callers (`openWebAgentHarness`, `
 
 A queued provider turn proves local staging, not visible-provider acceptance. Provider authentication and verification stay external; resume continues the same in-process run after the user completes the handoff.
 
-Agent context is stored separately in `<TOKENLESS_HOME>/harness.sqlite3`. The ledger stores bounded IDs, canonical project identity, hashes, timestamps, provider mapping references, and job IDs. It does not store raw Codex prompts, transcripts, assistant messages, tool results, browser state, or credentials. The Web Provider API owns real provider Projects, conversations, and jobs; this package binds their returned opaque IDs to Harness conversations.
+Agent context is stored in the shared `<TOKENLESS_HOME>/tokenless.sqlite3` database, in one `harness_context_records` table. The record stores bounded IDs, canonical project identity, hashes, timestamps, provider mapping references, and job IDs. It does not store raw Codex prompts, transcripts, assistant messages, tool results, browser state, or credentials. The Web Provider API owns real provider Projects, conversations, and jobs; this package binds their returned opaque IDs to Harness conversations.
 
 ```ts
 import {

@@ -3,7 +3,7 @@
   import { onMount, tick } from 'svelte'
   import PageHeader from '../components/PageHeader.svelte'
   import ProviderIdentity from '../components/ProviderIdentity.svelte'
-  import { formatNumber, formatTime } from '../formatting.js'
+  import { formatChatTitle, formatNumber, formatTime, isConversationJob } from '../formatting.js'
   import { stateLabel, translateError, type MessageKey } from '../i18n/index.js'
   import { createRouterEngine } from '../router-engine.js'
   import type { DashboardActions, Language, DashboardJobDetail, DashboardJobSummary, DashboardSnapshot } from '../types.js'
@@ -27,7 +27,7 @@
   let generatedTitles = $state<Record<string, string>>({})
   let detailPage = $state<HTMLElement>()
   const titleRequests = new Set<string>()
-  let chatJobs = $derived(snapshot.jobs.filter((job) => typeof job.titlePrompt === 'string' && job.titlePrompt.length > 0))
+  let chatJobs = $derived(snapshot.jobs.filter(isConversationJob))
   let filtered = $derived(chatJobs.filter((job) => {
     const query = search.trim().toLowerCase()
     return (!status || job.status === status)
@@ -48,6 +48,8 @@
     } catch {
       generatedTitles = {}
     }
+    const requestedJobId = query.get('job')
+    if (requestedJobId) void showDetail(requestedJobId)
   })
 
   $effect(() => {
@@ -70,6 +72,10 @@
     error = ''
     try {
       detail = await actions.getJob(jobId)
+      const url = new URL(location.href)
+      url.searchParams.set('job', jobId)
+      url.hash = 'jobs'
+      history.replaceState(history.state, '', url)
       await tick()
       detailPage?.focus()
       window.scrollTo({ top: 0 })
@@ -83,6 +89,9 @@
   async function closeDetail() {
     detail = null
     error = ''
+    const url = new URL(location.href)
+    url.searchParams.delete('job')
+    history.replaceState(history.state, '', url)
     await tick()
     document.querySelector<HTMLInputElement>('[data-testid="job-search"]')?.focus()
   }
@@ -119,18 +128,7 @@
   }
 
   function titleFor(job: DashboardJobSummary) {
-    return job.chatTitle ?? generatedTitles[job.jobId] ?? fallbackTitle(job.titlePrompt) ?? t('untitledChat')
-  }
-
-  function fallbackTitle(value: string | null) {
-    if (!value) return null
-    const userTurns = [...value.matchAll(/\[User\]\s*([\s\S]*?)(?=\n\n\[(?:System|Developer|Assistant|Tool|User)\]|$)/giu)]
-    const source = userTurns.at(-1)?.[1] ?? value
-    const normalized = source
-      .replace(/\[(?:System|Developer|Assistant|Tool|User)\]\s*/giu, ' ')
-      .replace(/\s+/gu, ' ')
-      .trim()
-    return normalized.length > 64 ? `${normalized.slice(0, 61).trimEnd()}…` : normalized
+    return formatChatTitle(job.chatTitle ?? generatedTitles[job.jobId], job.titlePrompt, t('untitledChat'))
   }
 
   async function generateTitle(job: DashboardJobSummary) {

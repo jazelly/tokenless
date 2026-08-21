@@ -13,7 +13,7 @@ import {
   normalizeBrowserSelection,
   type BrowserSelection,
 } from '../browser/runtime/types.js'
-import { withPrivateSqliteWriterLock } from '../browser/profiles/sqlite-lock.js'
+import { readManagedProfileRegistryReadOnly } from '../browser/profiles/registry.js'
 
 export { TOKENLESS_CONFIG_SCHEMA_ID } from '../schema-ids.js'
 
@@ -130,7 +130,7 @@ export async function readTokenlessConfig(
 ): Promise<TokenlessConfig> {
   const initial = await readTokenlessConfigUnlocked(homeDir)
   if (!initial.needsWrite || !persistMigrations) return initial.config
-  return await withConfigWriterLock(homeDir, async () => {
+  return await withConfigWriteDirectory(homeDir, async () => {
     const latest = await readTokenlessConfigUnlocked(homeDir)
     if (!latest.needsWrite) return latest.config
     latest.config.updatedAt = new Date().toISOString()
@@ -254,7 +254,7 @@ export async function writeTokenlessConfig({
   directProvider?: unknown
   router?: unknown
 } = {}) {
-  return await withConfigWriterLock(homeDir, async () => {
+  return await withConfigWriteDirectory(homeDir, async () => {
     const current = (await readTokenlessConfigUnlocked(homeDir)).config
     const requestedBrowserSelection = browser === undefined ? current.browser : validateConfigBrowser(browser)
     const requestedBrowser = requestedBrowserSelection === 'brave' ? 'brave' : 'chrome'
@@ -312,7 +312,7 @@ export async function upsertTokenlessProfileConfig({
 }) {
   const normalized = validateProfiles({ [slug]: profile })[slug]
   if (!normalized) throw configError('tokenless_config_invalid', `Invalid Tokenless profile configuration for '${slug}'.`)
-  return await withConfigWriterLock(homeDir, async () => {
+  return await withConfigWriteDirectory(homeDir, async () => {
     const current = (await readTokenlessConfigUnlocked(homeDir)).config
     const config = {
       ...current,
@@ -333,7 +333,7 @@ export async function deleteTokenlessProfileConfig({
   homeDir?: string
   slug: string
 }) {
-  return await withConfigWriterLock(homeDir, async () => {
+  return await withConfigWriteDirectory(homeDir, async () => {
     const current = (await readTokenlessConfigUnlocked(homeDir)).config
     const profiles = { ...current.profiles }
     delete profiles[slug]
@@ -347,11 +347,10 @@ export async function deleteTokenlessProfileConfig({
   })
 }
 
-async function withConfigWriterLock<T>(homeDir: string, operation: () => Promise<T>) {
+async function withConfigWriteDirectory<T>(homeDir: string, operation: () => Promise<T>) {
   await fs.mkdir(homeDir, { recursive: true, mode: 0o700 })
   await fs.chmod(homeDir, 0o700).catch(() => undefined)
-  const canonicalHome = await fs.realpath(homeDir)
-  return await withPrivateSqliteWriterLock(path.join(canonicalHome, 'config.writer.sqlite'), operation)
+  return await operation()
 }
 
 function emptyTokenlessConfig(): TokenlessConfig {
@@ -596,18 +595,11 @@ function configuredLegacyProviders(payload: JsonRecord) {
 }
 
 async function readRegisteredProfileSlugs(homeDir: string) {
-  try {
-    const payload = JSON.parse(await fs.readFile(path.join(homeDir, 'browser', 'profiles.json'), 'utf8')) as unknown
-    if (!isJsonRecord(payload) || !isJsonRecord(payload.profiles)) return []
-    return Object.entries(payload.profiles).flatMap(([slug, profile]) => (
-      /^[a-z0-9][a-z0-9-]{0,63}$/.test(slug) && isJsonRecord(profile) && profile.lifecycle !== 'removed'
-        ? [slug]
-        : []
-    )).sort()
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
-    throw error
-  }
+  const registry = await readManagedProfileRegistryReadOnly(homeDir)
+  return Object.values(registry.profiles)
+    .filter((profile) => profile.lifecycle !== 'removed')
+    .map((profile) => profile.slug)
+    .sort()
 }
 
 function normalizeRoleLabel(value: unknown) {

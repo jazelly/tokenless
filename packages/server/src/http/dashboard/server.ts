@@ -45,9 +45,13 @@ export class TokenlessDashboardServer {
     this.resolveHarnessRunHandler = options.resolveHarnessRunHandler
   }
 
-  dashboardUrl(profileId?: string | null) {
+  dashboardUrl(profileId?: string | null, jobId?: string | null) {
     const url = new URL('/dashboard/', this.origin())
     if (profileId) url.searchParams.set('profile', profileId)
+    if (jobId) {
+      url.searchParams.set('job', jobId)
+      url.hash = 'jobs'
+    }
     return url.toString()
   }
 

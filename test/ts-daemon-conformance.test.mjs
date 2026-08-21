@@ -26,7 +26,7 @@ test('TS daemon embeds the managed Playwright scheduler without idle browser lau
 }, async () => {
   requireBuiltArtifacts()
   const homeDir = tempHome('tokenless-ts-embedded-scheduler-')
-  const profile = createReadyManagedProfile(homeDir)
+  const profile = await createReadyManagedProfile(homeDir)
   const daemon = await startTsDaemon(homeDir)
   try {
     await delay(1_500)
@@ -1419,7 +1419,7 @@ test('TS daemon browser runtime control is authenticated, quiesces queued work, 
       reason: { code: 'test_roundtrip_complete' },
     })
 
-    const profile = createReadyManagedProfile(homeDir, { profileId })
+    const profile = await createReadyManagedProfile(homeDir, { profileId })
     assertProfileDirectoryEmpty(profile.directory)
 
     const wakeJobId = randomUUID()
@@ -1750,14 +1750,15 @@ function runCli(args) {
   })
 }
 
-function createReadyManagedProfile(homeDir, options = {}) {
+async function createReadyManagedProfile(homeDir, options = {}) {
   const browserDir = path.join(homeDir, 'browser')
   const profilesRoot = path.join(browserDir, 'profiles')
   const profileId = options.profileId ?? randomUUID()
   const profileDir = path.join(profilesRoot, profileId)
   fs.mkdirSync(profileDir, { recursive: true, mode: 0o700 })
   const now = new Date().toISOString()
-  fs.writeFileSync(path.join(browserDir, 'profiles.json'), `${JSON.stringify({
+  const registry = new (await importPlaywright()).ManagedProfileRegistry(homeDir)
+  await registry.write({
     version: 1,
     defaultProfile: 'default',
     profiles: {
@@ -1771,7 +1772,7 @@ function createReadyManagedProfile(homeDir, options = {}) {
         lastObservedAuth: {},
       },
     },
-  }, null, 2)}\n`, { mode: 0o600 })
+  })
   return { id: profileId, directory: profileDir }
 }
 

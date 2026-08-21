@@ -225,12 +225,39 @@ export type BrowserRuntimeOpenProviderTabsResponse = BrowserRuntimeOpenProfileRe
 
 export type OpenDashboardOptions = DaemonClientOptions & {
   profileId?: string | undefined
+  jobId?: string | undefined
   open?: boolean | undefined
 }
 
 export type OpenDashboardResponse = {
   url: string
   opened: null | { url: string, reused: boolean }
+}
+
+export type MenuBarConversation = {
+  jobId: string
+  title: string
+  provider: string
+  providers: string[]
+  status: DaemonJobStatus
+  updatedAt: string
+  profileId: string | null
+  profileSlug: string | null
+}
+
+export type MenuBarSnapshot = {
+  schema: 'tokenless.menu-bar-snapshot.v1'
+  generatedAt: string
+  daemon: {
+    status: 'running'
+    version: string
+    origin: string
+    pid: number
+  }
+  runtime: BrowserRuntimeStatus
+  activeJobCount: number
+  dashboardUrl: string
+  conversations: MenuBarConversation[]
 }
 
 export type ControlProfile = {
@@ -811,6 +838,7 @@ export async function openTokenlessDashboard({
   requestTimeoutMs,
   signal,
   profileId,
+  jobId,
   open = true,
 }: OpenDashboardOptions = {}) {
   const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
@@ -819,6 +847,7 @@ export async function openTokenlessDashboard({
     path: '/v1/private/control/dashboard',
     body: {
       ...(profileId ? { profile_id: profileId } : {}),
+      ...(jobId ? { job_id: jobId } : {}),
     },
     token: daemon.token,
     timeoutMs: requestTimeoutMs,
@@ -846,6 +875,10 @@ async function openUrlInDefaultBrowser(url: string) {
       resolve()
     })
   })
+}
+
+export async function getMenuBarSnapshot(options: DaemonClientOptions = {}) {
+  return controlRequest<MenuBarSnapshot>(options, '/v1/private/control/menu-bar', 'GET')
 }
 
 export async function getControlState(options: DaemonClientOptions = {}) {

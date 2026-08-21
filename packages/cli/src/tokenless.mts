@@ -47,6 +47,7 @@ import {
   drainDaemonReplay,
   ensureDaemonReady,
   generateImage,
+  getMenuBarSnapshot,
   getDaemonJob,
   getControlState,
   getControlCapabilities,
@@ -284,7 +285,8 @@ const TOP_LEVEL_USAGE = [
   'tokenless replay --agent-kind <kind> --agent-session-id <id> --json',
   'tokenless profiles <subcommand> [options]',
   'tokenless agents <install|status|inspect|uninstall> <codex|dsh> [options]',
-  'tokenless dashboard [--profile <slug>] [--no-open] [--json]',
+  'tokenless dashboard [--profile <slug>] [--job-id <id>] [--no-open] [--json]',
+  'tokenless menubar status --json',
   'tokenless savings <status|enable|disable|uninstall|clear> --json',
   'tokenless daemon stop [--json]',
   'tokenless help',
@@ -319,7 +321,7 @@ try {
   } else {
     command = argv[0]?.startsWith('-') ? 'prompt' : (argv.shift() ?? 'help')
   }
-  const subcommand = (command === 'profiles' || command === 'daemon' || command === 'capabilities' || command === 'limits' || command === 'savings' || command === 'api-proxy' || command === 'agents' || command === 'agent' || command === 'featurebench') && argv[0] && !argv[0].startsWith('-')
+  const subcommand = (command === 'profiles' || command === 'daemon' || command === 'capabilities' || command === 'limits' || command === 'savings' || command === 'api-proxy' || command === 'agents' || command === 'agent' || command === 'featurebench' || command === 'menubar') && argv[0] && !argv[0].startsWith('-')
     ? argv.shift()
     : undefined
   const agentTarget = command === 'agents' && argv[0] && !argv[0].startsWith('-')
@@ -360,6 +362,8 @@ try {
     await agentsCommand(subcommand, args)
   } else if (command === 'agent') {
     await agentCommand(subcommand, args)
+  } else if (command === 'menubar') {
+    await menubarCommand(subcommand, args)
   } else if (command === 'dashboard') {
     await dashboardCommand(args)
   } else if (command === 'run') {
@@ -401,17 +405,21 @@ try {
   } else if (command === 'install') {
     await installCommand(args)
   } else if (command === 'upgrade') {
-    const humanOutput = args.json !== true
-    if (humanOutput && !args.quiet) console.error(t('cliUpgradeTitle'))
-    const result = await runUpgradeCommand(args, humanOutput && args.verbose
-      ? { onProgress: (event) => console.error(formatUpgradeProgressLine(event, args)) }
-      : undefined)
-    if (humanOutput) {
-    console.log(formatHumanLine(formatUpgradeSummary(result), result.ok === true, args))
-      if (args.verbose) printVerbosePayload(result, args)
+    if (args.check === true) {
+      await upgradeCheckCommand(args)
+    } else {
+      const humanOutput = args.json !== true
+      if (humanOutput && !args.quiet) console.error(t('cliUpgradeTitle'))
+      const result = await runUpgradeCommand(args, humanOutput && args.verbose
+        ? { onProgress: (event) => console.error(formatUpgradeProgressLine(event, args)) }
+        : undefined)
+      if (humanOutput) {
+        console.log(formatHumanLine(formatUpgradeSummary(result), result.ok === true, args))
+        if (args.verbose) printVerbosePayload(result, args)
+      }
+      else printPayload(result, args)
+      if (!result.ok) process.exitCode = 1
     }
-    else printPayload(result, args)
-    if (!result.ok) process.exitCode = 1
   } else if (command === 'doctor') {
     await doctorCommand(args)
   } else if (command === 'config') {
@@ -678,6 +686,7 @@ async function dashboardCommand(args: CliArgs) {
     homeDir,
     daemonUrl: daemon.url,
     ...(profile === null ? {} : { profileId: profile.id }),
+    ...(args.jobId === undefined ? {} : { jobId: String(args.jobId) }),
     open: args.noOpen !== true,
   })
   printPayload({
@@ -698,6 +707,41 @@ async function dashboardCommand(args: CliArgs) {
         ? t('dashboardOpened')
         : t('dashboardOpenedForProfile', { profile: profile.slug }),
   }, args)
+}
+
+async function menubarCommand(subcommand: string | undefined, args: CliArgs) {
+  if (subcommand !== 'status') {
+    throw usageError('menubar_command_invalid', 'Menubar subcommand must be status.')
+  }
+  const homeDir = tokenlessHome(args.home)
+  const control = await ensureControlDaemon(args, homeDir)
+  const snapshot = await getMenuBarSnapshot({
+    homeDir,
+    daemonUrl: control.daemon.url,
+  })
+  printPayload({
+    ok: true,
+    command: 'menubar status',
+    ...snapshot,
+  }, args)
+}
+
+async function upgradeCheckCommand(args: CliArgs) {
+  const check = await setupCliVersionCheck()
+  const payload = {
+    ok: check.ok,
+    command: 'upgrade',
+    current: check.currentVersion,
+    latest: check.latestVersion,
+    status: check.status,
+    updateAvailable: check.updateAvailable,
+    ...(check.error === undefined ? {} : { error: check.error }),
+  }
+  printPayload(args.json === true ? payload : {
+    ...payload,
+    compactOutput: setupCliVersionCompact(check),
+  }, args)
+  if (!check.ok) process.exitCode = 1
 }
 
 async function ensureControlDaemon(
@@ -4833,14 +4877,14 @@ async function readManagedProfileReadOnly(homeDir: string) {
   if (!profile || profile.lifecycle === 'removed') {
     return {
       ok: false,
-      path: registry.paths.registryFile,
+      path: registry.paths.databasePath,
       profile: null,
       message: defaultSlug ? 'Default managed profile is not available.' : 'No default managed profile is configured.',
     }
   }
   return {
     ok: true,
-    path: registry.paths.registryFile,
+    path: registry.paths.databasePath,
     profile,
   }
 }
@@ -5554,10 +5598,11 @@ function createCommandContracts(): CommandContract[] {
     { command: 'cancel', usage: ['tokenless cancel --job-id <job-id> --json'], options: ['home', 'json', 'jobId', 'daemonUrl', 'daemonStartTimeoutMs', 'cancelTimeoutMs', 'agentKind', 'agentSessionId'] },
     { command: 'setup', usage: ['tokenless setup [--browser <chrome|brave|cloak>|--anti-detect] [--browser-executable-path <absolute-path>] [--install-codex [--codex-home <dir>]] [--profile <slug>] [--provider-whitelist <list>] [--no-open] [--defaults] --json'], options: ['home', 'json', 'quiet', 'browser', 'browserExecutablePath', 'antiDetect', 'profile', 'providerWhitelist', 'noOpen', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'cancelTimeoutMs', 'timeoutMs', 'targetUrl', 'setDefault', 'setupDefaults', 'installCodex', 'codexHome'] },
     { command: 'install', usage: ['tokenless install [--browser <browser>|--browsers <list>] [--repair-browser] --json'], options: ['home', 'json', 'browser', 'browsers', 'repairBrowser', 'daemonUrl', 'daemonStartTimeoutMs'] },
-    { command: 'upgrade', usage: ['tokenless upgrade [--json] [--home <dir>] [--daemon-url <url>] [--browser <browser>|--browsers <list>]'], options: ['json', 'home', 'daemonUrl', 'browser', 'browsers', 'daemonStartTimeoutMs'] },
+    { command: 'upgrade', usage: ['tokenless upgrade [--check] [--json] [--home <dir>] [--daemon-url <url>] [--browser <browser>|--browsers <list>]'], options: ['check', 'json', 'home', 'daemonUrl', 'browser', 'browsers', 'daemonStartTimeoutMs'] },
     { command: 'doctor', usage: ['tokenless doctor --json'], options: ['home', 'json', 'browser', 'daemonUrl'] },
     { command: 'config', usage: ['tokenless config [--language <en|zh-CN>] [--browser <chrome|brave>] [--browser-executable-path <absolute-path>|--clear-browser-executable-path] [--daemon-url <url>] --json', 'tokenless config --profile <slug> [--provider-whitelist <list>] [--browser-visibility headed] --json'], options: ['home', 'json', 'profile', 'language', 'providerWhitelist', 'browser', 'browserExecutablePath', 'clearBrowserExecutablePath', 'browserVisibility', 'daemonUrl'] },
-    { command: 'dashboard', usage: ['tokenless dashboard [--profile <slug>] [--no-open] [--json]'], options: ['home', 'json', 'profile', 'noOpen', 'daemonUrl', 'daemonStartTimeoutMs'] },
+    { command: 'dashboard', usage: ['tokenless dashboard [--profile <slug>] [--job-id <id>] [--no-open] [--json]'], options: ['home', 'json', 'profile', 'jobId', 'noOpen', 'daemonUrl', 'daemonStartTimeoutMs'] },
+    { command: 'menubar', subcommand: 'status', usage: ['tokenless menubar status --json'], options: ['home', 'json', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'prompt', usage: ['tokenless --prompt <text> [--context <text>] [--file <path>]'], options: ['json', 'prompt', 'promptFile', 'context', 'contextFile', 'turnContextFile', 'projectRoot', 'files', 'output'] },
     { command: 'profiles', subcommand: 'add', usage: ['tokenless profiles add --profile <slug> [--browser <managed-chromium|cloak>] [--set-default] --json'], options: ['home', 'json', 'profile', 'browser', 'providerWhitelist', 'setDefault'] },
     { command: 'profiles', subcommand: 'clear', usage: ['tokenless profiles clear (--profile <slug>|--all)'], options: ['home', 'profile', 'allProfiles'] },
@@ -5709,6 +5754,7 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--provider-ready': 'providerReady',
     '--prompt-stdin': 'promptStdin',
     '--adapter-stream': 'adapterStream',
+    '--check': 'check',
   }
   const repeatedValueFlags: Record<string, keyof Pick<CliArgs, 'answers' | 'approvals' | 'authenticationCompleted' | 'skills'>> = {
     '--answer': 'answers',
@@ -7176,6 +7222,7 @@ function optionUsageLabel(option: string) {
     capabilities: '--capability <capability>',
     bridgeTimeoutMs: '--bridge-timeout-ms <ms>',
     cancelTimeoutMs: '--cancel-timeout-ms <ms>',
+    check: '--check',
     color: '--color',
     chatName: '--chat-name <name>',
     chatId: '--chat-id <id>',

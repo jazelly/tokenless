@@ -163,6 +163,8 @@ export type ListJobsInput = {
   provider?: string | undefined
   task_id?: string | undefined
   limit?: number | undefined
+  order_by?: 'created_at' | 'updated_at' | undefined
+  conversation_only?: boolean | undefined
 }
 
 export type ClaimNextInput = {
@@ -913,7 +915,20 @@ export class JobStore {
       sql += ' AND jobs.provider = ?'
       params.push(provider)
     }
-    sql += ' ORDER BY jobs.created_at DESC, jobs.job_id DESC LIMIT ?'
+    if (query.conversation_only === true) {
+      sql += ` AND (
+        COALESCE(jobs.summary_chat_name, '') <> ''
+        OR EXISTS (
+          SELECT 1
+          FROM json_each(jobs.request_json, '$.actions') AS action
+          WHERE json_extract(action.value, '$.action') = 'prompt.input'
+            AND typeof(json_extract(action.value, '$.payload.text')) = 'text'
+            AND trim(json_extract(action.value, '$.payload.text')) <> ''
+        )
+      )`
+    }
+    const orderColumn = query.order_by === 'updated_at' ? 'updated_at' : 'created_at'
+    sql += ` ORDER BY jobs.${orderColumn} DESC, jobs.job_id DESC LIMIT ?`
     params.push(limit)
     return this.all(sql, ...params).map(rowToJob)
   }

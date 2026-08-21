@@ -6,6 +6,7 @@
   import { DEFAULT_TOKENLESS_LANGUAGE, normalizeTokenlessLanguage } from 'tokenless-internal-shared/i18n'
   import { createReadinessState } from './readiness-state.svelte.js'
   import HarnessExtensionPairing from './components/HarnessExtensionPairing.svelte'
+  import TopHeader from './components/TopHeader.svelte'
   import CapabilitiesView from './views/CapabilitiesView.svelte'
   import JobsView from './views/JobsView.svelte'
   import OverviewView from './views/OverviewView.svelte'
@@ -296,13 +297,7 @@
       </div>
     </aside>
 
-    <header class="mobile-header">
-      <div><img src="/dashboard/mark.png" alt="" width="24" height="24" /><strong translate="no">Tokenless</strong></div>
-      <label class="mobile-profile-select">
-        <span class="sr-only">{t('selectProfile')}</span>
-        <select name="activeProfile" value={selectedProfile} onchange={(event) => selectProfile(event.currentTarget.value)}>{#each snapshot.profiles as profile}<option value={profile.slug}>{profile.slug}</option>{/each}</select>
-      </label>
-    </header>
+    <TopHeader {snapshot} {selectedProfile} {language} {t} onselect={selectProfile} />
 
     {#if offline}<div class="offline-banner" role="status">{t('offlineShort')}</div>{/if}
 
@@ -316,6 +311,7 @@
           readinessBusy={readiness.state.busy}
           readinessJobs={readiness.state.jobs}
           onrefreshreadiness={readiness.refresh}
+          onrefreshproviderreadiness={readiness.refreshProvider}
         />
       {:else if section === 'profiles'}
         <ProfilesView {snapshot} {selectedProfile} {language} {t} {busy} {actions} onselect={selectProfile} />

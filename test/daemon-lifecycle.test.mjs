@@ -648,7 +648,7 @@ test('doctor reports authenticated embedded browser runtime status for a ready T
   }
 })
 
-test('doctor validates an existing managed profile registry without mutating home markers', () => {
+test('doctor migrates an existing JSON profile registry into SQLite without mutating unrelated state', () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-doctor-existing-readonly-')))
   const browserDir = path.join(homeDir, 'browser')
   const profilesDir = path.join(browserDir, 'profiles')
@@ -676,10 +676,9 @@ test('doctor validates an existing managed profile registry without mutating hom
   }, null, 2)}\n`, { mode: 0o600 })
   fs.writeFileSync(path.join(homeDir, 'daemon.token'), 'initialized-stopped-home-token\n', { mode: 0o600 })
   fs.writeFileSync(markerPath, 'unchanged\n', { mode: 0o600 })
-  const before = snapshotTree(homeDir)
   try {
     const result = runCli(['doctor', '--home', homeDir, '--daemon-url', 'http://127.0.0.1:9', '--json'])
-    assert.equal(result.status, 1)
+    assert.equal(result.status, 1, result.stderr || result.stdout)
     const payload = JSON.parse(result.stdout)
     assert.equal(payload.checks.managedProfile.ok, true)
     assert.equal(payload.checks.managedProfile.slug, 'personal')
@@ -692,7 +691,9 @@ test('doctor validates an existing managed profile registry without mutating hom
     assert.equal(payload.checks.runner.state, 'stopped')
     assert.equal(payload.checks.daemon.daemonLogPath, path.join(homeDir, 'daemon.log'))
     assert.equal(payload.checks.daemon.daemonLogExists, false)
-    assert.deepEqual(snapshotTree(homeDir), before)
+    assert.equal(fs.readFileSync(markerPath, 'utf8'), 'unchanged\n')
+    assert.equal(fs.existsSync(path.join(homeDir, 'tokenless.sqlite3')), true)
+    assert.equal(fs.existsSync(path.join(profilesDir, profileId)), true)
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
