@@ -14,9 +14,13 @@ import { persistArenaImageAsset } from '../browser/image-assets.js'
 import type { Locator, Page } from 'playwright-core'
 import type { ProviderExecutionContext } from './execution-context.js'
 import type { VisibleActionRequest } from './contracts.js'
-import type { VisibleActionResponse, VisibleActionResult } from '../browser/actions.js'
+import type { AuthStatusResult, VisibleActionResponse, VisibleActionResult } from '../browser/actions.js'
 
 const ARENA_DIRECT_TURN_SELECTOR = 'ol.flex-col-reverse > :first-child + div'
+const ARENA_SIDEBAR_FOOTER_SELECTOR = '[data-sidebar="footer"]'
+const ARENA_SIDEBAR_ACCOUNT_BUTTON_SELECTOR = 'button:has(img)'
+const ARENA_SIDEBAR_LOGIN_BUTTON_SELECTOR = 'button'
+const ARENA_SIDEBAR_EXPAND_SELECTOR = 'button[aria-label="Expand sidebar"]'
 
 export class ArenaProvider extends BaseProvider<'arena'> {
   constructor() {
@@ -129,6 +133,66 @@ export class ArenaProvider extends BaseProvider<'arena'> {
       !arenaVideoRoute(page.url())
     ) await ensureArenaDirectMode(page)
     return super.inputPrompt(page, text, context)
+  }
+
+  protected override async inspectAccount(page: Page, signal: AbortSignal | undefined): Promise<AuthStatusResult> {
+    const inspectedUrl = page.url()
+    assertArenaInspectionNotAborted(signal)
+    await expandArenaSidebar(page, signal)
+
+    const footer = page.locator(ARENA_SIDEBAR_FOOTER_SELECTOR).first()
+    const login = footer.locator(ARENA_SIDEBAR_LOGIN_BUTTON_SELECTOR).filter({ hasText: /^Log In$/u }).first()
+    if (await login.isVisible({ timeout: 500 }).catch(() => false)) {
+      return {
+        state: 'unauthenticated',
+        access: 'sign_in_required',
+        visibleProof: 'arena-sidebar-log-in-visible',
+      }
+    }
+
+    const accountControl = footer.locator(ARENA_SIDEBAR_ACCOUNT_BUTTON_SELECTOR).first()
+    if (!await accountControl.isVisible({ timeout: 500 }).catch(() => false)) {
+      return {
+        state: 'unknown',
+        access: 'unknown',
+        visibleProof: 'arena-sidebar-account-control-not-visible',
+      }
+    }
+
+    const expanded = await accountControl.getAttribute('aria-expanded').catch(() => null)
+    let openedHere = false
+    let openedSurface: Locator | null = null
+    try {
+      if (expanded !== 'true') {
+        await accountControl.click({ timeout: 2_000 })
+        openedHere = true
+      }
+      openedSurface = await waitForArenaAccountSurface(page, signal)
+      if (!openedSurface) {
+        return {
+          state: 'unknown',
+          access: 'unknown',
+          visibleProof: 'arena-account-surface-not-visible',
+        }
+      }
+      if (page.url() !== inspectedUrl) {
+        return {
+          state: 'unknown',
+          access: 'unknown',
+          visibleProof: 'arena-auth-inspection-route-changed',
+        }
+      }
+      return {
+        state: 'authenticated',
+        access: 'signed_in_unknown',
+        visibleProof: 'arena-account-modal-sign-out-visible',
+      }
+    } finally {
+      if (openedHere) {
+        await page.keyboard.press('Escape').catch(() => undefined)
+        await openedSurface?.waitFor({ state: 'hidden', timeout: 500 }).catch(() => undefined)
+      }
+    }
   }
 
   protected override async readResponse(
@@ -1093,6 +1157,37 @@ async function visibleArenaMode(page: Page) {
 
 function normalizeVisibleText(value: string) {
   return value.replace(/\s+/g, ' ').trim()
+}
+
+async function expandArenaSidebar(page: Page, signal: AbortSignal | undefined) {
+  const expand = page.locator(ARENA_SIDEBAR_EXPAND_SELECTOR).first()
+  if (!await expand.isVisible({ timeout: 500 }).catch(() => false)) return
+  assertArenaInspectionNotAborted(signal)
+  await expand.click({ timeout: 2_000 })
+}
+
+async function waitForArenaAccountSurface(page: Page, signal: AbortSignal | undefined): Promise<Locator | null> {
+  const deadline = Date.now() + 2_000
+  while (Date.now() <= deadline) {
+    assertArenaInspectionNotAborted(signal)
+    const surfaces = page.locator('[role="dialog"], [role="menu"]').filter({ visible: true })
+    const count = await surfaces.count().catch(() => 0)
+    for (let index = count - 1; index >= 0; index -= 1) {
+      const surface = surfaces.nth(index)
+      if (!await surface.isVisible({ timeout: 100 }).catch(() => false)) continue
+      const signOut = surface.getByText(/^(?:Log Out|Sign Out)$/iu)
+      const signOutCount = await signOut.count().catch(() => 0)
+      for (let signOutIndex = 0; signOutIndex < signOutCount; signOutIndex += 1) {
+        if (await signOut.nth(signOutIndex).isVisible({ timeout: 100 }).catch(() => false)) return surface
+      }
+    }
+    await page.waitForTimeout(100)
+  }
+  return null
+}
+
+function assertArenaInspectionNotAborted(signal: AbortSignal | undefined) {
+  if (signal?.aborted) throw signal.reason ?? new Error('Provider session inspection was aborted.')
 }
 
 function arenaComparisonRoute(value: string) {
