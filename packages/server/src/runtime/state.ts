@@ -62,11 +62,11 @@ export class DaemonRuntimeState {
     }
     try {
       const table = db.prepare(
-        `SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'daemon_runtime_state'`,
+        `SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'daemon_endpoint'`,
       ).get()
       if (!table) return null
       const row = db.prepare(
-        `SELECT origin, pid, updated_at FROM daemon_runtime_state WHERE id = ?`,
+        `SELECT origin, pid, updated_at FROM daemon_endpoint WHERE id = ?`,
       ).get(RUNTIME_STATE_ID)
       const parsed = row ? rowToRuntimeRow(row as Record<string, unknown>) : null
       return parsed?.origin ? endpointFromRow(parsed) : null
@@ -104,7 +104,7 @@ export class DaemonRuntimeState {
     const now = nowRfc3339()
     return this.transaction(() => {
       this.run(
-        `INSERT INTO daemon_runtime_state (id, origin, pid, updated_at)
+        `INSERT INTO daemon_endpoint (id, origin, pid, updated_at)
          VALUES (?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET origin = excluded.origin, pid = excluded.pid, updated_at = excluded.updated_at`,
         RUNTIME_STATE_ID,
@@ -124,14 +124,14 @@ export class DaemonRuntimeState {
       if (!row || !row.origin) return
       if (normalizedOrigin !== undefined && row.origin !== normalizedOrigin) return
       if (normalizedPid !== undefined && row.pid !== normalizedPid) return
-      this.run('DELETE FROM daemon_runtime_state WHERE id = ?', RUNTIME_STATE_ID)
+      this.run('DELETE FROM daemon_endpoint WHERE id = ?', RUNTIME_STATE_ID)
     })
   }
 
   private initialize() {
     this.exec(`
       PRAGMA foreign_keys = ON;
-      CREATE TABLE IF NOT EXISTS daemon_runtime_state (
+      CREATE TABLE IF NOT EXISTS daemon_endpoint (
         id TEXT PRIMARY KEY NOT NULL CHECK (id = 'daemon'),
         origin TEXT,
         pid INTEGER,
@@ -143,7 +143,7 @@ export class DaemonRuntimeState {
 
   private runtimeRow(): RuntimeRow | null {
     const row = this.get(
-      `SELECT origin, pid, updated_at FROM daemon_runtime_state WHERE id = ?`,
+      `SELECT origin, pid, updated_at FROM daemon_endpoint WHERE id = ?`,
       RUNTIME_STATE_ID,
     ) as Record<string, unknown> | undefined
     return row ? rowToRuntimeRow(row) : null
