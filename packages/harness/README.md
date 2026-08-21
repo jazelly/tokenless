@@ -64,7 +64,7 @@ tokenless agent resume --run-id <run-id> --approve <call-id:digest> --json
 tokenless agent cancel --run-id <run-id> --json
 ```
 
-The package API is the SDK-like seam for local callers (`openWebAgentHarness`, `start`, `read`, `resume`, and `cancel`). The daemon exposes the same run contract at `/v1/private/agent/runs` for the CLI and at the UI-session-protected `/dashboard-api/v1/harness/runs` facade for Dashboard; the latter adds UI session and CSRF checks but does not create a second Harness implementation.
+The package API is the SDK-like seam for local callers (`openWebAgentHarness`, `start`, `read`, `resume`, and `cancel`). The daemon exposes the same run contract at `/v1/private/agent/runs` for the CLI and at the Dashboard-session-protected `/dashboard-api/v1/harness/runs` facade for Dashboard; the latter adds Dashboard session and CSRF checks but does not create a second Harness implementation.
 
 A queued provider turn proves local staging, not visible-provider acceptance. Provider authentication and verification stay external; resume continues the same in-process run after the user completes the handoff.
 

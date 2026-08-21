@@ -13,7 +13,7 @@
 | `tokenless install` | 底层本地 runtime provisioning；日常维护请使用 `tokenless upgrade`。 | 否 |
 | `tokenless setup` | 配置 skills、浏览器、profiles、daemon，并执行一次 provider 登录检查。 | 是 |
 | `tokenless agents <install\|status\|inspect\|uninstall> codex` | 管理可选的 Codex guidance、native hooks 和精确 Harness context binding。 | 否 |
-| `tokenless dashboard` | 打开本地 Web 控制台，或输出可直接访问的 loopback URL。 | 否 |
+| `tokenless dashboard` | 打开本地 Web Dashboard，或输出可直接访问的 loopback URL。 | 否 |
 | `tokenless doctor` | 只读检查本地配置和 runtime 健康状态，不刷新 provider。 | 否 |
 | `tokenless config` | 读取或更新 Tokenless 持久化配置。 | 否 |
 | `tokenless upgrade` | 升级全局 CLI、skills、本地 runtime，并运行 doctor。 | 否 |
@@ -168,7 +168,7 @@ tokenless setup --install-codex --codex-home <dir> --profile default --defaults 
 - `--install-codex` 在 setup 中显式安装可选的 Codex guidance、native hooks 和 skills。
 - `--codex-home <dir>` 选择自定义 Codex state root，并且必须与 `--install-codex` 同时使用。
 - `--provider-whitelist <list>` 在非交互 setup 中设置该 profile 的 provider membership。
-- `--no-open` 完成 setup，但不打开控制台。
+- `--no-open` 完成 setup，但不打开 Dashboard。
 - `--defaults` 选择非交互默认值。
 - `--set-default` 将所选 profile 设为默认。
 - `--browser-executable-path <absolute-path>` 可在自动 discovery 失败时提供用户自行安装的 Chrome 或 Brave executable。
@@ -177,7 +177,7 @@ Setup 会先询问是否使用 Anti-Detect mode。若选择不使用，用户再
 
 交互式 `setup` 会列出所有受支持的 provider，默认全部启用，并允许用户回复界面显示的编号移除 provider；直接回车则保留全部。非交互 setup 会使用 `--provider-whitelist`、已有 profile 的 `enabledProviders`，或为新 profile 使用所有受支持 provider。浏览器可解析时，setup 会检查 provider 状态并保留 headed review tabs；找不到浏览器时则跳过这些 browser 检查并打开 dashboard，供用户添加 executable path。
 
-每个新 profile 默认包含所有非 `disabled` provider，包括 Gemini。可通过 `--profile <slug> --provider-whitelist <list>` 或控制台修改其 membership。
+每个新 profile 默认包含所有非 `disabled` provider，包括 Gemini。可通过 `--profile <slug> --provider-whitelist <list>` 或 Dashboard 修改其 membership。
 
 ### `tokenless agents <install|status|inspect|uninstall> codex`
 
@@ -229,7 +229,7 @@ Delegated run 会获得以 `--workspace-root` 为根的有界 `workspace.read` �
 
 ### `tokenless dashboard`
 
-启动或发现同一 Tokenless home 的 daemon，并在所选 managed profile 中打开一个保留的控制台标签页。也可以直接在浏览器中打开 daemon 的 loopback URL：
+启动或发现同一 Tokenless home 的 daemon，并在所选 managed profile 中打开一个保留的 Dashboard 标签页。也可以直接在浏览器中打开 daemon 的 loopback URL：
 
 ```bash
 tokenless dashboard
@@ -237,9 +237,9 @@ tokenless dashboard --profile work
 tokenless dashboard --profile work --no-open --json
 ```
 
-`--no-open` 不启动浏览器，只输出可直接访问的 loopback 控制台 URL。打开 `/` 会跳转到 `/dashboard/`，并建立短期有效的 `HttpOnly`、`SameSite=Strict` session cookie；所有 mutation 仍会校验 exact Origin 和 CSRF。控制台不会收到 daemon bearer token、provider cookies、browser storage、Keychain 数据、raw DOM、claim token、checkpoint 或私有文件路径。
+`--no-open` 不启动浏览器，只输出可直接访问的 loopback Dashboard URL。打开 `/` 会跳转到 `/dashboard/`，并建立短期有效的 `HttpOnly`、`SameSite=Strict` session cookie；所有 mutation 仍会校验 exact Origin 和 CSRF。Dashboard 不会收到 daemon bearer token、provider cookies、browser storage、Keychain 数据、raw DOM、claim token、checkpoint 或私有文件路径。
 
-控制台包含 Overview、Profiles、Providers、Capabilities、Jobs 和 System/Diagnostics。Provider membership、visibility、role label，以及不带凭据的 HTTP/HTTPS/SOCKS5 proxy 都按 profile 配置。CLI 恢复入口仍然完整保留：
+Dashboard 包含 Overview、Profiles、Providers、Capabilities、Jobs 和 System/Diagnostics。Provider membership、visibility、role label，以及不带凭据的 HTTP/HTTPS/SOCKS5 proxy 都按 profile 配置。CLI 恢复入口仍然完整保留：
 
 Provider 就绪状态刷新会以最多三个一批的方式隐式运行。Profile 空闲时，Tokenless 会启动常驻 headless browser；如果同一 Profile 已有 headed browser，则复用该 runtime，不替换 browser、不关闭现有 tabs，也不把检查带到前台。每项检查只拥有一个临时后台 tab，并在完成、失败、遇到 blocker、超时或取消时关闭它；用户原有 tabs 不受影响。刷新遇到登录或验证时只记录所需操作；只有显式 Provider、browser 或 job 操作才会启动可见 browser interaction。
 

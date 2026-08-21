@@ -78,7 +78,7 @@ tokenless setup
 tokenless run --provider chatgpt --prompt "Review this proposal."
 ```
 
-Setup 会自动打开本地控制台，之后可随时用 `tokenless dashboard` 再次打开。
+Setup 会自动打开本地 Dashboard，之后可随时用 `tokenless dashboard` 再次打开。
 
 ## Agent 可以获得什么
 

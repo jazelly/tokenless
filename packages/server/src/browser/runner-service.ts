@@ -348,8 +348,8 @@ export class ManagedPlaywrightRunnerService {
     }
   }
 
-  async openControlPlane(profileId: string, consoleUrl: string): Promise<ManagedControlPlaneOpenResult> {
-    const parsed = new URL(consoleUrl)
+  async openControlPlane(profileId: string, dashboardUrl: string): Promise<ManagedControlPlaneOpenResult> {
+    const parsed = new URL(dashboardUrl)
     if (
       parsed.protocol !== 'http:' ||
       parsed.username ||

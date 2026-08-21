@@ -335,7 +335,7 @@ test('workspace packages keep standalone product names', () => {
   assert.deepEqual(shared.exports, {
     './localized-errors': './dist/src/localized-errors.js',
     './structured-json': './dist/src/structured-json.js',
-    './ui': './dist/src/ui.js',
+    './dashboard': './dist/src/dashboard.js',
     './harness-sidecar': './dist/src/harness-sidecar.js',
     './i18n': './dist/src/i18n.js',
   })

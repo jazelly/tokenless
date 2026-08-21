@@ -14,13 +14,13 @@ import { ManagedProfileRegistry } from '../packages/server/dist/src/browser/prof
 
 const execFileAsync = promisify(execFile)
 const cliEntry = path.resolve('packages/cli/dist/src/tokenless.mjs')
-const uiApiDocument = JSON.parse(fs.readFileSync(path.resolve('packages/contracts/tokenless.openapi.json'), 'utf8'))
-const validateUiSession = uiSchemaValidator('UiSession')
-const validateUiSnapshot = uiSchemaValidator('UiSnapshot')
-const validateUiError = uiSchemaValidator('ErrorEnvelope')
-const validateProviderReadinessRefresh = uiSchemaValidator('ProviderReadinessRefresh')
+const dashboardApiDocument = JSON.parse(fs.readFileSync(path.resolve('packages/contracts/tokenless.openapi.json'), 'utf8'))
+const validateDashboardSession = dashboardSchemaValidator('DashboardSession')
+const validateDashboardSnapshot = dashboardSchemaValidator('DashboardSnapshot')
+const validateDashboardError = dashboardSchemaValidator('ErrorEnvelope')
+const validateProviderReadinessRefresh = dashboardSchemaValidator('ProviderReadinessRefresh')
 
-test('local web control plane opens directly, establishes UI sessions, and enforces CSRF, Origin, Host, and bearer boundaries', async () => {
+test('local web control plane opens directly, establishes Dashboard sessions, and enforces CSRF, Origin, Host, and bearer boundaries', async () => {
   await withDaemon(async ({ daemon, homeDir }) => {
     const token = fs.readFileSync(path.join(homeDir, 'daemon.token'), 'utf8').trim()
     const directSession = await fetch(`${daemon.origin}/dashboard-api/v1/session`)
@@ -72,18 +72,18 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     assert.equal(initialHtml.headers.get('x-content-type-options'), 'nosniff')
 
     for (const missingPath of ['/dashboard/not-found', '/dashboard/not-found.js']) {
-      const missingUiAsset = await fetch(`${daemon.origin}${missingPath}`, { signal: AbortSignal.timeout(2000) })
-      assert.equal(missingUiAsset.status, 404)
-      assert.equal(missingUiAsset.headers.get('referrer-policy'), 'no-referrer')
-      assert.match(missingUiAsset.headers.get('content-security-policy') ?? '', /frame-ancestors 'none'/)
-      assert.equal(missingUiAsset.headers.get('x-content-type-options'), 'nosniff')
+      const missingDashboardAsset = await fetch(`${daemon.origin}${missingPath}`, { signal: AbortSignal.timeout(2000) })
+      assert.equal(missingDashboardAsset.status, 404)
+      assert.equal(missingDashboardAsset.headers.get('referrer-policy'), 'no-referrer')
+      assert.match(missingDashboardAsset.headers.get('content-security-policy') ?? '', /frame-ancestors 'none'/)
+      assert.equal(missingDashboardAsset.headers.get('x-content-type-options'), 'nosniff')
     }
 
     const session = await fetch(`${daemon.origin}/dashboard-api/v1/session`, { headers: { cookie } })
     assert.equal(session.status, 200)
     const sessionBody = await session.json()
     assert.equal(typeof sessionBody.csrf, 'string')
-    assertUiSchema(validateUiSession, sessionBody)
+    assertDashboardSchema(validateDashboardSession, sessionBody)
 
     const machineRoute = await fetch(`${daemon.origin}/v1/private/jobs`)
     assert.equal(machineRoute.status, 401)
@@ -124,7 +124,7 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     })
     assert.equal(snapshotBody.config.outputSavings.enabled, true)
     assert.equal(snapshotBody.diagnostics.find((item) => item.id === 'output-savings')?.state, 'ok')
-    assertUiSchema(validateUiSnapshot, snapshotBody)
+    assertDashboardSchema(validateDashboardSnapshot, snapshotBody)
     assert.equal(snapshotBody.providers.length, 45)
     assert.equal(new Set(snapshotBody.providers.map((provider) => provider.id)).size, 45)
     assert.deepEqual(snapshotBody.providers.find((provider) => provider.id === 'ai-badgr')?.executionModes, ['direct'])
@@ -278,7 +278,7 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     assert.equal(missingJob.status, 404)
     const missingJobBody = await missingJob.json()
     assert.equal(missingJobBody.error.code, 'job_not_found')
-    assertUiSchema(validateUiError, missingJobBody)
+    assertDashboardSchema(validateDashboardError, missingJobBody)
 
     const missingCsrf = await fetch(`${daemon.origin}/dashboard-api/v1/config`, {
       method: 'PATCH',
@@ -501,7 +501,7 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     assert.deepEqual(storedWorkProfile.providerModes.chatgpt, ['browser'])
 
     const afterProfile = await fetch(`${daemon.origin}/dashboard-api/v1/snapshot`, { headers: { cookie } }).then((response) => response.json())
-    assertUiSchema(validateUiSnapshot, afterProfile)
+    assertDashboardSchema(validateDashboardSnapshot, afterProfile)
     assert.deepEqual(afterProfile.profiles[0].enabledProviders, ['chatgpt', 'claude'])
     assert.deepEqual(afterProfile.profiles[0].providerModes.chatgpt, ['browser'])
     assert.deepEqual(afterProfile.profiles[0].browserBinding, {
@@ -539,7 +539,7 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
       profileFormat: 1,
     })
     const boundSnapshot = await fetch(`${daemon.origin}/dashboard-api/v1/snapshot`, { headers: { cookie } }).then((response) => response.json())
-    assertUiSchema(validateUiSnapshot, boundSnapshot)
+    assertDashboardSchema(validateDashboardSnapshot, boundSnapshot)
     assert.deepEqual(boundSnapshot.profiles.find((profile) => profile.slug === 'cloak-bound').browserBinding, {
       browserId: 'cloak',
       runtimeId: 'cloak:darwin-arm64:145.0.7632.109.2',
@@ -560,7 +560,7 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     })
     assert.equal(readinessRefresh.status, 202)
     const readinessBody = await readinessRefresh.json()
-    assertUiSchema(validateProviderReadinessRefresh, readinessBody)
+    assertDashboardSchema(validateProviderReadinessRefresh, readinessBody)
     assert.equal(readinessBody.profileSlug, 'work')
     assert.deepEqual(readinessBody.jobs.map((job) => job.provider), ['chatgpt', 'claude'])
     assert.equal(readinessBody.jobs.every((job) => job.status === 'queued' && job.taskId.startsWith('ui:readiness:')), true)
@@ -651,10 +651,10 @@ async function requestWithHost(port, host) {
   })
 }
 
-function uiSchemaValidator(name) {
+function dashboardSchemaValidator(name) {
   const ajv = new Ajv2020({ allErrors: true, strict: true })
   addFormats(ajv)
-  const defs = Object.fromEntries(Object.entries(uiApiDocument.components.schemas).map(([schemaName, schema]) => [schemaName, rewriteUiSchemaRefs(schema)]))
+  const defs = Object.fromEntries(Object.entries(dashboardApiDocument.components.schemas).map(([schemaName, schema]) => [schemaName, rewriteDashboardSchemaRefs(schema)]))
   return ajv.compile({
     $schema: 'https://json-schema.org/draft/2020-12/schema',
     $defs: defs,
@@ -662,17 +662,17 @@ function uiSchemaValidator(name) {
   })
 }
 
-function rewriteUiSchemaRefs(value) {
-  if (Array.isArray(value)) return value.map(rewriteUiSchemaRefs)
+function rewriteDashboardSchemaRefs(value) {
+  if (Array.isArray(value)) return value.map(rewriteDashboardSchemaRefs)
   if (!value || typeof value !== 'object') return value
   return Object.fromEntries(Object.entries(value).map(([key, child]) => [
     key,
     key === '$ref' && typeof child === 'string' && child.startsWith('#/components/schemas/')
       ? `#/$defs/${child.slice('#/components/schemas/'.length)}`
-      : rewriteUiSchemaRefs(child),
+      : rewriteDashboardSchemaRefs(child),
   ]))
 }
 
-function assertUiSchema(validate, value) {
+function assertDashboardSchema(validate, value) {
   assert.equal(validate(value), true, JSON.stringify(validate.errors))
 }

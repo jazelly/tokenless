@@ -237,7 +237,7 @@ tokenless dashboard --profile work
 tokenless dashboard --profile work --no-open --json
 ```
 
-`--no-open` prints the direct loopback console URL without launching a browser. Opening `/` redirects to `/dashboard/` and establishes a short-lived `HttpOnly`, `SameSite=Strict` session cookie. UI mutations continue to require exact-Origin and CSRF checks. The dashboard never receives the daemon bearer token, provider cookies, browser storage, Keychain data, raw DOM, claim tokens, checkpoints, or private filesystem paths.
+`--no-open` prints the direct loopback Dashboard URL without launching a browser. Opening `/` redirects to `/dashboard/` and establishes a short-lived `HttpOnly`, `SameSite=Strict` session cookie. Dashboard mutations continue to require exact-Origin and CSRF checks. The dashboard never receives the daemon bearer token, provider cookies, browser storage, Keychain data, raw DOM, claim tokens, checkpoints, or private filesystem paths.
 
 The dashboard provides Overview, Profiles, Providers, Capabilities, Jobs, and System/Diagnostics areas. Provider membership, visibility, role label, and an optional credential-free HTTP/HTTPS/SOCKS5 proxy are profile scoped. CLI recovery equivalents remain available:
 

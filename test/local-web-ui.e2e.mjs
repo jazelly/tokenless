@@ -50,7 +50,7 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       })
 
       await page.goto(`${consoleOrigin}/`, { waitUntil: 'networkidle' })
-      assert.equal(await page.title(), 'Tokenless local console')
+      assert.equal(await page.title(), 'Tokenless local Dashboard')
       await page.getByTestId('setup-view').waitFor()
       assert.equal(await page.locator('.boot-state').count(), 0)
       assert.equal(await page.locator('main').count(), 1)
@@ -398,7 +398,7 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       await page.getByTestId('config-language').selectOption('zh-CN')
       await page.getByTestId('config-save').click()
       await page.waitForFunction(() => document.documentElement.lang === 'zh-CN')
-      assert.equal(await page.title(), 'Tokenless 本地控制台')
+      assert.equal(await page.title(), 'Tokenless 本地 Dashboard')
       assert.match(await page.getByTestId('output-savings-card').textContent(), /输出节省|已停用|需要时才会下载/)
       await activateNavigation(page, 'overview')
       assert.match(await page.getByTestId('overview-output-savings').textContent(), /Token 汇总统计不可用|开启后即可查看/)
