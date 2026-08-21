@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
@@ -229,7 +230,7 @@ export type OpenDashboardOptions = DaemonClientOptions & {
 
 export type OpenDashboardResponse = {
   url: string
-  opened: null | (BrowserRuntimeOpenProfileResponse & { url: string, reused: boolean })
+  opened: null | { url: string, reused: boolean }
 }
 
 export type ControlProfile = {
@@ -813,16 +814,37 @@ export async function openTokenlessDashboard({
   open = true,
 }: OpenDashboardOptions = {}) {
   const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
-  return daemonRequest<OpenDashboardResponse>({
+  const dashboard = await daemonRequest<OpenDashboardResponse>({
     daemonUrl: daemon.daemonUrl,
     path: '/v1/private/control/dashboard',
     body: {
       ...(profileId ? { profile_id: profileId } : {}),
-      open,
     },
     token: daemon.token,
     timeoutMs: requestTimeoutMs,
     signal,
+  })
+  if (!open) return { ...dashboard, opened: null }
+  await openUrlInDefaultBrowser(dashboard.url)
+  return {
+    ...dashboard,
+    opened: { url: dashboard.url, reused: false },
+  }
+}
+
+async function openUrlInDefaultBrowser(url: string) {
+  const [command, args] = process.platform === 'darwin'
+    ? ['open', [url]] as const
+    : process.platform === 'win32'
+      ? ['cmd.exe', ['/d', '/s', '/c', 'start', '', url]] as const
+      : ['xdg-open', [url]] as const
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(command, args, { detached: true, stdio: 'ignore', windowsHide: true })
+    child.once('error', reject)
+    child.once('spawn', () => {
+      child.unref()
+      resolve()
+    })
   })
 }
 

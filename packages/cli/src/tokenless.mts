@@ -284,7 +284,7 @@ const TOP_LEVEL_USAGE = [
   'tokenless replay --agent-kind <kind> --agent-session-id <id> --json',
   'tokenless profiles <subcommand> [options]',
   'tokenless agents <install|status|inspect|uninstall> <codex|dsh> [options]',
-  'tokenless dashboard [--no-open] [--json]',
+  'tokenless dashboard [--profile <slug>] [--no-open] [--json]',
   'tokenless savings <status|enable|disable|uninstall|clear> --json',
   'tokenless daemon stop [--json]',
   'tokenless help',
@@ -667,30 +667,36 @@ async function dashboardCommand(args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
   const control = await ensureControlDaemon(args, homeDir)
   const daemon = control.daemon
-  const profile = (await resolveControlProfile({
-    homeDir,
-    daemonUrl: daemon.url,
-    profile: args.profile === undefined ? undefined : String(args.profile),
-  })).profile
+  const profile = args.profile === undefined
+    ? null
+    : (await resolveControlProfile({
+        homeDir,
+        daemonUrl: daemon.url,
+        profile: String(args.profile),
+      })).profile
   const dashboard = await openTokenlessDashboard({
     homeDir,
     daemonUrl: daemon.url,
-    profileId: profile.id,
+    ...(profile === null ? {} : { profileId: profile.id }),
     open: args.noOpen !== true,
   })
   printPayload({
     ok: true,
     command: 'dashboard',
     daemon: { url: daemon.url, started: daemon.started, pid: daemon.pid },
-    profile: { slug: profile.slug, id: profile.id },
+    profile: profile === null ? null : { slug: profile.slug, id: profile.id },
     dashboard: {
       url: dashboard.url,
       opened: dashboard.opened !== null,
       reused: dashboard.opened?.reused ?? false,
     },
     compactOutput: args.noOpen === true
-      ? t('dashboardReady', { profile: profile.slug, url: dashboard.url })
-      : t('dashboardOpened', { profile: profile.slug }),
+      ? profile === null
+        ? t('dashboardReady', { url: dashboard.url })
+        : t('dashboardReadyForProfile', { profile: profile.slug, url: dashboard.url })
+      : profile === null
+        ? t('dashboardOpened')
+        : t('dashboardOpenedForProfile', { profile: profile.slug }),
   }, args)
 }
 

@@ -229,7 +229,7 @@ The delegated run receives bounded `workspace.read` and `workspace.search` tools
 
 ### `tokenless dashboard`
 
-Starts or discovers the same-home daemon and opens one reserved dashboard tab in the selected managed profile. You can also open the daemon loopback URL directly in your browser:
+Starts or discovers the same-home daemon and opens the Dashboard URL in your operating system's default browser. `--profile` only selects the initial Dashboard profile; it does not select the browser used to display the Dashboard. You can also open the daemon loopback URL directly in any browser:
 
 ```bash
 tokenless dashboard
@@ -237,7 +237,7 @@ tokenless dashboard --profile work
 tokenless dashboard --profile work --no-open --json
 ```
 
-`--no-open` prints the direct loopback Dashboard URL without launching a browser. Opening `/` redirects to `/dashboard/` and establishes a short-lived `HttpOnly`, `SameSite=Strict` session cookie. Dashboard mutations continue to require exact-Origin and CSRF checks. The dashboard never receives the daemon bearer token, provider cookies, browser storage, Keychain data, raw DOM, claim tokens, checkpoints, or private filesystem paths.
+`--no-open` prints the direct loopback Dashboard URL without launching a browser. Opening `/` redirects to `/dashboard/` and establishes a short-lived `HttpOnly`, `SameSite=Strict` session cookie. Dashboard mutations continue to require exact-Origin and CSRF checks. The Dashboard can run in any browser; provider actions still execute in the selected profile's bound browser runtime. The dashboard never receives the daemon bearer token, provider cookies, browser storage, Keychain data, raw DOM, claim tokens, checkpoints, or private filesystem paths.
 
 The dashboard provides Overview, Profiles, Providers, Capabilities, Jobs, and System/Diagnostics areas. Provider membership, visibility, role label, and an optional credential-free HTTP/HTTPS/SOCKS5 proxy are profile scoped. CLI recovery equivalents remain available:
 

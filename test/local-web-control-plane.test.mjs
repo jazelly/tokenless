@@ -30,6 +30,19 @@ test('local web control plane opens directly, establishes Dashboard sessions, an
     const directSnapshot = await fetch(`${daemon.origin}/dashboard-api/v1/snapshot`)
     assert.equal(directSnapshot.status, 200)
 
+    const dashboardWithoutProfile = await execFileAsync(process.execPath, [
+      cliEntry,
+      'dashboard',
+      '--home', homeDir,
+      '--daemon-url', daemon.origin,
+      '--no-open',
+      '--json',
+    ])
+    const dashboardWithoutProfileBody = JSON.parse(dashboardWithoutProfile.stdout)
+    assert.equal(dashboardWithoutProfileBody.profile, null)
+    assert.equal(dashboardWithoutProfileBody.dashboard.opened, false)
+    assert.equal(new URL(dashboardWithoutProfileBody.dashboard.url).pathname, '/dashboard/')
+
     const localhostHost = `localhost:${daemon.port}`
     const localhostOrigin = `http://${localhostHost}`
     const localhostSession = await fetch(`${localhostOrigin}/dashboard-api/v1/session`)

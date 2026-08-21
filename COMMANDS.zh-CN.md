@@ -229,7 +229,7 @@ Delegated run 会获得以 `--workspace-root` 为根的有界 `workspace.read` �
 
 ### `tokenless dashboard`
 
-启动或发现同一 Tokenless home 的 daemon，并在所选 managed profile 中打开一个保留的 Dashboard 标签页。也可以直接在浏览器中打开 daemon 的 loopback URL：
+启动或发现同一 Tokenless home 的 daemon，并使用操作系统默认浏览器打开 Dashboard URL。`--profile` 只用于选择 Dashboard 初始显示的 profile，不决定打开 Dashboard 的浏览器。你也可以在任意浏览器中直接打开 daemon 的 loopback URL：
 
 ```bash
 tokenless dashboard
@@ -237,7 +237,7 @@ tokenless dashboard --profile work
 tokenless dashboard --profile work --no-open --json
 ```
 
-`--no-open` 不启动浏览器，只输出可直接访问的 loopback Dashboard URL。打开 `/` 会跳转到 `/dashboard/`，并建立短期有效的 `HttpOnly`、`SameSite=Strict` session cookie；所有 mutation 仍会校验 exact Origin 和 CSRF。Dashboard 不会收到 daemon bearer token、provider cookies、browser storage、Keychain 数据、raw DOM、claim token、checkpoint 或私有文件路径。
+`--no-open` 不启动浏览器，只输出可直接访问的 loopback Dashboard URL。打开 `/` 会跳转到 `/dashboard/`，并建立短期有效的 `HttpOnly`、`SameSite=Strict` session cookie；所有 mutation 仍会校验 exact Origin 和 CSRF。Dashboard 可以在任意浏览器中运行；provider action 仍会在所选 profile 绑定的 browser runtime 中执行。Dashboard 不会收到 daemon bearer token、provider cookies、browser storage、Keychain 数据、raw DOM、claim token、checkpoint 或私有文件路径。
 
 Dashboard 包含 Overview、Profiles、Providers、Capabilities、Jobs 和 System/Diagnostics。Provider membership、visibility、role label，以及不带凭据的 HTTP/HTTPS/SOCKS5 proxy 都按 profile 配置。CLI 恢复入口仍然完整保留：
 

@@ -46,7 +46,7 @@ export class TokenlessDashboardServer {
   }
 
   dashboardUrl(profileId?: string | null) {
-    const url = new URL(profileId ? '/dashboard/' : '/dashboard/setup/', this.origin())
+    const url = new URL('/dashboard/', this.origin())
     if (profileId) url.searchParams.set('profile', profileId)
     return url.toString()
   }

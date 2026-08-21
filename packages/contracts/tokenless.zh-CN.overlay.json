@@ -107,7 +107,7 @@
     { "target": "$[\"paths\"][\"/v1/private/control/browser-runtime/quiesce\"][\"post\"][\"responses\"][\"200\"][\"description\"]", "update": "Quiesce request 后的 browser runtime status" },
     { "target": "$[\"paths\"][\"/v1/private/control/browser-runtime/status\"][\"get\"][\"summary\"]", "update": "读取 embedded browser runtime status" },
     { "target": "$[\"paths\"][\"/v1/private/control/browser-runtime/status\"][\"get\"][\"responses\"][\"200\"][\"description\"]", "update": "Browser runtime status" },
-    { "target": "$[\"paths\"][\"/v1/private/control/dashboard\"][\"post\"][\"summary\"]", "update": "返回本地 Dashboard URL，并可选择打开" },
+    { "target": "$[\"paths\"][\"/v1/private/control/dashboard\"][\"post\"][\"summary\"]", "update": "返回本地 Dashboard URL，由调用方使用系统默认浏览器打开" },
     { "target": "$[\"paths\"][\"/v1/private/control/dashboard\"][\"post\"][\"responses\"][\"200\"][\"description\"]", "update": "Dashboard target" },
     { "target": "$[\"paths\"][\"/v1/private/control/dashboard\"][\"post\"][\"responses\"][\"400\"][\"description\"]", "update": "Request 无效" },
     { "target": "$[\"paths\"][\"/v1/private/control/dashboard\"][\"post\"][\"responses\"][\"401\"][\"description\"]", "update": "缺少认证" },

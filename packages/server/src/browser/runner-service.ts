@@ -119,11 +119,6 @@ export type ManagedProviderTabsOpenResult = ManagedProfileOpenResult & {
   }[]
 }
 
-export type ManagedControlPlaneOpenResult = ManagedProfileOpenResult & {
-  url: string
-  reused: boolean
-}
-
 type RunnerCheckpointPhase =
   | { state: 'idle' }
   | {
@@ -195,7 +190,6 @@ export class ManagedPlaywrightRunnerService {
   private readonly cleanupAttachmentRoot: boolean
   private readonly now: () => Date
   private readonly e2eInspection: E2EBrowserInspectionConfig | null
-  private readonly controlPlanePageKey: string
   private readonly homeDir: string | undefined
   private readonly protocolRouter: ProviderProtocolRouter
   private readonly g4fClient: G4fServiceClient | undefined
@@ -243,8 +237,6 @@ export class ManagedPlaywrightRunnerService {
     this.cleanupAttachmentRoot = options.cleanupAttachmentRoot ?? true
     this.now = options.now ?? (() => new Date())
     this.e2eInspection = resolveE2EBrowserInspectionConfig(options.homeDir)
-    const homeIdentity = createHash('sha256').update(path.resolve(options.homeDir ?? '.')).digest('base64url').slice(0, 20)
-    this.controlPlanePageKey = `tokenless:control-plane:${homeIdentity}`
   }
 
   stop() {
@@ -345,34 +337,6 @@ export class ManagedPlaywrightRunnerService {
       pageCount: managedContext.browserContext.pages().length,
       tabs,
       failures,
-    }
-  }
-
-  async openControlPlane(profileId: string, dashboardUrl: string): Promise<ManagedControlPlaneOpenResult> {
-    const parsed = new URL(dashboardUrl)
-    if (
-      parsed.protocol !== 'http:' ||
-      parsed.username ||
-      parsed.password ||
-      !(parsed.hostname === 'localhost' || parsed.hostname === '::1' || parsed.hostname.startsWith('127.'))
-    ) {
-      throw tokenlessError('invalid_control_plane_url', 'Control-plane URL must use a loopback HTTP origin.')
-    }
-    const profile = (await this.profileRegistry.listProfiles())
-      .find((candidate) => candidate.id === profileId && (candidate.lifecycle === undefined || candidate.lifecycle === 'ready'))
-    if (!profile) throw tokenlessError('profile_not_found', 'Managed profile is not registered or is not ready.')
-    const managedContext = await this.contextManager.ensureContext(profile, 'headed')
-    const page = await managedContext.acquireReservedPage({ key: this.controlPlanePageKey, policy: 'preserve' })
-    const reused = page.url() !== 'about:blank'
-    await page.goto(parsed.toString(), { waitUntil: 'domcontentloaded' })
-    await bringToFrontForUserHandoff(page)
-    return {
-      profileId: profile.id,
-      browserVisibility: managedContext.browserVisibility,
-      effectiveBrowserVisibility: managedContext.effectiveBrowserVisibility,
-      pageCount: managedContext.browserContext.pages().length,
-      url: page.url(),
-      reused,
     }
   }
 

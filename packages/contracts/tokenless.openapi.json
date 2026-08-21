@@ -1761,7 +1761,7 @@
         "tags": [
           "Private · Control"
         ],
-        "summary": "Return the local Dashboard URL and optionally open it",
+        "summary": "Return the local Dashboard URL for the caller to open in the default browser",
         "operationId": "openDashboard",
         "requestBody": {
           "required": false,
@@ -1773,9 +1773,6 @@
                 "properties": {
                   "profile_id": {
                     "type": "string"
-                  },
-                  "open": {
-                    "type": "boolean"
                   }
                 }
               }
