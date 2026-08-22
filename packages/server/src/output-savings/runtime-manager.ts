@@ -24,7 +24,6 @@ const MAX_ARCHIVE_LIST_BYTES = 4 * 1024 * 1024
 const WORKER_TIMEOUT_MS = 10_000
 const MAX_MEASUREMENT_BYTES = 4 * 1024 * 1024
 const WORKER_PATH = fileURLToPath(new URL('./worker.mjs', import.meta.url))
-let measurementQueue: Promise<void> = Promise.resolve()
 
 type RuntimeManifest = {
   schema: 'tokenless.output-savings-runtime.v1'
@@ -171,11 +170,11 @@ export class OutputSavingsRuntimeManager {
     if (options.signal?.aborted) return unavailable('measurement_canceled')
     if (inspection.state !== 'ready') return unavailable('runtime_not_ready')
     try {
-      const estimatedOutputTokens = await serializeMeasurement(() => runWorker(
+      const estimatedOutputTokens = await runWorker(
         this.runtimeDirectory,
         text,
         options.signal,
-      ))
+      )
       if (options.signal?.aborted) return unavailable('measurement_canceled')
       return {
         schema: OUTPUT_SAVINGS_MEASUREMENT_SCHEMA,
@@ -499,12 +498,6 @@ async function runWorker(runtimeDirectory: string, text: string, signal?: AbortS
     throw tokenlessError('output_savings_runtime_worker_invalid', 'The output savings runtime returned an invalid result.')
   }
   return payload.tokens
-}
-
-async function serializeMeasurement<T>(operation: () => Promise<T>): Promise<T> {
-  const result = measurementQueue.then(operation, operation)
-  measurementQueue = result.then(() => undefined, () => undefined)
-  return await result
 }
 
 function parseManifest(value: unknown): RuntimeManifest | null {

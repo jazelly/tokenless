@@ -13,7 +13,7 @@ async function main() {
     agentRunHandlerFactory: await loadAgentRunHandlerFactory(),
   })
   if (process.stdout.isTTY) {
-    const dashboardUrl = new URL('/dashboard/', daemon.origin).toString()
+    const dashboardUrl = new URL('/dashboard/overview/', daemon.origin).toString()
     console.log(`Tokenless Dashboard is running at ${dashboardUrl} / Tokenless Dashboard 已运行于 ${dashboardUrl}`)
   }
 }

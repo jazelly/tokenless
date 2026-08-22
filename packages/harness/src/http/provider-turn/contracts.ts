@@ -14,14 +14,12 @@ export type TurnRef = OpaqueRef<'turn'>
 export type AttachmentRef = OpaqueRef<'attachment'>
 
 export type Lifecycle = 'queued' | 'running' | 'waiting_for_user' | 'succeeded' | 'failed' | 'cancelled'
-export type DispatchCertainty = 'not_dispatched' | 'dispatched' | 'ambiguous'
 export type WaitingReason =
   | 'authentication'
   | 'mfa'
   | 'captcha'
   | 'consent'
   | 'provider_blocker'
-  | 'ambiguous_submission'
   | 'manual_intervention'
 
 export type CancelReason = 'client_requested' | 'provider_cancelled' | 'timeout' | 'user_declined' | 'shutdown'
@@ -50,8 +48,6 @@ export type StableError = {
     | 'response_failed'
     | 'timeout'
     | 'cancellation_requested'
-    | 'recovery_failed'
-    | 'ambiguous_external_mutation'
   message: string
 }
 
@@ -114,106 +110,20 @@ export type ContinueTurnRequest = {
 
 export type StartTurnRequest = NewTurnRequest | ContinueTurnRequest
 
-type TurnStateBase = {
+export type TurnState = {
   protocol: typeof WEB_AI_INTERACTION_PROTOCOL_V0
   requestRef: RequestRef
   turnRef: TurnRef
   providerRef: ProviderRef
   providerBindingRef: ProviderBindingRef
   conversationRef: ConversationRef
+  lifecycle: Lifecycle
+  attachmentDelivery: AttachmentDelivery
+  waitingReason?: WaitingReason
+  result?: TerminalResult
+  error?: StableError
+  cancelReason?: CancelReason
 }
-
-type NonTerminalPayload = {
-  result?: never
-  error?: never
-  cancelReason?: never
-  waitingReason?: never
-}
-
-type ResultOnlyExclusions = {
-  error?: never
-  cancelReason?: never
-  waitingReason?: never
-}
-
-type ErrorOnlyExclusions = {
-  result?: never
-  cancelReason?: never
-  waitingReason?: never
-}
-
-type CancelOnlyExclusions = {
-  result?: never
-  error?: never
-  waitingReason?: never
-}
-
-type WaitingOnlyExclusions = {
-  result?: never
-  error?: never
-  cancelReason?: never
-}
-
-type NotDispatchedPending = {
-  dispatchCertainty: 'not_dispatched'
-  attachmentDelivery: PendingAttachmentDelivery
-}
-
-type NotDispatchedDelivered = {
-  dispatchCertainty: 'not_dispatched'
-  attachmentDelivery: DeliveredAttachmentDelivery
-}
-
-type Dispatched = {
-  dispatchCertainty: 'dispatched'
-  attachmentDelivery: DeliveredAttachmentDelivery
-}
-
-type Ambiguous = {
-  dispatchCertainty: 'ambiguous'
-  attachmentDelivery: DeliveredAttachmentDelivery
-}
-
-type NotDispatchedRejected = {
-  dispatchCertainty: 'not_dispatched'
-  attachmentDelivery: RejectedAttachmentDelivery
-}
-
-export type TurnState =
-  | (TurnStateBase & NotDispatchedPending & NonTerminalPayload & { lifecycle: 'queued' })
-  | (TurnStateBase & (NotDispatchedPending | NotDispatchedDelivered | Dispatched | Ambiguous) & NonTerminalPayload & { lifecycle: 'running' })
-  | (TurnStateBase & Ambiguous & WaitingOnlyExclusions & { lifecycle: 'waiting_for_user'; waitingReason: 'ambiguous_submission' })
-  | (TurnStateBase & (NotDispatchedPending | NotDispatchedDelivered | Dispatched | Ambiguous) & WaitingOnlyExclusions & {
-    lifecycle: 'waiting_for_user'
-    waitingReason: Exclude<WaitingReason, 'ambiguous_submission'>
-  })
-  | (TurnStateBase & Dispatched & ResultOnlyExclusions & { lifecycle: 'succeeded'; result: TerminalResult })
-  | (TurnStateBase & NotDispatchedRejected & ErrorOnlyExclusions & {
-    lifecycle: 'failed'
-    error: StableError
-  })
-  | (TurnStateBase & (NotDispatchedPending | NotDispatchedDelivered | Dispatched | Ambiguous) & ErrorOnlyExclusions & {
-    lifecycle: 'failed'
-    error: StableError
-  })
-  | (TurnStateBase & (NotDispatchedPending | NotDispatchedDelivered | Dispatched | Ambiguous) & CancelOnlyExclusions & {
-    lifecycle: 'cancelled'
-    cancelReason: CancelReason
-  })
-
-type Assert<T extends true> = T
-type QueuedTurnState = Extract<TurnState, { lifecycle: 'queued' }>
-type RejectedFailedTurnState = Extract<TurnState, { lifecycle: 'failed'; attachmentDelivery: { status: 'rejected' } }>
-
-// These compile-time assertions make the discriminated state boundary visible beside its schema binding.
-type _QueuedStateContract = Assert<QueuedTurnState extends {
-  dispatchCertainty: 'not_dispatched'
-  attachmentDelivery: PendingAttachmentDelivery
-} ? true : false>
-type _RejectedFailureContract = Assert<RejectedFailedTurnState extends {
-  dispatchCertainty: 'not_dispatched'
-  attachmentDelivery: RejectedAttachmentDelivery
-} ? true : false>
 
 export class ProtocolValidationError extends Error {
   readonly code = 'web_ai_interaction_protocol_invalid'

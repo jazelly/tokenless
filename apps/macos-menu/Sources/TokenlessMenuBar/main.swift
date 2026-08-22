@@ -131,15 +131,15 @@ private enum TokenlessAppError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .bindingUnavailable:
-            return "Tokenless API is not installed yet. Run the local macOS installer."
+            return "Tokenless is not installed yet. Run the local macOS installer."
         case .bindingInvalid:
-            return "The local Tokenless API binding is invalid. Run the local macOS installer again."
+            return "The local Tokenless binding is invalid. Run the local macOS installer again."
         case .processLaunchFailed:
-            return "Tokenless API could not start its local CLI."
+            return "Tokenless could not start its local CLI."
         case .processFailed:
-            return "The Tokenless API CLI exited without a usable result."
+            return "The Tokenless CLI exited without a usable result."
         case .invalidJSON:
-            return "Tokenless API returned an invalid local response."
+            return "Tokenless returned an invalid local response."
         case let .commandFailed(message):
             return message
         }
@@ -163,6 +163,7 @@ private final class AppModel: ObservableObject {
 
     init() {
         launchAtLogin = SMAppService.mainApp.status == .enabled
+        refreshOnAppear()
     }
 
     deinit {
@@ -190,6 +191,7 @@ private final class AppModel: ObservableObject {
     }
 
     func refreshOnAppear() {
+        guard !isRefreshing else { return }
         refreshTask?.cancel()
         refreshTask = Task { [weak self] in
             guard let self else { return }
@@ -356,8 +358,8 @@ private final class AppModel: ObservableObject {
 
     private func restart() {
         operationMessage = text(LocalizedText(
-            english: "Restarting Tokenless API…",
-            chinese: "正在重启 Tokenless API…"
+            english: "Restarting Tokenless…",
+            chinese: "正在重启 Tokenless…"
         ))
         errorMessage = nil
         Task { [weak self] in
@@ -368,8 +370,8 @@ private final class AppModel: ObservableObject {
                 try requireOK(stopPayload.ok, error: stopPayload.error)
                 await refresh()
                 operationMessage = text(LocalizedText(
-                    english: "Tokenless API restarted",
-                    chinese: "Tokenless API 已重启"
+                    english: "Tokenless restarted",
+                    chinese: "Tokenless 已重启"
                 ))
             } catch {
                 operationMessage = nil
@@ -380,8 +382,8 @@ private final class AppModel: ObservableObject {
 
     private func quit() {
         operationMessage = text(LocalizedText(
-            english: "Stopping Tokenless API…",
-            chinese: "正在停止 Tokenless API…"
+            english: "Stopping Tokenless…",
+            chinese: "正在停止 Tokenless…"
         ))
         errorMessage = nil
         Task { [weak self] in
@@ -490,8 +492,8 @@ private final class AppModel: ObservableObject {
     private func requireOK(_ ok: Bool?, error: CLIErrorPayload?) throws {
         guard ok == true else {
             throw TokenlessAppError.commandFailed(commandError(error, fallback: LocalizedText(
-                english: "The Tokenless API command failed.",
-                chinese: "Tokenless API 命令执行失败。"
+                english: "The Tokenless command failed.",
+                chinese: "Tokenless 命令执行失败。"
             )))
         }
     }
@@ -528,23 +530,23 @@ private final class AppModel: ObservableObject {
                 }
                 switch tokenlessError {
                 case TokenlessAppError.bindingUnavailable:
-                    return "Tokenless API 尚未安装。请运行本地 macOS installer。"
+                    return "Tokenless 尚未安装。请运行本地 macOS installer。"
                 case TokenlessAppError.bindingInvalid:
-                    return "本地 Tokenless API binding 无效。请重新运行本地 macOS installer。"
+                    return "本地 Tokenless binding 无效。请重新运行本地 macOS installer。"
                 case TokenlessAppError.processLaunchFailed:
-                    return "Tokenless API 无法启动本地 CLI。"
+                    return "Tokenless 无法启动本地 CLI。"
                 case TokenlessAppError.processFailed:
-                    return "Tokenless API CLI 未返回可用结果。"
+                    return "Tokenless CLI 未返回可用结果。"
                 case TokenlessAppError.invalidJSON:
-                    return "Tokenless API 返回了无效的本地响应。"
+                    return "Tokenless 返回了无效的本地响应。"
                 case .commandFailed:
                     return description
                 }
             }
         }
         return text(LocalizedText(
-            english: "Tokenless API could not complete the request.",
-            chinese: "Tokenless API 无法完成请求。"
+            english: "Tokenless could not complete the request.",
+            chinese: "Tokenless 无法完成请求。"
         ))
     }
 }
@@ -556,10 +558,10 @@ private struct MenuBarIcon: View {
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .frame(width: 18, height: 18)
-                .accessibilityLabel("Tokenless API")
+                .accessibilityLabel("Tokenless")
         } else {
             Image(systemName: "circle.hexagongrid.circle")
-                .accessibilityLabel("Tokenless API")
+                .accessibilityLabel("Tokenless")
         }
     }
 
@@ -601,8 +603,8 @@ private struct MenuBarView: View {
             }
             .keyboardShortcut("d", modifiers: [.command])
             .accessibilityLabel(model.text(LocalizedText(
-                english: "Open Tokenless API Dashboard",
-                chinese: "打开 Tokenless API Dashboard"
+                english: "Open Tokenless Dashboard",
+                chinese: "打开 Tokenless Dashboard"
             )))
 
             recentConversations
@@ -613,14 +615,14 @@ private struct MenuBarView: View {
                 model.requestQuit()
             } label: {
                 Label(model.text(LocalizedText(
-                    english: "Quit Tokenless API",
-                    chinese: "退出 Tokenless API"
+                    english: "Quit Tokenless",
+                    chinese: "退出 Tokenless"
                 )), systemImage: "power")
             }
             .keyboardShortcut("q", modifiers: [.command])
             .accessibilityLabel(model.text(LocalizedText(
-                english: "Quit Tokenless API",
-                chinese: "退出 Tokenless API"
+                english: "Quit Tokenless",
+                chinese: "退出 Tokenless"
             )))
         }
         .padding(16)
@@ -699,7 +701,7 @@ private struct MenuBarView: View {
         HStack(alignment: .top, spacing: 10) {
             MenuBarIcon()
             VStack(alignment: .leading, spacing: 3) {
-                Text("Tokenless API")
+                Text("Tokenless")
                     .font(.headline)
                 HStack(spacing: 5) {
                     Circle()
@@ -793,8 +795,8 @@ private struct MenuBarView: View {
                 model.requestRestart()
             } label: {
                 Label(model.text(LocalizedText(
-                    english: "Restart Tokenless API",
-                    chinese: "重启 Tokenless API"
+                    english: "Restart Tokenless",
+                    chinese: "重启 Tokenless"
                 )), systemImage: "arrow.clockwise")
             }
             .disabled(model.updateState.isBusy)
@@ -806,8 +808,8 @@ private struct MenuBarView: View {
                 set: { model.setLaunchAtLogin($0) }
             )) {
                 Label(model.text(LocalizedText(
-                    english: "Launch at Login",
-                    chinese: "登录时启动"
+                    english: "Start Tokenless at Login",
+                    chinese: "登录时启动 Tokenless"
                 )), systemImage: "rectangle.portrait.and.arrow.forward")
             }
             .toggleStyle(.checkbox)
@@ -871,13 +873,13 @@ private struct MenuBarView: View {
         switch model.pendingConfirmation {
         case .restart:
             return model.text(LocalizedText(
-                english: "Restart Tokenless API?",
-                chinese: "要重启 Tokenless API 吗？"
+                english: "Restart Tokenless?",
+                chinese: "要重启 Tokenless 吗？"
             ))
         case .quit:
             return model.text(LocalizedText(
-                english: "Quit Tokenless API?",
-                chinese: "要退出 Tokenless API 吗？"
+                english: "Quit Tokenless?",
+                chinese: "要退出 Tokenless 吗？"
             ))
         case nil:
             return ""
@@ -897,8 +899,8 @@ private struct MenuBarView: View {
 
     private var confirmationMessage: String {
         model.text(LocalizedText(
-            english: "There are active jobs. Stopping Tokenless API may interrupt them.",
-            chinese: "当前有 active job。停止 Tokenless API 可能会中断它们。"
+            english: "There are active jobs. Stopping Tokenless may interrupt them.",
+            chinese: "当前有 active job。停止 Tokenless 可能会中断它们。"
         ))
     }
 }

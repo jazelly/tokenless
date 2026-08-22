@@ -161,10 +161,6 @@ export class DashboardClient {
     return await this.requireResult(this.request<DashboardJobDetail>(`/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' }))
   }
 
-  async resumeJob(jobId: string): Promise<DashboardJobDetail> {
-    return await this.requireResult(this.request<DashboardJobDetail>(`/jobs/${encodeURIComponent(jobId)}/resume`, { method: 'POST' }))
-  }
-
   async startHarnessRun(input: DashboardHarnessRunInput): Promise<DashboardHarnessRunView> {
     return await this.requireResult(this.request<DashboardHarnessRunView>('/harness/runs', {
       method: 'POST',

@@ -76,7 +76,7 @@
           {@const checkedAt = state?.observation?.checkedAt}
           <div class="data-row" data-testid={`overview-provider-${provider.id}`}>
             <span class="provider-glyph">{provider.label.slice(0, 1)}</span>
-            <span class="data-row-main"><span class="provider-name-line"><strong>{provider.label}</strong><ProviderModeBadges {provider} {state} {t} /></span><ProviderAccessIndicators providerId={provider.id} observation={state?.observation} {t} /></span>
+            <span class="data-row-main"><span class="provider-name-line"><strong>{provider.label}</strong><ProviderModeBadges {provider} {state} {t} /></span><ProviderAccessIndicators providerId={provider.id} subscriptionSupport={provider.subscriptionSupport} observation={state?.observation} {t} /></span>
             <span class="overview-status-meta">
               {#if readiness && readiness.status !== 'succeeded'}<span class={`job-state ${readinessStatus(provider)}`} aria-label={stateLabel(language, readiness.status)}></span>{/if}
               <time datetime={checkedAt ?? undefined}>{formatAge(checkedAt, language, t('neverChecked'), now)}</time>
@@ -87,7 +87,7 @@
               disabled={!state?.enabled || readinessBusy}
               aria-label={`${t('checkNow')}: ${provider.label}`}
               title={`${t('checkNow')}: ${provider.label}`}
-              aria-busy={readiness?.status === 'queued' || readiness?.status === 'claimed' || readiness?.status === 'running'}
+              aria-busy={readiness?.status === 'queued' || readiness?.status === 'running' || readiness?.status === 'waiting_for_user'}
               onclick={() => profile?.slug && onrefreshproviderreadiness(profile.slug, provider.id)}
               data-testid={`overview-provider-readiness-${provider.id}`}
             ><RefreshCw size={15} /></button>
@@ -97,10 +97,10 @@
     </section>
 
     <section class="content-panel">
-      <header class="panel-title"><div><h2>{t('recentJobs')}</h2><p>{formatNumber(recentJobs.length, language)} {t('recentConversations')}</p></div><a class="text-button" href="#jobs">{t('moreChats')}</a></header>
+      <header class="panel-title"><div><h2>{t('recentJobs')}</h2><p>{formatNumber(recentJobs.length, language)} {t('recentConversations')}</p></div><a class="text-button" href="/dashboard/jobs/" data-dashboard-section="jobs">{t('moreChats')}</a></header>
       <div class="row-list">
         {#each recentJobs as job (job.jobId)}
-          <a class="data-row" href="#jobs">
+          <a class="data-row" href="/dashboard/jobs/" data-dashboard-section="jobs">
             <span class={`job-state ${job.status}`}></span>
             <span class="data-row-main"><strong>{formatChatTitle(job.chatTitle, job.titlePrompt, t('untitledChat'))}</strong><small>{job.provider ?? '—'} · {job.profileSlug ?? '—'}</small></span>
             <span class="mono-label">{stateLabel(language, job.status)}</span>

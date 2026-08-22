@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { normalizeBrowserVisibility } from '../browser-visibility.js'
 import type { TokenlessLanguage } from 'tokenless-internal-shared/i18n'
 import { TOKENLESS_CONFIG_SCHEMA_ID } from '../schema-ids.js'
@@ -107,13 +108,13 @@ export function normalizeBrowserId(browser: unknown) {
 export function deriveTaskId({
   projectName,
   chatName,
-  idempotencyKey,
+  taskId,
 }: {
   projectName?: unknown
   chatName?: unknown
-  idempotencyKey?: unknown
+  taskId?: unknown
 } = {}) {
-  const explicit = normalizeNonemptyString(idempotencyKey)
+  const explicit = normalizeNonemptyString(taskId)
   if (explicit) return explicit
   const project = normalizeNonemptyString(projectName)
   const chat = normalizeNonemptyString(chatName)
@@ -778,7 +779,7 @@ function isJsonRecord(value: unknown): value is JsonRecord {
 
 async function writeJsonAtomic(file: string, payload: unknown, mode: number) {
   await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 })
-  const temporary = `${file}.${process.pid}.${Date.now()}.tmp`
+  const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`
   try {
     await fs.writeFile(temporary, `${JSON.stringify(payload, null, 2)}\n`, { mode })
     await fs.rename(temporary, file)

@@ -31,6 +31,7 @@ export class GrokProvider extends BaseProvider<'grok'> {
       label: 'Grok',
       stage: 'supported',
       setupOrder: 3,
+      subscriptionSupport: 'supported',
       protocolCompatibility: Object.freeze({
         legacyRequests: true,
       }),

@@ -26,9 +26,13 @@
   const sections = new Set<Section>(['overview', 'profiles', 'providers', 'capabilities', 'jobs', 'system'])
   const initialLanguage: Language = normalizeTokenlessLanguage(document.documentElement.lang) ?? DEFAULT_TOKENLESS_LANGUAGE
 
-  function parseSection(hash: string): Section {
-    const candidate = hash.replace(/^#/, '') as Section
-    return sections.has(candidate) ? candidate : 'overview'
+  function parseSection(pathname: string): Section {
+    const candidate = /^\/dashboard\/([^/]+)\/?$/.exec(pathname)?.[1] as Section | undefined
+    return candidate && sections.has(candidate) ? candidate : 'overview'
+  }
+
+  function sectionPath(section: Section) {
+    return `/dashboard/${section}/`
   }
 
   let language = $state<Language>(initialLanguage)
@@ -40,7 +44,7 @@
   let setupRoute = $state(isSetupPath(location.pathname))
   let selectedProfile = $state(new URL(location.href).searchParams.get('profile') ?? '')
   let harnessPairingId = $state(new URL(location.href).searchParams.get('harnessPairing') ?? '')
-  let section = $state<Section>(parseSection(location.hash))
+  let section = $state<Section>(parseSection(location.pathname))
   let toastTimer = 0
   let pollTimer = 0
   const client = new DashboardClient(() => language)
@@ -67,7 +71,6 @@
     ),
     getJob: (jobId) => client.getJob(jobId),
     cancelJob: (jobId, announce = true) => perform(() => client.cancelJob(jobId), announce),
-    resumeJob: (jobId, announce = true) => perform(() => client.resumeJob(jobId), announce),
     startHarnessRun: (input, announce = true) => perform(() => client.startHarnessRun(input), announce),
     readHarnessRun: (runId) => client.readHarnessRun(runId),
     resumeHarnessRun: (runId, input, announce = true) => perform(() => client.resumeHarnessRun(runId, input), announce),
@@ -103,19 +106,17 @@
       main?.focus()
       main?.scrollIntoView({ block: 'start' })
     }
-    const hashChange = () => {
-      section = parseSection(location.hash)
+    const popState = () => {
+      setupRoute = isSetupPath(location.pathname)
+      section = parseSection(location.pathname)
       queueMicrotask(() => document.querySelector<HTMLElement>('#main')?.focus())
     }
-    const popState = () => { setupRoute = isSetupPath(location.pathname) }
     const visibilityChange = () => { if (!document.hidden) void refresh() }
-    window.addEventListener('hashchange', hashChange)
     window.addEventListener('popstate', popState)
     document.addEventListener('visibilitychange', visibilityChange)
     skipLink?.addEventListener('click', skipToContent)
     void initialize()
     return () => {
-      window.removeEventListener('hashchange', hashChange)
       window.removeEventListener('popstate', popState)
       document.removeEventListener('visibilitychange', visibilityChange)
       skipLink?.removeEventListener('click', skipToContent)
@@ -190,11 +191,30 @@
     history.replaceState(history.state, '', url)
   }
 
-  function navigate(next: string) {
-    if (!sections.has(next as Section)) return
-    section = next as Section
-    location.hash = next
+  function sectionHref(next: Section) {
+    const url = new URL(location.href)
+    url.pathname = sectionPath(next)
+    url.hash = ''
+    return `${url.pathname}${url.search}`
+  }
+
+  function navigate(next: Section) {
+    const url = new URL(location.href)
+    url.pathname = sectionPath(next)
+    url.hash = ''
+    if (url.href !== location.href) history.pushState(history.state, '', url)
+    section = next
+    setupRoute = false
     queueMicrotask(() => document.querySelector<HTMLElement>('#main')?.focus())
+  }
+
+  function handleDashboardNavigation(event: MouseEvent) {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+    const anchor = (event.target as Element).closest<HTMLAnchorElement>('a[data-dashboard-section]')
+    const next = anchor?.dataset.dashboardSection as Section | undefined
+    if (!next || !sections.has(next)) return
+    event.preventDefault()
+    navigate(next)
   }
 
   async function perform<Result>(operation: DashboardOperation<Result>, announce = true): Promise<Result> {
@@ -219,9 +239,9 @@
     setupRoute = false
     section = 'profiles'
     const url = new URL(location.href)
-    url.pathname = '/dashboard/'
+    url.pathname = sectionPath('profiles')
     url.searchParams.set('profile', profile.slug)
-    url.hash = '#profiles'
+    url.hash = ''
     history.replaceState(history.state, '', url)
     showToast(t('updateSaved'))
   }
@@ -248,7 +268,7 @@
   }
 
   function isDashboardPath(pathname: string) {
-    return pathname === '/dashboard' || pathname === '/dashboard/'
+    return pathname === '/dashboard' || pathname === '/dashboard/' || /^\/dashboard\/(?:overview|profiles|providers|capabilities|jobs|system)\/?$/.test(pathname)
   }
 </script>
 
@@ -274,7 +294,7 @@
     onsetup={setup}
   />
 {:else}
-  <div class:profiles-active={section === 'profiles'} class="app-shell" data-testid="app-shell">
+  <div class:profiles-active={section === 'profiles'} class="app-shell" data-testid="app-shell" onclick={handleDashboardNavigation}>
     <aside class="rail">
       <div class="rail-brand"><img src="/dashboard/mark.png" alt="Tokenless" width="28" height="28" translate="no" /></div>
       <nav aria-label={t('primaryNavigation')}>
@@ -283,12 +303,13 @@
           <a
             class:active={section === item.id}
             class="rail-button"
-            href={`#${item.id}`}
+            href={sectionHref(item.id)}
             aria-label={item.label}
             aria-current={section === item.id ? 'page' : undefined}
             title={item.label}
             data-tooltip={item.label}
             data-nav={item.id}
+            data-dashboard-section={item.id}
           ><Icon size={19} strokeWidth={1.8} /></a>
         {/each}
       </nav>
@@ -336,7 +357,7 @@
     <nav class="mobile-nav" aria-label={t('primaryNavigation')}>
       {#each navigation as item (item.id)}
         {@const Icon = item.icon}
-        <a class:active={section === item.id} href={`#${item.id}`} aria-label={item.label} aria-current={section === item.id ? 'page' : undefined} data-nav={item.id}>
+        <a class:active={section === item.id} href={sectionHref(item.id)} aria-label={item.label} aria-current={section === item.id ? 'page' : undefined} data-nav={item.id} data-dashboard-section={item.id}>
           <Icon size={18} strokeWidth={1.8} /><span>{item.label}</span>
         </a>
       {/each}

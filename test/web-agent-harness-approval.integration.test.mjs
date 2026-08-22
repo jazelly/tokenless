@@ -50,9 +50,9 @@ test('one in-process Harness run approves and executes an exact real MCP call', 
 
     const mapping = store.getWebAiTurn(running.providerTurnRef)
     const job = store.getJob(mapping.job_id)
-    const claim = store.claimJob(job.job_id, job.claim_token)
-    store.markRunning(claim.job_id, claim.claim_token)
-    store.recordProviderSubmission(claim.job_id, claim.claim_token)
+    const selected = store.takeNextJob({ job_id_prefix: job.job_id }, 'playwright', profile.id)
+    assert.ok(selected)
+    store.recordProviderSubmission(selected.job_id)
     store.upsertProviderTaskConversation({
       provider: 'chatgpt',
       profile_id: profile.id,
@@ -62,7 +62,7 @@ test('one in-process Harness run approves and executes an exact real MCP call', 
     })
     const promptAction = job.request_json.actions.find((action) => action.action === 'prompt.input')
     const bootstrap = JSON.parse(promptAction.payload.text)
-    store.completeJob(claim.job_id, claim.claim_token, {
+    store.completeJob(selected.job_id, {
       result_json: successfulVisibleResult(framed({
         protocol: 'tokenless.web-agent/v1',
         kind: 'action_batch',
@@ -90,6 +90,7 @@ test('one in-process Harness run approves and executes an exact real MCP call', 
     assert.equal(approved.status, 'running')
     assert.equal((await harness.read(started.runId)).status, 'submitting_provider')
     await assert.rejects(fs.stat(path.join(homeDir, 'harness.sqlite3')))
+    assert.equal((await fs.stat(path.join(homeDir, 'tokenless.sqlite3'))).isFile(), true)
   } finally {
     harness?.close()
     await daemon.close()

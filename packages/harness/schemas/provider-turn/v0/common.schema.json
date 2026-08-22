@@ -36,8 +36,7 @@
           "enum": [
             "unsupported_capability", "invalid_request", "resource_not_found", "identity_mismatch",
             "authentication_required", "user_intervention_required", "provider_unavailable", "upload_failed",
-            "submission_failed", "response_failed", "timeout", "cancellation_requested", "recovery_failed",
-            "ambiguous_external_mutation"
+            "submission_failed", "response_failed", "timeout", "cancellation_requested"
           ]
         },
         "message": { "type": "string", "minLength": 1, "maxLength": 512, "x-tokenless-internal-maxUtf8Bytes": 1024 }

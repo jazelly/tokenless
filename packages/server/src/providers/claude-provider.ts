@@ -16,6 +16,7 @@ export class ClaudeProvider extends BaseProvider<'claude'> {
       label: 'Claude',
       stage: 'supported',
       setupOrder: 1,
+      subscriptionSupport: 'supported',
       protocolCompatibility: Object.freeze({
         legacyRequests: true,
       }),

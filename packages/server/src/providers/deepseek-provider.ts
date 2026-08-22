@@ -24,6 +24,7 @@ export class DeepSeekProvider extends BaseProvider<'deepseek'> {
       label: 'DeepSeek',
       stage: 'experimental',
       setupOrder: 5,
+      subscriptionSupport: 'supported',
       protocolCompatibility: Object.freeze({
         legacyRequests: false,
       }),

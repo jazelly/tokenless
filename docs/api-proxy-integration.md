@@ -4,7 +4,7 @@ How to call the Tokenless local API proxy from an existing project. Written for 
 
 ## What this is
 
-The Tokenless daemon exposes OpenAI- and Anthropic-compatible HTTP routes. A request becomes a durable job, a Playwright worker types the prompt into a real provider page in a signed-in browser profile, and the visible reply is returned in the wire shape your client already expects.
+The Tokenless daemon exposes OpenAI- and Anthropic-compatible HTTP routes. A request creates a local job record, an in-process Playwright worker types the prompt into a real provider page in a signed-in browser profile, and the visible reply is returned in the wire shape your client already expects.
 
 **This is a task-level bridge, not a drop-in API replacement.** Read [Hard limits](#hard-limits) before designing around it. Browser-backed requests trade throughput and latency for cost; direct G4F plain-text requests can preserve upstream incremental streaming.
 
@@ -432,14 +432,14 @@ If you need a savings figure, use `tokenless savings status --json`, which measu
 | Field | Use |
 | --- | --- |
 | `provider` | Which provider actually answered, including the settled fallback provider |
-| `job_id` | Durable job id — pass to `tokenless state --job-id <id> --json` to inspect what happened |
+| `job_id` | Job id — pass to `tokenless state --job-id <id> --json` to inspect what happened |
 | `conversation_mode` | Actual route: `new-conversation` for fresh/mapping-miss requests, or `continue-conversation` for a mapped Responses continuation |
 | `execution_mode` / `provider_backend` | Actual execution route |
 | `structured_control_strategy` | `prompt_tool_envelope`, `prompt_json_envelope`, or `null` for plain text |
-| `provider_attempts` | Redacted attempt order/status and blocker classification from the one durable job |
+| `provider_attempts` | Redacted attempt order/status and blocker classification from the one job |
 | `citations` | Visible source links, when the provider rendered any |
 
-Log `job_id`. It is the only handle that ties a client-side failure to a durable local record.
+Log `job_id`. It is the only handle that ties a client-side failure to the local job record.
 
 ## Streaming
 
@@ -534,11 +534,11 @@ The status is the signal to branch on. Read `code` for the specific cause and tr
 | 503 | `profile_not_ready` | The managed profile needs `tokenless setup` | No — finish setup |
 | 503 | `model_not_available` | The provider is not enabled for the resolved profile | No — enable it |
 | 503 | `auto_route_unavailable` | No enabled, currently usable, evidence-backed provider satisfies the complete request | No — change scope or provider readiness |
-| 504 | `completion_timeout` | The provider did not answer within 10 minutes | Yes, but the original job may still be running |
+| 504 | `completion_timeout` | The provider did not answer within 10 minutes | Check the current job before deciding |
 
 A `4xx` other than 499 means the caller must change something. A `502`, `504`, or `500` is operational: the same request may succeed later. That distinction is the whole point of the table — do not match on message strings.
 
-On `502` and `504` the underlying browser job is **not** cancelled and may still complete. Inspect it with `tokenless state --job-id <id> --json` before retrying, or you may queue duplicate provider work.
+On `502` and `504` the underlying browser job is **not** cancelled and may still complete in the current daemon process. Inspect it with `tokenless state --job-id <id> --json` before deciding what to do; a daemon restart marks unfinished work as `job_interrupted` rather than resuming it.
 
 ## Hard limits
 
@@ -547,7 +547,7 @@ Design around these, not against them.
 | Property | Reality |
 | --- | --- |
 | Latency | Seconds to minutes. Real browser navigation, page settle, typing, submit, and render. |
-| Timeout | 10 minutes, then 504. The underlying job may still be running — check `job_id`. |
+| Timeout | 10 minutes, then 504. The current daemon process may still be running the job — check `job_id`. |
 | Concurrency | Effectively serial per profile. One browser, one provider tab. |
 | Tool use | One or more modern function calls, non-streaming or terminal SSE; caller executes them. |
 | Structured output | OpenAI `json_object` and the documented closed-object `json_schema` subset; valid final JSON or explicit error. |
@@ -621,7 +621,7 @@ const message = await client.messages.create({
 console.log(message.content)
 ```
 
-Note both SDKs need their default timeout raised and their retry count zeroed. Default retries on a 10-minute request will queue duplicate browser jobs.
+Note both SDKs need their default timeout raised and their retry count zeroed. Default retries on a 10-minute request can start duplicate browser executions.
 
 ## Implementation checklist
 
@@ -636,7 +636,7 @@ Note both SDKs need their default timeout raised and their retry count zeroed. D
 - [ ] Do not read `usage` for cost.
 - [ ] Raise client timeout above 10 minutes; set retries to 0 and handle retries yourself.
 - [ ] Branch on HTTP status, not on `message`: retry only `500`, `502`, and `504`.
-- [ ] Before retrying a `502` or `504`, check `job_id` — the original job may still be running.
+- [ ] Before deciding whether to retry a `502` or `504`, check `job_id` — the current daemon process may still be running it.
 - [ ] Log `tokenless.job_id` on every call.
 - [ ] Expect serial execution; do not fan out concurrent requests.
 - [ ] For Chat Completions/Anthropic, send full history on every request; for Responses, omit `previous_response_id` when starting a fresh provider chat and use it only for a mapped continuation.
@@ -658,7 +658,7 @@ An [unmodified DSH multiple-call run](evidence/openai-multiple-tool-calls-deepse
 Two things a client should still not rely on:
 
 - **A `502` does not say why the page failed.** A sign-in blocker, a CAPTCHA, and a genuinely failed job all report `upstream_error`. Use `job_id` to find out which.
-- **A timeout or disconnect leaves the browser job running.** Nothing cancels provider-side work on your behalf, so a naive retry can queue a second job for the same prompt.
+- **A timeout or disconnect leaves the browser job running in the current daemon process.** Nothing cancels provider-side work on your behalf, so a naive retry can start a second execution for the same prompt.
 
 ## Reference
 

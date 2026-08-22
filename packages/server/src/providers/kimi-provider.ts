@@ -19,6 +19,7 @@ export class KimiProvider extends BaseProvider<'kimi'> {
       label: 'Kimi',
       stage: 'experimental',
       setupOrder: 9,
+      subscriptionSupport: 'supported',
       protocolCompatibility: Object.freeze({
         legacyRequests: false,
       }),

@@ -31,6 +31,7 @@ export class GeminiProvider extends BaseProvider<'gemini'> {
       label: 'Gemini',
       stage: 'supported',
       setupOrder: 2,
+      subscriptionSupport: 'supported',
       protocolCompatibility: Object.freeze({
         legacyRequests: true,
       }),

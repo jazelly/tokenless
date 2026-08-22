@@ -70,7 +70,7 @@ function infoPlist(bundleVersion) {
 <plist version="1.0">
 <dict>
 	<key>CFBundleDisplayName</key>
-	<string>Tokenless API</string>
+	<string>Tokenless</string>
 	<key>CFBundleExecutable</key>
 	<string>${executableName}</string>
 	<key>CFBundleIdentifier</key>
@@ -78,7 +78,7 @@ function infoPlist(bundleVersion) {
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>Tokenless API</string>
+	<string>Tokenless</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

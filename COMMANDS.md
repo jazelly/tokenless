@@ -27,12 +27,10 @@ This document is the public inventory of the `tokenless` command-line interface.
 | `tokenless profiles remove` | Delete one managed profile with explicit confirmation. | None |
 | `tokenless capabilities list` | List canonical task capabilities and evidence-backed provider routes. | None |
 | `tokenless limits inspect` | Inspect the next-prompt provider/profile capacity estimate from the packaged catalog and local job history. | None |
-| `tokenless savings <status\|enable\|disable\|clear\|uninstall>` | Manage optional local output savings measurement and its lazily downloaded tokenizer. | None |
+| `tokenless savings <status\|enable\|disable\|clear\|uninstall>` | Manage optional local output savings measurement and its tokenizer, downloaded on the first successful visible response. | None |
 | `tokenless api-proxy <status\|enable\|disable>` | Manage the OpenAI/Anthropic-compatible local API proxy and its compatibility conversation-mode setting. | None |
 | `tokenless run` | Send a prompt and optional files through a visible provider session. | Yes |
-| `tokenless replay` | Report previously unseen daemon outcome summaries for one agent recipient. | None |
-| `tokenless state` | Inspect durable daemon job state. | None |
-| `tokenless resume` | Resume a job waiting for user action in a headed browser. | Yes |
+| `tokenless state` | Inspect current daemon job state. | None |
 | `tokenless cancel` | Cancel a daemon job and confirm its canceled state. | None |
 | `tokenless provider-status` | Perform a live provider authentication check. | Yes |
 | `tokenless provider-controls` | Inspect visible model and effort controls. | Yes |
@@ -90,13 +88,12 @@ These options are available where the command needs the corresponding runtime be
 | `--color` | Force ANSI colors for human-readable output. It has no effect on JSON stdout. |
 | `--no-color` | Disable ANSI colors, including when output is attached to a terminal. |
 | `--home <path>` | Use a non-default Tokenless state directory. |
-| `--daemon-url <url>` | Set the preferred loopback daemon URL. If its port is occupied, Tokenless may bind the next free port and records the actual endpoint in SQLite. |
-| `--agent-kind <kind>` | Address a job or replay drain to an explicit agent kind; use with `--agent-session-id`. |
-| `--agent-session-id <id>` | Address a job or replay drain to an explicit agent session; use with `--agent-kind`. |
+| `--daemon-url <url>` | Set the loopback daemon URL. If its port is occupied, daemon startup fails clearly. |
+| `--agent-kind <kind>` | Supply the Codex Harness agent kind for the current invocation; use with `--agent-session-id`. |
+| `--agent-session-id <id>` | Supply the Codex Harness session identity for the current invocation; use with `--agent-kind`. |
 | `--browser-visibility <headed>` | Native Chrome is headed-only. |
 | `--timeout-ms <ms>` | Override the command or job wait timeout. |
 | `--daemon-start-timeout-ms <ms>` | Override daemon startup waiting. |
-| `--runner-heartbeat-timeout-ms <ms>` | Accepted for compatibility; the embedded Playwright runtime ignores it. |
 | `--cancel-timeout-ms <ms>` | Override cancellation confirmation waiting. |
 | `--target-url <url>` | Start from a provider-approved URL on the selected provider domain. |
 
@@ -239,13 +236,13 @@ tokenless dashboard --profile work --no-open --json
 tokenless dashboard --job-id <job-id>
 ```
 
-`--no-open` prints the direct loopback Dashboard URL without launching a browser. Opening `/` redirects to `/dashboard/` and establishes a short-lived `HttpOnly`, `SameSite=Strict` session cookie. Dashboard mutations continue to require exact-Origin and CSRF checks. The Dashboard can run in any browser; provider actions still execute in the selected profile's bound browser runtime. The dashboard never receives the daemon bearer token, provider cookies, browser storage, Keychain data, raw DOM, claim tokens, checkpoints, or private filesystem paths.
+`--no-open` prints the direct loopback Dashboard URL without launching a browser. Opening `/` redirects to `/dashboard/overview/` and establishes a short-lived `HttpOnly`, `SameSite=Strict` session cookie. Dashboard mutations continue to require exact-Origin and CSRF checks. The Dashboard can run in any browser; provider actions still execute in the selected profile's bound browser runtime. The dashboard never receives the daemon bearer token, provider cookies, browser storage, Keychain data, raw DOM, or private filesystem paths.
 
 `--job-id` opens the Jobs view and loads that job's detail automatically. `tokenless menubar status --json` starts or discovers the same-home daemon, then returns the daemon/runtime status, dashboard URL, active job count, and up to ten conversation summaries ordered by `updatedAt` descending. Conversation summaries contain only safe titles and public identifiers; they do not include prompts, transcripts, credentials, or private paths.
 
-The dashboard provides Overview, Profiles, Providers, Capabilities, Jobs, and System/Diagnostics areas. Provider membership, visibility, role label, and an optional credential-free HTTP/HTTPS/SOCKS5 proxy are profile scoped. CLI recovery equivalents remain available:
+The dashboard provides Overview, Profiles, Providers, Capabilities, Jobs, and System/Diagnostics areas. Provider membership, visibility, role label, and an optional credential-free HTTP/HTTPS/SOCKS5 proxy are profile scoped. CLI state and cancellation commands remain available:
 
-Provider readiness refreshes run implicitly in batches of up to three. Tokenless starts a resident headless browser when the profile is idle, or reuses an already-running headed profile without replacing its browser, closing its existing tabs, or bringing the check to the foreground. Each check owns one temporary background tab and closes it on every completion, failure, blocker, timeout, or cancellation path; user-owned tabs remain untouched. A readiness check that encounters sign-in or verification records the required action; visible browser interaction starts only from an explicit provider, browser, or job action.
+Provider readiness refreshes run serially per profile. Tokenless starts a resident headless browser when the profile is idle, or reuses an already-running headed profile without replacing its browser, closing its existing tabs, or bringing the check to the foreground. Each check owns one temporary background tab and closes it on every completion, failure, blocker, timeout, or cancellation path; user-owned tabs remain untouched. A readiness check that encounters sign-in or verification records the required action; visible browser interaction starts only from an explicit provider, browser, or job action.
 
 ```bash
 tokenless config --profile work --provider-whitelist chatgpt,claude --browser-visibility headed --json
@@ -378,7 +375,7 @@ tokenless profiles add -P work --set-default --json
 
 Reads the profile registry and returns every managed profile.
 
-The registry is stored in `<TOKENLESS_HOME>/tokenless.sqlite3`. An existing `<TOKENLESS_HOME>/browser/profiles.json` registry is imported once when this storage is first opened.
+The registry is stored in `<TOKENLESS_HOME>/tokenless.sqlite3`.
 
 ```bash
 tokenless profiles list
@@ -463,7 +460,7 @@ Inspect the next prompt against the observed profile subscription, packaged prov
 tokenless limits inspect --profile default --provider chatgpt --json
 ```
 
-The projection reports the matched catalog plan and rules, local usage, published and effective allowance, estimated remaining units, cadence, burst allowance, decision, and `eligibleAt`. `unknown` means Tokenless has no enforceable official number and will allow execution; it does not mean unlimited provider capacity. This command is local and read-only and does not open or submit to a provider website.
+The projection reports the matched catalog plan and rules, local usage, published and effective allowance, estimated remaining units, cadence, burst allowance, and decision. `unknown` means Tokenless has no enforceable official number and will allow execution; it does not mean unlimited provider capacity. This command is local and read-only and does not open or submit to a provider website.
 
 ### `tokenless savings`
 
@@ -477,9 +474,9 @@ tokenless savings clear --confirm-delete --json
 tokenless savings uninstall --confirm-delete --json
 ```
 
-`enable` downloads and verifies the pinned `o200k_base` WASM tokenizer before setting `outputSavings.enabled` to `true`. Normal default-on use instead installs it lazily after the first provider job has already completed and durably handed its measurement work to the daemon. `disable` discards queued text and prevents in-flight results from being saved while retaining history and the runtime. `clear` discards pre-clear work and removes the durable measurement history, and `uninstall` disables measurement, discards work, and removes the runtime; both destructive operations require `--confirm-delete`. `status` is read-only with respect to configuration and tokenizer installation. None of these commands opens a provider page.
+`enable` downloads and verifies the pinned `o200k_base` WASM tokenizer before setting `outputSavings.enabled` to `true`. Normal default-on use installs and measures it during the first successful visible response in the current execution. `disable` prevents later results from being saved while retaining history and the runtime. `clear` removes the measurement history, and `uninstall` disables measurement, clears history, and removes the runtime; both destructive operations require `--confirm-delete`. `status` is read-only with respect to configuration and tokenizer installation. None of these commands opens a provider page.
 
-Measurements cover only normalized visible assistant output and are attributed to the triggering durable job and response. They are stable cross-provider estimates, not provider billing values; input tokens, hidden reasoning, and private backend traffic are excluded.
+Measurements cover only normalized visible assistant output and are attributed to the triggering job and response. They are stable cross-provider estimates, not provider billing values; input tokens, hidden reasoning, and private backend traffic are excluded.
 
 ### `tokenless api-proxy`
 
@@ -505,7 +502,7 @@ The `--conversation-mode` option is retained for config/status compatibility, bu
 
 `tools`, `tool_choice`, `functions`, `function_call`, and `response_format` are rejected because visible provider pages expose no equivalent control. `stream: true` returns the documented event sequence for that dialect, delivered as one terminal chunk, because a visible response is only readable once it has finished rendering. Reported `usage` counts are always zero: Tokenless does not meter provider tokens, and the response is billed by your own web subscription.
 
-Responses carry a `tokenless` object with the provider, durable `job_id`, conversation mode, and any visible citations.
+Responses carry a `tokenless` object with the provider, current `job_id`, conversation mode, and any visible citations.
 
 ### `tokenless run`
 
@@ -529,8 +526,8 @@ Provider selection:
 - Unknown and sign-in-required observations are not usable for implicit routing. If no cached provider is usable, the CLI returns `provider_unavailable` with provider observation context before creating a daemon job.
 - A known capability with no complete route returns `task_capability_route_unavailable` before browser mutation. `--capability` currently requires the normal `submit_and_read` action.
 - Successful submissions return and durably store `capabilityRoute`, including normalized requirements, selected strategies, support level, evidence identifiers, and runtime eligibility; `tokenless state` returns the same route.
-- Implicit `submit_and_read` runs may persist an automatic fallback plan. Before mutation, every attempt rechecks known local provider capacity, the visible session, and capability-specific UI without a probe prompt. Classified safe pre-submit capacity, auth, CAPTCHA, rate/plan, maintenance, region, navigation, stable-surface, and capability-availability failures requeue the same job on the next ranked provider only when it satisfies the identical complete requirements and all completed mutations are reconstructable. Exact or mapped continuation, explicit providers, provider-specific controls, non-reconstructable mutations, ambiguous external state, and post-submission failures never switch automatically. JSON state includes ranked `fallback.routes`, structured stop reasons, and `providerAttempts`.
-- The job validator independently derives capabilities from actions, attachment MIME types, and native workspace intent, so internal or agent callers cannot under-declare a fallback requirement. Routed jobs carry `tokenless.context-envelope.v1`; its instructions, references, output/constraint contract, optional upstream state, and delivery hashes are replayed unchanged on every attempt. JSON state exposes only a redacted envelope summary.
+- Implicit `submit_and_read` runs may keep an automatic fallback plan in the current execution. Before mutation, every attempt rechecks known local provider capacity, the visible session, and capability-specific UI without a probe prompt. Classified safe pre-submit capacity, auth, CAPTCHA, rate/plan, maintenance, region, navigation, stable-surface, and capability-availability failures immediately try the next ranked provider only when it satisfies the identical complete requirements and no external mutation has completed. Exact or mapped continuation, explicit providers, provider-specific controls, ambiguous external state, and post-submission failures never switch automatically. JSON state includes ranked `fallback.routes`, structured stop reasons, and `providerAttempts`.
+- The job validator independently derives capabilities from actions, attachment MIME types, and native workspace intent, so internal or agent callers cannot under-declare a fallback requirement. Routed jobs carry `tokenless.context-envelope.v1`; its instructions, references, output/constraint contract, optional upstream state, and delivery hashes are reused unchanged on each fallback attempt. JSON state exposes only a redacted envelope summary.
 
 Prompt input:
 
@@ -558,19 +555,18 @@ Provider controls:
 
 Identity and continuity:
 
-- `--task-id <id>` supplies durable task identity.
+- `--task-id <id>` supplies task identity for the current daemon execution.
 - `--page-ref <ref>` supplies caller-controlled provider-tab identity. Reuse one Ref only for work that must continue in the same tab; independent work should use distinct Refs. Omit it to generate an independent Ref.
-- `--idempotency-key <id>` supplies the same identity when no task ID is used.
 - `--project-name <name>` and `--chat-name <name>` contribute to derived task identity without requesting Workspace handling.
 - `--workspace-mode <auto|native|conversation>` explicitly requests Workspace handling and requires `--project-name`.
 - `--project-instructions <text>` or `--project-instructions-file <path>` supplies optional Workspace instructions.
-- `--agent-kind <kind>` and `--agent-session-id <id>` address the job to one agent recipient. Both are required together; the same values may come from `TOKENLESS_AGENT_KIND` and `TOKENLESS_AGENT_SESSION_ID`.
+- `--agent-kind <kind>` and `--agent-session-id <id>` supply Codex Harness context identity. Both are required together; the same values may come from `TOKENLESS_AGENT_KIND` and `TOKENLESS_AGENT_SESSION_ID`.
 
 Execution:
 
 - `--no-wait` submits and returns without waiting for the result.
 - `--long-running` uses the long-running wait budget and cannot be combined with `--no-wait`.
-- `--timeout-ms`, `--cancel-timeout-ms`, and `--daemon-start-timeout-ms` override execution timing. `--runner-heartbeat-timeout-ms` remains accepted for compatibility but no longer controls a standalone runner.
+- `--timeout-ms`, `--cancel-timeout-ms`, and `--daemon-start-timeout-ms` override execution timing.
 - `--target-url <url>` selects an approved starting URL on the provider domain.
 
 Workspace modes:
@@ -582,26 +578,9 @@ Workspace modes:
 - Native results report `created` or `reused`, canonical provider resource identity, provider/profile scope, and the instruction outcome. Conversation results report `fallback`.
 - Project and task conversation targets are persisted as exact SQLite mappings rather than recovered by scanning historical job results.
 
-### `tokenless replay`
-
-Atomically reports outcome summaries that have not yet been delivered to one explicit agent recipient:
-
-```bash
-tokenless replay \
-  --agent-kind codex \
-  --agent-session-id "<stable-session-id>" \
-  --json
-```
-
-The command probes or starts the local daemon on demand. SQLite marks each actionable outcome revision as reported before the response is returned, so the same revision is never proactively reported again—even if the CLI response is lost. A later parked or terminal revision of the same job is a new outcome and may be reported once.
-
-Replay contains only allowlisted metadata and `has_result`, `has_error`, and `has_blocker` flags. It does not include raw result, error, or blocker content. Use `tokenless state --job-id "<jobId>" --json` to retrieve the durable full job whenever needed. Do not submit a replacement job solely because a replay response was missed.
-
-Main options: `--agent-kind`, `--agent-session-id`, `--limit`, `--daemon-url`, `--daemon-start-timeout-ms`, `--home`, and `--json`. The two identity flags may instead be supplied by `TOKENLESS_AGENT_KIND` and `TOKENLESS_AGENT_SESSION_ID`.
-
 ### `tokenless state`
 
-Reads durable daemon job state without visiting the provider.
+Reads current daemon job state without visiting the provider. Jobs left unfinished when the daemon restarts are reported as failed with `job_interrupted`; they are not resumed.
 
 ```bash
 tokenless state --task-id task-123 -P default --json
@@ -610,21 +589,6 @@ tokenless state -P default -p chatgpt --limit 10 --json
 ```
 
 Provide a task ID, job ID, or profile. Results are filtered to the managed Playwright backend, selected profile, and provider. `--limit` controls the number of returned jobs.
-
-### `tokenless resume`
-
-Resumes the same daemon job after it entered `waiting_for_user`.
-
-```bash
-tokenless resume \
-  --job-id tlp_... \
-  --browser-visibility headed \
-  --json
-```
-
-`--job-id` and `--browser-visibility headed` are required. Resume preserves the original job and task identity.
-
-When provider sign-in, hCaptcha, MFA, or another visible human verification is required, Tokenless reports `waiting_for_user` and explicitly says that your help is needed. Complete the visible step, then query or resume the same job; do not submit a replacement job.
 
 ### `tokenless cancel`
 
@@ -796,7 +760,6 @@ The following aliases are accepted for compatibility. Prefer the canonical form 
 | `tokenless inspect-chatgpt-controls` | `tokenless chatgpt-controls` |
 | `--turn-context` | `--context` |
 | `--turn-context-file` | `--context-file` |
-| `--conversation-key` | `--idempotency-key` |
 
 ## Status and Side-Effect Summary
 
@@ -815,7 +778,7 @@ provider-status
     but is not the profile-registry refresh workflow
 ```
 
-Commands that may open or operate a provider page are `setup`, `profiles status`, `profiles open`, `run`, `resume`, every provider inspection/configuration/action command, and `snapshot-dom`.
+Commands that may open or operate a provider page are `setup`, `profiles status`, `profiles open`, `run`, every provider inspection/configuration/action command, and `snapshot-dom`.
 
 ## Manual Real-Browser Acceptance
 

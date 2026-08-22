@@ -174,9 +174,8 @@ async function providerPost<T>(operation: () => Promise<T>): Promise<T> {
   } catch (error) {
     if (error instanceof LocalHttpError || error instanceof ProviderTurnDispatchError) throw error
     throw new ProviderTurnDispatchError(
-      'ambiguous',
-      'harness_provider_dispatch_ambiguous',
-      'Local provider dispatch outcome is ambiguous.',
+      'harness_provider_dispatch_failed',
+      'Local provider dispatch failed.',
     )
   }
 }
@@ -192,7 +191,7 @@ export async function completeHarnessLocalHttpBootstrap(
   const turnState = await readHarnessLocalHttpTurn(input)
   if (
     turnState.lifecycle !== 'succeeded' ||
-    turnState.dispatchCertainty !== 'dispatched' ||
+    !turnState.result ||
     turnState.attachmentDelivery.status !== 'delivered' ||
     turnState.result.text.trim() === ''
   ) {
@@ -243,15 +242,16 @@ export async function completeHarnessLocalHttpContinuation(
   input: CompleteHarnessLocalHttpContinuationInput,
 ): Promise<HarnessLocalHttpContinuationCompletion> {
   const turnState = await readHarnessLocalHttpTurn(input)
-  if (turnState.lifecycle !== 'succeeded' || turnState.dispatchCertainty !== 'dispatched' || turnState.attachmentDelivery.status !== 'delivered' || turnState.attachmentDelivery.sha256 !== input.resultSha256 || turnState.result.text.trim() === '') {
+  if (turnState.lifecycle !== 'succeeded' || !turnState.result || turnState.attachmentDelivery.status !== 'delivered' || turnState.attachmentDelivery.sha256 !== input.resultSha256 || turnState.result.text.trim() === '') {
     throw new HarnessSkillError('harness_continuation_turn_incomplete', 'The local continuation turn has not succeeded with its exact delivered tool-result attachment.')
   }
+  const result = turnState.result
   return {
     turnState,
     response: await import('../skill-runtime/skill-harness.js').then(({ parseHarnessModelResponse }) => parseHarnessModelResponse({
       runId: input.runId,
       stagingRoot: input.stagingRoot,
-      responseText: normalizeProviderResponse(turnState.result.text),
+      responseText: normalizeProviderResponse(result.text),
       turn: input.turn,
       nonce: input.nonce,
     })),

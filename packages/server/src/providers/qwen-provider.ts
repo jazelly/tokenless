@@ -33,6 +33,7 @@ export class QwenProvider extends BaseProvider<'qwen'> {
       label: 'Qwen / 千问',
       stage: 'experimental',
       setupOrder: 4,
+      subscriptionSupport: 'supported',
       protocolCompatibility: Object.freeze({
         legacyRequests: false,
       }),

@@ -6,7 +6,6 @@
   "providerBindingRef": "binding:22222222222222222222222222222222",
   "conversationRef": "conversation:33333333333333333333333333333333",
   "lifecycle": "running",
-  "dispatchCertainty": "not_dispatched",
   "attachmentDelivery": {
     "status": "delivered",
     "attachmentRef": "attachment:55555555555555555555555555555555",

@@ -26,6 +26,7 @@ import type {
   ProviderCapabilityStability,
   ProviderDescriptor,
   ProviderGuestAccess,
+  ProviderSubscriptionSupport,
 } from './provider-definition.js'
 import type {
   ProviderCapabilityId,
@@ -93,6 +94,7 @@ export type {
   ProviderCapabilityStability,
   ProviderDescriptor,
   ProviderGuestAccess,
+  ProviderSubscriptionSupport,
 } from './provider-definition.js'
 export type {
   ProviderCapabilityId,

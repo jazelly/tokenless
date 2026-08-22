@@ -56,7 +56,6 @@ test('built Harness bootstraps exact System Prompt bytes through real local HTTP
       })
 
       assert.equal(queued.lifecycle, 'queued')
-      assert.equal(queued.dispatchCertainty, 'not_dispatched')
       assert.equal(queued.attachmentDelivery.status, 'pending')
       assert.equal((await fs.stat(path.join(homeDir, 'tokenless.sqlite3'))).isFile(), true)
 
@@ -110,7 +109,6 @@ test('built Harness bootstraps exact System Prompt bytes through real local HTTP
       const cancelled = await cancelHarnessLocalHttpTurn({ baseUrl: daemon.origin, token, turnRef: queued.turnRef })
       assert.equal(cancelled.turnRef, queued.turnRef)
       assert.equal(cancelled.lifecycle, 'cancelled')
-      assert.equal(cancelled.dispatchCertainty, 'not_dispatched')
       assert.equal(cancelled.attachmentDelivery.status, 'pending')
 
       const publicResult = JSON.stringify({ queued, read, cancelled })

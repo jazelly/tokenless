@@ -28,6 +28,7 @@ export type ProviderCapabilityAvailability = 'available' | 'unavailable' | 'unkn
 export type ProviderCapabilityResourceKind = 'visible_action' | 'file_attachment' | 'project' | 'conversation'
 export type ProviderCapabilityStability = 'experimental'
 export type ProviderGuestAccess = 'supported' | 'unsupported'
+export type ProviderSubscriptionSupport = 'supported' | 'unsupported'
 export type ProviderAccessClass =
   | 'guest'
   | 'sign_in_required'
@@ -46,6 +47,7 @@ export type ProviderDescriptor<TId extends string = string> = Readonly<{
   stage: ProviderStage
   setupOrder: number
   executionModes: readonly ProviderExecutionMode[]
+  subscriptionSupport: ProviderSubscriptionSupport
   protocolCompatibility: Readonly<{
     legacyRequests: boolean
   }>

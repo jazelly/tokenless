@@ -37,7 +37,7 @@ test.after(async () => {
   restoreInspectionEnvironment?.()
 })
 
-test('real visible provider blocker falls back under one durable job', { timeout: 600_000 }, async () => {
+test('real visible provider blocker falls back under one current job', { timeout: 600_000 }, async () => {
   inspection = await createLiveBrowserInspectionSession({
     homeDir,
     profileSlug,

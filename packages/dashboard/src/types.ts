@@ -129,7 +129,6 @@ export type DashboardActions = {
   selectProviderControl: (profileSlug: string, providerId: string, input: DashboardProviderSelection, announce?: boolean) => Promise<DashboardJobSummary>
   getJob: (jobId: string) => Promise<DashboardJobDetail>
   cancelJob: (jobId: string, announce?: boolean) => Promise<DashboardJobDetail>
-  resumeJob: (jobId: string, announce?: boolean) => Promise<DashboardJobDetail>
   startHarnessRun: (input: DashboardHarnessRunInput, announce?: boolean) => Promise<DashboardHarnessRunView>
   readHarnessRun: (runId: string) => Promise<DashboardHarnessRunView>
   resumeHarnessRun: (runId: string, input: DashboardHarnessIntervention, announce?: boolean) => Promise<DashboardHarnessRunView>

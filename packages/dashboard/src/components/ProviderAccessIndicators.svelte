@@ -12,10 +12,12 @@
 
   let {
     providerId,
+    subscriptionSupport,
     observation,
     t,
   }: {
     providerId: string
+    subscriptionSupport: 'supported' | 'unsupported'
     observation: DashboardProviderProfileState['observation'] | undefined
     t: (key: MessageKey) => string
   } = $props()
@@ -23,7 +25,9 @@
   let auth = $derived(observation?.auth ?? 'unknown')
   let access = $derived(observation?.access ?? 'unknown')
   let planLabel = $derived(observation?.account?.tier.label ?? observation?.account?.subscription ?? null)
-  let planKind = $derived(auth !== 'authenticated' && access !== 'guest'
+  let planKind = $derived(subscriptionSupport === 'unsupported'
+    ? 'none'
+    : auth !== 'authenticated' && access !== 'guest'
     ? 'none'
     : access === 'guest' || access === 'signed_in_free'
       ? 'free'
@@ -60,6 +64,7 @@
   data-testid={`provider-access-${providerId}`}
   data-auth={auth}
   data-plan={planKind}
+  data-subscription-support={subscriptionSupport}
   data-paid-level={paidLevel || undefined}
 >
   <span class={`provider-access-indicator auth-${auth}`} title={authLabel} aria-label={authLabel}>

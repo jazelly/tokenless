@@ -2,7 +2,6 @@ import { TokenlessPlaywrightError } from './browser/errors.js'
 
 export type JobStatus =
   | 'queued'
-  | 'claimed'
   | 'running'
   | 'waiting_for_user'
   | 'succeeded'
@@ -20,8 +19,6 @@ type DaemonErrorKind =
   | 'non_loopback_bind'
   | 'invalid_status'
   | 'job_not_found'
-  | 'claim_rejected'
-  | 'claim_expired'
   | 'bridge_busy'
   | 'control_auth_missing'
   | 'control_auth_rejected'
@@ -108,14 +105,6 @@ export function jobNotFound(jobId: string) {
   return new DaemonError('job_not_found', `job not found: ${jobId}`, { jobId })
 }
 
-export function claimRejected(jobId: string) {
-  return new DaemonError('claim_rejected', `claim rejected for job: ${jobId}`, { jobId })
-}
-
-export function claimExpired(jobId: string) {
-  return new DaemonError('claim_expired', `claim lease expired for job: ${jobId}`, { jobId })
-}
-
 export function controlAuthMissing() {
   return new DaemonError('control_auth_missing', 'missing bearer token')
 }
@@ -164,10 +153,8 @@ export function daemonErrorStatus(error: DaemonError) {
       return 401
     case 'job_not_found':
       return 404
-    case 'claim_rejected':
     case 'control_auth_rejected':
       return 403
-    case 'claim_expired':
     case 'invalid_job_state':
     case 'bridge_busy':
       return 409
@@ -215,10 +202,6 @@ export function daemonErrorCodeRetryable(error: DaemonError) {
       return { code: 'invalid_status', retryable: false }
     case 'job_not_found':
       return { code: 'job_not_found', retryable: false }
-    case 'claim_rejected':
-      return { code: 'claim_rejected', retryable: false }
-    case 'claim_expired':
-      return { code: 'claim_expired', retryable: false }
     case 'bridge_busy':
       return { code: 'bridge_busy', retryable: true }
     case 'control_auth_missing':
@@ -254,8 +237,6 @@ function daemonErrorDetails(error: DaemonError) {
     case 'invalid_status':
       return { status: error.statusValue }
     case 'job_not_found':
-    case 'claim_rejected':
-    case 'claim_expired':
       return { job_id: error.jobId }
     case 'invalid_job_state':
       return {

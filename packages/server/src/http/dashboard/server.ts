@@ -46,12 +46,9 @@ export class TokenlessDashboardServer {
   }
 
   dashboardUrl(profileId?: string | null, jobId?: string | null) {
-    const url = new URL('/dashboard/', this.origin())
+    const url = new URL(jobId ? '/dashboard/jobs/' : '/dashboard/overview/', this.origin())
     if (profileId) url.searchParams.set('profile', profileId)
-    if (jobId) {
-      url.searchParams.set('job', jobId)
-      url.hash = 'jobs'
-    }
+    if (jobId) url.searchParams.set('job', jobId)
     return url.toString()
   }
 
@@ -59,14 +56,14 @@ export class TokenlessDashboardServer {
     this.requireOrigin(request)
     this.sessions.ensureSession(request, response)
     this.securityHeaders(response)
-    response.writeHead(303, { location: '/dashboard/' })
+    response.writeHead(303, { location: '/dashboard/overview/' })
     response.end()
   }
 
   async handle(request: IncomingMessage, response: ServerResponse, url: URL) {
     const requestOrigin = this.requireOrigin(request)
     const method = request.method ?? 'GET'
-    if (method === 'GET' && (url.pathname === '/dashboard' || url.pathname === '/dashboard/' || url.pathname === '/dashboard/setup' || url.pathname === '/dashboard/setup/')) {
+    if (method === 'GET' && isDashboardPagePath(url.pathname)) {
       this.sessions.ensureSession(request, response)
       const language = await this.initialLanguage(request)
       const shellMessages = DASHBOARD_SHELL_MESSAGES[language]
@@ -140,17 +137,13 @@ export class TokenlessDashboardServer {
       this.writeJson(response, 200, snapshot, { etag })
       return true
     }
-    const jobMatch = /^\/dashboard-api\/v1\/jobs\/([^/]+)(?:\/(cancel|resume))?$/.exec(url.pathname)
+    const jobMatch = /^\/dashboard-api\/v1\/jobs\/([^/]+)(?:\/(cancel))?$/.exec(url.pathname)
     if (jobMatch && method === 'GET' && !jobMatch[2]) {
       this.writeJson(response, 200, await this.services.job(decodeURIComponent(jobMatch[1] ?? '')))
       return true
     }
     if (jobMatch && method === 'POST' && jobMatch[2] === 'cancel') {
       this.writeJson(response, 200, await this.services.cancelJob(decodeURIComponent(jobMatch[1] ?? '')))
-      return true
-    }
-    if (jobMatch && method === 'POST' && jobMatch[2] === 'resume') {
-      this.writeJson(response, 200, await this.services.resumeJob(decodeURIComponent(jobMatch[1] ?? '')))
       return true
     }
     if (method === 'PATCH' && url.pathname === '/dashboard-api/v1/config') {
@@ -300,6 +293,14 @@ export class TokenlessDashboardServer {
     })
     response.end(payload)
   }
+}
+
+function isDashboardPagePath(pathname: string) {
+  return pathname === '/dashboard'
+    || pathname === '/dashboard/'
+    || pathname === '/dashboard/setup'
+    || pathname === '/dashboard/setup/'
+    || /^\/dashboard\/(?:overview|profiles|providers|capabilities|jobs|system)\/?$/.test(pathname)
 }
 
 const DASHBOARD_SHELL_MESSAGES = {

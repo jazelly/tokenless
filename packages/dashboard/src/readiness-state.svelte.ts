@@ -9,7 +9,7 @@ import type {
 
 const READINESS_TIMEOUT_MS = 120_000
 const READINESS_POLL_MS = 750
-const ACTIVE_JOB_STATUSES = new Set<DashboardJobStatus>(['queued', 'claimed', 'running'])
+const ACTIVE_JOB_STATUSES = new Set<DashboardJobStatus>(['queued', 'running', 'waiting_for_user'])
 
 type ReadinessDependencies = {
   client: DashboardClient

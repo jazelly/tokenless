@@ -1,10 +1,10 @@
-# Tokenless API macOS menu bar app
+# Tokenless macOS menu bar app
 
 The local macOS menu bar app provides a native SwiftUI surface for the Tokenless API daemon:
 
 - status and daemon version;
 - dashboard and the ten most recent conversations;
-- restart, quit, update checks, upgrades, and Launch at Login;
+- restart, quit, update checks, upgrades, and Start Tokenless at Login;
 - English and Simplified Chinese labels selected from the persisted Tokenless language.
 
 ## Local build and install
@@ -21,3 +21,5 @@ The build creates `dist/macos/Tokenless API.app` and `dist/macos/Tokenless API.z
 The installer replaces `~/Applications/Tokenless API.app`, resolves `which tokenless` in the invoking shell, and writes a mode-0600 binding at `~/Library/Application Support/Tokenless API/menubar-binding.json`. The binding records the absolute Node executable, the absolute `which tokenless` command path itself (without dereferencing its symlink), the CLI entrypoint, and Tokenless home so the GUI does not depend on shell PATH while following npm global upgrades.
 
 The bundle identifier is the local-only `local.tokenless.api.menubar`. The app is an agent application (`LSUIElement=true`), so it appears in the menu bar without a Dock icon.
+
+When the app launches, it immediately runs `tokenless menubar status --json` to ensure the Tokenless API daemon is ready. Therefore enabling Start Tokenless at Login starts the complete local Tokenless API control surface, including the Dashboard served by the daemon; provider browsers remain on-demand.

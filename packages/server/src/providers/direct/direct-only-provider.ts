@@ -29,6 +29,7 @@ export class DirectOnlyG4fProvider extends BaseProvider<ProviderId> {
       label: G4F_PROVIDER_LABELS[catalogId],
       stage: 'experimental',
       setupOrder,
+      subscriptionSupport: 'unsupported',
       executionModes: Object.freeze(['direct'] as const),
       protocolCompatibility: Object.freeze({
         legacyRequests: false,

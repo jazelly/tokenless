@@ -172,7 +172,7 @@ function cancelRunJobs({ homeDir, daemonUrl, env, jobPrefix }) {
       `SELECT job_id
        FROM jobs
        WHERE substr(job_id, 1, length(?)) = ?
-         AND status IN ('queued', 'claimed', 'running', 'waiting_for_user')
+         AND status IN ('queued', 'running', 'waiting_for_user')
        ORDER BY created_at, job_id`,
     ).all(jobPrefix, jobPrefix)
   } finally {

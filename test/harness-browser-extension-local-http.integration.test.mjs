@@ -54,7 +54,7 @@ test('built daemon pairs and revokes one extension-scoped Harness credential wit
     assert.equal(new URL(created.dashboardUrl).origin, daemon.origin)
     assert.equal(new URL(created.dashboardUrl).searchParams.get('harnessPairing'), created.pairingId)
 
-    const dashboard = await fetch(`${daemon.origin}/dashboard/`)
+    const dashboard = await fetch(`${daemon.origin}/dashboard/overview/`)
     assert.equal(dashboard.status, 200)
     const cookie = dashboard.headers.get('set-cookie')?.split(';')[0]
     assert.ok(cookie)

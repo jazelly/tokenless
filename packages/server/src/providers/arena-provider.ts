@@ -29,6 +29,7 @@ export class ArenaProvider extends BaseProvider<'arena'> {
       label: 'Arena',
       stage: 'supported',
       setupOrder: 11,
+      subscriptionSupport: 'unsupported',
       protocolCompatibility: Object.freeze({
         legacyRequests: false,
       }),

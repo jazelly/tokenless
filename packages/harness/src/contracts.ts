@@ -406,13 +406,11 @@ export type ProviderTurnClient = {
   start(request: ProviderTurnRequest): Promise<ProviderTurnState>
   read(request: ProviderTurnOperationRequest): Promise<ProviderTurnState>
   continue(request: ProviderTurnRequest): Promise<ProviderTurnState>
-  resume(request: ProviderTurnOperationRequest): Promise<ProviderTurnState>
   cancel(request: Pick<ProviderTurnRequest, 'requestRef' | 'runId' | 'turn' | 'nonce' | 'provider' | 'profileId'> & Partial<Pick<ProviderTurnOperationRequest, 'turnRef' | 'providerRef' | 'providerBindingRef' | 'conversationRef'>>): Promise<ProviderTurnCancellation>
 }
 
 export type ProviderTurnCancellation =
-  | { protocol: typeof PROVIDER_TURN_PROTOCOL; requestRef: string; kind: 'cancelled_before_start' }
-  | { protocol: typeof PROVIDER_TURN_PROTOCOL; requestRef: string; kind: 'turn'; turn: ProviderTurnState }
+  { protocol: typeof PROVIDER_TURN_PROTOCOL; requestRef: string; kind: 'turn'; turn: ProviderTurnState }
 
 export type HarnessToolCallResult = {
   id: string
@@ -502,7 +500,6 @@ export type HarnessRunPhase =
   | 'discovering_tools'
   | 'submitting_provider'
   | 'awaiting_provider'
-  | 'resuming_provider'
   | 'cancelling_provider'
   | 'waiting_intervention'
   | 'executing_batch'
@@ -528,7 +525,6 @@ export type AgentRunIntervention = {
   approvals?: readonly { callId: string; argumentsDigest: string }[] | undefined
   answers?: Readonly<Record<string, JsonValue>> | undefined
   authenticationCompleted?: readonly { callId: string; argumentsDigest: string }[] | undefined
-  providerReady?: true | undefined
 }
 
 export type WebAgentHarness = {
@@ -553,7 +549,6 @@ export class HarnessSkillError extends Error {
 
 export class ProviderTurnDispatchError extends Error {
   constructor(
-    readonly dispatch: 'deterministic' | 'retryable' | 'ambiguous',
     readonly code: string,
     message: string,
   ) {

@@ -90,7 +90,6 @@ export type ProviderRuleCapacityProjection = {
   burstUnits: number | null
   cadenceSeconds: number | null
   decision: 'admit' | 'defer' | 'unknown'
-  eligibleAt: string | null
   reason: string
 }
 
@@ -108,7 +107,6 @@ export type ProviderCapacityProjection = {
     match: 'label' | 'access_class' | 'unknown'
   }
   decision: 'admit' | 'defer' | 'unknown'
-  eligibleAt: string | null
   reason: string
   rules: readonly ProviderRuleCapacityProjection[]
 }
@@ -239,7 +237,6 @@ export const providerCapacityPolicy: ProviderCapacityPolicy = Object.freeze({
     const deferred = rules.filter((rule) => rule.decision === 'defer')
     const numeric = rules.filter((rule) => rule.knowledge === 'official_exact')
     const unknown = rules.filter((rule) => rule.decision === 'unknown')
-    const eligibleAt = deferred.reduce<string | null>((latest, rule) => laterIso(latest, rule.eligibleAt), null)
     const decision: ProviderCapacityProjection['decision'] = deferred.length > 0
       ? 'defer'
       : unknown.length > 0 ? 'unknown' : numeric.length > 0 ? 'admit' : 'unknown'
@@ -264,7 +261,6 @@ export const providerCapacityPolicy: ProviderCapacityPolicy = Object.freeze({
         match: subscription.match,
       },
       decision,
-      eligibleAt,
       reason,
       rules,
     }
@@ -300,7 +296,6 @@ function projectRule(
       burstUnits: null,
       cadenceSeconds: null,
       decision: 'unknown',
-      eligibleAt: null,
       reason: `Catalog allowance '${rule.allowance.kind}' is intentionally not converted into a numeric limit.`,
     }
   }
@@ -357,9 +352,6 @@ function projectRule(
     burstUnits,
     cadenceSeconds: cadenceMs / 1000,
     decision: deferred ? 'defer' : 'admit',
-    eligibleAt: deferred && Number.isFinite(eligibleMs)
-      ? new Date(Math.max(eligibleMs, now.getTime() + 1_000)).toISOString()
-      : null,
     reason: deferred
       ? Number.isFinite(eligibleMs)
         ? 'Known sliding-window capacity or smoothed burst cadence would be exceeded.'
@@ -492,7 +484,6 @@ function unknownProjection(
     evaluatedAt: now.toISOString(),
     subscription: { accessClass: input.accessClass, observedLabel, planId: 'unknown', match: 'unknown' },
     decision: 'unknown',
-    eligibleAt: null,
     reason,
     rules: [],
   }
@@ -544,12 +535,6 @@ function normalizeObservedLabel(value: string | null | undefined) {
 
 function comparableLabel(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, '')
-}
-
-function laterIso(left: string | null, right: string | null) {
-  if (!left) return right
-  if (!right) return left
-  return Date.parse(left) >= Date.parse(right) ? left : right
 }
 
 function isRecord(value: unknown): value is JsonRecord {

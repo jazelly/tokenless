@@ -27,12 +27,10 @@
 | `tokenless profiles remove` | 通过显式确认删除一个 managed profile。 | 否 |
 | `tokenless capabilities list` | 列出 canonical task capabilities 和已有证据闭环的 provider routes。 | 否 |
 | `tokenless limits inspect` | 根据 packaged catalog 和本地 job 历史查看下一次 prompt 的 provider/profile 容量估算。 | 否 |
-| `tokenless savings <status\|enable\|disable\|clear\|uninstall>` | 管理可选的本地输出节省计量及其 lazy-download tokenizer。 | 否 |
+| `tokenless savings <status\|enable\|disable\|clear\|uninstall>` | 管理可选的本地输出节省计量及其在首次成功可见 response 时下载的 tokenizer。 | 否 |
 | `tokenless api-proxy <status\|enable\|disable>` | 管理 OpenAI/Anthropic 兼容的本地 API proxy 及其兼容性 conversation-mode 设置。 | 否 |
 | `tokenless run` | 通过可见 provider session 发送 prompt 和可选文件。 | 是 |
-| `tokenless replay` | 为一个 agent recipient 报告此前未见过的 daemon outcome 摘要。 | 否 |
-| `tokenless state` | 查询 daemon 中持久化的 job 状态。 | 否 |
-| `tokenless resume` | 使用 headed browser 恢复等待用户操作的 job。 | 是 |
+| `tokenless state` | 查询当前 daemon job 状态。 | 否 |
 | `tokenless cancel` | 取消 daemon job，并确认其已进入 canceled 状态。 | 否 |
 | `tokenless provider-status` | 实时执行 provider 认证检查。 | 是 |
 | `tokenless provider-controls` | 检查可见的 model 和 effort 控件。 | 是 |
@@ -90,13 +88,12 @@ Tokenless 使用 native mode：Playwright 直接连接用户已经运行的 Goog
 | `--color` | 强制 human-readable output 使用 ANSI 颜色；对 JSON stdout 无效。 |
 | `--no-color` | 禁用 ANSI 颜色，即使输出连接到 terminal 也不启用。 |
 | `--home <path>` | 使用非默认的 Tokenless 状态目录。 |
-| `--daemon-url <url>` | 设置首选 loopback daemon URL。若其端口被占用，Tokenless 可顺延到下一个空闲端口，并把实际 endpoint 记录到 SQLite。 |
-| `--agent-kind <kind>` | 将 job 或 replay drain 定向到显式 agent kind；必须与 `--agent-session-id` 同时使用。 |
-| `--agent-session-id <id>` | 将 job 或 replay drain 定向到显式 agent session；必须与 `--agent-kind` 同时使用。 |
+| `--daemon-url <url>` | 设置 loopback daemon URL。若其端口被占用，daemon 启动会明确失败。 |
+| `--agent-kind <kind>` | 为当前 invocation 提供 Codex Harness agent kind；必须与 `--agent-session-id` 同时使用。 |
+| `--agent-session-id <id>` | 为当前 invocation 提供 Codex Harness session identity；必须与 `--agent-kind` 同时使用。 |
 | `--browser-visibility <headed>` | Native Chrome 目前只支持 headed。 |
 | `--timeout-ms <ms>` | 覆盖命令或 job 的等待时间。 |
 | `--daemon-start-timeout-ms <ms>` | 覆盖 daemon 启动等待时间。 |
-| `--runner-heartbeat-timeout-ms <ms>` | 为兼容保留；embedded Playwright runtime 会忽略它。 |
 | `--cancel-timeout-ms <ms>` | 覆盖取消确认等待时间。 |
 | `--target-url <url>` | 从所选 provider 域名下允许的 URL 开始执行。 |
 
@@ -239,13 +236,13 @@ tokenless dashboard --profile work --no-open --json
 tokenless dashboard --job-id <job-id>
 ```
 
-`--no-open` 不启动浏览器，只输出可直接访问的 loopback Dashboard URL。打开 `/` 会跳转到 `/dashboard/`，并建立短期有效的 `HttpOnly`、`SameSite=Strict` session cookie；所有 mutation 仍会校验 exact Origin 和 CSRF。Dashboard 可以在任意浏览器中运行；provider action 仍会在所选 profile 绑定的 browser runtime 中执行。Dashboard 不会收到 daemon bearer token、provider cookies、browser storage、Keychain 数据、raw DOM、claim token、checkpoint 或私有文件路径。
+`--no-open` 不启动浏览器，只输出可直接访问的 loopback Dashboard URL。打开 `/` 会跳转到 `/dashboard/overview/`，并建立短期有效的 `HttpOnly`、`SameSite=Strict` session cookie；所有 mutation 仍会校验 exact Origin 和 CSRF。Dashboard 可以在任意浏览器中运行；provider action 仍会在所选 profile 绑定的 browser runtime 中执行。Dashboard 不会收到 daemon bearer token、provider cookies、browser storage、Keychain 数据、raw DOM 或私有文件路径。
 
 `--job-id` 会打开 Jobs view，并自动加载该 job 的详情。`tokenless menubar status --json` 会启动或发现同一 Tokenless home 的 daemon，然后返回 daemon/runtime status、Dashboard URL、active job 数量，以及最多十条按 `updatedAt` 降序排列的 conversation 摘要。摘要只包含安全标题和公开标识符，不包含 prompt、transcript、credentials 或私有路径。
 
 Dashboard 包含 Overview、Profiles、Providers、Capabilities、Jobs 和 System/Diagnostics。Provider membership、visibility、role label，以及不带凭据的 HTTP/HTTPS/SOCKS5 proxy 都按 profile 配置。CLI 恢复入口仍然完整保留：
 
-Provider 就绪状态刷新会以最多三个一批的方式隐式运行。Profile 空闲时，Tokenless 会启动常驻 headless browser；如果同一 Profile 已有 headed browser，则复用该 runtime，不替换 browser、不关闭现有 tabs，也不把检查带到前台。每项检查只拥有一个临时后台 tab，并在完成、失败、遇到 blocker、超时或取消时关闭它；用户原有 tabs 不受影响。刷新遇到登录或验证时只记录所需操作；只有显式 Provider、browser 或 job 操作才会启动可见 browser interaction。
+Provider 就绪状态刷新会在每个 Profile 内串行运行。Profile 空闲时，Tokenless 会启动常驻 headless browser；如果同一 Profile 已有 headed browser，则复用该 runtime，不替换 browser、不关闭现有 tabs，也不把检查带到前台。每项检查只拥有一个临时后台 tab，并在完成、失败、遇到 blocker、超时或取消时关闭它；用户原有 tabs 不受影响。刷新遇到登录或验证时只记录所需操作；只有显式 Provider、browser 或 job 操作才会启动可见 browser interaction。
 
 ```bash
 tokenless config --profile work --provider-whitelist chatgpt,claude --browser-visibility headed --json
@@ -378,7 +375,7 @@ tokenless profiles add -P work --set-default --json
 
 读取 profile registry，并返回全部 managed profiles。
 
-Registry 存储在 `<TOKENLESS_HOME>/tokenless.sqlite3` 中。首次打开该存储时，会一次性导入已有的 `<TOKENLESS_HOME>/browser/profiles.json` registry。
+Registry 存储在 `<TOKENLESS_HOME>/tokenless.sqlite3` 中。
 
 ```bash
 tokenless profiles list
@@ -463,7 +460,7 @@ tokenless capabilities list --json
 tokenless limits inspect --profile default --provider chatgpt --json
 ```
 
-结果会报告匹配的 catalog plan 和 rules、本地 usage、公开与生效 allowance、估算剩余额度、cadence、burst allowance、decision 和 `eligibleAt`。`unknown` 表示 Tokenless 没有可执行的官方数值，因此会放行；它不表示 provider 容量无限。该命令只读且只访问本地状态，不会打开 provider 网站或提交 prompt。
+结果会报告匹配的 catalog plan 和 rules、本地 usage、公开与生效 allowance、估算剩余额度、cadence、burst allowance 与 decision。`unknown` 表示 Tokenless 没有可执行的官方数值，因此会放行；它不表示 provider 容量无限。该命令只读且只访问本地状态，不会打开 provider 网站或提交 prompt。
 
 ### `tokenless savings`
 
@@ -477,9 +474,9 @@ tokenless savings clear --confirm-delete --json
 tokenless savings uninstall --confirm-delete --json
 ```
 
-`enable` 会先下载并验证固定版本的 `o200k_base` WASM tokenizer，再把 `outputSavings.enabled` 设为 `true`。正常的默认开启流程则会等到第一个 provider job 已经完成、并把计量工作持久交接给 daemon 后，才在后台懒安装。`disable` 会丢弃排队文本、阻止进行中的结果被保存，并保留历史和 runtime。`clear` 会丢弃清空前的工作并删除持久化计量历史；`uninstall` 会停用计量、丢弃工作并移除 runtime；这两个破坏性操作都必须提供 `--confirm-delete`。`status` 对配置和 tokenizer 安装状态都是只读的。所有这些命令都不会打开 provider 页面。
+`enable` 会先下载并验证固定版本的 `o200k_base` WASM tokenizer，再把 `outputSavings.enabled` 设为 `true`。正常的默认开启流程会在当前 execution 的首次成功可见 response 期间安装并计量。`disable` 会阻止后续结果保存，但保留历史和 runtime。`clear` 会删除计量历史；`uninstall` 会停用计量、清除历史并移除 runtime；这两个破坏性操作都必须提供 `--confirm-delete`。`status` 对配置和 tokenizer 安装状态都是只读的。所有这些命令都不会打开 provider 页面。
 
-计量范围仅包括经过规范化的可见 assistant 输出，并归属到触发它的 durable job 和 response。它是稳定的跨 provider estimate，不是 provider billing 数值；input token、隐藏推理和私有 backend traffic 都不在范围内。
+计量范围仅包括经过规范化的可见 assistant 输出，并归属到触发它的 job 和 response。它是稳定的跨 provider estimate，不是 provider billing 数值；input token、隐藏推理和私有 backend traffic 都不在范围内。
 
 ### `tokenless api-proxy`
 
@@ -505,7 +502,7 @@ tokenless api-proxy disable --json
 
 `tools`、`tool_choice`、`functions`、`function_call` 和 `response_format` 会被拒绝，因为可见 provider 页面没有对应控件。`stream: true` 会返回该方言约定的事件序列，但作为一个终态 chunk 一次性下发，因为可见 response 只有渲染完成后才可读。返回的 `usage` 计数恒为 0：Tokenless 不计量 provider token，该 response 由你自己的网页版订阅承担。
 
-Response 中附带一个 `tokenless` 对象，包含 provider、持久 `job_id`、conversation mode 以及可见 citations。
+Response 中附带一个 `tokenless` 对象，包含 provider、当前 `job_id`、conversation mode 以及可见 citations。
 
 ### `tokenless run`
 
@@ -529,8 +526,8 @@ Provider 选择：
 - Unknown 与 sign-in-required observations 不可用于隐式路由。如果没有可用 cached provider，CLI 会在创建 daemon job 前返回带 provider observation context 的 `provider_unavailable`。
 - 已知 capability 如果没有完整 route，会在 browser mutation 前返回 `task_capability_route_unavailable`。`--capability` 当前只支持正常的 `submit_and_read` action。
 - 成功提交会返回并持久化 `capabilityRoute`，其中包含规范化 requirements、所选 strategies、support level、evidence identifiers 和 runtime eligibility；`tokenless state` 会返回同一 route。
-- 隐式 `submit_and_read` run 可以持久化 automatic fallback plan。每次 attempt 都会在 mutation 前只读复核已知本地 provider capacity、可见 session 和 capability-specific UI，不发送 probe prompt。已分类的 safe pre-submit capacity、登录、CAPTCHA、rate/plan、维护、区域、导航、稳定 surface 和 capability availability failure，只有在下一条 ranked route 满足完全相同的完整 requirements，且此前 mutation 都可重建时，才会让同一个 job 重新排队。精确或已映射 continuation、显式 provider、provider-specific controls、不可重建 mutation、ambiguous external state 和 post-submission failure 都绝不会自动切换。JSON state 包含排序后的 `fallback.routes`、结构化停止原因和 `providerAttempts`。
-- Job validator 会再次根据 actions、attachment MIME types 和 native workspace intent 推导 capabilities，因此 internal 或 agent caller 无法少报 fallback requirement。Routed job 携带 `tokenless.context-envelope.v1`，其中的 instructions、references、output/constraint contract、可选 upstream state 和 delivery hashes 会在每次 attempt 原样重放；JSON state 只公开脱敏后的 envelope 摘要。
+- 隐式 `submit_and_read` run 可以在当前 execution 中保留 automatic fallback plan。每次 attempt 都会在 mutation 前只读复核已知本地 provider capacity、可见 session 和 capability-specific UI，不发送 probe prompt。已分类的 safe pre-submit capacity、登录、CAPTCHA、rate/plan、维护、区域、导航、稳定 surface 和 capability availability failure，只有在下一条 ranked route 满足完全相同的完整 requirements 且尚未完成 external mutation 时，才会立即尝试该 route。精确或已映射 continuation、显式 provider、provider-specific controls、ambiguous external state 和 post-submission failure 都绝不会自动切换。JSON state 包含排序后的 `fallback.routes`、结构化停止原因和 `providerAttempts`。
+- Job validator 会再次根据 actions、attachment MIME types 和 native workspace intent 推导 capabilities，因此 internal 或 agent caller 无法少报 fallback requirement。Routed job 携带 `tokenless.context-envelope.v1`，其中的 instructions、references、output/constraint contract、可选 upstream state 和 delivery hashes 会在每次 fallback attempt 原样复用；JSON state 只公开脱敏后的 envelope 摘要。
 
 Prompt 输入：
 
@@ -558,19 +555,18 @@ Provider 控件：
 
 Identity 与 continuity：
 
-- `--task-id <id>` 提供持久化 task identity。
+- `--task-id <id>` 为当前 daemon execution 提供 task identity。
 - `--page-ref <ref>` 提供由调用方控制的 provider tab identity。只有必须在同一 tab 中继续的工作才复用同一个 Ref；独立工作应使用不同 Ref。省略时会生成独立 Ref。
-- `--idempotency-key <id>` 在没有 task ID 时提供相同 identity。
 - `--project-name <name>` 和 `--chat-name <name>` 会参与推导 task identity，但不会请求 Workspace 处理。
 - `--workspace-mode <auto|native|conversation>` 显式请求 Workspace 处理，并要求同时提供 `--project-name`。
 - `--project-instructions <text>` 或 `--project-instructions-file <path>` 提供可选 Workspace instructions。
-- `--agent-kind <kind>` 和 `--agent-session-id <id>` 将 job 定向到一个 agent recipient。两者必须同时提供，也可通过 `TOKENLESS_AGENT_KIND` 与 `TOKENLESS_AGENT_SESSION_ID` 提供。
+- `--agent-kind <kind>` 和 `--agent-session-id <id>` 提供 Codex Harness context identity。两者必须同时提供，也可通过 `TOKENLESS_AGENT_KIND` 与 `TOKENLESS_AGENT_SESSION_ID` 提供。
 
 执行控制：
 
 - `--no-wait` 提交后立即返回，不等待结果。
 - `--long-running` 使用 long-running wait budget，且不能与 `--no-wait` 同时使用。
-- `--timeout-ms`、`--cancel-timeout-ms` 和 `--daemon-start-timeout-ms` 可覆盖执行时间。`--runner-heartbeat-timeout-ms` 为兼容保留，但不再控制 standalone runner。
+- `--timeout-ms`、`--cancel-timeout-ms` 和 `--daemon-start-timeout-ms` 可覆盖执行时间。
 - `--target-url <url>` 选择 provider 域名下允许的起始 URL。
 
 Workspace modes：
@@ -582,26 +578,9 @@ Workspace modes：
 - 原生结果会报告 `created` 或 `reused`、canonical provider resource identity、provider/profile scope 和 instruction outcome；conversation 结果会报告 `fallback`。
 - Project 和 task conversation target 会作为精确 SQLite mapping 持久化，不再通过扫描历史 job result 恢复。
 
-### `tokenless replay`
-
-原子报告尚未送达给一个显式 agent recipient 的 outcome 摘要：
-
-```bash
-tokenless replay \
-  --agent-kind codex \
-  --agent-session-id "<stable-session-id>" \
-  --json
-```
-
-该命令会按需探测或启动本地 daemon。SQLite 会在返回响应前把每个 actionable outcome revision 标为已报告，因此同一 revision 永不再次主动报告——即使本次 CLI 响应丢失。同一 job 后续进入新的 parked 或 terminal revision 时，会作为新的 outcome 再报告一次。
-
-Replay 只包含 allowlist metadata，以及 `has_result`、`has_error`、`has_blocker` 标志；不会包含原始 result、error 或 blocker 内容。需要时使用 `tokenless state --job-id "<jobId>" --json` 读取持久化的完整 job。不要仅仅因为漏掉 replay 响应就提交替代 job。
-
-主要选项：`--agent-kind`、`--agent-session-id`、`--limit`、`--daemon-url`、`--daemon-start-timeout-ms`、`--home` 和 `--json`。两个 identity 参数也可由 `TOKENLESS_AGENT_KIND` 与 `TOKENLESS_AGENT_SESSION_ID` 提供。
-
 ### `tokenless state`
 
-读取 daemon 中持久化的 job 状态，不访问 provider。
+读取 daemon 当前 job 状态，不访问 provider。Daemon 重启时未完成的 job 会以 `job_interrupted` 错误标记为 failed，不会恢复。
 
 ```bash
 tokenless state --task-id task-123 -P default --json
@@ -610,21 +589,6 @@ tokenless state -P default -p chatgpt --limit 10 --json
 ```
 
 必须提供 task ID、job ID 或 profile。结果会按 managed Playwright backend、所选 profile 和 provider 过滤。`--limit` 控制返回 job 数量。
-
-### `tokenless resume`
-
-当同一个 daemon job 进入 `waiting_for_user` 后，恢复该 job。
-
-```bash
-tokenless resume \
-  --job-id tlp_... \
-  --browser-visibility headed \
-  --json
-```
-
-必须提供 `--job-id` 和 `--browser-visibility headed`。Resume 会保留原始 job 与 task identity。
-
-当 provider 登录、hCaptcha、MFA 或其他可见人工验证成为必要条件时，Tokenless 会报告 `waiting_for_user`，并明确提示“需要你的协助”。请完成可见步骤，然后查询或恢复同一个 job；不要提交替代 job。
 
 ### `tokenless cancel`
 
@@ -796,7 +760,6 @@ tokenless prompt \
 | `tokenless inspect-chatgpt-controls` | `tokenless chatgpt-controls` |
 | `--turn-context` | `--context` |
 | `--turn-context-file` | `--context-file` |
-| `--conversation-key` | `--idempotency-key` |
 
 ## 状态与副作用总结
 
@@ -815,7 +778,7 @@ provider-status
     但不是用于刷新 profile registry 的工作流
 ```
 
-可能打开或操作 provider 页面的命令包括：`setup`、`profiles status`、`profiles open`、`run`、`resume`、所有 provider inspection/configuration/action 命令，以及 `snapshot-dom`。
+可能打开或操作 provider 页面的命令包括：`setup`、`profiles status`、`profiles open`、`run`、所有 provider inspection/configuration/action 命令，以及 `snapshot-dom`。
 
 ## 手动真实浏览器验收
 

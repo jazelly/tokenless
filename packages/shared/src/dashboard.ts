@@ -17,7 +17,6 @@ export type DashboardBrowserVisibility = 'auto' | 'headed' | 'headless'
 
 export type DashboardJobStatus =
   | 'queued'
-  | 'claimed'
   | 'running'
   | 'waiting_for_user'
   | 'succeeded'
@@ -199,6 +198,7 @@ export type DashboardProvider = {
   label: string
   stage: 'experimental' | 'supported' | 'disabled'
   executionModes: readonly DashboardProviderExecutionMode[]
+  subscriptionSupport: 'supported' | 'unsupported'
   homeUrl: string
   profiles: DashboardProviderProfileState[]
 }
@@ -279,7 +279,6 @@ export type DashboardJobSummary = {
   conversationUrl: string | null
   estimatedTokens: number | null
   capabilityRoute: unknown
-  agent: { kind: string; sessionId: string } | null
   blocker: unknown
   outputSavings: DashboardJobOutputSavings
   createdAt: string

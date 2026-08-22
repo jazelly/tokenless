@@ -161,33 +161,6 @@
         ]
       }
     },
-    "/dashboard-api/v1/jobs/{jobId}/resume": {
-      "post": {
-        "operationId": "resumeDashboardJob",
-        "security": [
-          {
-            "dashboardSession": [],
-            "csrf": []
-          }
-        ],
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/JobId"
-          }
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/JobDetail"
-          },
-          "400": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "tags": [
-          "Dashboard"
-        ]
-      }
-    },
     "/dashboard-api/v1/output-savings/disable": {
       "post": {
         "operationId": "disableDashboardOutputSavings",
@@ -2600,104 +2573,6 @@
         ]
       }
     },
-    "/v1/private/jobs/{job_id}/report": {
-      "post": {
-        "operationId": "reportJobOutcome",
-        "summary": "Mark one addressed job outcome revision as reported",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/job_id"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AgentRecipientRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Idempotent report receipt and public job view",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/JobReportResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          }
-        },
-        "tags": [
-          "Private · Jobs"
-        ]
-      }
-    },
-    "/v1/private/jobs/{job_id}/resume": {
-      "post": {
-        "operationId": "resumeJob",
-        "summary": "Resume a parked Playwright job",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/job_id"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ResumeJobRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/PublicJob"
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          }
-        },
-        "tags": [
-          "Private · Jobs"
-        ]
-      }
-    },
     "/v1/private/provider-capacity": {
       "get": {
         "operationId": "getProviderCapacity",
@@ -3080,7 +2955,7 @@
             "$ref": "#/components/responses/Forbidden"
           },
           "409": {
-            "$ref": "#/components/responses/WebAiRequestRefStartConflict"
+            "$ref": "#/components/responses/WebAiRequestRefConflict"
           }
         },
         "tags": [
@@ -3091,7 +2966,7 @@
     "/v1/private/provider-turn/requests/{requestRef}/cancel": {
       "post": {
         "operationId": "cancelWebAiInteractionV0Request",
-        "summary": "Durably cancel a V0 request intent before or after its opaque turn reference is known",
+        "summary": "Cancel an existing V0 request by its request reference",
         "parameters": [
           {
             "$ref": "#/components/parameters/web_ai_request_ref"
@@ -3127,6 +3002,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
           }
         },
         "tags": [
@@ -3201,85 +3079,6 @@
         },
         "tags": [
           "Private · Provider Turn"
-        ]
-      }
-    },
-    "/v1/private/provider-turn/turns/{turnRef}/resume": {
-      "post": {
-        "operationId": "resumeWebAiInteractionV0Turn",
-        "summary": "Resume one waiting V0 turn by opaque turn reference",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/web_ai_turn_ref"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Core V0 turn state",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/WebAiTurnResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          }
-        },
-        "tags": [
-          "Private · Provider Turn"
-        ]
-      }
-    },
-    "/v1/private/replay/drain": {
-      "post": {
-        "operationId": "drainAgentReplay",
-        "summary": "Atomically report pending outcome summaries for one agent recipient",
-        "description": "Eligible outcome revisions are marked reported in SQLite before this response is returned. A lost response is not replayed automatically; full job state remains queryable by job ID.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ReplayDrainRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Newly reported outcome summaries",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ReplayDrainResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          }
-        },
-        "tags": [
-          "Private · Replay"
         ]
       }
     },
@@ -3566,7 +3365,7 @@
         }
       },
       "Conflict": {
-        "description": "Claim lease or job state conflict",
+        "description": "Job state conflict",
         "content": {
           "application/json": {
             "schema": {
@@ -3596,7 +3395,7 @@
         }
       },
       "Forbidden": {
-        "description": "Rejected bearer token or claim token",
+        "description": "Rejected bearer token",
         "content": {
           "application/json": {
             "schema": {
@@ -3606,28 +3405,11 @@
         }
       },
       "WebAiRequestRefConflict": {
-        "description": "The immutable requestRef is already bound to a different Web AI V0 start request; no new turn or job was created.",
+        "description": "The requestRef already has a Web AI V0 turn; duplicate starts are not replayed.",
         "content": {
           "application/json": {
             "schema": {
               "$ref": "#/components/schemas/WebAiRequestRefConflictResponse"
-            }
-          }
-        }
-      },
-      "WebAiRequestRefStartConflict": {
-        "description": "The immutable requestRef is already bound to a different request or was cancelled before a turn could be created.",
-        "content": {
-          "application/json": {
-            "schema": {
-              "oneOf": [
-                {
-                  "$ref": "#/components/schemas/WebAiRequestRefConflictResponse"
-                },
-                {
-                  "$ref": "#/components/schemas/WebAiRequestCancelledResponse"
-                }
-              ]
             }
           }
         }
@@ -3763,7 +3545,7 @@
         }
       },
       "JobSummary": {
-        "description": "Redacted durable job summary.",
+        "description": "Redacted job summary.",
         "content": {
           "application/json": {
             "schema": {
@@ -3783,7 +3565,7 @@
         }
       },
       "JobDetail": {
-        "description": "Redacted durable job detail.",
+        "description": "Redacted job detail.",
         "content": {
           "application/json": {
             "schema": {
@@ -3917,26 +3699,6 @@
       }
     },
     "schemas": {
-      "AgentRecipientRequest": {
-        "type": "object",
-        "required": [
-          "agent_kind",
-          "agent_session_id"
-        ],
-        "additionalProperties": false,
-        "properties": {
-          "agent_kind": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 128
-          },
-          "agent_session_id": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 256
-          }
-        }
-      },
       "ApiProxyAnthropicError": {
         "type": "object",
         "description": "Anthropic-shaped error envelope carrying the same status semantics as the OpenAI dialect.",
@@ -4253,7 +4015,7 @@
                 }
               }
             },
-            "description": "Redacted attempts from the one durable provider job. Credentials, prompt bodies, model output, and hidden reasoning are never included."
+            "description": "Redacted attempts from the one provider job. Credentials, prompt bodies, model output, and hidden reasoning are never included."
           },
           "citations": {
             "type": "array",
@@ -6058,14 +5820,6 @@
           "request_json"
         ],
         "additionalProperties": false,
-        "dependentRequired": {
-          "agent_kind": [
-            "agent_session_id"
-          ],
-          "agent_session_id": [
-            "agent_kind"
-          ]
-        },
         "properties": {
           "provider": {
             "type": "string",
@@ -6085,16 +5839,6 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 128
-          },
-          "agent_kind": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 128
-          },
-          "agent_session_id": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 256
           },
           "job_id": {
             "type": "string",
@@ -6623,26 +6367,9 @@
         ],
         "additionalProperties": false
       },
-      "JobReportResponse": {
-        "type": "object",
-        "required": [
-          "reported",
-          "job"
-        ],
-        "additionalProperties": false,
-        "properties": {
-          "reported": {
-            "type": "boolean"
-          },
-          "job": {
-            "$ref": "#/components/schemas/JobView"
-          }
-        }
-      },
       "JobStatus": {
         "enum": [
           "queued",
-          "claimed",
           "running",
           "waiting_for_user",
           "succeeded",
@@ -6738,12 +6465,6 @@
               "null"
             ]
           },
-          "agent": {
-            "type": [
-              "object",
-              "null"
-            ]
-          },
           "blocker": {},
           "outputSavings": {
             "$ref": "#/components/schemas/JobOutputSavings"
@@ -6772,7 +6493,6 @@
           "conversationUrl",
           "estimatedTokens",
           "capabilityRoute",
-          "agent",
           "blocker",
           "outputSavings",
           "createdAt",
@@ -6795,7 +6515,6 @@
           "blocker_json",
           "provider_attempts_json",
           "provider_submitted_at",
-          "eligible_at",
           "created_at",
           "updated_at"
         ],
@@ -6873,13 +6592,6 @@
             }
           },
           "provider_submitted_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          },
-          "eligible_at": {
             "type": [
               "string",
               "null"
@@ -7948,6 +7660,13 @@
               ]
             }
           },
+          "subscriptionSupport": {
+            "type": "string",
+            "enum": [
+              "supported",
+              "unsupported"
+            ]
+          },
           "profiles": {
             "type": "array",
             "items": {
@@ -7961,6 +7680,7 @@
           "stage",
           "homeUrl",
           "executionModes",
+          "subscriptionSupport",
           "profiles"
         ],
         "additionalProperties": false
@@ -7975,8 +7695,7 @@
           "profileId",
           "evaluatedAt",
           "subscription",
-          "decision",
-          "eligibleAt",
+    "decision",
           "reason",
           "rules"
         ],
@@ -8044,13 +7763,6 @@
               "defer",
               "unknown"
             ]
-          },
-          "eligibleAt": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
           },
           "reason": {
             "type": "string",
@@ -8352,8 +8064,7 @@
           "remainingUnits",
           "burstUnits",
           "cadenceSeconds",
-          "decision",
-          "eligibleAt",
+        "decision",
           "reason"
         ],
         "additionalProperties": false,
@@ -8431,13 +8142,6 @@
               "defer",
               "unknown"
             ]
-          },
-          "eligibleAt": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
           },
           "reason": {
             "type": "string",
@@ -8594,132 +8298,6 @@
           "proof": {
             "type": "string",
             "pattern": "^[A-Za-z0-9_-]{43}$"
-          }
-        }
-      },
-      "ReplayDrainRequest": {
-        "type": "object",
-        "required": [
-          "agent_kind",
-          "agent_session_id"
-        ],
-        "additionalProperties": false,
-        "properties": {
-          "agent_kind": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 128
-          },
-          "agent_session_id": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 256
-          },
-          "limit": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 200,
-            "default": 100
-          }
-        }
-      },
-      "ReplayDrainResponse": {
-        "type": "object",
-        "required": [
-          "jobs"
-        ],
-        "additionalProperties": false,
-        "properties": {
-          "jobs": {
-            "type": "array",
-            "maxItems": 200,
-            "items": {
-              "$ref": "#/components/schemas/ReplaySummary"
-            }
-          }
-        }
-      },
-      "ReplaySummary": {
-        "type": "object",
-        "required": [
-          "job_id",
-          "provider",
-          "action",
-          "status",
-          "task_id",
-          "updated_at",
-          "reported_at",
-          "outcome_kind",
-          "has_result",
-          "has_error",
-          "has_blocker"
-        ],
-        "additionalProperties": false,
-        "properties": {
-          "job_id": {
-            "type": "string",
-            "minLength": 1
-          },
-          "provider": {
-            "type": "string",
-            "minLength": 1
-          },
-          "action": {
-            "type": "string",
-            "minLength": 1
-          },
-          "status": {
-            "enum": [
-              "waiting_for_user",
-              "succeeded",
-              "failed",
-              "canceled",
-              "timed_out"
-            ]
-          },
-          "task_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "maxLength": 256
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "reported_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "outcome_kind": {
-            "enum": [
-              "result",
-              "error",
-              "blocker",
-              "none"
-            ]
-          },
-          "has_result": {
-            "type": "boolean"
-          },
-          "has_error": {
-            "type": "boolean"
-          },
-          "has_blocker": {
-            "type": "boolean"
-          }
-        }
-      },
-      "ResumeJobRequest": {
-        "type": "object",
-        "required": [
-          "browser_visibility"
-        ],
-        "additionalProperties": false,
-        "properties": {
-          "browser_visibility": {
-            "const": "headed"
           }
         }
       },
@@ -9397,36 +8975,20 @@
         }
       },
       "WebAiRequestCancellationResponse": {
-        "oneOf": [
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "kind"
-            ],
-            "properties": {
-              "kind": {
-                "const": "cancelled_before_start"
-              }
-            }
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "turn"
+        ],
+        "properties": {
+          "kind": {
+            "const": "turn"
           },
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "kind",
-              "turn"
-            ],
-            "properties": {
-              "kind": {
-                "const": "turn"
-              },
-              "turn": {
-                "$ref": "#/components/schemas/WebAiRequestCancellationTurn"
-              }
-            }
+          "turn": {
+            "$ref": "#/components/schemas/WebAiRequestCancellationTurn"
           }
-        ]
+        }
       },
       "WebAiRequestCancellationTurn": {
         "type": "object",
@@ -9434,9 +8996,7 @@
         "required": [
           "turnRef",
           "conversationRef",
-          "lifecycle",
-          "dispatchCertainty",
-          "attachmentDeliveryStatus"
+          "lifecycle"
         ],
         "properties": {
           "turnRef": {
@@ -9449,91 +9009,6 @@
           },
           "lifecycle": {
             "const": "cancelled"
-          },
-          "dispatchCertainty": {
-            "enum": [
-              "not_dispatched",
-              "dispatched",
-              "ambiguous"
-            ]
-          },
-          "attachmentDeliveryStatus": {
-            "enum": [
-              "pending",
-              "delivered"
-            ]
-          }
-        },
-        "allOf": [
-          {
-            "if": {
-              "properties": {
-                "dispatchCertainty": {
-                  "const": "not_dispatched"
-                }
-              },
-              "required": [
-                "dispatchCertainty"
-              ]
-            },
-            "then": {
-              "properties": {
-                "attachmentDeliveryStatus": {
-                  "const": "pending"
-                }
-              }
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "dispatchCertainty": {
-                  "enum": [
-                    "dispatched",
-                    "ambiguous"
-                  ]
-                }
-              },
-              "required": [
-                "dispatchCertainty"
-              ]
-            },
-            "then": {
-              "properties": {
-                "attachmentDeliveryStatus": {
-                  "const": "delivered"
-                }
-              }
-            }
-          }
-        ]
-      },
-      "WebAiRequestCancelledResponse": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "error"
-        ],
-        "properties": {
-          "error": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "code",
-              "message",
-              "retryable"
-            ],
-            "properties": {
-              "code": {
-                "const": "web_ai_request_cancelled"
-              },
-              "message": {
-                "const": "The request reference was cancelled before a turn could be created."
-              },
-              "retryable": {
-                "const": false
-              }
-            }
           }
         }
       },
@@ -9557,7 +9032,7 @@
                 "const": "web_ai_request_ref_conflict"
               },
               "message": {
-                "const": "The request reference is already bound to a different request."
+                "const": "The request reference already has a turn; duplicate starts are not replayed."
               },
               "retryable": {
                 "const": false
@@ -9587,9 +9062,7 @@
               "submission_failed",
               "response_failed",
               "timeout",
-              "cancellation_requested",
-              "recovery_failed",
-              "ambiguous_external_mutation"
+              "cancellation_requested"
             ]
           },
           "message": {
@@ -9764,490 +9237,6 @@
         }
       },
       "WebAiTurnState": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/WebAiTurnStateBase"
-          },
-          {
-            "if": {
-              "type": "object",
-              "properties": {
-                "dispatchCertainty": {
-                  "enum": [
-                    "dispatched",
-                    "ambiguous"
-                  ]
-                }
-              },
-              "required": [
-                "dispatchCertainty"
-              ]
-            },
-            "then": {
-              "type": "object",
-              "properties": {
-                "attachmentDelivery": {
-                  "type": "object",
-                  "properties": {
-                    "status": {
-                      "const": "delivered"
-                    }
-                  },
-                  "required": [
-                    "status"
-                  ]
-                }
-              }
-            }
-          },
-          {
-            "if": {
-              "type": "object",
-              "properties": {
-                "attachmentDelivery": {
-                  "type": "object",
-                  "properties": {
-                    "status": {
-                      "const": "rejected"
-                    }
-                  },
-                  "required": [
-                    "status"
-                  ]
-                }
-              },
-              "required": [
-                "attachmentDelivery"
-              ]
-            },
-            "then": {
-              "type": "object",
-              "properties": {
-                "lifecycle": {
-                  "const": "failed"
-                },
-                "dispatchCertainty": {
-                  "const": "not_dispatched"
-                }
-              },
-              "required": [
-                "error"
-              ]
-            }
-          },
-          {
-            "if": {
-              "type": "object",
-              "properties": {
-                "waitingReason": {
-                  "const": "ambiguous_submission"
-                }
-              },
-              "required": [
-                "waitingReason"
-              ]
-            },
-            "then": {
-              "type": "object",
-              "properties": {
-                "dispatchCertainty": {
-                  "const": "ambiguous"
-                }
-              }
-            }
-          }
-        ],
-        "oneOf": [
-          {
-            "title": "queued",
-            "type": "object",
-            "properties": {
-              "lifecycle": {
-                "const": "queued"
-              },
-              "dispatchCertainty": {
-                "const": "not_dispatched"
-              },
-              "attachmentDelivery": {
-                "type": "object",
-                "allOf": [
-                  {
-                    "$ref": "#/components/schemas/WebAiAttachmentDelivery"
-                  }
-                ],
-                "properties": {
-                  "status": {
-                    "const": "pending"
-                  }
-                }
-              }
-            },
-            "required": [
-              "lifecycle",
-              "dispatchCertainty",
-              "attachmentDelivery"
-            ],
-            "not": {
-              "anyOf": [
-                {
-                  "type": "object",
-                  "required": [
-                    "waitingReason"
-                  ]
-                },
-                {
-                  "type": "object",
-                  "required": [
-                    "result"
-                  ]
-                },
-                {
-                  "type": "object",
-                  "required": [
-                    "error"
-                  ]
-                },
-                {
-                  "type": "object",
-                  "required": [
-                    "cancelReason"
-                  ]
-                }
-              ]
-            }
-          },
-          {
-            "title": "running",
-            "type": "object",
-            "properties": {
-              "lifecycle": {
-                "const": "running"
-              },
-              "attachmentDelivery": {
-                "type": "object",
-                "allOf": [
-                  {
-                    "$ref": "#/components/schemas/WebAiAttachmentDelivery"
-                  }
-                ],
-                "properties": {
-                  "status": {
-                    "enum": [
-                      "pending",
-                      "delivered"
-                    ]
-                  }
-                }
-              }
-            },
-            "required": [
-              "lifecycle",
-              "attachmentDelivery"
-            ],
-            "not": {
-              "anyOf": [
-                {
-                  "type": "object",
-                  "required": [
-                    "waitingReason"
-                  ]
-                },
-                {
-                  "type": "object",
-                  "required": [
-                    "result"
-                  ]
-                },
-                {
-                  "type": "object",
-                  "required": [
-                    "error"
-                  ]
-                },
-                {
-                  "type": "object",
-                  "required": [
-                    "cancelReason"
-                  ]
-                }
-              ]
-            }
-          },
-          {
-            "title": "waiting_for_user",
-            "type": "object",
-            "properties": {
-              "lifecycle": {
-                "const": "waiting_for_user"
-              },
-              "attachmentDelivery": {
-                "type": "object",
-                "allOf": [
-                  {
-                    "$ref": "#/components/schemas/WebAiAttachmentDelivery"
-                  }
-                ],
-                "properties": {
-                  "status": {
-                    "enum": [
-                      "pending",
-                      "delivered"
-                    ]
-                  }
-                }
-              }
-            },
-            "required": [
-              "lifecycle",
-              "attachmentDelivery",
-              "waitingReason"
-            ],
-            "not": {
-              "anyOf": [
-                {
-                  "type": "object",
-                  "required": [
-                    "result"
-                  ]
-                },
-                {
-                  "type": "object",
-                  "required": [
-                    "error"
-                  ]
-                },
-                {
-                  "type": "object",
-                  "required": [
-                    "cancelReason"
-                  ]
-                }
-              ]
-            }
-          },
-          {
-            "title": "succeeded",
-            "type": "object",
-            "properties": {
-              "lifecycle": {
-                "const": "succeeded"
-              },
-              "dispatchCertainty": {
-                "const": "dispatched"
-              },
-              "attachmentDelivery": {
-                "type": "object",
-                "allOf": [
-                  {
-                    "$ref": "#/components/schemas/WebAiAttachmentDelivery"
-                  }
-                ],
-                "properties": {
-                  "status": {
-                    "const": "delivered"
-                  }
-                }
-              }
-            },
-            "required": [
-              "lifecycle",
-              "dispatchCertainty",
-              "attachmentDelivery",
-              "result"
-            ],
-            "not": {
-              "anyOf": [
-                {
-                  "type": "object",
-                  "required": [
-                    "waitingReason"
-                  ]
-                },
-                {
-                  "type": "object",
-                  "required": [
-                    "error"
-                  ]
-                },
-                {
-                  "type": "object",
-                  "required": [
-                    "cancelReason"
-                  ]
-                }
-              ]
-            }
-          },
-          {
-            "title": "failed",
-            "type": "object",
-            "properties": {
-              "lifecycle": {
-                "const": "failed"
-              }
-            },
-            "required": [
-              "lifecycle",
-              "error"
-            ],
-            "not": {
-              "anyOf": [
-                {
-                  "type": "object",
-                  "required": [
-                    "waitingReason"
-                  ]
-                },
-                {
-                  "type": "object",
-                  "required": [
-                    "result"
-                  ]
-                },
-                {
-                  "type": "object",
-                  "required": [
-                    "cancelReason"
-                  ]
-                }
-              ]
-            },
-            "allOf": [
-              {
-                "if": {
-                  "type": "object",
-                  "properties": {
-                    "attachmentDelivery": {
-                      "type": "object",
-                      "properties": {
-                        "status": {
-                          "const": "rejected"
-                        }
-                      },
-                      "required": [
-                        "status"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "attachmentDelivery"
-                  ]
-                },
-                "then": {
-                  "type": "object",
-                  "properties": {
-                    "dispatchCertainty": {
-                      "const": "not_dispatched"
-                    }
-                  }
-                }
-              },
-              {
-                "if": {
-                  "type": "object",
-                  "properties": {
-                    "dispatchCertainty": {
-                      "enum": [
-                        "dispatched",
-                        "ambiguous"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "dispatchCertainty"
-                  ]
-                },
-                "then": {
-                  "type": "object",
-                  "properties": {
-                    "attachmentDelivery": {
-                      "type": "object",
-                      "properties": {
-                        "status": {
-                          "const": "delivered"
-                        }
-                      },
-                      "required": [
-                        "status"
-                      ]
-                    }
-                  }
-                }
-              }
-            ]
-          },
-          {
-            "title": "cancelled",
-            "type": "object",
-            "properties": {
-              "lifecycle": {
-                "const": "cancelled"
-              }
-            },
-            "required": [
-              "lifecycle",
-              "cancelReason"
-            ],
-            "not": {
-              "anyOf": [
-                {
-                  "type": "object",
-                  "required": [
-                    "waitingReason"
-                  ]
-                },
-                {
-                  "type": "object",
-                  "required": [
-                    "result"
-                  ]
-                },
-                {
-                  "type": "object",
-                  "required": [
-                    "error"
-                  ]
-                }
-              ]
-            },
-            "allOf": [
-              {
-                "if": {
-                  "type": "object",
-                  "properties": {
-                    "dispatchCertainty": {
-                      "enum": [
-                        "dispatched",
-                        "ambiguous"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "dispatchCertainty"
-                  ]
-                },
-                "then": {
-                  "type": "object",
-                  "properties": {
-                    "attachmentDelivery": {
-                      "type": "object",
-                      "properties": {
-                        "status": {
-                          "const": "delivered"
-                        }
-                      },
-                      "required": [
-                        "status"
-                      ]
-                    }
-                  }
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "WebAiTurnStateBase": {
         "type": "object",
         "additionalProperties": false,
         "required": [
@@ -10258,7 +9247,6 @@
           "providerBindingRef",
           "conversationRef",
           "lifecycle",
-          "dispatchCertainty",
           "attachmentDelivery"
         ],
         "properties": {
@@ -10295,13 +9283,6 @@
               "cancelled"
             ]
           },
-          "dispatchCertainty": {
-            "enum": [
-              "not_dispatched",
-              "dispatched",
-              "ambiguous"
-            ]
-          },
           "attachmentDelivery": {
             "$ref": "#/components/schemas/WebAiAttachmentDelivery"
           },
@@ -10312,7 +9293,6 @@
               "captcha",
               "consent",
               "provider_blocker",
-              "ambiguous_submission",
               "manual_intervention"
             ]
           },
@@ -10391,7 +9371,7 @@
     },
     {
       "name": "Private · Jobs",
-      "description": "Bearer-authenticated durable job control."
+      "description": "Bearer-authenticated job control."
     },
     {
       "name": "Private · Control",
@@ -10408,10 +9388,6 @@
     {
       "name": "Private · Assets",
       "description": "Bearer-authenticated generated asset readback."
-    },
-    {
-      "name": "Private · Replay",
-      "description": "Bearer-authenticated durable outcome replay."
     },
     {
       "name": "Private · FeatureBench",

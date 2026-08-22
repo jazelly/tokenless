@@ -24,11 +24,10 @@ import {
   toDaemonError,
   type DaemonError,
 } from '../errors.js'
-import { JobStore, WebAiRequestCancelledError, WebAiRequestRefConflictError, publicView, type ExecutionBackend, type JobStatus } from '../jobs/store.js'
+import { JobStore, WebAiRequestNotFoundError, WebAiRequestRefConflictError, publicView, type ExecutionBackend, type JobStatus } from '../jobs/store.js'
 import { TokenlessApplicationServices } from '../application/services.js'
 import { TokenlessDashboardServer } from './dashboard/server.js'
 import { DashboardSessionManager } from './dashboard/session.js'
-import { OutputSavingsProcessor } from '../output-savings/processor.js'
 import { PrivateProviderTurnV0Adapter } from './private/provider-turn/v0.js'
 import {
   ApiProxyAdapter,
@@ -112,11 +111,10 @@ export async function serveHttp({
   const deactivate = () => {
     active = false
   }
-  const outputSavingsProcessor = new OutputSavingsProcessor(store)
   const featureBench = new FeatureBenchChannelManager(store, async () => await runtimeController?.wake())
   let closePromise: Promise<void> | undefined
   const close = () => {
-    closePromise ??= closeServer(server, store, outputSavingsProcessor, async () => {
+    closePromise ??= closeServer(server, store, async () => {
       await featureBench.close()
       await beforeClose?.()
     }, afterStoreClose)
@@ -139,7 +137,6 @@ export async function serveHttp({
   const applicationServices = new TokenlessApplicationServices({
     store,
     runtimeController,
-    outputSavingsProcessor,
     origin,
     startedAt,
   })
@@ -169,7 +166,6 @@ export async function serveHttp({
     server.once('listening', onListening)
     server.listen(port, host)
   })
-  outputSavingsProcessor.start()
   return {
     activate,
     server,
@@ -581,17 +577,10 @@ async function handleRequest(
         'request_json',
         'execution_backend',
         'profile_id',
-        'agent_kind',
-        'agent_session_id',
         'job_id',
       ])
       if (Object.keys(body).some((key) => !createJobFields.has(key))) {
         throw invalidInput('request body must be valid JSON: unknown field')
-      }
-      const hasAgentKind = Object.hasOwn(body, 'agent_kind')
-      const hasAgentSessionId = Object.hasOwn(body, 'agent_session_id')
-      if (hasAgentKind !== hasAgentSessionId) {
-        throw invalidInput('agent_kind and agent_session_id must be provided together')
       }
       const provider = requiredString(body.provider, 'provider')
       const action = requiredString(body.action, 'action')
@@ -609,8 +598,6 @@ async function handleRequest(
         request_json: requestJson,
         execution_backend: executionBackend,
         profile_id: optionalString(body.profile_id),
-        agent_kind: hasAgentKind ? requiredString(body.agent_kind, 'agent_kind') : undefined,
-        agent_session_id: hasAgentSessionId ? requiredString(body.agent_session_id, 'agent_session_id') : undefined,
         job_id: optionalString(body.job_id) ?? undefined,
       })
       if (job.execution_backend === 'playwright') await runtimeController?.wake()
@@ -669,33 +656,9 @@ async function handleRequest(
       return
     }
 
-    if (method === 'POST' && url.pathname === '/v1/private/replay/drain') {
-      const body = await readJsonObject(request)
-      if (Object.keys(body).some((key) => key !== 'agent_kind' && key !== 'agent_session_id' && key !== 'limit')) {
-        throw invalidInput('request body must be valid JSON: unknown field')
-      }
-      const summaries = store.drainReplaySummaries({
-        agent_kind: requiredString(body.agent_kind, 'agent_kind'),
-        agent_session_id: requiredString(body.agent_session_id, 'agent_session_id'),
-      }, optionalBodyLimit(body.limit))
-      writeJson(response, 200, { jobs: summaries })
-      return
-    }
-
     const jobRoute = matchJobRoute(url.pathname)
     if (jobRoute && method === 'GET' && jobRoute.action === null) {
       writeJson(response, 200, publicView(store.getJob(jobRoute.jobId)))
-      return
-    }
-    if (jobRoute && method === 'POST' && jobRoute.action === 'resume') {
-      const body = await readJsonObject(request)
-      if (Object.keys(body).some((key) => key !== 'browser_visibility')) {
-        throw invalidInput('request body must be valid JSON: unknown field')
-      }
-      if (body.browser_visibility !== 'headed') throw invalidInput('request body must be valid JSON: invalid browser_visibility')
-      const job = store.resumeJob(jobRoute.jobId, { browser_visibility: 'headed' })
-      await runtimeController?.wake()
-      writeJson(response, 200, publicView(job))
       return
     }
     if (jobRoute && method === 'POST' && jobRoute.action === 'cancel') {
@@ -704,22 +667,6 @@ async function handleRequest(
       writeJson(response, 200, publicView(await store.cancelJob(jobRoute.jobId, body.reason)))
       return
     }
-    if (jobRoute && method === 'POST' && jobRoute.action === 'report') {
-      const body = await readJsonObject(request)
-      if (Object.keys(body).some((key) => key !== 'agent_kind' && key !== 'agent_session_id')) {
-        throw invalidInput('request body must be valid JSON: unknown field')
-      }
-      const result = store.markJobReported(jobRoute.jobId, {
-        agent_kind: requiredString(body.agent_kind, 'agent_kind'),
-        agent_session_id: requiredString(body.agent_session_id, 'agent_session_id'),
-      })
-      writeJson(response, 200, {
-        reported: result.reported,
-        job: publicView(result.job),
-      })
-      return
-    }
-
     if (method === 'POST' && url.pathname === '/v1/private/control/shutdown') {
       deactivate()
       writeJson(response, 200, { ok: true, status: 'shutting_down', pid: process.pid })
@@ -807,7 +754,7 @@ async function handlePrivateProviderTurnRequest(
     writeJson(response, 200, await providerTurn.cancelRequest(decodeURIComponent(requestRoute[1] ?? '')))
     return true
   }
-  const turnRoute = /^\/v1\/private\/provider-turn\/turns\/([^/]+)(?:\/(cancel|resume))?$/.exec(url.pathname)
+  const turnRoute = /^\/v1\/private\/provider-turn\/turns\/([^/]+)(?:\/(cancel))?$/.exec(url.pathname)
   if (turnRoute) {
     const turnRef = decodeURIComponent(turnRoute[1] ?? '')
     const action = turnRoute[2] ?? null
@@ -821,14 +768,6 @@ async function handlePrivateProviderTurnRequest(
       writeJson(response, 200, { turn: await providerTurn.cancel(turnRef) })
       return true
     }
-    if (method === 'POST' && action === 'resume') {
-      const rawBody = await readBody(request)
-      if (rawBody && Object.keys(parseJsonObject(rawBody)).length > 0) throw invalidInput('web ai resume body must be empty')
-      const turn = providerTurn.resume(turnRef)
-      await runtimeController?.wake()
-      writeJson(response, 200, { turn })
-      return true
-    }
   }
   return false
 }
@@ -836,13 +775,13 @@ async function handlePrivateProviderTurnRequest(
 function writePrivateProviderTurnError(response: ServerResponse, error: unknown) {
   const daemonError = toDaemonError(error)
   const requestRefConflict = error instanceof WebAiRequestRefConflictError
-  const requestCancelled = error instanceof WebAiRequestCancelledError
+  const requestNotFound = error instanceof WebAiRequestNotFoundError
   const invalid = daemonError.kind === 'invalid_input'
-  writeJson(response, requestRefConflict || requestCancelled ? 409 : invalid ? 400 : 500, {
+  writeJson(response, requestRefConflict ? 409 : requestNotFound ? 404 : invalid ? 400 : 500, {
     error: {
-      code: requestRefConflict ? 'web_ai_request_ref_conflict' : requestCancelled ? 'web_ai_request_cancelled' : invalid ? 'invalid_input' : 'local_http_error',
-      message: requestRefConflict ? 'The request reference is already bound to a different request.' : requestCancelled ? 'The request reference was cancelled before a turn could be created.' : invalid ? 'The local Web AI request was rejected.' : 'The local Web AI service encountered an error.',
-      retryable: requestRefConflict || requestCancelled ? false : !invalid,
+      code: requestRefConflict ? 'web_ai_request_ref_conflict' : requestNotFound ? 'web_ai_request_not_found' : invalid ? 'invalid_input' : 'local_http_error',
+      message: requestRefConflict ? 'The request reference already has a turn; duplicate starts are not replayed.' : requestNotFound ? 'The Web AI request was not found.' : invalid ? 'The local Web AI request was rejected.' : 'The local Web AI service encountered an error.',
+      retryable: requestRefConflict || requestNotFound ? false : !invalid,
     },
   })
 }
@@ -1221,7 +1160,7 @@ function matchJobRoute(pathname: string) {
   const match = /^\/v1\/private\/jobs\/([^/]+)(?:\/([^/]+))?$/.exec(pathname)
   if (!match) return null
   const action = match[2] ?? null
-  if (action !== null && !['resume', 'cancel', 'report'].includes(action)) return null
+  if (action !== null && action !== 'cancel') return null
   return { jobId: decodeURIComponent(match[1] || ''), action }
 }
 
@@ -1272,7 +1211,7 @@ function optionalBodyLimit(value: unknown) {
 
 function optionalJobStatus(value: string | null) {
   if (value === null) return undefined
-  const statuses: JobStatus[] = ['queued', 'claimed', 'running', 'waiting_for_user', 'succeeded', 'failed', 'canceled', 'timed_out']
+  const statuses: JobStatus[] = ['queued', 'running', 'waiting_for_user', 'succeeded', 'failed', 'canceled', 'timed_out']
   if (!statuses.includes(value as JobStatus)) throw invalidInput(`invalid status: ${value}`)
   return value as JobStatus
 }
@@ -1296,14 +1235,10 @@ function optionalQueryExecutionBackend(value: string | null) {
 async function closeServer(
   server: http.Server,
   store: JobStore,
-  outputSavingsProcessor: OutputSavingsProcessor,
   beforeClose: (() => Promise<void>) | undefined,
   afterStoreClose: (() => Promise<void>) | undefined
 ) {
-  const results = await Promise.allSettled([
-    outputSavingsProcessor.stop(),
-  ])
-  results.push(...await Promise.allSettled([beforeClose?.() ?? Promise.resolve()]))
+  const results = await Promise.allSettled([beforeClose?.() ?? Promise.resolve()])
   results.push(...await Promise.allSettled([new Promise<void>((resolve, reject) => {
     server.close((error) => {
       if (error) reject(error)

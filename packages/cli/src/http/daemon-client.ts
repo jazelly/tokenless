@@ -22,7 +22,7 @@ export type AgentRunClientOptions = DaemonClientOptions & {
   body?: Record<string, unknown> | undefined
 }
 
-export type DaemonJobStatus = 'queued' | 'claimed' | 'running' | 'waiting_for_user' | 'succeeded' | 'failed' | 'canceled' | 'timed_out'
+export type DaemonJobStatus = 'queued' | 'running' | 'waiting_for_user' | 'succeeded' | 'failed' | 'canceled' | 'timed_out'
 
 export type DaemonJob = {
   job_id: string
@@ -37,7 +37,6 @@ export type DaemonJob = {
   blocker_json: unknown | null
   provider_attempts_json: unknown
   provider_submitted_at: string | null
-  eligible_at: string | null
   created_at: string
   updated_at: string
 }
@@ -48,35 +47,8 @@ export type CreateDaemonJobOptions = DaemonClientOptions & {
   requestJson?: unknown
   executionBackend?: 'playwright' | undefined
   profileId?: string | undefined
-  agentKind?: string | undefined
-  agentSessionId?: string | undefined
   jobId?: string | undefined
 }
-
-export type AgentRecipientOptions = {
-  agentKind: string
-  agentSessionId: string
-}
-
-export type DaemonReplaySummary = {
-  job_id: string
-  provider: string
-  action: string
-  status: 'waiting_for_user' | 'succeeded' | 'failed' | 'canceled' | 'timed_out'
-  task_id: string | null
-  updated_at: string
-  reported_at: string
-  outcome_kind: 'result' | 'error' | 'blocker' | 'none'
-  has_result: boolean
-  has_error: boolean
-  has_blocker: boolean
-}
-
-export type DrainDaemonReplayOptions = DaemonClientOptions & AgentRecipientOptions & {
-  limit?: number | undefined
-}
-
-export type MarkDaemonJobReportedOptions = GetDaemonJobOptions & AgentRecipientOptions
 
 export type GetDaemonJobOptions = DaemonClientOptions & {
   jobId: string
@@ -121,7 +93,6 @@ export type ProviderCapacityProjection = {
   evaluatedAt: string
   subscription: Record<string, unknown>
   decision: 'admit' | 'defer' | 'unknown'
-  eligibleAt: string | null
   reason: string
   rules: readonly Record<string, unknown>[]
 }
@@ -130,17 +101,11 @@ export type CancelDaemonJobOptions = GetDaemonJobOptions & {
   reason?: unknown
 }
 
-export type ResumeDaemonJobOptions = GetDaemonJobOptions & {
-  browserVisibility: 'headed'
-}
-
 export type WaitDaemonJobResultOptions = GetDaemonJobOptions & {
   timeoutMs?: number | undefined
   pollMs?: number | undefined
   heartbeatMs?: number | undefined
   onStatus?: ((event: Record<string, unknown>) => unknown) | undefined
-  agentKind?: string | undefined
-  agentSessionId?: string | undefined
 }
 
 export type ShutdownDaemonOptions = {
@@ -368,17 +333,12 @@ export async function createDaemonJob({
   requestJson = {},
   executionBackend,
   profileId,
-  agentKind,
-  agentSessionId,
   jobId,
 }: CreateDaemonJobOptions) {
-  assertAgentRecipientPair(agentKind, agentSessionId)
   assertDaemonRequestSize({
     provider,
     action,
     request_json: requestJson,
-    agent_kind: agentKind,
-    agent_session_id: agentSessionId,
   })
   const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
   return daemonRequest<DaemonJob>({
@@ -390,8 +350,6 @@ export async function createDaemonJob({
       request_json: requestJson,
       execution_backend: executionBackend,
       profile_id: profileId,
-      agent_kind: agentKind,
-      agent_session_id: agentSessionId,
       job_id: jobId,
     },
     token: daemon.token,
@@ -501,55 +459,6 @@ export async function issueFeatureBenchChannel({
       maxTurns,
       expiresInMs,
       providerTurnTimeoutMs,
-    },
-    token: daemon.token,
-    timeoutMs: requestTimeoutMs,
-    signal,
-  })
-}
-
-export async function drainDaemonReplay({
-  daemonUrl: explicitDaemonUrl,
-  homeDir,
-  requestTimeoutMs,
-  signal,
-  agentKind,
-  agentSessionId,
-  limit,
-}: DrainDaemonReplayOptions) {
-  assertAgentRecipientPair(agentKind, agentSessionId)
-  const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
-  return daemonRequest<{ jobs: DaemonReplaySummary[] }>({
-    daemonUrl: daemon.daemonUrl,
-    path: '/v1/private/replay/drain',
-    body: {
-      agent_kind: agentKind,
-      agent_session_id: agentSessionId,
-      limit,
-    },
-    token: daemon.token,
-    timeoutMs: requestTimeoutMs,
-    signal,
-  })
-}
-
-export async function markDaemonJobReported({
-  daemonUrl: explicitDaemonUrl,
-  homeDir,
-  requestTimeoutMs,
-  signal,
-  jobId,
-  agentKind,
-  agentSessionId,
-}: MarkDaemonJobReportedOptions) {
-  assertAgentRecipientPair(agentKind, agentSessionId)
-  const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
-  return daemonRequest<{ reported: boolean; job: DaemonJob }>({
-    daemonUrl: daemon.daemonUrl,
-    path: `/v1/private/jobs/${encodeURIComponent(jobId)}/report`,
-    body: {
-      agent_kind: agentKind,
-      agent_session_id: agentSessionId,
     },
     token: daemon.token,
     timeoutMs: requestTimeoutMs,
@@ -1070,32 +979,6 @@ function isControlTransportErrorCode(code: string) {
     code === 'non_loopback_bind'
 }
 
-export async function resumeDaemonJob({
-  daemonUrl: explicitDaemonUrl,
-  homeDir,
-  requestTimeoutMs,
-  signal,
-  jobId,
-  browserVisibility,
-}: ResumeDaemonJobOptions) {
-  if (browserVisibility !== 'headed') {
-    throw daemonClientError(
-      'invalid_resume_browser_visibility',
-      'A parked Tokenless browser job can be resumed only with headed visibility.',
-      false
-    )
-  }
-  const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
-  return daemonRequest<DaemonJob>({
-    daemonUrl: daemon.daemonUrl,
-    path: `/v1/private/jobs/${encodeURIComponent(jobId)}/resume`,
-    body: { browser_visibility: browserVisibility },
-    token: daemon.token,
-    timeoutMs: requestTimeoutMs,
-    signal,
-  })
-}
-
 export async function waitDaemonJobResult({
   daemonUrl: explicitDaemonUrl,
   homeDir,
@@ -1106,10 +989,7 @@ export async function waitDaemonJobResult({
   pollMs = 250,
   heartbeatMs = 30000,
   onStatus,
-  agentKind,
-  agentSessionId,
 }: WaitDaemonJobResultOptions) {
-  assertAgentRecipientPair(agentKind, agentSessionId)
   const startedAt = Date.now()
   let lastStatus: string | undefined
   let lastHeartbeatAt = startedAt
@@ -1139,15 +1019,6 @@ export async function waitDaemonJobResult({
       })
     }
     if (job.status === 'succeeded') {
-      await markOutcomeReportedIfAddressed({
-        daemonUrl: explicitDaemonUrl,
-        homeDir,
-        requestTimeoutMs,
-        signal,
-        jobId,
-        agentKind,
-        agentSessionId,
-      })
       return {
         ok: true,
         status: job.status,
@@ -1157,15 +1028,6 @@ export async function waitDaemonJobResult({
       }
     }
     if (job.status === 'failed' || job.status === 'canceled' || job.status === 'timed_out') {
-      await markOutcomeReportedIfAddressed({
-        daemonUrl: explicitDaemonUrl,
-        homeDir,
-        requestTimeoutMs,
-        signal,
-        jobId,
-        agentKind,
-        agentSessionId,
-      })
       return {
         ok: false,
         status: job.status,
@@ -1178,15 +1040,6 @@ export async function waitDaemonJobResult({
       }
     }
     if (job.status === 'waiting_for_user') {
-      await markOutcomeReportedIfAddressed({
-        daemonUrl: explicitDaemonUrl,
-        homeDir,
-        requestTimeoutMs,
-        signal,
-        jobId,
-        agentKind,
-        agentSessionId,
-      })
       return {
         ok: null,
         status: job.status,
@@ -1223,69 +1076,22 @@ export async function waitDaemonJobResult({
   )
 }
 
-async function markOutcomeReportedIfAddressed({
-  agentKind,
-  agentSessionId,
-  ...options
-}: GetDaemonJobOptions & {
-  agentKind?: string | undefined
-  agentSessionId?: string | undefined
-}) {
-  if (agentKind === undefined || agentSessionId === undefined) return
-  await markDaemonJobReported({
-    ...options,
-    agentKind,
-    agentSessionId,
-  })
-}
-
-function assertAgentRecipientPair(agentKind: string | undefined, agentSessionId: string | undefined) {
-  if ((agentKind === undefined) !== (agentSessionId === undefined)) {
-    throw daemonClientError(
-      'agent_recipient_incomplete',
-      'agentKind and agentSessionId must be provided together.',
-      false
-    )
-  }
-  if (agentKind !== undefined && agentKind.trim() === '') {
-    throw daemonClientError('agent_kind_invalid', 'agentKind must be a non-empty string.', false)
-  }
-  if (agentSessionId !== undefined && agentSessionId.trim() === '') {
-    throw daemonClientError('agent_session_id_invalid', 'agentSessionId must be a non-empty string.', false)
-  }
-}
-
 function userHandoverAction(job: DaemonJob) {
   const blocker = jsonRecord(job.blocker_json)
   const browser = jsonRecord(blocker.browser)
   const windowOpen = browser.windowOpen !== false
   return {
     message: windowOpen
-      ? 'Your help is needed: complete provider sign-in or verification in the visible browser. Tokenless will preserve this job and continue afterward.'
-      : 'Your help is needed, but no browser window is open. Resume this same job in headed mode; do not create a replacement job.',
-    resumeCommand: windowOpen ? jobIdStateCommand(job) : jobIdHeadedResumeCommand(job),
-    queryGuidance: windowOpen
-      ? 'After completing sign-in or verification, query this same job; Tokenless will continue from its saved checkpoint.'
-      : 'Do not submit a replacement job; resume this exact job with headed visibility.',
+      ? 'Your help is needed: complete provider sign-in or verification in the visible browser. The current daemon execution will continue afterward.'
+      : 'Your help is needed, but no browser window is open. This execution cannot continue without a visible browser.',
+    queryGuidance: 'The current daemon execution will continue while it remains alive; a daemon restart fails the job.',
   }
-}
-
-function jobIdStateCommand(job: DaemonJob) {
-  return `tokenless state --job-id ${shellQuote(job.job_id)} --json`
-}
-
-function jobIdHeadedResumeCommand(job: DaemonJob) {
-  return `tokenless resume --job-id ${shellQuote(job.job_id)} --browser-visibility headed --json`
 }
 
 function jsonRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {}
-}
-
-function shellQuote(value: string) {
-  return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
 async function daemonRequest<T>({

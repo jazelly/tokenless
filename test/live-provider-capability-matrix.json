@@ -614,7 +614,7 @@
         "research_plan",
         "terminal_report",
         "visible_citation",
-        "durable_background_job"
+        "visible_background_progress"
       ]
     },
     "kimi-artifacts": {
@@ -647,7 +647,7 @@
         "cli",
         "visible_submission",
         "visible_response",
-        "durable_background_job",
+        "visible_background_progress",
         "terminal_state"
       ]
     },

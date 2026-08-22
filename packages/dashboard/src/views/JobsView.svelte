@@ -74,7 +74,6 @@
       detail = await actions.getJob(jobId)
       const url = new URL(location.href)
       url.searchParams.set('job', jobId)
-      url.hash = 'jobs'
       history.replaceState(history.state, '', url)
       await tick()
       detailPage?.focus()
@@ -96,11 +95,11 @@
     document.querySelector<HTMLInputElement>('[data-testid="job-search"]')?.focus()
   }
 
-  async function jobAction(action: 'cancel' | 'resume') {
+  async function jobAction() {
     if (!detail) return
     error = ''
     try {
-      await (action === 'cancel' ? actions.cancelJob(detail.jobId) : actions.resumeJob(detail.jobId))
+      await actions.cancelJob(detail.jobId)
       await closeDetail()
     } catch (caught) {
       error = caught instanceof Error ? caught.message : t('requestFailed')
@@ -196,7 +195,7 @@
             <div><dt>{t('updated')}</dt><dd>{formatTime(detail.updatedAt, language)}</dd></div>
             <div><dt>{t('jobId')}</dt><dd class="mono-label">{detail.jobId}</dd></div>
           </dl>
-          {#if detail.status === 'waiting_for_user'}<footer><button class="button primary" type="button" disabled={busy} onclick={() => jobAction('resume')}>{t('resume')}</button></footer>{:else if ['queued', 'claimed', 'running'].includes(detail.status)}<footer><button class="button danger" type="button" disabled={busy} onclick={() => jobAction('cancel')}>{t('cancel')}</button></footer>{/if}
+          {#if ['queued', 'running', 'waiting_for_user'].includes(detail.status)}<footer><button class="button danger" type="button" disabled={busy} onclick={jobAction}>{t('cancel')}</button></footer>{/if}
         </section>
 
         <details class="content-panel chat-technical-details">
@@ -211,7 +210,7 @@
     <PageHeader title={t('jobs')} description={t('jobsLede')} />
     <div class="filter-bar">
     <label class="search-field"><Search size={16} /><input name="jobSearch" type="search" bind:value={search} placeholder={t('searchJobs')} autocomplete="off" data-testid="job-search" />{#if search}<button type="button" aria-label={t('close')} onclick={() => search = ''}><X size={14} /></button>{/if}</label>
-      <select name="jobStatus" bind:value={status} aria-label={t('allStatuses')} data-testid="job-status"><option value="">{t('allStatuses')}</option>{#each ['queued', 'claimed', 'running', 'waiting_for_user', 'succeeded', 'failed', 'canceled', 'timed_out'] as value}<option value={value}>{stateLabel(language, value)}</option>{/each}</select>
+      <select name="jobStatus" bind:value={status} aria-label={t('allStatuses')} data-testid="job-status"><option value="">{t('allStatuses')}</option>{#each ['queued', 'running', 'waiting_for_user', 'succeeded', 'failed', 'canceled', 'timed_out'] as value}<option value={value}>{stateLabel(language, value)}</option>{/each}</select>
       <select name="jobProvider" bind:value={provider} aria-label={t('allProviders')}><option value="">{t('allProviders')}</option>{#each snapshot.providers as entry}<option value={entry.id}>{entry.label}</option>{/each}</select>
       <select name="jobProfile" bind:value={profile} aria-label={t('allProfiles')}><option value="">{t('allProfiles')}</option>{#each snapshot.profiles as entry}<option value={entry.slug}>{entry.slug}</option>{/each}</select>
     </div>

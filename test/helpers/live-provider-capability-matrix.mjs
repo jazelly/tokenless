@@ -45,7 +45,7 @@ const closures = new Set([
   'deep_research_surface',
   'research_plan',
   'terminal_report',
-  'durable_background_job',
+  'visible_background_progress',
   'docs_surface',
   'slides_surface',
   'sheets_surface',

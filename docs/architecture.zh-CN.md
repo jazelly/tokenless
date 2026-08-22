@@ -76,16 +76,16 @@ Web Agent Harness 是 Tokenless 在 `packages/harness/` 中的 first-party agent
 
 它负责：
 
-- durable `AgentRun`、turn、action-batch、intervention 与 tool-result state；
+- `AgentRun`、turn、action-batch、intervention 与 tool-result 的当前 state；
 - System Prompt compilation 与 precedence；
 - Skill registry discovery、selection、content-addressed delivery 与 per-turn manifest；
 - internal Tool Registry 与 model-visible tool schema；
 - bounded filesystem 与 local tools；
-- MCP discovery、transport、authentication、authorization、approval、timeout、cancellation 与 resume；
-- 完整 action-batch execution、dependency handling、loop limit、recovery 与 final-output validation；
+- MCP discovery、transport、authentication、authorization、approval、timeout、cancellation 与 user intervention；
+- 完整 action-batch execution、dependency handling、loop limit、failure handling 与 final-output validation；
 - 向 CLI 或 caller 呈现 waiting、approval、authentication 与 terminal state。
 
-Harness 不接收 Playwright `Page`、browser profile path、provider cookie、provider session token 或 provider adapter object。普通 model turn 通过 OpenAI-compatible Client Adapter；只有 OpenAI contract 当前无法表达的 attachment、identity、waiting、resume 或 dispatch semantics 才使用 private provider-turn Client Adapter。
+Harness 不接收 Playwright `Page`、browser profile path、provider cookie、provider session token 或 provider adapter object。普通 model turn 通过 OpenAI-compatible Client Adapter；只有 OpenAI contract 当前无法表达的 attachment、identity、waiting 或 dispatch semantics 才使用 private provider-turn Client Adapter。
 
 ## 调用路径
 
@@ -152,10 +152,10 @@ API Adapter 不得调用 Harness mission queue、Tool Registry 或 MCP runtime�
 
 1. `tokenless` CLI 负责 command parsing、daemon bootstrap、authenticated HTTP call、wait、localization 与 output formatting。
 2. Web Agent Harness 负责 Tokenless 自有 agent run、OpenAI-compatible model call 与必要的 private provider-turn extension call。
-3. 本地 TypeScript daemon 以 SQLite 持久化 job，并提供 authenticated loopback control plane。
-4. Playwright worker 认领 managed-web job，通过 CDP 连接独立启动的 resident Chromium，并在持久化 managed profile 中操作真实 provider 页面。
+3. 本地 TypeScript daemon 以 SQLite 保存 job facts/results，并提供 authenticated loopback control plane；active execution 留在 daemon process 中。
+4. Playwright worker 选择 profile-scoped queued job，通过 CDP 连接独立启动的 resident Chromium，并在持久化 managed profile 中操作真实 provider 页面。
 5. provider navigation catalog 与 provider registry 负责 URL、origin、session、account、selector 与 capability policy。
-6. provider-session state machine 负责页面 observation；daemon job state machine 负责 durable execution。
+6. provider-session state machine 负责页面 observation；daemon job state machine 负责当前 execution。
 7. provider adapter 在 session decision 允许后，执行 provider-specific visible page operation。
 8. Server application services 为不同 HTTP surface 共享同一份 use-case 实现，不复制业务逻辑。
 9. `packages/dashboard/` 中的完整 Dashboard SPA 从 `/ui/` 提供，保留全部 read/mutation 能力；`/ui-api/v1` 不向 browser JavaScript 暴露 daemon bearer token。
@@ -181,15 +181,15 @@ request
   → rank compatible provider route
   → validate target, actions, context, files, and limits
   → create authenticated daemon job
-  → Playwright worker claims the profile-scoped job
+  → Playwright worker selects the profile-scoped queued job
   → recheck visible session and capability before mutation
   → provider adapter performs visible actions
   → verify visible postconditions
-  → only a classified safe pre-submit failure may use the next compatible route
+  → only a classified safe pre-submit failure may immediately use the next compatible route in this execution
   → complete the job and return normalized result
 ```
 
-Job 必须携带明确的 provider/profile identity。Unsupported control、ambiguous page、unexpected navigation、authentication blocker 与 selector drift 都必须 fail closed；已提交或状态不明确的 provider mutation 不得被静默 replay。
+Job 必须携带明确的 provider/profile identity。Unsupported control、ambiguous page、unexpected navigation、authentication blocker 与 selector drift 都必须 fail closed；已提交或状态不明确的 provider mutation 不得被静默重新提交。
 
 ## Setup and profiles
 
@@ -201,13 +201,13 @@ Job 必须携带明确的 provider/profile identity。Unsupported control、ambi
 
 `packages/server/src/providers/registry.ts` 是 provider 的 production registration point。Provider-specific visible-page behavior 留在 provider-owned adapter；shared runner 只消费 normalized session decision 与 capability contract。
 
-Provider-session state machine 处理单次页面 observation，例如 `wait`、`continue_guest`、`ready`、`handoff` 与 `terminal`。Daemon job state machine 处理 `queued`、`claimed`、`running`、`waiting_for_user`、`succeeded`、`failed`、`canceled` 与 `timed_out`。handoff 进入现有 job 的 `waiting_for_user`，不创建替代 job。
+Provider-session state machine 处理单次页面 observation，例如 `wait`、`continue_guest`、`ready`、`handoff` 与 `terminal`。Daemon job state machine 处理 `queued`、`running`、`waiting_for_user`、`succeeded`、`failed`、`canceled` 与 `timed_out`。handoff 进入现有 job 的 `waiting_for_user`，不创建替代 job。
 
 ## Local control plane
 
-Daemon 绑定 loopback，以 bearer token 保护 machine endpoint，并用 SQLite 保存 durable job state。除平级 compatibility Interface 外，所有 bearer-authenticated Tokenless machine endpoint 都位于 `/v1/private/*`。Browser Dashboard 使用独立的 `/ui-api/v1` session/CSRF Interface，不把 daemon control bearer token 暴露给 browser JavaScript；两者统一记录在 [`packages/contracts/tokenless.openapi.json`](../packages/contracts/tokenless.openapi.json)。
+Daemon 绑定 loopback，以 bearer token 保护 machine endpoint，并用 SQLite 保存 job facts/results。除平级 compatibility Interface 外，所有 bearer-authenticated Tokenless machine endpoint 都位于 `/v1/private/*`。Browser Dashboard 使用独立的 `/ui-api/v1` session/CSRF Interface，不把 daemon control bearer token 暴露给 browser JavaScript；两者统一记录在 [`packages/contracts/tokenless.openapi.json`](../packages/contracts/tokenless.openapi.json)。
 
-Control-plane page 有独立的 reserved page key，不能被 provider job acquire、navigate 或 replace。Job claim、lease、completion、cancellation、state query 与 replay 都必须经过 daemon 的 durable boundary。
+Control-plane page 有独立的 reserved page key，不能被 provider job acquire、navigate 或 replace。Job completion、cancellation 与 state query 都经过 daemon 的 SQLite business record。
 
 ## Browser boundary
 
@@ -226,7 +226,7 @@ Native Project/workspace、file upload、model/effort selection、conversation c
 
 ## Browser visibility policy
 
-Browser visibility 由 global fallback 与 profile-scoped preference 决定，默认使用 `auto`。Headless job 不能因为 blocker 静默提交替代 job；需要用户处理时，原 job 进入 `waiting_for_user`，保留同一个 `jobId`、`taskId` 与 profile identity。Chromium sandbox 保持开启，CDP 是 managed browser control boundary。
+Browser visibility 由 global fallback 与 profile-scoped preference 决定，默认使用 `auto`。Headless job 不能因为 blocker 静默提交替代 request；需要用户处理时，当前 execution 进入 `waiting_for_user`，保留同一个 `jobId`、`taskId` 与 profile identity；`headless` 模式则清晰失败。Chromium sandbox 保持开启，CDP 是 managed browser control boundary。
 
 ## File handling
 
@@ -234,16 +234,16 @@ CLI 只接受用户明确选择的 regular file，将其 stage 到 Tokenless hom
 
 ## Long-running and user-handoff states
 
-Provider 需要用户操作时，现有 daemon job 与 browser profile 仍然是 authoritative state。调用方必须 query/resume 同一个 job，不得新建 job 规避 `waiting_for_user` 或重复 provider mutation。长任务、取消、失败与 timeout 都通过 durable job state 反馈。
+Provider 需要用户操作时，当前 execution 与 browser profile 仍然是 authoritative state。调用方观察同一个 job；不得新建 job 规避 `waiting_for_user` 或重复 provider mutation。长任务、取消、失败与 timeout 都通过 job state 反馈；daemon restart 会将未完成 job 标记为 `job_interrupted`，不会继续执行。
 
 ## Trust 与 persistence boundary
 
 - Provider credential 与 browser object 留在 provider runtime 内。
-- Harness state 只保存有界 identifier、policy decision、digest、checkpoint 与 result，不保存 raw provider credential。
+- Harness state 只保存有界 identifier、policy decision、digest 与 result，不保存 raw provider credential 或 execution recovery data。
 - External caller tools 默认只在 API request 范围内有效，除非 external Harness 自己持久化。
-- Harness-owned tools 只能在 Harness 明确的 authorization 与 AgentRun boundary 内持久化和 resume。
+- Harness-owned tools 只能在 Harness 明确的 authorization 与当前 AgentRun boundary 内执行。
 - User content、Skill content、model output 与 tool result 都是不可信数据；它们不能增加 tools、放宽 policy 或改写 protocol framing。
-- provider submission 出现 ambiguity 时，由 provider-turn 与 dispatch-certainty contract 处理；Harness 不会静默重放已经完成的 external mutation。
+- provider submission 出现 ambiguity 时，由 provider-turn 与 dispatch-certainty contract 处理；Harness 不会静默重新提交已经完成的 external mutation。
 
 ## Repository package boundary
 

@@ -4,7 +4,7 @@
 
 ## 这是什么
 
-Tokenless daemon 暴露了 OpenAI 与 Anthropic 兼容的 HTTP 路由。一个请求会变成 durable job，由 Playwright worker 在已登录的浏览器 profile 中把 prompt 输入真实 provider 页面，再把可见回复按你客户端已经预期的 wire shape 返回。
+Tokenless daemon 暴露了 OpenAI 与 Anthropic 兼容的 HTTP 路由。一个请求会创建本地 job record，由 daemon 进程内的 Playwright worker 在已登录的浏览器 profile 中把 prompt 输入真实 provider 页面，再把可见回复按你客户端已经预期的 wire shape 返回。
 
 **这是任务级桥接，不是 API 的即插即用替代品。** 在围绕它做设计之前，请先读 [硬性限制](#硬性限制)。Browser-backed request 用吞吐和延迟换成本；direct G4F plain-text request 可以保留 upstream 增量 streaming。
 
@@ -432,14 +432,14 @@ OpenAI 文本使用 `finish_reason: stop`；通过校验的 function call 使用
 | 字段 | 用途 |
 | --- | --- |
 | `provider` | 实际回答的 provider，包括 settle 后的 fallback provider |
-| `job_id` | 持久 job id——可传给 `tokenless state --job-id <id> --json` 查看具体发生了什么 |
+| `job_id` | Job id——可传给 `tokenless state --job-id <id> --json` 查看具体发生了什么 |
 | `conversation_mode` | 实际 route：fresh/mapping-miss 为 `new-conversation`，命中 mapping 的 Responses continuation 为 `continue-conversation` |
 | `execution_mode` / `provider_backend` | 实际 execution route |
 | `structured_control_strategy` | `prompt_tool_envelope`、`prompt_json_envelope`，或 plain text 的 `null` |
-| `provider_attempts` | 单个 durable job 的脱敏 attempt 顺序/status 与 blocker classification |
+| `provider_attempts` | 单个 job 的脱敏 attempt 顺序/status 与 blocker classification |
 | `citations` | provider 渲染出的可见来源链接（如果有） |
 
-请记录 `job_id`。它是把客户端侧失败关联到本地持久记录的唯一句柄。
+请记录 `job_id`。它是把客户端侧失败关联到本地 job record 的唯一句柄。
 
 ## Streaming
 
@@ -534,11 +534,11 @@ Anthropic：
 | 503 | `profile_not_ready` | managed profile 需要先执行 `tokenless setup` | 否 —— 请先完成 setup |
 | 503 | `model_not_available` | 该 provider 未在解析出的 profile 上启用 | 否 —— 请先启用 |
 | 503 | `auto_route_unavailable` | 没有 enabled、当前可用且有 evidence 的 provider 能满足完整 request | 否 —— 调整 scope 或 provider readiness |
-| 504 | `completion_timeout` | provider 在 10 分钟内没有回复 | 可重试，但原 job 可能仍在运行 |
+| 504 | `completion_timeout` | provider 在 10 分钟内没有回复 | 先检查当前 job 再决定 |
 
 除 499 之外的 `4xx` 表示调用方必须做出修改。`502`、`504`、`500` 属于运行期问题：同一请求稍后可能成功。这张表的全部意义就在于这一区分 —— 不要匹配 message 字符串。
 
-发生 `502` 与 `504` 时，底层浏览器 job **不会**被取消，仍可能继续完成。重试前请用 `tokenless state --job-id <id> --json` 检查，否则可能重复排入同一份 provider 工作。
+发生 `502` 与 `504` 时，底层浏览器 job **不会**被取消，可能仍在当前 daemon 进程中完成。请用 `tokenless state --job-id <id> --json` 检查后再决定；daemon 重启会把未完成工作标为 `job_interrupted`，不会恢复。
 
 ## 硬性限制
 
@@ -547,7 +547,7 @@ Anthropic：
 | 属性 | 实际情况 |
 | --- | --- |
 | 延迟 | 秒到分钟级。真实浏览器导航、页面稳定、输入、提交、渲染。 |
-| 超时 | 10 分钟，随后返回 504。底层 job 可能仍在运行——请用 `job_id` 查询。 |
+| 超时 | 10 分钟，随后返回 504。当前 daemon 进程可能仍在运行该 job——请用 `job_id` 查询。 |
 | 并发 | 单 profile 基本串行。一个浏览器、一个 provider 标签页。 |
 | Tool use | 支持一个或多个现代 function calls，可使用非流式或终态 SSE；由调用方执行。 |
 | 结构化输出 | 支持 OpenAI `json_object` 与本文记录的 closed-object `json_schema` subset；返回 valid final JSON 或明确错误。 |
@@ -621,7 +621,7 @@ const message = await client.messages.create({
 console.log(message.content)
 ```
 
-注意两个 SDK 都需要把默认超时调高、并把重试次数设为 0。在一个 10 分钟请求上使用默认重试，会排队出重复的浏览器 job。
+注意两个 SDK 都需要把默认超时调高、并把重试次数设为 0。在一个 10 分钟请求上使用默认重试，可能启动重复的 browser execution。
 
 ## 实现清单
 
@@ -636,7 +636,7 @@ console.log(message.content)
 - [ ] 不要用 `usage` 计算成本。
 - [ ] 把客户端超时提到 10 分钟以上；重试设为 0，改由自己控制重试。
 - [ ] 依据 HTTP 状态码而不是 `message` 分支：只重试 `500`、`502`、`504`。
-- [ ] 重试 `502` 或 `504` 前先检查 `job_id` —— 原 job 可能仍在运行。
+- [ ] 决定是否重试 `502` 或 `504` 前先检查 `job_id` —— 当前 daemon 进程可能仍在运行它。
 - [ ] 每次调用都记录 `tokenless.job_id`。
 - [ ] 按串行执行预期设计；不要并发扇出请求。
 - [ ] Chat Completions/Anthropic 每次发送完整历史；Responses 要新建 provider chat 时省略 `previous_response_id`，只在已有 mapping 时使用它继续。
@@ -658,7 +658,7 @@ Packaged daemon 已通过真实 DeepSeek browser route 完成一次非流式单 
 仍有两点不应依赖：
 
 - **`502` 不会说明页面失败的原因。** 登录 blocker、CAPTCHA 与真正失败的 job 都报 `upstream_error`，需要用 `job_id` 进一步定位。
-- **超时或断开不会终止浏览器 job。** 系统不会代为取消 provider 侧的工作，因此草率重试可能为同一 prompt 排入第二个 job。
+- **超时或断开不会终止当前 daemon 进程中的浏览器 job。** 系统不会代为取消 provider 侧的工作，因此草率重试可能为同一 prompt 启动第二次 execution。
 
 ## 参考
 

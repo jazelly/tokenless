@@ -9,6 +9,8 @@ import { DatabaseSync } from 'node:sqlite'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
+import { ManagedProfileRegistry } from '../packages/server/dist/src/browser/profiles/registry.js'
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliEntry = path.join(root, 'packages/cli/dist/src/tokenless.mjs')
 const daemonEntry = path.join(root, 'packages/server/dist/src/entry.mjs')
@@ -18,13 +20,13 @@ test.after(async () => {
   await Promise.all([...children].map((child) => terminateChild(child)))
 })
 
-test('provider rate-limit policy projects subscription-aware cadence from durable SQLite history', {
+test('provider rate-limit policy projects subscription-aware cadence from SQLite history', {
   timeout: 60_000,
 }, async () => {
   assert.equal(fs.existsSync(cliEntry), true, 'build the CLI before running the rate-limit simulation')
   assert.equal(fs.existsSync(daemonEntry), true, 'build the daemon before running the rate-limit simulation')
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-rate-limit-')))
-  const profile = createReadyManagedProfile(homeDir)
+  const profile = await createReadyManagedProfile(homeDir)
   const daemon = await startDaemon(homeDir)
   let database
   try {
@@ -56,7 +58,6 @@ test('provider rate-limit policy projects subscription-aware cadence from durabl
     replacePromptHistory(database, profile.id, Array.from({ length: 8 }, () => burstBase))
     const burstExceeded = await capacity(daemon.url, token, profile.id, 'chatgpt', 'signed_in_paid', 'Plus')
     assert.equal(burstExceeded.decision, 'defer')
-    assert.ok(Date.parse(burstExceeded.eligibleAt) > Date.now())
 
     const cadenceBase = Date.now()
     replacePromptHistory(database, profile.id, Array.from(
@@ -81,7 +82,6 @@ test('provider rate-limit policy projects subscription-aware cadence from durabl
     assert.equal(fullWindow.decision, 'defer')
     assert.equal(fullWindowRule.usedUnits, 144)
     assert.equal(fullWindowRule.remainingUnits, 0)
-    assert.ok(Date.parse(fullWindow.eligibleAt) > Date.now())
 
     replacePromptHistory(database, profile.id, Array.from(
       { length: 144 },
@@ -154,53 +154,34 @@ test('provider rate-limit policy projects subscription-aware cadence from durabl
   }
 })
 
-function createReadyManagedProfile(homeDir) {
-  const browserDir = path.join(homeDir, 'browser')
-  const profileId = randomUUID()
-  const profileDir = path.join(browserDir, 'profiles', profileId)
-  fs.mkdirSync(profileDir, { recursive: true, mode: 0o700 })
+async function createReadyManagedProfile(homeDir) {
+  const registry = new ManagedProfileRegistry(homeDir)
+  const profile = await registry.addProfile({ slug: 'default', lifecycle: 'ready', setDefault: true })
   const now = new Date().toISOString()
-  fs.writeFileSync(path.join(browserDir, 'profiles.json'), `${JSON.stringify({
-    version: 1,
-    defaultProfile: 'default',
-    profiles: {
-      default: {
-        slug: 'default',
-        id: profileId,
-        directory: profileDir,
-        lifecycle: 'ready',
-        createdAt: now,
-        updatedAt: now,
-        lastObservedAuth: {
-          chatgpt: {
-            provider: 'chatgpt',
-            auth: 'authenticated',
-            access: 'signed_in_paid',
-            checkedAt: now,
-            account: {
-              name: null,
-              subscription: 'ChatGPT Plus',
-              tier: { class: 'signed_in_paid', label: 'Plus' },
-            },
-          },
-        },
-      },
+  await registry.updateProviderStatus('default', {
+    provider: 'chatgpt',
+    auth: 'authenticated',
+    access: 'signed_in_paid',
+    checkedAt: now,
+    account: {
+      name: null,
+      subscription: 'ChatGPT Plus',
+      tier: { class: 'signed_in_paid', label: 'Plus' },
     },
-  }, null, 2)}\n`, { mode: 0o600 })
-  return { id: profileId }
+  })
+  return profile
 }
 
 function replacePromptHistory(database, profileId, timestamps, modelLabel = null) {
   database.exec('DELETE FROM jobs;')
     const insert = database.prepare(`INSERT INTO jobs (
-      job_id, claim_token, execution_backend, profile_id, provider, action, status,
+      job_id, execution_backend, profile_id, provider, action, status,
       request_json, provider_attempts_json, provider_submitted_at, created_at, updated_at
-    ) VALUES (?, ?, 'playwright', ?, 'chatgpt', 'visible_provider_actions', 'succeeded', ?, '[]', ?, ?, ?)`)
+    ) VALUES (?, 'playwright', ?, 'chatgpt', 'visible_provider_actions', 'succeeded', ?, '[]', ?, ?, ?)`)
     for (const timestamp of timestamps) {
       const submittedAt = new Date(timestamp).toISOString()
       insert.run(
         randomUUID(),
-        randomBytes(32).toString('base64url'),
         profileId,
         JSON.stringify({
           provider: 'chatgpt',

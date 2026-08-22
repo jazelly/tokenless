@@ -69,7 +69,6 @@ export async function startDaemon({
       pid: process.pid,
     })
     if (!endpoint) throw new Error('Tokenless daemon endpoint could not be published.')
-    store.requeueExpiredClaims()
     await runtimeController.start()
     daemon.activate()
   } catch (error) {

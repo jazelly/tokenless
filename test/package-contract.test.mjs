@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
+import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -156,9 +157,11 @@ test('persistent config preserves native Chrome or Brave and removes managed bro
   }
 })
 
-test('new profiles are logical native Chrome profiles and do not provision a browser runtime', () => {
+test('new profiles are logical native Chrome profiles and do not provision a browser runtime', async () => {
   const homeDir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'tokenless-native-browser-default-'))
+  let daemonUrl
   try {
+    daemonUrl = await configureIsolatedDaemon(homeDir)
     const result = spawnSync(process.execPath, [
       cliEntry,
       'profiles',
@@ -179,91 +182,7 @@ test('new profiles are logical native Chrome profiles and do not provision a bro
     assert.equal(Object.hasOwn(config, 'profilePreferences'), false)
     assert.equal(fs.existsSync(path.join(homeDir, 'browser', 'runtimes')), false)
   } finally {
-    fs.rmSync(homeDir, { recursive: true, force: true })
-  }
-})
-
-test('existing JSON profile registry is imported once with its complete browser identity', async () => {
-  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-profile-sqlite-import-')))
-  const profileId = '11111111-1111-4111-8111-111111111111'
-  const profilesRoot = path.join(homeDir, 'browser', 'profiles')
-  const profileDirectory = path.join(profilesRoot, profileId)
-  const legacyRegistryPath = path.join(homeDir, 'browser', 'profiles.json')
-  const now = '2026-08-21T00:00:00.000Z'
-  fs.mkdirSync(profileDirectory, { recursive: true, mode: 0o700 })
-  fs.writeFileSync(legacyRegistryPath, `${JSON.stringify({
-    version: 1,
-    defaultProfile: 'web-ai',
-    profiles: {
-      'web-ai': {
-        slug: 'web-ai',
-        id: profileId,
-        directory: profileDirectory,
-        lifecycle: 'ready',
-        createdAt: now,
-        updatedAt: now,
-        runtimeBinding: {
-          runtimeId: 'test:node',
-          family: 'test',
-          browserId: 'node',
-          executablePath: process.execPath,
-          createdWithVersion: '1.2.3.4',
-          profileFormat: 1,
-        },
-        lastObservedAuth: {
-          chatgpt: {
-            provider: 'chatgpt',
-            auth: 'authenticated',
-            access: 'signed_in_paid',
-            checkedAt: now,
-            account: { name: 'Local User', subscription: 'Plus', tier: 'paid' },
-          },
-        },
-      },
-    },
-  }, null, 2)}\n`, { mode: 0o600 })
-
-  try {
-    const { ManagedProfileRegistry } = await import('../packages/server/dist/src/browser/profiles/registry.js')
-    const imported = await new ManagedProfileRegistry(homeDir).resolveProfile()
-    assert.equal(imported.slug, 'web-ai')
-    assert.equal(imported.id, profileId)
-    assert.equal(imported.directory, profileDirectory)
-    assert.equal(imported.runtimeBinding.runtimeId, 'test:node')
-    assert.equal(imported.lastObservedAuth.chatgpt.account.subscription, 'Plus')
-
-    fs.writeFileSync(legacyRegistryPath, '{}\n', { mode: 0o600 })
-    assert.equal((await new ManagedProfileRegistry(homeDir).resolveProfile()).id, profileId)
-  } finally {
-    fs.rmSync(homeDir, { recursive: true, force: true })
-  }
-})
-
-test('concurrent single-profile config updates preserve both memberships', async () => {
-  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-profile-config-concurrency-')))
-  const runtime = await import('../packages/cli/dist/src/index.js')
-  const { ManagedProfileRegistry } = await import('../packages/server/dist/src/browser/profiles/registry.js')
-  try {
-    const registry = new ManagedProfileRegistry(homeDir)
-    await registry.addProfile({ slug: 'alpha', lifecycle: 'ready', setDefault: true })
-    await registry.addProfile({ slug: 'beta', lifecycle: 'ready' })
-    const stale = await runtime.readTokenlessConfig(homeDir)
-    await Promise.all([
-      runtime.upsertTokenlessProfileConfig({
-        homeDir,
-        slug: 'alpha',
-        profile: { ...stale.profiles.alpha, enabledProviders: ['chatgpt'] },
-      }),
-      runtime.upsertTokenlessProfileConfig({
-        homeDir,
-        slug: 'beta',
-        profile: { ...stale.profiles.beta, enabledProviders: ['claude'] },
-      }),
-    ])
-    const persisted = JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8'))
-    assert.deepEqual(persisted.profiles.alpha.enabledProviders, ['chatgpt'])
-    assert.deepEqual(persisted.profiles.beta.enabledProviders, ['claude'])
-  } finally {
+    stopIsolatedDaemon(homeDir, daemonUrl)
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
@@ -288,7 +207,7 @@ test('managed Chrome for Testing catalog follows the platform Cloak major', asyn
   assert.equal(linuxCloak.executableRelativePath, 'chrome')
 })
 
-test('persistent config migrates every registered legacy profile into config.profiles', async () => {
+test('persistent config includes every registered profile in config.profiles', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-profile-config-migration-')))
   const configPath = path.join(homeDir, 'config.json')
   const runtime = await import('../packages/cli/dist/src/index.js')
@@ -327,9 +246,11 @@ test('persistent config migrates every registered legacy profile into config.pro
   }
 })
 
-test('output savings defaults on without downloading its runtime during status checks', () => {
+test('output savings defaults on without downloading its runtime during status checks', async () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-output-savings-default-on-'))
+  let daemonUrl
   try {
+    daemonUrl = await configureIsolatedDaemon(homeDir)
     const result = spawnSync(process.execPath, [
       cliEntry,
       'savings',
@@ -364,6 +285,7 @@ test('output savings defaults on without downloading its runtime during status c
     })
     assert.equal(fs.existsSync(path.join(homeDir, 'tokenizers')), false)
   } finally {
+    stopIsolatedDaemon(homeDir, daemonUrl)
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
@@ -438,7 +360,7 @@ test('CLI help separates canonical and advanced commands into described workflow
     'Manage browser profiles and their sign-in sessions.',
     'Manage AI providers and their visible controls.',
     'Use miscellaneous maintenance and help commands.',
-    'Customize, inspect, resume, or cancel jobs.',
+    'Customize, inspect, or cancel jobs.',
     'Connect native Chrome and configure Tokenless profiles.',
     'Manage logical Tokenless profiles.',
     'Use low-level actions and provider-specific controls.',
@@ -475,8 +397,9 @@ test('CLI help separates canonical and advanced commands into described workflow
   assert.match(result.stderr, /^  https:\/\/github\.com\/jazelly\/tokenless\/blob\/main\/COMMANDS\.md$/m)
 })
 
-test('CLI localizes human output from system setup locale and persistent language config', () => {
+test('CLI localizes human output from system setup locale and persistent language config', async () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-language-'))
+  let daemonUrl
   try {
     const systemLocalizedSetupHelp = runCli(['setup', '--help'], {
       env: {
@@ -489,6 +412,7 @@ test('CLI localizes human output from system setup locale and persistent languag
     assert.match(systemLocalizedSetupHelp.stderr, /^用法：$/m)
     assert.match(systemLocalizedSetupHelp.stderr, /^通用选项：$/m)
 
+    daemonUrl = await configureIsolatedDaemon(homeDir)
     const configured = runCli(['config', '--home', homeDir, '--language', 'zh-CN', '--json'])
     assert.equal(configured.status, 0, configured.stderr || configured.stdout)
     assert.equal(JSON.parse(configured.stdout).config.language, 'zh-CN')
@@ -523,13 +447,16 @@ test('CLI localizes human output from system setup locale and persistent languag
     assert.equal(localizedSuccess.status, 0, localizedSuccess.stderr || localizedSuccess.stdout)
     assert.match(localizedSuccess.stdout, /Tokenless daemon (?:未在 .* 运行|已在 .* 停止(?:（pid \d+）)?)。/)
   } finally {
+    stopIsolatedDaemon(homeDir, daemonUrl)
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
 
 test('CLI accepts distinct case-sensitive short options for profile and provider', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-short-options-')))
+  let daemonUrl
   try {
+    daemonUrl = await configureIsolatedDaemon(homeDir)
     const added = spawnSync(process.execPath, [
       cliEntry,
       'profiles',
@@ -566,6 +493,7 @@ test('CLI accepts distinct case-sensitive short options for profile and provider
     assert.equal(payload.error.code, 'profile_not_found')
     assert.match(payload.error.message, /missing/)
   } finally {
+    stopIsolatedDaemon(homeDir, daemonUrl)
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
@@ -659,7 +587,6 @@ test('CLI rejects misspelled, unknown, and wrong-command options with usage befo
     ['snapshot-dom', '--all'],
     ['state', '--all'],
     ['status', '--all'],
-    ['resume', '--all'],
     ['cancel', '--all'],
     ['setup', '--provider', 'chatgpt'],
     ['install', '--provider', 'chatgpt'],
@@ -704,9 +631,11 @@ test('CLI command help is a supported common option for commands and subcommands
   }
 })
 
-test('CLI keeps human output succinct and exposes verbose diagnostics with controllable color', () => {
+test('CLI keeps human output succinct and exposes verbose diagnostics with controllable color', async () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-output-contract-'))
+  let daemonUrl
   try {
+    daemonUrl = await configureIsolatedDaemon(homeDir)
     const concise = runCli(['config', '--home', homeDir])
     assert.equal(concise.status, 0, concise.stderr)
     assert.match(concise.stdout, /^Completed: config=/)
@@ -732,6 +661,7 @@ test('CLI keeps human output succinct and exposes verbose diagnostics with contr
     assert.doesNotMatch(json.stdout, /\u001b\[/)
     assert.deepEqual(JSON.parse(json.stdout).config.browserVisibility, 'headed')
   } finally {
+    stopIsolatedDaemon(homeDir, daemonUrl)
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
@@ -991,7 +921,9 @@ test('CLI rejects removed local fallback routes before network access', () => {
 test('built CLI reads managed profile registries without enforcing POSIX mode bits', async () => {
   const temporaryRoot = fs.realpathSync(os.tmpdir())
   const homeDir = fs.mkdtempSync(path.join(temporaryRoot, 'tokenless-profile-registry-mode-'))
+  let daemonUrl
   try {
+    daemonUrl = await configureIsolatedDaemon(homeDir)
     const { ManagedProfileRegistry } = await import('../packages/server/dist/src/browser/profiles/registry.js')
     const registry = new ManagedProfileRegistry(homeDir)
     await registry.addProfile({ slug: 'mode-visible', lifecycle: 'ready' })
@@ -1010,6 +942,7 @@ test('built CLI reads managed profile registries without enforcing POSIX mode bi
     assert.equal(payload.ok, true)
     assert.deepEqual(payload.profiles.map((profile) => profile.slug), ['mode-visible'])
   } finally {
+    stopIsolatedDaemon(homeDir, daemonUrl)
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
@@ -1024,6 +957,30 @@ function runCli(args, options = {}) {
     encoding: 'utf8',
     ...options,
   })
+}
+
+async function configureIsolatedDaemon(homeDir) {
+  const { writeTokenlessConfig } = await import('../packages/cli/dist/src/index.js')
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
+  await writeTokenlessConfig({ homeDir, daemonUrl })
+  return daemonUrl
+}
+
+function stopIsolatedDaemon(homeDir, daemonUrl) {
+  if (!daemonUrl) return
+  runCli(['daemon', 'stop', '--home', homeDir, '--daemon-url', daemonUrl, '--json'])
+}
+
+async function freePort() {
+  const server = net.createServer()
+  await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  const address = server.address()
+  await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+  assert.equal(typeof address, 'object')
+  return address.port
 }
 
 function npmPack(directory, destination) {

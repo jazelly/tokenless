@@ -17,6 +17,7 @@ export class PerplexityProvider extends BaseProvider<'perplexity'> {
       label: 'Perplexity',
       stage: 'experimental',
       setupOrder: 6,
+      subscriptionSupport: 'supported',
       protocolCompatibility: Object.freeze({
         legacyRequests: false,
       }),

@@ -8,6 +8,8 @@ import test from 'node:test'
 import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
 
+import { ManagedProfileRegistry } from '../packages/server/dist/src/browser/profiles/registry.js'
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliEntry = path.join(root, 'packages/cli/dist/src/tokenless.mjs')
 
@@ -108,7 +110,7 @@ test('implicit run routing chooses the first usable cached provider in setup ord
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
   let daemonStarted = false
   try {
-    seedManagedProfile(homeDir, {
+    await seedManagedProfile(homeDir, {
       chatgpt: observedProvider('chatgpt', 'unknown', 'unknown'),
       claude: observedProvider('claude', 'unauthenticated', 'sign_in_required'),
       gemini: observedProvider('gemini', 'unauthenticated', 'guest'),
@@ -167,7 +169,7 @@ test('explicit attachment run uses a provider with file acceptance closure', asy
   fs.writeFileSync(attachment, 'Tokenless capability routing evidence.\n')
   let daemonStarted = false
   try {
-    seedManagedProfile(homeDir, {
+    await seedManagedProfile(homeDir, {
       gemini: observedProvider('gemini', 'unauthenticated', 'guest'),
       grok: observedProvider('grok', 'authenticated', 'signed_in_paid'),
     })
@@ -218,13 +220,13 @@ test('explicit attachment run uses a provider with file acceptance closure', asy
   }
 })
 
-test('explicit provider fails before daemon submission when required capability is not closed', () => {
+test('explicit provider fails before daemon submission when required capability is not closed', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-capability-explicit-')))
   const daemonUrl = 'http://127.0.0.1:9'
   const attachment = path.join(homeDir, 'evidence.txt')
   fs.writeFileSync(attachment, 'Tokenless explicit route evidence.\n')
   try {
-    seedManagedProfile(homeDir, {
+    await seedManagedProfile(homeDir, {
       perplexity: observedProvider('perplexity', 'unauthenticated', 'guest'),
     })
     writeConfig(homeDir, ['perplexity'], daemonUrl)
@@ -260,7 +262,7 @@ test('conversation continuation requires workspace intent and an existing exact 
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-continuation-route-')))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
   try {
-    seedManagedProfile(homeDir, {
+    await seedManagedProfile(homeDir, {
       arena: observedProvider('arena', 'authenticated', 'signed_in_unknown'),
     })
     writeConfig(homeDir, ['arena'], daemonUrl)
@@ -309,11 +311,11 @@ test('conversation continuation requires workspace intent and an existing exact 
   }
 })
 
-test('Arena model comparison rejects unsupported surfaces and continuation before job submission', () => {
+test('Arena model comparison rejects unsupported surfaces and continuation before job submission', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-arena-comparison-route-')))
   const daemonUrl = 'http://127.0.0.1:9'
   try {
-    seedManagedProfile(homeDir, {
+    await seedManagedProfile(homeDir, {
       arena: observedProvider('arena', 'authenticated', 'signed_in_unknown'),
     })
     writeConfig(homeDir, ['arena'], daemonUrl)
@@ -357,17 +359,17 @@ test('Arena model comparison rejects unsupported surfaces and continuation befor
     }
 
     assert.equal(fs.existsSync(path.join(homeDir, 'daemon.token')), false)
-    assert.equal(fs.existsSync(path.join(homeDir, 'tokenless.sqlite3')), false)
+    assert.equal(fs.existsSync(path.join(homeDir, 'tokenless.sqlite3')), true)
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
 
-test('Arena search capabilities select Direct Search and reject incompatible surfaces before job submission', () => {
+test('Arena search capabilities select Direct Search and reject incompatible surfaces before job submission', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-arena-search-route-')))
   const daemonUrl = 'http://127.0.0.1:9'
   try {
-    seedManagedProfile(homeDir, {
+    await seedManagedProfile(homeDir, {
       arena: observedProvider('arena', 'authenticated', 'signed_in_unknown'),
     })
     writeConfig(homeDir, ['arena'], daemonUrl)
@@ -407,17 +409,17 @@ test('Arena search capabilities select Direct Search and reject incompatible sur
     }
 
     assert.equal(fs.existsSync(path.join(homeDir, 'daemon.token')), false)
-    assert.equal(fs.existsSync(path.join(homeDir, 'tokenless.sqlite3')), false)
+    assert.equal(fs.existsSync(path.join(homeDir, 'tokenless.sqlite3')), true)
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
 
-test('Arena image capabilities reject incompatible controls and missing source images before job submission', () => {
+test('Arena image capabilities reject incompatible controls and missing source images before job submission', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-arena-image-route-')))
   const daemonUrl = 'http://127.0.0.1:9'
   try {
-    seedManagedProfile(homeDir, {
+    await seedManagedProfile(homeDir, {
       arena: observedProvider('arena', 'authenticated', 'signed_in_unknown'),
     })
     writeConfig(homeDir, ['arena'], daemonUrl)
@@ -483,17 +485,17 @@ test('Arena image capabilities reject incompatible controls and missing source i
     }
 
     assert.equal(fs.existsSync(path.join(homeDir, 'daemon.token')), false)
-    assert.equal(fs.existsSync(path.join(homeDir, 'tokenless.sqlite3')), false)
+    assert.equal(fs.existsSync(path.join(homeDir, 'tokenless.sqlite3')), true)
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
 
-test('Arena website generation selects Direct Code and rejects incompatible controls before job submission', () => {
+test('Arena website generation selects Direct Code and rejects incompatible controls before job submission', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-arena-code-route-')))
   const daemonUrl = 'http://127.0.0.1:9'
   try {
-    seedManagedProfile(homeDir, {
+    await seedManagedProfile(homeDir, {
       arena: observedProvider('arena', 'authenticated', 'signed_in_unknown'),
     })
     writeConfig(homeDir, ['arena'], daemonUrl)
@@ -554,19 +556,19 @@ test('Arena website generation selects Direct Code and rejects incompatible cont
     }
 
     assert.equal(fs.existsSync(path.join(homeDir, 'daemon.token')), false)
-    assert.equal(fs.existsSync(path.join(homeDir, 'tokenless.sqlite3')), false)
+    assert.equal(fs.existsSync(path.join(homeDir, 'tokenless.sqlite3')), true)
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
 
-test('Arena agent execution rejects unsupported controls and capability combinations before job submission', () => {
+test('Arena agent execution rejects unsupported controls and capability combinations before job submission', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-arena-agent-route-')))
   const daemonUrl = 'http://127.0.0.1:9'
   const attachment = path.join(homeDir, 'unproven-agent-input.txt')
   fs.writeFileSync(attachment, 'This must not reach Arena.\n')
   try {
-    seedManagedProfile(homeDir, {
+    await seedManagedProfile(homeDir, {
       arena: observedProvider('arena', 'authenticated', 'signed_in_unknown'),
     })
     writeConfig(homeDir, ['arena'], daemonUrl)
@@ -629,19 +631,19 @@ test('Arena agent execution rejects unsupported controls and capability combinat
     }
 
     assert.equal(fs.existsSync(path.join(homeDir, 'daemon.token')), false)
-    assert.equal(fs.existsSync(path.join(homeDir, 'tokenless.sqlite3')), false)
+    assert.equal(fs.existsSync(path.join(homeDir, 'tokenless.sqlite3')), true)
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
 
-test('Arena video generation rejects unsupported controls and capability combinations before job submission', () => {
+test('Arena video generation rejects unsupported controls and capability combinations before job submission', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-arena-video-route-')))
   const daemonUrl = 'http://127.0.0.1:9'
   const attachment = path.join(homeDir, 'unproven-video-input.png')
   fs.writeFileSync(attachment, 'This must not reach Arena.\n')
   try {
-    seedManagedProfile(homeDir, {
+    await seedManagedProfile(homeDir, {
       arena: observedProvider('arena', 'authenticated', 'signed_in_unknown'),
     })
     writeConfig(homeDir, ['arena'], daemonUrl)
@@ -719,16 +721,16 @@ test('Arena video generation rejects unsupported controls and capability combina
     }
 
     assert.equal(fs.existsSync(path.join(homeDir, 'daemon.token')), false)
-    assert.equal(fs.existsSync(path.join(homeDir, 'tokenless.sqlite3')), false)
+    assert.equal(fs.existsSync(path.join(homeDir, 'tokenless.sqlite3')), true)
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
 
-test('deep research stays unavailable until its complete lifecycle is closed', () => {
+test('deep research stays unavailable until its complete lifecycle is closed', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-capability-research-')))
   try {
-    seedManagedProfile(homeDir, {
+    await seedManagedProfile(homeDir, {
       qwen: observedProvider('qwen', 'unauthenticated', 'guest'),
     })
     writeConfig(homeDir, ['qwen'], 'http://127.0.0.1:9')
@@ -762,12 +764,12 @@ test('deep research stays unavailable until its complete lifecycle is closed', (
   }
 })
 
-test('attachment media infers its semantic input capability', () => {
+test('attachment media infers its semantic input capability', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-capability-image-input-')))
   const image = path.join(homeDir, 'evidence.png')
   fs.writeFileSync(image, Buffer.from('89504e470d0a1a0a', 'hex'))
   try {
-    seedManagedProfile(homeDir, {
+    await seedManagedProfile(homeDir, {
       deepseek: observedProvider('deepseek', 'authenticated', 'signed_in_free'),
     })
     writeConfig(homeDir, ['deepseek'], 'http://127.0.0.1:9')
@@ -801,7 +803,7 @@ test('explicit run provider is not replaced by cached provider usability', async
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
   let daemonStarted = false
   try {
-    seedManagedProfile(homeDir, {
+    await seedManagedProfile(homeDir, {
       chatgpt: observedProvider('chatgpt', 'unknown', 'unknown'),
       gemini: observedProvider('gemini', 'unauthenticated', 'guest'),
     })
@@ -835,7 +837,7 @@ test('implicit run routing fails before daemon submission when no cached provide
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-provider-none-')))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
   try {
-    seedManagedProfile(homeDir, {
+    await seedManagedProfile(homeDir, {
       chatgpt: observedProvider('chatgpt', 'unknown', 'unknown'),
       claude: observedProvider('claude', 'unauthenticated', 'sign_in_required'),
     })
@@ -870,10 +872,10 @@ test('implicit run routing fails before daemon submission when no cached provide
   }
 })
 
-test('doctor reports observation health separately from cached provider usability', () => {
+test('doctor reports observation health separately from cached provider usability', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-provider-doctor-')))
   try {
-    seedManagedProfile(homeDir, {
+    await seedManagedProfile(homeDir, {
       chatgpt: observedProvider('chatgpt', 'unknown', 'unknown'),
       claude: observedProvider('claude', 'unauthenticated', 'sign_in_required'),
       gemini: observedProvider('gemini', 'unauthenticated', 'guest'),
@@ -908,26 +910,12 @@ function writeConfig(homeDir, providerWhitelist, daemonUrl) {
   }, null, 2)}\n`, { mode: 0o600 })
 }
 
-function seedManagedProfile(homeDir, lastObservedAuth) {
-  const id = '11111111-1111-4111-8111-111111111111'
-  const profilesRoot = path.join(homeDir, 'browser', 'profiles')
-  const directory = path.join(profilesRoot, id)
-  fs.mkdirSync(directory, { recursive: true, mode: 0o700 })
-  fs.writeFileSync(path.join(homeDir, 'browser', 'profiles.json'), `${JSON.stringify({
-    version: 1,
-    defaultProfile: 'default',
-    profiles: {
-      default: {
-        slug: 'default',
-        id,
-        directory,
-        lifecycle: 'ready',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        lastObservedAuth,
-      },
-    },
-  }, null, 2)}\n`, { mode: 0o600 })
+async function seedManagedProfile(homeDir, lastObservedAuth) {
+  const registry = new ManagedProfileRegistry(homeDir)
+  await registry.addProfile({ slug: 'default', lifecycle: 'ready', setDefault: true })
+  for (const status of Object.values(lastObservedAuth)) {
+    await registry.updateProviderStatus('default', status)
+  }
 }
 
 function observedProvider(provider, auth, access) {

@@ -23,6 +23,7 @@ export class MetaProvider extends BaseProvider<'meta'> {
       label: 'Meta AI',
       stage: 'experimental',
       setupOrder: 12,
+      subscriptionSupport: 'supported',
       protocolCompatibility: Object.freeze({
         legacyRequests: false,
       }),

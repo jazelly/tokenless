@@ -6,7 +6,7 @@ import {
   type ManagedProfileOpenResult,
   type ManagedProviderTabsOpenResult,
 } from '../browser/runner-service.js'
-import { isClaimRecoveryError, tokenlessError } from '../browser/errors.js'
+import { tokenlessError } from '../browser/errors.js'
 import { BrowserRuntimeManager } from '../browser/runtime/manager.js'
 import { readTokenlessConfig } from '../persistence/config.js'
 import type { JobStore } from '../jobs/store.js'
@@ -131,9 +131,8 @@ export class BrowserRuntimeController {
       this.state = 'quiescing'
       runner.abortController.abort()
       runner.service.stop()
-      const results = await this.settleRunner(runner, 'close')
+      await this.settleRunner(runner, 'close')
       if (this.runner === runner) this.runner = null
-      this.throwIfRunnerFailedToRecover(results)
       if (!this.terminal) this.state = 'quiesced'
       this.quiesceRequested = false
       return this.status()
@@ -188,7 +187,6 @@ export class BrowserRuntimeController {
           launchPolicy: runtime.launchPolicy,
         }
       },
-      recoverAbortedClaim: (job) => this.store.recoverActiveClaim(job.job_id, job.claim_token),
     })
     const abortController = new AbortController()
     const runner: RunnerInstance = {
@@ -198,7 +196,6 @@ export class BrowserRuntimeController {
     }
     runner.loop = service.runUntilStopped(abortController.signal)
       .catch((error) => {
-        if (isClaimRecoveryError(error)) throw error
         if (abortController.signal.aborted || this.terminal) return
         if (this.runner === runner) {
           this.runner = null
@@ -227,18 +224,6 @@ export class BrowserRuntimeController {
     const shutdown = (browserDisposition === 'close' ? runner.service.shutdown() : runner.service.detach())
       .catch(() => undefined)
     return await Promise.allSettled([runner.loop, shutdown])
-  }
-
-  private throwIfRunnerFailedToRecover(results: PromiseSettledResult<unknown>[]) {
-    const failed = results.find((result) => (
-      result.status === 'rejected' &&
-      isClaimRecoveryError(result.reason)
-    ))
-    if (failed?.status !== 'rejected') return
-    this.quiesceFailure = failed.reason
-    this.state = 'quiescing'
-    this.quiesceRequested = false
-    throw failed.reason
   }
 
   private enqueue<T>(operation: () => Promise<T> | T): Promise<T> {

@@ -45,7 +45,6 @@
         "blocker_json": null,
         "provider_attempts_json": [],
         "provider_submitted_at": null,
-        "eligible_at": null,
         "created_at": "2026-07-26T00:00:00Z",
         "updated_at": "2026-07-26T00:00:00Z"
       }
@@ -121,7 +120,6 @@
         "blocker_json": null,
         "provider_attempts_json": [],
         "provider_submitted_at": "2026-07-26T00:00:30Z",
-        "eligible_at": null,
         "created_at": "2026-07-26T00:00:00Z",
         "updated_at": "2026-07-26T00:01:00Z"
       }
@@ -271,57 +269,6 @@
           "canonical_url": "https://chatgpt.com/c/conversation-1",
           "proved_job_id": "job-1",
           "observed_at": "2026-07-26T00:01:00Z"
-        }
-      }
-    },
-    {
-      "name": "replay-drain",
-      "schema": "#/components/schemas/ReplayDrainResponse",
-      "valid": true,
-      "data": {
-        "jobs": [
-          {
-            "job_id": "job-1",
-            "provider": "chatgpt",
-            "action": "visible_provider_actions",
-            "status": "succeeded",
-            "task_id": "task-1",
-            "updated_at": "2026-07-26T00:00:00Z",
-            "reported_at": "2026-07-26T00:01:00Z",
-            "outcome_kind": "result",
-            "has_result": true,
-            "has_error": false,
-            "has_blocker": false
-          }
-        ]
-      }
-    },
-    {
-      "name": "job-report",
-      "schema": "#/components/schemas/JobReportResponse",
-      "valid": true,
-      "data": {
-        "reported": true,
-        "job": {
-          "job_id": "job-1",
-          "execution_backend": "playwright",
-          "profile_id": "work",
-          "provider": "chatgpt",
-          "action": "visible_provider_actions",
-          "status": "succeeded",
-          "request_json": {
-            "taskId": "task-1"
-          },
-          "result_json": {
-            "text": "complete"
-          },
-          "error_json": null,
-          "blocker_json": null,
-          "provider_attempts_json": [],
-          "provider_submitted_at": "2026-07-26T00:00:30Z",
-          "eligible_at": null,
-          "created_at": "2026-07-26T00:00:00Z",
-          "updated_at": "2026-07-26T00:00:00Z"
         }
       }
     }

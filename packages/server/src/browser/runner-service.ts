@@ -2,12 +2,10 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import {
-  claimRecoveryError,
   errorResponse,
-  isClaimRecoveryError,
   tokenlessError,
 } from './errors.js'
-import { RUNNER_CHECKPOINT_SCHEMA_ID, USER_HANDOVER_SCHEMA_ID } from '../schema-ids.js'
+import { USER_HANDOVER_SCHEMA_ID } from '../schema-ids.js'
 import { MAX_ACTIVE_BROWSER_PROFILES, PersistentContextManager } from './browser/context-manager.js'
 import {
   e2eInspectionJobPrefix,
@@ -29,9 +27,8 @@ import {
   classifyVisibleProviderBlocker,
   type ClassifiedProviderFailure,
 } from './provider-failure-classification.js'
-import { VISIBLE_ACTIONS, VISIBLE_ACTION_SCHEMA_ID, isVisibleActionProtocolVersion } from './actions.js'
+import { VISIBLE_ACTIONS, VISIBLE_ACTION_SCHEMA_ID } from './actions.js'
 import { ManagedProfileRegistry } from './profiles/registry.js'
-import { checkpointIndicatesExternalMutation } from './submission-certainty.js'
 import { readTokenlessConfig } from '../persistence/config.js'
 import { PROVIDER_CAPABILITIES, TASK_CAPABILITIES, getProviderInstanceById } from '../providers/registry.js'
 import { readChatGptBrowserSession, sendDirectChatGptMessage } from '../providers/direct/chatgpt.js'
@@ -42,23 +39,24 @@ import type {
   ManagedProviderPageLease,
   PersistentContextManager as PersistentContextManagerType,
 } from './browser/context-manager.js'
-import type { DaemonClaimedJob, DaemonJob, ManagedDaemonClient } from './daemon-client.js'
+import type { DaemonJob, ManagedDaemonClient } from './daemon-client.js'
 import type { ManagedPlaywrightJobRequest } from './job-contract.js'
 import type { ProviderCapabilityId, ProviderId, TaskCapabilityId, TaskCapabilityRoute } from '../providers/registry.js'
 import type { BrowserVisibility } from '../browser-visibility.js'
-import type { VisibleAction, VisibleActionRequest } from './actions.js'
+import type { VisibleActionRequest } from './actions.js'
 import type { VisibleActionResponse } from './actions.js'
+import type { ResponseReadResult } from './actions.js'
 import type { VisibleActionResult } from './actions.js'
 import type { VisibleBlocker } from './actions.js'
 import type { NativeWorkspaceEnsureResult } from './actions.js'
 import type { ProviderActionPreparation } from '../providers/contracts.js'
 import type { ProviderCapacityProjection } from '../providers/rate-limit-policy.js'
 import type { BrowserContext, Page } from 'playwright-core'
-import type { OutputSavingsWorkInput } from '../jobs/store.js'
 import type { G4fServiceClient } from '../providers/direct/g4f/client.js'
 import { ProviderProtocolRouter } from '../providers/direct/protocol-router.js'
 import { g4fProviderName, isG4fDirectOnlyProvider } from '../providers/direct/g4f-map.js'
 import { persistDirectImageAsset } from './image-assets.js'
+import { OutputSavingsRuntimeManager } from '../output-savings/runtime-manager.js'
 
 export type ManagedPlaywrightRunnerServiceOptions = {
   homeDir?: string | undefined
@@ -68,13 +66,11 @@ export type ManagedPlaywrightRunnerServiceOptions = {
   browser?: ManagedBrowserLaunchTarget | undefined
   browserResolver?: ManagedBrowserResolver | undefined
   pollIdleMs?: number | undefined
-  renewIntervalMs?: number | undefined
   cancelPollMs?: number | undefined
   responseWaitPollMs?: number | undefined
   userHandoverTimeoutMs?: number | undefined
   userHandoverPollMs?: number | undefined
   attachmentRootForJob?: ((job: DaemonJob) => string | undefined | Promise<string | undefined>) | undefined
-  recoverAbortedClaim?: ((job: DaemonClaimedJob) => Promise<unknown> | unknown) | undefined
   cleanupAttachmentRoot?: boolean | undefined
   now?: (() => Date) | undefined
   g4fClient?: G4fServiceClient | undefined
@@ -85,8 +81,8 @@ export type ManagedProfileSource = {
 }
 
 export type ManagedPlaywrightRunnerIteration =
-  | { claimed: false }
-  | { claimed: true, jobId: string, status: 'succeeded' | 'failed' | 'canceled' | 'waiting_for_user' | 'fallback_queued' | 'rate_limit_deferred' }
+  | { taken: false }
+  | { taken: true, jobId: string, status: 'succeeded' | 'failed' | 'canceled' | 'waiting_for_user' }
 
 export type ManagedPlaywrightJobResult = {
   protocol: typeof MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID
@@ -96,7 +92,6 @@ export type ManagedPlaywrightJobResult = {
 
 type ManagedPlaywrightExecutionOutcome = {
   result: ManagedPlaywrightJobResult
-  outputSavingsWork: readonly OutputSavingsWorkInput[]
 }
 
 export type ManagedProfileOpenResult = {
@@ -119,43 +114,18 @@ export type ManagedProviderTabsOpenResult = ManagedProfileOpenResult & {
   }[]
 }
 
-type RunnerCheckpointPhase =
-  | { state: 'idle' }
-  | {
-    state: 'started' | 'completed'
-    actionIndex: number
-    requestId: string
-    action: VisibleAction
-    mutating: boolean
-    providerUrl: string | null
-  }
-
-type RunnerSubmittedActionCheckpoint = {
+type RunnerSubmittedAction = {
   actionIndex: number
   requestId: string
   providerUrl: string
   preparation: ProviderActionPreparation
 }
 
-type RunnerCheckpoint = {
-  protocol: typeof RUNNER_CHECKPOINT_SCHEMA_ID
-  jobId: string
-  profileId: string | null
-  provider: string
-  targetUrl: string
-  browserVisibility: BrowserVisibility
-  actionCursor: number
-  responses: readonly VisibleActionResponse[]
-  preparation: ProviderActionPreparation | null
-  submitted: RunnerSubmittedActionCheckpoint | null
-  phase: RunnerCheckpointPhase
-}
-
 type RunnerExecutionState = {
   actionCursor: number
   responses: VisibleActionResponse[]
   preparation: ProviderActionPreparation | null
-  submitted: RunnerSubmittedActionCheckpoint | null
+  submitted: RunnerSubmittedAction | null
 }
 
 type ClearBlockerResult = {
@@ -167,33 +137,30 @@ type ClearBlockerResult = {
 
 type RunnerProvider = NonNullable<ReturnType<typeof getProviderInstanceById>>
 
-const DEFAULT_RENEW_INTERVAL_MS = 10_000
 const DEFAULT_CANCEL_POLL_MS = 500
 const DEFAULT_POLL_IDLE_MS = 1_000
 const DEFAULT_RESPONSE_WAIT_POLL_MS = 250
 const DEFAULT_USER_HANDOVER_TIMEOUT_MS = 10 * 60_000
 const DEFAULT_USER_HANDOVER_POLL_MS = 1_000
-const MAX_READINESS_BATCH_CONCURRENCY = 3
 const SAFE_JOB_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 export class ManagedPlaywrightRunnerService {
   private readonly profileRegistry: ManagedProfileSource
   private readonly daemonClient: ManagedDaemonClient
   private readonly contextManager: PersistentContextManagerType
   private readonly pollIdleMs: number
-  private readonly renewIntervalMs: number
   private readonly cancelPollMs: number
   private readonly responseWaitPollMs: number
   private readonly userHandoverTimeoutMs: number
   private readonly userHandoverPollMs: number
   private readonly attachmentRootForJob: ((job: DaemonJob) => string | undefined | Promise<string | undefined>) | undefined
-  private readonly recoverAbortedClaim: ((job: DaemonClaimedJob) => Promise<unknown> | unknown) | undefined
   private readonly cleanupAttachmentRoot: boolean
   private readonly now: () => Date
   private readonly e2eInspection: E2EBrowserInspectionConfig | null
   private readonly homeDir: string | undefined
   private readonly protocolRouter: ProviderProtocolRouter
   private readonly g4fClient: G4fServiceClient | undefined
-  private readonly inFlightProfiles = new Set<string>()
+  private readonly outputSavingsRuntimeManager: OutputSavingsRuntimeManager | undefined
+  private readonly inFlightJobsByProfile = new Map<string, number>()
   private readonly inFlightJobs = new Set<Promise<void>>()
   private stopped = false
 
@@ -201,6 +168,9 @@ export class ManagedPlaywrightRunnerService {
     this.homeDir = options.homeDir === undefined ? undefined : path.resolve(options.homeDir)
     this.g4fClient = options.g4fClient
     this.protocolRouter = new ProviderProtocolRouter(options.g4fClient)
+    this.outputSavingsRuntimeManager = this.homeDir === undefined
+      ? undefined
+      : new OutputSavingsRuntimeManager(this.homeDir)
     if (options.profileRegistry) {
       this.profileRegistry = options.profileRegistry
     } else {
@@ -224,7 +194,6 @@ export class ManagedPlaywrightRunnerService {
       ...(options.browserResolver ? { browserResolver: options.browserResolver } : {}),
     })
     this.pollIdleMs = normalizedPositiveInteger(options.pollIdleMs, DEFAULT_POLL_IDLE_MS)
-    this.renewIntervalMs = normalizedPositiveInteger(options.renewIntervalMs, DEFAULT_RENEW_INTERVAL_MS)
     this.cancelPollMs = normalizedPositiveInteger(options.cancelPollMs, DEFAULT_CANCEL_POLL_MS)
     this.responseWaitPollMs = normalizedPositiveInteger(options.responseWaitPollMs, DEFAULT_RESPONSE_WAIT_POLL_MS)
     this.userHandoverTimeoutMs = normalizedPositiveInteger(options.userHandoverTimeoutMs, DEFAULT_USER_HANDOVER_TIMEOUT_MS)
@@ -233,7 +202,6 @@ export class ManagedPlaywrightRunnerService {
     this.attachmentRootForJob = options.attachmentRootForJob ?? (
       defaultAttachmentHomeDir ? (job) => defaultAttachmentRootForJob(defaultAttachmentHomeDir, job) : undefined
     )
-    this.recoverAbortedClaim = options.recoverAbortedClaim
     this.cleanupAttachmentRoot = options.cleanupAttachmentRoot ?? true
     this.now = options.now ?? (() => new Date())
     this.e2eInspection = resolveE2EBrowserInspectionConfig(options.homeDir)
@@ -359,91 +327,52 @@ export class ManagedPlaywrightRunnerService {
         }
       }
     } finally {
-      const results = await Promise.allSettled([...this.inFlightJobs])
-      const recoveryFailure = results.find((result) => (
-        result.status === 'rejected' &&
-        isManagedPlaywrightClaimRecoveryFailure(result.reason)
-      ))
-      if (recoveryFailure?.status === 'rejected') throw recoveryFailure.reason
+      await Promise.allSettled([...this.inFlightJobs])
     }
   }
 
   async runOnce(signal?: AbortSignal | undefined): Promise<ManagedPlaywrightRunnerIteration> {
-    if (this.stopped || signal?.aborted) return { claimed: false }
-    const profiles = await this.claimableProfiles(new Set())
+    if (this.stopped || signal?.aborted) return { taken: false }
+    const profiles = await this.availableProfiles(new Set())
     for (const profile of profiles) {
-      const claimed = await this.daemonClient.claimNextJob({
+      const selected = await this.daemonClient.takeNextJob({
         executionBackend: PLAYWRIGHT_EXECUTION_BACKEND,
         profileId: profile.id,
         action: MANAGED_PLAYWRIGHT_JOB_ACTION,
         jobIdPrefix: this.e2eInspection ? e2eInspectionJobPrefix(this.e2eInspection) : undefined,
         signal,
       })
-      if (claimed.job) return await this.executeClaimedJob(profile, claimed.job, signal)
+      if (selected.job) return await this.executeJob(profile, selected.job, signal)
     }
-    return { claimed: false }
+    return { taken: false }
   }
 
   private async startAvailableJobs(signal?: AbortSignal | undefined) {
-    if (this.inFlightProfiles.size >= MAX_ACTIVE_BROWSER_PROFILES) return 0
     let started = 0
-    const profiles = await this.claimableProfiles(this.inFlightProfiles)
+    const profiles = await this.availableProfiles(new Set(this.inFlightJobsByProfile.keys()))
     for (const profile of profiles) {
-      if (this.stopped || signal?.aborted || this.inFlightProfiles.size >= MAX_ACTIVE_BROWSER_PROFILES) break
-      if (this.inFlightProfiles.has(profile.id)) continue
-      const claimed = await this.daemonClient.claimNextJob({
+      if (this.stopped || signal?.aborted) break
+      const selected = await this.daemonClient.takeNextJob({
         executionBackend: PLAYWRIGHT_EXECUTION_BACKEND,
         profileId: profile.id,
         action: MANAGED_PLAYWRIGHT_JOB_ACTION,
         jobIdPrefix: this.e2eInspection ? e2eInspectionJobPrefix(this.e2eInspection) : undefined,
         signal,
       })
-      if (!claimed.job) continue
-      this.inFlightProfiles.add(profile.id)
-      const jobPromise = this.executeClaimedBatch(profile, claimed.job, signal)
+      if (!selected.job) continue
+      this.inFlightJobsByProfile.set(profile.id, (this.inFlightJobsByProfile.get(profile.id) ?? 0) + 1)
+      const jobPromise = this.executeJob(profile, selected.job, signal)
         .then(() => undefined)
-        .catch((error) => {
-          if (isClaimRecoveryError(error)) throw error
-        })
         .finally(() => {
-          this.inFlightProfiles.delete(profile.id)
+          const remaining = (this.inFlightJobsByProfile.get(profile.id) ?? 1) - 1
+          if (remaining === 0) this.inFlightJobsByProfile.delete(profile.id)
+          else this.inFlightJobsByProfile.set(profile.id, remaining)
           this.inFlightJobs.delete(jobPromise)
         })
       this.inFlightJobs.add(jobPromise)
       started += 1
     }
     return started
-  }
-
-  private async executeClaimedBatch(
-    profile: ManagedBrowserProfile,
-    firstJob: DaemonClaimedJob,
-    signal?: AbortSignal | undefined,
-  ) {
-    const executions = [this.executeClaimedJob(profile, firstJob, signal)]
-    const batchPrefix = readinessBatchPrefix(firstJob)
-    let claimError: unknown
-    try {
-      if (batchPrefix) {
-        while (executions.length < MAX_READINESS_BATCH_CONCURRENCY && !this.stopped && !signal?.aborted) {
-          const claimed = await this.daemonClient.claimNextJob({
-            executionBackend: PLAYWRIGHT_EXECUTION_BACKEND,
-            profileId: profile.id,
-            action: MANAGED_PLAYWRIGHT_JOB_ACTION,
-            jobIdPrefix: batchPrefix,
-            signal,
-          })
-          if (!claimed.job) break
-          executions.push(this.executeClaimedJob(profile, claimed.job, signal))
-        }
-      }
-    } catch (error) {
-      claimError = error
-    }
-    const results = await Promise.allSettled(executions)
-    if (claimError) throw claimError
-    const failed = results.find((result) => result.status === 'rejected')
-    if (failed?.status === 'rejected') throw failed.reason
   }
 
   private async waitForSchedulerProgress(signal?: AbortSignal | undefined) {
@@ -457,27 +386,16 @@ export class ManagedPlaywrightRunnerService {
     ])
   }
 
-  private async executeClaimedJob(
+  private async executeJob(
     profile: ManagedBrowserProfile,
-    job: DaemonClaimedJob,
+    job: DaemonJob,
     outerSignal?: AbortSignal | undefined
   ): Promise<ManagedPlaywrightRunnerIteration> {
     const controller = new AbortController()
     const signal = outerSignal ? AbortSignal.any([outerSignal, controller.signal]) : controller.signal
     let canceled = false
-    let renewError: unknown
     let attachmentRoot: string | undefined
     let providerAttachmentRoot: string | undefined
-    let terminalCompletion = false
-    const renewTimer = setInterval(() => {
-      void this.daemonClient.renewJobClaim({
-        jobId: job.job_id,
-        claimToken: job.claim_token,
-      }).catch((error) => {
-        renewError = error
-        controller.abort()
-      })
-    }, this.renewIntervalMs)
     const cancelTimer = setInterval(() => {
       void this.daemonClient.getJob({ jobId: job.job_id }).then((latest) => {
         if (latest.status === 'canceled' || latest.status === 'timed_out') {
@@ -488,16 +406,14 @@ export class ManagedPlaywrightRunnerService {
     }, this.cancelPollMs)
 
     try {
-      const request = this.validateClaimedJob(profile, job)
+      const request = this.validateJob(profile, job)
       if (
         request.executionMode === 'browser' &&
-        job.provider_submitted_at === null &&
-        !checkpointIndicatesExternalMutation(job.checkpoint_json)
+        job.provider_submitted_at === null
       ) {
         const subscription = rateLimitSubscription(profile, job.provider)
         const projection = await this.daemonClient.projectJobProviderCapacity({
           jobId: job.job_id,
-          claimToken: job.claim_token,
           accessClass: subscription.accessClass,
           tierLabel: subscription.tierLabel,
           subscriptionLabel: subscription.subscriptionLabel,
@@ -509,28 +425,18 @@ export class ManagedPlaywrightRunnerService {
           if (fallbackRequest) {
             await this.daemonClient.fallbackJob({
               jobId: job.job_id,
-              claimToken: job.claim_token,
               provider: fallbackRequest.provider,
               request: fallbackRequest,
-              blocker: { code: 'provider_capacity_deferred', projection, failure },
+              blocker: { code: 'provider_capacity_unavailable', projection, failure },
               signal,
             })
-            throw new QueuedProviderFallback()
+            throw new ProviderFallbackSignal()
           }
-          if (!projection.eligibleAt) {
-            throw tokenlessError(
-              'provider_capacity_request_exceeds_known_allowance',
-              'The request exceeds a known provider allowance and cannot become eligible by waiting.',
-              { retryable: false, details: projection },
-            )
-          }
-          await this.daemonClient.deferJobForProviderCapacity({
-            jobId: job.job_id,
-            claimToken: job.claim_token,
-            projection,
-            signal,
-          })
-          throw new DeferredProviderCapacity()
+          throw tokenlessError(
+            'provider_capacity_unavailable',
+            'Provider capacity is unavailable for this request and no fallback can run now.',
+            { retryable: false, details: projection },
+          )
         }
       }
       attachmentRoot = await this.attachmentRootForJob?.(job)
@@ -538,11 +444,6 @@ export class ManagedPlaywrightRunnerService {
         assertSafeAttachmentCleanupRoot(attachmentRoot, job.job_id)
         providerAttachmentRoot = path.dirname(attachmentRoot)
       }
-      await this.daemonClient.markJobRunning({
-        jobId: job.job_id,
-        claimToken: job.claim_token,
-        signal,
-      })
       const execution = await this.executeActions(
         profile,
         job,
@@ -550,108 +451,115 @@ export class ManagedPlaywrightRunnerService {
         providerAttachmentRoot,
         signal,
         () => canceled,
-        () => renewError,
       )
       if (canceled || signal.aborted) {
-        return { claimed: true, jobId: job.job_id, status: 'canceled' }
+        return { taken: true, jobId: job.job_id, status: 'canceled' }
       }
+      const result = await this.measureOutputSavings(execution.result, signal)
       await this.daemonClient.completeJob({
         jobId: job.job_id,
-        claimToken: job.claim_token,
-        result: execution.result,
-        outputSavingsWork: execution.outputSavingsWork,
+        result,
       })
-      terminalCompletion = true
-      return { claimed: true, jobId: job.job_id, status: 'succeeded' }
+      return { taken: true, jobId: job.job_id, status: 'succeeded' }
     } catch (error) {
-      if (error instanceof ParkedPlaywrightJob) {
+      if (error instanceof ProviderFallbackSignal) {
         attachmentRoot = undefined
-        return { claimed: true, jobId: job.job_id, status: 'waiting_for_user' }
-      }
-      if (error instanceof QueuedProviderFallback) {
-        attachmentRoot = undefined
-        return { claimed: true, jobId: job.job_id, status: 'fallback_queued' }
-      }
-      if (error instanceof DeferredProviderCapacity) {
-        attachmentRoot = undefined
-        return { claimed: true, jobId: job.job_id, status: 'rate_limit_deferred' }
+        const fallbackJob = await this.daemonClient.getJob({ jobId: job.job_id, signal })
+        return await this.executeJob(profile, fallbackJob, outerSignal)
       }
       if (canceled || signal.aborted) {
-        if (!renewError) {
-          return { claimed: true, jobId: job.job_id, status: 'canceled' }
-        }
-      }
-      const completionError = renewError ?? error
-      if (renewError) {
-        await this.daemonClient.completeJob({
-          jobId: job.job_id,
-          claimToken: job.claim_token,
-          error: serializeRunnerError(completionError),
-        }).catch(() => undefined)
-        terminalCompletion = true
-        return { claimed: true, jobId: job.job_id, status: 'failed' }
+        return { taken: true, jobId: job.job_id, status: 'canceled' }
       }
       if (signal.aborted) {
-        return { claimed: true, jobId: job.job_id, status: 'canceled' }
+        return { taken: true, jobId: job.job_id, status: 'canceled' }
       }
       await this.daemonClient.completeJob({
         jobId: job.job_id,
-        claimToken: job.claim_token,
-        error: serializeRunnerError(completionError),
+        error: serializeRunnerError(error),
       }).catch(() => undefined)
-      terminalCompletion = true
-      return { claimed: true, jobId: job.job_id, status: 'failed' }
+      return { taken: true, jobId: job.job_id, status: 'failed' }
     } finally {
-      clearInterval(renewTimer)
       clearInterval(cancelTimer)
       controller.abort()
-      const recoverClaim = outerSignal?.aborted && !terminalCompletion && !canceled && !renewError
-      if (attachmentRoot && this.cleanupAttachmentRoot && !recoverClaim) {
+      if (attachmentRoot && this.cleanupAttachmentRoot) {
         await fs.rm(attachmentRoot, { recursive: true, force: true }).catch(() => undefined)
-      }
-      if (recoverClaim) {
-        try {
-          await this.recoverAbortedClaim?.(job)
-        } catch (error) {
-          throw claimRecoveryError(error)
-        }
       }
     }
   }
 
-  private async claimableProfiles(inFlightProfiles: ReadonlySet<string>): Promise<ManagedBrowserProfile[]> {
+  private async measureOutputSavings(
+    result: ManagedPlaywrightJobResult,
+    signal: AbortSignal,
+  ): Promise<ManagedPlaywrightJobResult> {
+    const manager = this.outputSavingsRuntimeManager
+    if (!manager || !this.homeDir) return result
+    let enabled = false
+    try {
+      enabled = (await readTokenlessConfig(this.homeDir)).outputSavings.enabled
+    } catch {
+      return result
+    }
+    if (!enabled) return result
+
+    let changed = false
+    const responses: VisibleActionResponse[] = []
+    for (const response of result.responses) {
+      if (!response.ok || response.action !== VISIBLE_ACTIONS.RESPONSE_READ) {
+        responses.push(response)
+        continue
+      }
+      const responseResult = response.result as ResponseReadResult
+      if (typeof responseResult.text !== 'string' || responseResult.text.length === 0) {
+        responses.push(response)
+        continue
+      }
+      try {
+        const measurement = await manager.measure(responseResult.text, { signal, installIfMissing: true })
+        if (measurement.state !== 'measured') {
+          responses.push(response)
+          continue
+        }
+        changed = true
+        responses.push({
+          ...response,
+          result: { ...responseResult, outputSavings: measurement },
+        })
+      } catch {
+        responses.push(response)
+      }
+    }
+    return changed ? { ...result, responses } : result
+  }
+
+  private async availableProfiles(inFlightProfileIds: ReadonlySet<string>): Promise<ManagedBrowserProfile[]> {
     const profiles = (await this.profileRegistry.listProfiles())
       .filter((profile) => profile.lifecycle === undefined || profile.lifecycle === 'ready')
     const activeProfileIds = new Set(this.contextManager.activeProfileIds())
-    if (activeProfileIds.size >= MAX_ACTIVE_BROWSER_PROFILES) {
-      return profiles.filter((profile) => activeProfileIds.has(profile.id) && !inFlightProfiles.has(profile.id))
-    }
-    const remainingNewProfileSlots = MAX_ACTIVE_BROWSER_PROFILES - activeProfileIds.size - [...inFlightProfiles]
-      .filter((profileId) => !activeProfileIds.has(profileId)).length
-    let newProfiles = 0
-    const claimable: ManagedBrowserProfile[] = []
+    const occupiedProfileIds = new Set([...activeProfileIds, ...inFlightProfileIds])
+    let remainingNewProfileSlots = MAX_ACTIVE_BROWSER_PROFILES - occupiedProfileIds.size
+    const available: ManagedBrowserProfile[] = []
     for (const profile of profiles) {
-      if (inFlightProfiles.has(profile.id)) continue
+      if (inFlightProfileIds.has(profile.id)) continue
       if (activeProfileIds.has(profile.id)) {
-        claimable.push(profile)
+        available.push(profile)
         continue
       }
-      if (newProfiles >= remainingNewProfileSlots) continue
-      newProfiles += 1
-      claimable.push(profile)
+      if (remainingNewProfileSlots <= 0) continue
+      remainingNewProfileSlots -= 1
+      available.push(profile)
     }
-    return claimable
+    return available
   }
 
-  private validateClaimedJob(profile: ManagedBrowserProfile, job: DaemonClaimedJob): ManagedPlaywrightJobRequest {
+  private validateJob(profile: ManagedBrowserProfile, job: DaemonJob): ManagedPlaywrightJobRequest {
     if (job.execution_backend !== PLAYWRIGHT_EXECUTION_BACKEND) {
-      throw tokenlessError('invalid_playwright_job_backend', 'Managed Playwright runner claimed a non-Playwright job.')
+      throw tokenlessError('invalid_playwright_job_backend', 'Managed Playwright runner taken a non-Playwright job.')
     }
     if (job.profile_id !== profile.id) {
-      throw tokenlessError('invalid_playwright_job_profile', 'Managed Playwright runner claimed a job for a different profile.')
+      throw tokenlessError('invalid_playwright_job_profile', 'Managed Playwright runner taken a job for a different profile.')
     }
     if (job.action !== MANAGED_PLAYWRIGHT_JOB_ACTION) {
-      throw tokenlessError('invalid_playwright_job_action', 'Managed Playwright runner claimed an unsupported job action.')
+      throw tokenlessError('invalid_playwright_job_action', 'Managed Playwright runner taken an unsupported job action.')
     }
     const request = validateManagedPlaywrightJobRequest(job.request_json)
     if (request.provider !== job.provider) {
@@ -662,12 +570,11 @@ export class ManagedPlaywrightRunnerService {
 
   private async executeActions(
     profile: ManagedBrowserProfile,
-    job: DaemonClaimedJob,
+    job: DaemonJob,
     request: ManagedPlaywrightJobRequest,
     attachmentRoot: string | undefined,
     signal: AbortSignal,
     isCanceled: () => boolean,
-    renewalError: () => unknown,
   ): Promise<ManagedPlaywrightExecutionOutcome> {
     if (request.executionMode === 'direct') {
       const config = await readTokenlessConfig(this.homeDir)
@@ -678,18 +585,14 @@ export class ManagedPlaywrightRunnerService {
       )
       if (backend === 'g4f') {
         if (request.context.requirements.includes('image.generation')) {
-          return await this.executeG4fDirectImageActions(profile, job, request, signal, isCanceled, renewalError)
+          return await this.executeG4fDirectImageActions(profile, job, request, signal, isCanceled)
         }
-        return await this.executeG4fDirectChatActions(profile, job, request, signal, isCanceled, renewalError)
+        return await this.executeG4fDirectChatActions(profile, job, request, signal, isCanceled)
       }
-      return await this.executeDirectChatActions(profile, job, request, signal, isCanceled, renewalError)
+      return await this.executeDirectChatActions(profile, job, request, signal, isCanceled)
     }
-    const outputSavingsEnabled = await this.outputSavingsEnabled()
-    const outputSavingsWorkByRequestId = new Map<string, string>()
-    const resumeVisibility = validateResumeVisibility(job.resume_json)
-    const claimBrowserVisibility = requestedVisibilityForClaim(request.browserVisibility, resumeVisibility)
-    const restoredCheckpoint = validateRunnerCheckpoint(job.checkpoint_json, profile, job, request)
-    const automaticAuthObservation = isAutomaticAuthObservation(request, claimBrowserVisibility)
+    const requestedBrowserVisibility = request.browserVisibility
+    const automaticAuthObservation = isAutomaticAuthObservation(request, requestedBrowserVisibility)
     const operation = async (initialManagedContext: ManagedBrowserContext) => {
       let managedContext = initialManagedContext
       const pageRef = managedPageRef(job, request)
@@ -711,32 +614,30 @@ export class ManagedPlaywrightRunnerService {
       }
       let page: Page = acquiredPage
       try {
-        const state = executionStateFromCheckpoint(restoredCheckpoint)
+        const state = initialExecutionState()
       if (state.submitted !== null && job.provider_submitted_at === null) {
         await this.daemonClient.recordProviderSubmission({
           jobId: job.job_id,
-          claimToken: job.claim_token,
           signal,
         })
       }
       const failOrFallback = async (failure: ClassifiedProviderFailure): Promise<never> => {
-        throwIfStopped(signal, isCanceled, renewalError)
+        throwIfStopped(signal, isCanceled)
         const fallbackRequest = safeFallbackRequest(request, state, failure)
         if (!fallbackRequest) {
           throw classifiedFailureError(failure, providerFallbackStopReason(request, state, failure))
         }
         await this.daemonClient.fallbackJob({
           jobId: job.job_id,
-          claimToken: job.claim_token,
           provider: fallbackRequest.provider,
           request: fallbackRequest,
           blocker: providerFailurePayload(job, failure, {
-            requestedVisibility: claimBrowserVisibility,
+            requestedVisibility: requestedBrowserVisibility,
             effectiveVisibility: managedContext.effectiveBrowserVisibility,
-            windowOpen: claimBrowserVisibility !== 'headless',
+            windowOpen: requestedBrowserVisibility !== 'headless',
           }),
         })
-        throw new QueuedProviderFallback()
+        throw new ProviderFallbackSignal()
       }
       const startUrl = state.submitted?.providerUrl ?? request.target.url
       try {
@@ -765,18 +666,6 @@ export class ManagedPlaywrightRunnerService {
           signal,
         })
       }
-      if (restoredCheckpoint && !state.submitted) {
-        await reconstructCompletedPreSubmitActions(page, {
-          provider,
-          request,
-          actionCursor: state.actionCursor,
-          profile,
-          job,
-          attachmentRoot,
-          signal,
-          now: this.now,
-        })
-      }
       const clearBlocker = async (waitForGuestSurface = false): Promise<number> => {
         const cleared = await this.clearUserResolvableBlocker({
           managedContext,
@@ -786,13 +675,12 @@ export class ManagedPlaywrightRunnerService {
           request,
           pageRef,
           providerPageLease,
-          claimBrowserVisibility,
+          requestedBrowserVisibility,
           provider,
           state,
           attachmentRoot,
           signal,
           isCanceled,
-          renewalError,
           waitForGuestSurface,
         })
         managedContext = cleared.managedContext
@@ -805,19 +693,19 @@ export class ManagedPlaywrightRunnerService {
         try {
           await clearBlocker(true)
           failure = await inspectAttemptCapabilityEligibility(page, provider, request.capabilityRoute)
-          throwIfStopped(signal, isCanceled, renewalError)
+          throwIfStopped(signal, isCanceled)
         } catch (error) {
           throwRunnerControlFlow(error)
-          throwIfStopped(signal, isCanceled, renewalError)
+          throwIfStopped(signal, isCanceled)
           failure = classifyProviderFailure({ error, submitted: false })
         }
         if (failure) await failOrFallback(failure)
       }
       for (let actionIndex = state.actionCursor; actionIndex < request.actions.length; actionIndex += 1) {
         const action = request.actions[actionIndex]
-        if (!action) throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner action cursor is invalid.')
+        if (!action) throw tokenlessError('invalid_playwright_runner_state', 'Managed Playwright runner action cursor is invalid.')
         const lifecycle = getVisibleActionLifecycle(action.action)
-        throwIfStopped(signal, isCanceled, renewalError)
+        throwIfStopped(signal, isCanceled)
         if (lifecycle.completion === 'records_submission') {
           try {
             await clearBlocker(true)
@@ -839,7 +727,6 @@ export class ManagedPlaywrightRunnerService {
               pollMs: this.responseWaitPollMs,
               signal,
               isCanceled,
-              renewalError,
               clearBlocker: () => clearBlocker(true),
             })
           } catch (error) {
@@ -863,8 +750,6 @@ export class ManagedPlaywrightRunnerService {
             }))
           }
         }
-        await this.checkpointJob(profile, job, request, state, checkpointPhaseForAction('started', actionIndex, action, page, provider))
-        let capturedVisibleOutput: string | undefined
         const providerContext = {
           profileId: profile.id,
           operationId: job.job_id,
@@ -876,11 +761,6 @@ export class ManagedPlaywrightRunnerService {
             : {}),
           signal,
           now: this.now,
-          ...(outputSavingsEnabled
-            ? { captureVisibleOutput: (text: string) => {
-                capturedVisibleOutput = text
-              } }
-            : {}),
           ...(attachmentRoot === undefined ? {} : { attachmentRoot }),
           ...(this.homeDir === undefined ? {} : { assetRoot: path.join(this.homeDir, 'assets') }),
         }
@@ -896,7 +776,7 @@ export class ManagedPlaywrightRunnerService {
           }
         })()
         if (!response.ok) {
-          throwIfStopped(signal, isCanceled, renewalError)
+          throwIfStopped(signal, isCanceled)
           const error = tokenlessError(response.error.code, response.error.message, { retryable: response.error.retryable })
           const failure = classifyProviderFailure({
             error,
@@ -905,13 +785,10 @@ export class ManagedPlaywrightRunnerService {
           })
           await failOrFallback(failure)
         }
-        if (action.action === VISIBLE_ACTIONS.RESPONSE_READ && capturedVisibleOutput !== undefined) {
-          outputSavingsWorkByRequestId.set(action.requestId, capturedVisibleOutput)
-        }
         state.responses.push(response)
         if (lifecycle.completion === 'records_submission') {
           if (!state.preparation) {
-            throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner did not prepare prompt submission completion.')
+            throw tokenlessError('invalid_playwright_runner_state', 'Managed Playwright runner did not prepare prompt submission completion.')
           }
           state.submitted = {
             actionIndex,
@@ -921,17 +798,14 @@ export class ManagedPlaywrightRunnerService {
           }
           await this.daemonClient.recordProviderSubmission({
             jobId: job.job_id,
-            claimToken: job.claim_token,
             signal,
           })
         }
         if (lifecycle.completion === 'reads_response') state.preparation = null
         state.actionCursor = actionIndex + 1
-        await this.checkpointJob(profile, job, request, state, checkpointPhaseForAction('completed', actionIndex, action, page, provider))
         if (action.action === VISIBLE_ACTIONS.WORKSPACE_ENSURE && isNativeWorkspaceResult(response.result)) {
           await this.daemonClient.upsertProviderProject({
             jobId: job.job_id,
-            claimToken: job.claim_token,
             provider: request.provider,
             profileId: profile.id,
             resourceId: response.result.resource.id,
@@ -954,7 +828,6 @@ export class ManagedPlaywrightRunnerService {
           if (conversationUrl) {
             await this.daemonClient.upsertProviderTaskConversation({
               jobId: job.job_id,
-              claimToken: job.claim_token,
               provider: request.provider,
               profileId: profile.id,
               taskId: request.taskId,
@@ -965,7 +838,6 @@ export class ManagedPlaywrightRunnerService {
           if (workspace && conversationUrl) {
             await this.daemonClient.upsertProviderConversation({
               jobId: job.job_id,
-              claimToken: job.claim_token,
               provider: request.provider,
               profileId: profile.id,
               projectResourceId: workspace.resource.id,
@@ -982,53 +854,36 @@ export class ManagedPlaywrightRunnerService {
         await providerPageLease?.release()
       }
     }
-    const responses = await (automaticAuthObservation
-      ? this.contextManager.runWithProfileObservation(profile, claimBrowserVisibility, operation)
-      : this.contextManager.runWithProfile(profile, claimBrowserVisibility, operation))
+    const responses = await this.contextManager.runWithProfile(profile, requestedBrowserVisibility, operation)
     return {
       result: {
         protocol: MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID,
         provider: request.provider,
         responses,
       },
-      outputSavingsWork: [...outputSavingsWorkByRequestId].map(([response_request_id, source_text]) => ({
-        response_request_id,
-        source_text,
-      })),
     }
   }
 
   private async executeDirectChatActions(
     profile: ManagedBrowserProfile,
-    job: DaemonClaimedJob,
+    job: DaemonJob,
     request: ManagedPlaywrightJobRequest,
     signal: AbortSignal,
     isCanceled: () => boolean,
-    renewalError: () => unknown,
   ): Promise<ManagedPlaywrightExecutionOutcome> {
-    const restoredCheckpoint = validateRunnerCheckpoint(job.checkpoint_json, profile, job, request)
-    const state = executionStateFromCheckpoint(restoredCheckpoint)
-    if (state.actionCursor > 1 || state.submitted !== null) {
-      throw tokenlessError(
-        'direct_protocol_resume_unsupported',
-        'A direct provider submission cannot be replayed after runner interruption; start a new direct request.',
-      )
-    }
+    const state = initialExecutionState()
     const promptAction = request.actions[0]
     if (promptAction?.action !== VISIBLE_ACTIONS.PROMPT_INPUT || typeof promptAction.payload.text !== 'string') {
       throw tokenlessError('direct_action_unsupported', 'Direct execution requires one text prompt.')
     }
     const prompt = promptAction.payload.text
-    const claimBrowserVisibility = requestedVisibilityForClaim(
-      request.browserVisibility,
-      validateResumeVisibility(job.resume_json),
-    )
+    const requestedBrowserVisibility = request.browserVisibility
     const provider = getProviderInstanceById(request.provider)
     if (!provider || (provider.id !== 'chatgpt' && provider.id !== 'perplexity')) {
       throw tokenlessError('direct_provider_unsupported', 'Direct execution currently supports only the ChatGPT and Perplexity providers.')
     }
 
-    const responses = await this.contextManager.runWithProfile(profile, claimBrowserVisibility, async (managedContext) => {
+    const responses = await this.contextManager.runWithProfile(profile, requestedBrowserVisibility, async (managedContext) => {
       const providerPageLease = await managedContext.acquireProviderPage({
         provider: provider.id,
         pageRef: managedPageRef(job, request),
@@ -1042,15 +897,8 @@ export class ManagedPlaywrightRunnerService {
         await navigateToTarget(page, provider, request.target.url, signal, false)
         for (let actionIndex = state.actionCursor; actionIndex < request.actions.length; actionIndex += 1) {
           const action = request.actions[actionIndex]
-          if (!action) throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner action cursor is invalid.')
-          throwIfStopped(signal, isCanceled, renewalError)
-          await this.checkpointJob(
-            profile,
-            job,
-            request,
-            state,
-            checkpointPhaseForAction('started', actionIndex, action, page, provider),
-          )
+          if (!action) throw tokenlessError('invalid_playwright_runner_state', 'Managed Playwright runner action cursor is invalid.')
+          throwIfStopped(signal, isCanceled)
 
           let response: VisibleActionResponse
           if (action.action === VISIBLE_ACTIONS.PROMPT_INPUT) {
@@ -1086,7 +934,6 @@ export class ManagedPlaywrightRunnerService {
             }
             await this.daemonClient.recordProviderSubmission({
               jobId: job.job_id,
-              claimToken: job.claim_token,
               signal,
             })
           } else if (action.action === VISIBLE_ACTIONS.RESPONSE_READ) {
@@ -1111,13 +958,6 @@ export class ManagedPlaywrightRunnerService {
 
           state.responses.push(response)
           state.actionCursor = actionIndex + 1
-          await this.checkpointJob(
-            profile,
-            job,
-            request,
-            state,
-            checkpointPhaseForAction('completed', actionIndex, action, page, provider),
-          )
         }
         return state.responses
       } finally {
@@ -1130,17 +970,15 @@ export class ManagedPlaywrightRunnerService {
         provider: request.provider,
         responses,
       },
-      outputSavingsWork: [],
     }
   }
 
   private async executeG4fDirectChatActions(
     profile: ManagedBrowserProfile,
-    job: DaemonClaimedJob,
+    job: DaemonJob,
     request: ManagedPlaywrightJobRequest,
     signal: AbortSignal,
     isCanceled: () => boolean,
-    renewalError: () => unknown,
   ): Promise<ManagedPlaywrightExecutionOutcome> {
     const promptAction = request.actions[0]
     const submitAction = request.actions[1]
@@ -1153,13 +991,7 @@ export class ManagedPlaywrightRunnerService {
     ) {
       throw tokenlessError('direct_action_unsupported', 'G4F direct execution requires prompt.input, prompt.submit, and response.read.')
     }
-    if (job.checkpoint_json !== null || job.provider_submitted_at !== null) {
-      throw tokenlessError(
-        'direct_protocol_resume_unsupported',
-        'A G4F direct provider submission cannot be replayed after runner interruption; start a new direct request.',
-      )
-    }
-    throwIfStopped(signal, isCanceled, renewalError)
+    throwIfStopped(signal, isCanceled)
     let ephemeralContextId: string | undefined
     let authContextId = request.authContextId ?? undefined
     try {
@@ -1173,10 +1005,9 @@ export class ManagedPlaywrightRunnerService {
         ...(authContextId ? { authContextId } : {}),
         signal,
       })
-      throwIfStopped(signal, isCanceled, renewalError)
+      throwIfStopped(signal, isCanceled)
       await this.daemonClient.recordProviderSubmission({
         jobId: job.job_id,
-        claimToken: job.claim_token,
         signal,
       })
       const responses: VisibleActionResponse[] = [
@@ -1209,7 +1040,6 @@ export class ManagedPlaywrightRunnerService {
           provider: request.provider,
           responses,
         },
-        outputSavingsWork: [],
       }
     } finally {
       if (ephemeralContextId) await this.deleteG4fAuthContext(ephemeralContextId)
@@ -1218,11 +1048,10 @@ export class ManagedPlaywrightRunnerService {
 
   private async executeG4fDirectImageActions(
     profile: ManagedBrowserProfile,
-    job: DaemonClaimedJob,
+    job: DaemonJob,
     request: ManagedPlaywrightJobRequest,
     signal: AbortSignal,
     isCanceled: () => boolean,
-    renewalError: () => unknown,
   ): Promise<ManagedPlaywrightExecutionOutcome> {
     const promptAction = request.actions[0]
     const submitAction = request.actions[1]
@@ -1235,16 +1064,10 @@ export class ManagedPlaywrightRunnerService {
     ) {
       throw tokenlessError('direct_action_unsupported', 'Direct image execution requires prompt.input, prompt.submit, and response.read.')
     }
-    if (job.checkpoint_json !== null || job.provider_submitted_at !== null) {
-      throw tokenlessError(
-        'direct_protocol_resume_unsupported',
-        'A direct image submission cannot be replayed after runner interruption; start a new direct request.',
-      )
-    }
     if (!this.homeDir) {
       throw tokenlessError('image_asset_root_unavailable', 'The managed image asset directory is unavailable.')
     }
-    throwIfStopped(signal, isCanceled, renewalError)
+    throwIfStopped(signal, isCanceled)
     let ephemeralContextId: string | undefined
     let authContextId = request.authContextId ?? undefined
     try {
@@ -1269,10 +1092,9 @@ export class ManagedPlaywrightRunnerService {
           details: { diagnostic: directImageFailureDiagnostic(error) },
         })
       }
-      throwIfStopped(signal, isCanceled, renewalError)
+      throwIfStopped(signal, isCanceled)
       await this.daemonClient.recordProviderSubmission({
         jobId: job.job_id,
-        claimToken: job.claim_token,
         signal,
       })
       const conversationId = `chatgpt-gpt-image-${job.job_id}`
@@ -1312,7 +1134,6 @@ export class ManagedPlaywrightRunnerService {
           provider: request.provider,
           responses,
         },
-        outputSavingsWork: [],
       }
     } finally {
       if (ephemeralContextId) await this.deleteG4fAuthContext(ephemeralContextId)
@@ -1321,7 +1142,7 @@ export class ManagedPlaywrightRunnerService {
 
   private async createG4fBrowserAuthContext(
     profile: ManagedBrowserProfile,
-    job: DaemonClaimedJob,
+    job: DaemonJob,
     request: ManagedPlaywrightJobRequest,
     signal: AbortSignal,
   ) {
@@ -1329,11 +1150,8 @@ export class ManagedPlaywrightRunnerService {
     const provider = getProviderInstanceById(request.provider)
     const upstreamProvider = g4fProviderName(request.provider)
     if (!client || !provider || !upstreamProvider) return undefined
-    const claimBrowserVisibility = requestedVisibilityForClaim(
-      request.browserVisibility,
-      validateResumeVisibility(job.resume_json),
-    )
-    return await this.contextManager.runWithProfile(profile, claimBrowserVisibility, async (managedContext) => {
+    const requestedBrowserVisibility = request.browserVisibility
+    return await this.contextManager.runWithProfile(profile, requestedBrowserVisibility, async (managedContext) => {
       const lease = await managedContext.acquireProviderPage({
         provider: provider.id,
         pageRef: `${managedPageRef(job, request)}:g4f-auth`,
@@ -1404,44 +1222,23 @@ export class ManagedPlaywrightRunnerService {
     }
   }
 
-  private async outputSavingsEnabled() {
-    if (!this.homeDir) return false
-    const config = await readTokenlessConfig(this.homeDir)
-    return config.outputSavings.enabled
-  }
-
-  private async checkpointJob(
-    profile: ManagedBrowserProfile,
-    job: DaemonClaimedJob,
-    request: ManagedPlaywrightJobRequest,
-    state: RunnerExecutionState,
-    phase: RunnerCheckpointPhase
-  ) {
-    await this.daemonClient.checkpointJob({
-      jobId: job.job_id,
-      claimToken: job.claim_token,
-      checkpoint: buildRunnerCheckpoint(profile, job, request, state, phase),
-    })
-  }
-
   private async clearUserResolvableBlocker(options: {
     managedContext: ManagedBrowserContext
     page: Page
     profile: ManagedBrowserProfile
-    job: DaemonClaimedJob
+    job: DaemonJob
     request: ManagedPlaywrightJobRequest
     pageRef: string
     providerPageLease: ManagedProviderPageLease | null
-    claimBrowserVisibility: BrowserVisibility
+    requestedBrowserVisibility: BrowserVisibility
     provider: RunnerProvider
     state: RunnerExecutionState
     attachmentRoot: string | undefined
     signal: AbortSignal
     isCanceled: () => boolean
-    renewalError: () => unknown
     waitForGuestSurface: boolean
   }): Promise<ClearBlockerResult> {
-    throwIfStopped(options.signal, options.isCanceled, options.renewalError)
+    throwIfStopped(options.signal, options.isCanceled)
     const initial = await visibleBlockerState(
       options.page,
       options.provider,
@@ -1461,40 +1258,27 @@ export class ManagedPlaywrightRunnerService {
     if (fallbackRequest) {
       await this.daemonClient.fallbackJob({
         jobId: options.job.job_id,
-        claimToken: options.job.claim_token,
         provider: fallbackRequest.provider,
         request: fallbackRequest,
         blocker: {
           ...blockerPayload(options.job, initial.blockers, {
-            requestedVisibility: options.claimBrowserVisibility,
+            requestedVisibility: options.requestedBrowserVisibility,
             effectiveVisibility: options.managedContext.effectiveBrowserVisibility,
             windowOpen: options.managedContext.effectiveBrowserVisibility === 'headed',
           }),
           failure,
         },
       })
-      throw new QueuedProviderFallback()
+      throw new ProviderFallbackSignal()
     }
     const initialCapacityDelay = options.state.submitted === null
       ? observedCapacityDelaySeconds(initial.primary)
       : null
     if (initialCapacityDelay !== null) {
-      await this.daemonClient.deferObservedProviderLimit({
-        jobId: options.job.job_id,
-        claimToken: options.job.claim_token,
-        blocker: {
-          ...blockerPayload(options.job, initial.blockers, {
-            requestedVisibility: options.claimBrowserVisibility,
-            effectiveVisibility: options.managedContext.effectiveBrowserVisibility,
-            windowOpen: options.managedContext.effectiveBrowserVisibility === 'headed',
-          }),
-          failure,
-          retryAfterSeconds: initialCapacityDelay,
-        },
-        delaySeconds: initialCapacityDelay,
-        signal: options.signal,
+      throw classifiedFailureError(failure, {
+        code: 'provider_capacity_unavailable',
+        retryAfterSeconds: initialCapacityDelay,
       })
-      throw new DeferredProviderCapacity()
     }
     if (initial.terminal) {
       throw classifiedFailureError(
@@ -1502,44 +1286,17 @@ export class ManagedPlaywrightRunnerService {
         providerFallbackStopReason(options.request, options.state, failure),
       )
     }
-    const checkpoint = buildRunnerCheckpoint(
-      options.profile,
-      options.job,
-      options.request,
-      options.state,
-      { state: 'idle' }
-    )
-    await this.daemonClient.checkpointJob({
-      jobId: options.job.job_id,
-      claimToken: options.job.claim_token,
-      checkpoint,
-    })
     if (
-      options.claimBrowserVisibility === 'headless' ||
+      options.requestedBrowserVisibility === 'headless' ||
       this.e2eInspection ||
-      isAutomaticAuthObservation(options.request, options.claimBrowserVisibility)
+      isAutomaticAuthObservation(options.request, options.requestedBrowserVisibility)
     ) {
-      await this.daemonClient.parkJob({
-        jobId: options.job.job_id,
-        claimToken: options.job.claim_token,
-        blocker: {
-          ...blockerPayload(options.job, initial.blockers, {
-            requestedVisibility: options.claimBrowserVisibility,
-            effectiveVisibility: options.managedContext.effectiveBrowserVisibility,
-            windowOpen: options.managedContext.effectiveBrowserVisibility === 'headed',
-          }),
-          failure,
-          fallbackStopped: providerFallbackStopReason(options.request, options.state, failure),
-        },
-        checkpoint,
-      })
-      await options.providerPageLease?.protect()
-      throw new ParkedPlaywrightJob()
+      throw classifiedFailureError(failure, providerFallbackStopReason(options.request, options.state, failure))
     }
     let managedContext = options.managedContext
     let page = options.page
     let providerPageLease = options.providerPageLease
-    if (options.claimBrowserVisibility === 'auto' && managedContext.effectiveBrowserVisibility === 'headless') {
+    if (options.requestedBrowserVisibility === 'auto' && managedContext.effectiveBrowserVisibility === 'headless') {
       const url = trustedSwitchUrl(page, options.provider, options.request.target.url)
       await providerPageLease?.release()
       managedContext = await managedContext.switchVisibility('headed')
@@ -1552,28 +1309,15 @@ export class ManagedPlaywrightRunnerService {
       })
       page = providerPageLease.page
       await navigateToTarget(page, options.provider, url, options.signal, true)
-      if (!options.state.submitted) {
-        await reconstructCompletedPreSubmitActions(page, {
-          provider: options.provider,
-          request: options.request,
-          actionCursor: options.state.actionCursor,
-          profile: options.profile,
-          job: options.job,
-          attachmentRoot: options.attachmentRoot,
-          signal: options.signal,
-          now: this.now,
-        })
-      }
     } else {
       await bringToFrontForUserHandoff(page)
     }
     const startedAt = Date.now()
     await this.daemonClient.markJobWaitingForUser({
       jobId: options.job.job_id,
-      claimToken: options.job.claim_token,
       blocker: {
         ...blockerPayload(options.job, initial.blockers, {
-          requestedVisibility: options.claimBrowserVisibility,
+          requestedVisibility: options.requestedBrowserVisibility,
           effectiveVisibility: managedContext.effectiveBrowserVisibility,
           windowOpen: true,
         }),
@@ -1583,7 +1327,7 @@ export class ManagedPlaywrightRunnerService {
     })
     const deadline = Date.now() + this.userHandoverTimeoutMs
     while (Date.now() <= deadline) {
-      throwIfStopped(options.signal, options.isCanceled, options.renewalError)
+      throwIfStopped(options.signal, options.isCanceled)
       await delay(Math.min(this.userHandoverPollMs, Math.max(1, deadline - Date.now())), options.signal)
       const latest = await visibleBlockerState(
         page,
@@ -1597,22 +1341,10 @@ export class ManagedPlaywrightRunnerService {
           ? observedCapacityDelaySeconds(latest.primary)
           : null
         if (latestCapacityDelay !== null) {
-          await this.daemonClient.deferObservedProviderLimit({
-            jobId: options.job.job_id,
-            claimToken: options.job.claim_token,
-            blocker: {
-              ...blockerPayload(options.job, latest.blockers, {
-                requestedVisibility: options.claimBrowserVisibility,
-                effectiveVisibility: managedContext.effectiveBrowserVisibility,
-                windowOpen: true,
-              }),
-              failure: latestFailure,
-              retryAfterSeconds: latestCapacityDelay,
-            },
-            delaySeconds: latestCapacityDelay,
-            signal: options.signal,
+          throw classifiedFailureError(latestFailure, {
+            code: 'provider_capacity_unavailable',
+            retryAfterSeconds: latestCapacityDelay,
           })
-          throw new DeferredProviderCapacity()
         }
         throw classifiedFailureError(
           latestFailure,
@@ -1625,11 +1357,10 @@ export class ManagedPlaywrightRunnerService {
         this.userHandoverPollMs,
         options.signal,
         options.isCanceled,
-        options.renewalError
       )) {
         await this.daemonClient.markJobRunning({
           jobId: options.job.job_id,
-          claimToken: options.job.claim_token,
+          signal: options.signal,
         })
         return { managedContext, page, providerPageLease, waitedMs: Date.now() - startedAt }
       }
@@ -1650,12 +1381,11 @@ export class ManagedPlaywrightRunnerService {
       pollMs: number
       signal: AbortSignal
       isCanceled: () => boolean
-      renewalError: () => unknown
       clearBlocker: () => Promise<number>
     }
   ) {
     while (true) {
-      throwIfStopped(options.signal, options.isCanceled, options.renewalError)
+      throwIfStopped(options.signal, options.isCanceled)
       await options.clearBlocker()
       const page = getPage()
       if ((await options.provider.observeAction(page, options.action, options.preparation)).state === 'ready') return
@@ -1745,38 +1475,15 @@ function directActionSuccess(
   }
 }
 
-export function isManagedPlaywrightClaimRecoveryFailure(error: unknown) {
-  return isClaimRecoveryError(error)
-}
-
-class ParkedPlaywrightJob extends Error {
+class ProviderFallbackSignal extends Error {
   constructor() {
-    super('Managed Playwright job parked waiting for user.')
-  }
-}
-
-class QueuedProviderFallback extends Error {
-  constructor() {
-    super('Managed Playwright job queued a provider fallback attempt.')
-    this.name = 'QueuedProviderFallback'
-  }
-}
-
-class DeferredProviderCapacity extends Error {
-  constructor() {
-    super('Managed Playwright job deferred until provider capacity is available.')
-    this.name = 'DeferredProviderCapacity'
+    super('Managed Playwright execution selected its next provider fallback.')
+    this.name = 'ProviderFallbackSignal'
   }
 }
 
 function throwRunnerControlFlow(error: unknown): void {
-  if (
-    error instanceof ParkedPlaywrightJob ||
-    error instanceof QueuedProviderFallback ||
-    error instanceof DeferredProviderCapacity
-  ) {
-    throw error
-  }
+  if (error instanceof ProviderFallbackSignal) throw error
 }
 
 function initialExecutionState(): RunnerExecutionState {
@@ -1786,7 +1493,7 @@ function initialExecutionState(): RunnerExecutionState {
 function providerCapacityFailure(projection: ProviderCapacityProjection): ClassifiedProviderFailure {
   return Object.freeze({
     classification: 'safe_pre_submit_provider_failure',
-    code: 'provider_capacity_deferred',
+    code: 'provider_capacity_unavailable',
     message: projection.reason,
     retryable: true,
     providerScoped: true,
@@ -1882,7 +1589,7 @@ function providerFallbackStopReason(
 
 function classifiedFailureError(
   failure: ClassifiedProviderFailure,
-  fallbackStopped: ReturnType<typeof providerFallbackStopReason>,
+  fallbackStopped: { code: string, [key: string]: unknown },
 ) {
   return tokenlessError(failure.code, failure.message, {
     retryable: failure.retryable,
@@ -2026,294 +1733,13 @@ function liveInspectionTarget(capability: TaskCapabilityId, provider: ProviderId
   return null
 }
 
-function validateResumeVisibility(value: unknown): Extract<BrowserVisibility, 'headed'> | null {
-  if (value === null || value === undefined) return null
-  if (!isPlainRecord(value) || value.browser_visibility !== 'headed') {
-    throw tokenlessError('invalid_playwright_job_resume', 'Managed Playwright job resume payload is invalid.')
-  }
-  return 'headed'
-}
-
-function requestedVisibilityForClaim(
-  requestVisibility: BrowserVisibility,
-  resumeVisibility: Extract<BrowserVisibility, 'headed'> | null
-): BrowserVisibility {
-  return resumeVisibility === 'headed' ? 'headed' : requestVisibility
-}
-
 function isAutomaticAuthObservation(
   request: ManagedPlaywrightJobRequest,
-  claimBrowserVisibility: BrowserVisibility,
+  requestedBrowserVisibility: BrowserVisibility,
 ) {
-  return claimBrowserVisibility === 'auto' && request.actions.every((action) => (
+  return requestedBrowserVisibility === 'auto' && request.actions.every((action) => (
     action.action === VISIBLE_ACTIONS.AUTH_STATUS
   ))
-}
-
-function readinessBatchPrefix(job: DaemonClaimedJob) {
-  const match = /^(ui-readiness-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-)/u.exec(job.job_id)
-  if (!match?.[1]) return null
-  try {
-    const request = validateManagedPlaywrightJobRequest(job.request_json)
-    return isAutomaticAuthObservation(request, request.browserVisibility) ? match[1] : null
-  } catch {
-    return null
-  }
-}
-
-function validateRunnerCheckpoint(
-  value: unknown,
-  profile: ManagedBrowserProfile,
-  job: DaemonClaimedJob,
-  request: ManagedPlaywrightJobRequest
-): RunnerCheckpoint | null {
-  if (value === null || value === undefined) return null
-  if (!isPlainRecord(value) || value.protocol !== RUNNER_CHECKPOINT_SCHEMA_ID) {
-    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner checkpoint is invalid.')
-  }
-  const expectedKeys = ['protocol', 'jobId', 'profileId', 'provider', 'targetUrl', 'browserVisibility', 'actionCursor', 'responses', 'preparation', 'submitted', 'phase']
-  if (!hasExactKeys(value, expectedKeys)) {
-    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner checkpoint fields are invalid.')
-  }
-  const provider = getProviderInstanceById(request.provider)
-  if (!provider) throw tokenlessError('unknown_playwright_job_provider', 'Managed Playwright job provider is not supported.')
-  const rawActionCursor = value.actionCursor
-  if (typeof rawActionCursor !== 'number' || !Number.isInteger(rawActionCursor) || rawActionCursor < 0 || rawActionCursor > request.actions.length) {
-    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner checkpoint cursor is invalid.')
-  }
-  const actionCursor = rawActionCursor as number
-  if (
-    value.jobId !== job.job_id ||
-    value.profileId !== profile.id ||
-    value.provider !== request.provider ||
-    value.targetUrl !== request.target.url ||
-    value.browserVisibility !== request.browserVisibility
-  ) {
-    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner checkpoint does not match the claimed job.')
-  }
-  if (!Array.isArray(value.responses) || value.responses.length !== actionCursor) {
-    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner checkpoint responses are invalid.')
-  }
-  const responses = value.responses.map((response, index) => validateCheckpointResponse(response, request.actions[index], index))
-  const preparation = validateCheckpointPreparation(value.preparation, provider)
-  const submitted = validateSubmittedCheckpoint(value.submitted, request, provider)
-  const phase = validateCheckpointPhase(value.phase, request)
-  if (phase.state === 'started' && phase.mutating) {
-    throw tokenlessError(
-      'ambiguous_action_outcome',
-      'Managed Playwright checkpoint stopped during a mutating action; refusing to replay it.',
-      { retryable: false }
-    )
-  }
-  const completedSubmitIndex = responses.findIndex((response) => response.action === VISIBLE_ACTIONS.PROMPT_SUBMIT)
-  if (completedSubmitIndex >= 0 && !submitted) {
-    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner checkpoint is missing submit state.')
-  }
-  const firstSubmitIndex = request.actions.findIndex((action) => action.action === VISIBLE_ACTIONS.PROMPT_SUBMIT)
-  if (!submitted && firstSubmitIndex >= 0 && actionCursor > firstSubmitIndex) {
-    throw tokenlessError(
-      'ambiguous_action_outcome',
-      'Managed Playwright checkpoint advanced past prompt.submit without trusted submit state.',
-      { retryable: false }
-    )
-  }
-  return {
-    protocol: RUNNER_CHECKPOINT_SCHEMA_ID,
-    jobId: job.job_id,
-    profileId: profile.id,
-    provider: request.provider,
-    targetUrl: request.target.url,
-    browserVisibility: request.browserVisibility,
-    actionCursor,
-    responses,
-    preparation,
-    submitted,
-    phase,
-  }
-}
-
-function validateCheckpointResponse(
-  value: unknown,
-  action: VisibleActionRequest | undefined,
-  index: number
-): VisibleActionResponse {
-  if (
-    !action ||
-    !isPlainRecord(value) ||
-    !isVisibleActionProtocolVersion(value.protocol) ||
-    value.ok !== true
-  ) {
-    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner checkpoint response is invalid.')
-  }
-  if (value.requestId !== action.requestId || value.provider !== action.provider || value.action !== action.action || value.error !== null) {
-    throw tokenlessError('invalid_playwright_runner_checkpoint', `Managed Playwright runner checkpoint response ${index} does not match the job action.`)
-  }
-  if (!isPlainRecord(value.result)) {
-    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner checkpoint response result is invalid.')
-  }
-  return value as VisibleActionResponse
-}
-
-function validateSubmittedCheckpoint(
-  value: unknown,
-  request: ManagedPlaywrightJobRequest,
-  provider: RunnerProvider
-): RunnerSubmittedActionCheckpoint | null {
-  if (value === null) return null
-  if (!isPlainRecord(value)) {
-    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner submit checkpoint is invalid.')
-  }
-  if (!hasExactKeys(value, ['actionIndex', 'requestId', 'providerUrl', 'preparation'])) {
-    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner submit checkpoint fields are invalid.')
-  }
-  const rawActionIndex = value.actionIndex
-  const actionIndex = typeof rawActionIndex === 'number' && Number.isInteger(rawActionIndex) ? rawActionIndex : -1
-  const action = request.actions[actionIndex]
-  if (!action || action.action !== VISIBLE_ACTIONS.PROMPT_SUBMIT || value.requestId !== action.requestId) {
-    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner submit checkpoint does not match the job action.')
-  }
-  if (typeof value.providerUrl !== 'string') {
-    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner submit checkpoint URL is invalid.')
-  }
-  const providerUrl = validateProviderUrl(value.providerUrl, provider)
-  const preparation = validateCheckpointPreparation(value.preparation, provider)
-  if (!preparation) {
-    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner submit checkpoint preparation is invalid.')
-  }
-  return {
-    actionIndex,
-    requestId: action.requestId,
-    providerUrl,
-    preparation,
-  }
-}
-
-function validateCheckpointPreparation(value: unknown, provider: RunnerProvider): ProviderActionPreparation | null {
-  if (value === null) return null
-  try {
-    return provider.validatePreparation(value as ProviderActionPreparation, { action: VISIBLE_ACTIONS.RESPONSE_READ })
-  } catch {
-    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner checkpoint preparation is invalid.')
-  }
-}
-
-function validateCheckpointPhase(value: unknown, request: ManagedPlaywrightJobRequest): RunnerCheckpointPhase {
-  if (!isPlainRecord(value) || typeof value.state !== 'string') {
-    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner checkpoint phase is invalid.')
-  }
-  if (value.state === 'idle') return { state: 'idle' }
-  if (value.state !== 'started' && value.state !== 'completed') {
-    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner checkpoint phase state is invalid.')
-  }
-  const rawActionIndex = value.actionIndex
-  const actionIndex = typeof rawActionIndex === 'number' && Number.isInteger(rawActionIndex) ? rawActionIndex : -1
-  const action = request.actions[actionIndex]
-  if (!action || value.requestId !== action.requestId || value.action !== action.action || typeof value.mutating !== 'boolean') {
-    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner checkpoint phase action is invalid.')
-  }
-  if (value.providerUrl !== null && typeof value.providerUrl !== 'string') {
-    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner checkpoint phase URL is invalid.')
-  }
-  return {
-    state: value.state,
-    actionIndex,
-    requestId: action.requestId,
-    action: action.action,
-    mutating: value.mutating,
-    providerUrl: value.providerUrl,
-  }
-}
-
-function executionStateFromCheckpoint(checkpoint: RunnerCheckpoint | null): RunnerExecutionState {
-  return checkpoint
-    ? {
-      actionCursor: checkpoint.actionCursor,
-      responses: [...checkpoint.responses],
-      preparation: checkpoint.submitted ? checkpoint.submitted.preparation : checkpoint.preparation,
-      submitted: checkpoint.submitted,
-    }
-    : {
-      actionCursor: 0,
-      responses: [],
-      preparation: null,
-      submitted: null,
-    }
-}
-
-function buildRunnerCheckpoint(
-  profile: ManagedBrowserProfile,
-  job: DaemonClaimedJob,
-  request: ManagedPlaywrightJobRequest,
-  state: RunnerExecutionState,
-  phase: RunnerCheckpointPhase
-): RunnerCheckpoint {
-  return {
-    protocol: RUNNER_CHECKPOINT_SCHEMA_ID,
-    jobId: job.job_id,
-    profileId: profile.id,
-    provider: request.provider,
-    targetUrl: request.target.url,
-    browserVisibility: request.browserVisibility,
-    actionCursor: state.actionCursor,
-    responses: state.responses,
-    preparation: state.preparation,
-    submitted: state.submitted,
-    phase,
-  }
-}
-
-function checkpointPhaseForAction(
-  state: Extract<RunnerCheckpointPhase['state'], 'started' | 'completed'>,
-  actionIndex: number,
-  action: VisibleActionRequest,
-  page: Page,
-  provider: RunnerProvider
-): RunnerCheckpointPhase {
-  return {
-    state,
-    actionIndex,
-    requestId: action.requestId,
-    action: action.action,
-    mutating: getVisibleActionLifecycle(action.action).mutating,
-    providerUrl: maybeProviderUrl(page, provider),
-  }
-}
-
-async function reconstructCompletedPreSubmitActions(
-  page: Page,
-  options: {
-    provider: RunnerProvider
-    request: ManagedPlaywrightJobRequest
-    actionCursor: number
-    profile: ManagedBrowserProfile
-    job: DaemonClaimedJob
-    attachmentRoot: string | undefined
-    signal: AbortSignal
-    now: () => Date
-  }
-) {
-  for (let index = 0; index < options.actionCursor; index += 1) {
-    const action = options.request.actions[index]
-    if (!action) throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner checkpoint cursor is invalid.')
-    if (action.action === VISIBLE_ACTIONS.PROMPT_SUBMIT) {
-      throw tokenlessError(
-        'ambiguous_action_outcome',
-        'Managed Playwright checkpoint would replay prompt.submit; refusing duplicate submission.',
-        { retryable: false }
-      )
-    }
-    if (!getVisibleActionLifecycle(action.action).reconstructablePreSubmit) continue
-    const response = await options.provider.executeAction(page, action, {
-      profileId: options.profile.id,
-      operationId: options.job.job_id,
-      signal: options.signal,
-      now: options.now,
-      ...(options.attachmentRoot === undefined ? {} : { attachmentRoot: options.attachmentRoot }),
-    })
-    if (!response.ok) {
-      throw tokenlessError(response.error.code, response.error.message, { retryable: response.error.retryable })
-    }
-  }
 }
 
 function trustedSwitchUrl(
@@ -2328,7 +1754,7 @@ function trustedSwitchUrl(
   if (classification.kind === 'trusted_sign_in') {
     return validateProviderUrl(fallbackUrl, provider)
   }
-  throw tokenlessError('unsupported_provider_navigation', 'Cannot resume managed Playwright job from an unsafe provider URL.', { retryable: false })
+  throw tokenlessError('unsupported_provider_navigation', 'Cannot continue the current managed Playwright action from an unsafe provider URL.', { retryable: false })
 }
 
 function validatedCurrentProviderUrl(
@@ -2349,9 +1775,7 @@ function maybeProviderUrl(page: Page, provider: RunnerProvider) {
 
 function validateProviderUrl(value: string, provider: RunnerProvider) {
   const target = provider.navigation.canonicalTarget(value)
-  if (!target) {
-    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner checkpoint URL is not a trusted provider URL.')
-  }
+  if (!target) throw tokenlessError('invalid_playwright_runner_state', 'Managed Playwright runner URL is not a trusted provider URL.')
   return target.href
 }
 
@@ -2437,9 +1861,7 @@ function dnsUnavailableDetails(url: string) {
   }
 }
 
-function throwIfStopped(signal: AbortSignal, isCanceled: () => boolean, renewalError?: () => unknown) {
-  const renewError = renewalError?.()
-  if (renewError) throw renewError
+function throwIfStopped(signal: AbortSignal, isCanceled: () => boolean) {
   if (signal.aborted || isCanceled()) {
     throw tokenlessError('playwright_job_canceled', 'Managed Playwright job was canceled.', { retryable: false })
   }
@@ -2535,16 +1957,15 @@ async function hasStableComposer(
   pollMs: number,
   signal: AbortSignal,
   isCanceled: () => boolean,
-  renewalError: () => unknown
 ) {
   if (!await provider.hasVisibleComposer(page)) return false
   await delay(Math.min(Math.max(pollMs, 50), 500), signal)
-  throwIfStopped(signal, isCanceled, renewalError)
+  throwIfStopped(signal, isCanceled)
   return await provider.hasVisibleComposer(page)
 }
 
 function blockerPayload(
-  job: DaemonClaimedJob,
+  job: DaemonJob,
   blockers: readonly VisibleBlocker[],
   browser: {
     requestedVisibility: BrowserVisibility
@@ -2564,14 +1985,14 @@ function blockerPayload(
     blockers,
     userAction: {
       message: browser.windowOpen
-        ? 'Your help is needed: complete provider sign-in or verification in the visible browser. Tokenless will resume the same unfinished action after the composer is stable.'
-        : 'Your help is needed, but no browser window is open. Resume this same job in headed mode to complete provider verification.',
+        ? 'Your help is needed: complete provider sign-in or verification in the visible browser. The current execution will continue after the composer is stable.'
+        : 'Your help is needed, but no browser window is open. Start a new job in headed mode to complete provider verification.',
     },
   }
 }
 
 function providerFailurePayload(
-  job: DaemonClaimedJob,
+  job: DaemonJob,
   failure: ClassifiedProviderFailure,
   browser: {
     requestedVisibility: BrowserVisibility
@@ -2606,7 +2027,7 @@ function taskIdFromRequest(value: unknown) {
   return typeof record.taskId === 'string' ? record.taskId : null
 }
 
-function managedPageRef(job: DaemonClaimedJob, request: ManagedPlaywrightJobRequest) {
+function managedPageRef(job: DaemonJob, request: ManagedPlaywrightJobRequest) {
   return request.pageRef ?? `job:${job.job_id}`
 }
 
@@ -2723,12 +2144,6 @@ function validatedConversationUrl(
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
-}
-
-function hasExactKeys(input: Record<string, unknown>, keys: readonly string[]) {
-  const actual = Object.keys(input).sort()
-  const expected = [...keys].sort()
-  return actual.length === expected.length && actual.every((key, index) => key === expected[index])
 }
 
 function normalizedPositiveInteger(value: number | undefined, fallback: number) {

@@ -3,7 +3,6 @@ import { execFile } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
 import test from 'node:test'
 import { promisify } from 'node:util'
 
@@ -15,7 +14,7 @@ import { createAgentRunHttpHandler } from '../packages/harness/dist/src/index.js
 const execFileAsync = promisify(execFile)
 const cliEntry = path.resolve('packages/cli/dist/src/tokenless.mjs')
 
-test('built singular agent CLI keeps one local control-plane turn across run, read, resume, and cancel', async () => {
+test('built singular agent CLI keeps one local control-plane turn across run, read, and cancel', async () => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-agent-cli-')))
   const homeDir = path.join(root, 'home')
   const store = await JobStore.open(homeDir)
@@ -45,17 +44,6 @@ test('built singular agent CLI keeps one local control-plane turn across run, re
     const mapping = store.getWebAiTurn(providerTurnRef)
     assert.ok(mapping)
 
-    injectWaitingJob(homeDir, mapping.job_id)
-    const waiting = await runCli(['agent', 'read', '--run-id', started.runId], homeDir, daemon.origin)
-    assert.equal(waiting.waiting.kind, 'provider')
-    assert.equal(waiting.providerTurnRef, providerTurnRef)
-
-    const resumed = await runCli(['agent', 'resume', '--run-id', started.runId, '--provider-ready'], homeDir, daemon.origin)
-    assert.equal(resumed.status, 'running')
-    assert.equal(resumed.providerTurnRef, providerTurnRef)
-    assert.equal(store.getWebAiTurn(providerTurnRef).job_id, mapping.job_id)
-    assert.equal(store.getJob(mapping.job_id).status, 'queued')
-
     const cancelled = await runCli(['agent', 'cancel', '--run-id', started.runId], homeDir, daemon.origin)
     assert.equal(cancelled.status, 'cancelled')
     assert.equal(cancelled.runId, started.runId)
@@ -76,14 +64,4 @@ async function runCli(command, homeDir, daemonUrl) {
   ], { cwd: path.resolve('.'), env: { ...process.env, TOKENLESS_HOME: homeDir } })
   assert.equal(stderr, '')
   return JSON.parse(stdout)
-}
-
-function injectWaitingJob(homeDir, jobId) {
-  const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'))
-  try {
-    database.prepare(`UPDATE jobs SET status = 'waiting_for_user', checkpoint_json = ?, blocker_json = ?, claim_expires_at = NULL WHERE job_id = ?`)
-      .run(JSON.stringify({ phase: { state: 'waiting', action: 'blocker.check', mutating: false } }), JSON.stringify({ code: 'provider_intervention' }), jobId)
-  } finally {
-    database.close()
-  }
 }

@@ -30,6 +30,7 @@ export class DolaProvider extends BaseProvider<'dola'> {
       label: 'Dola',
       stage: 'experimental',
       setupOrder: 10,
+      subscriptionSupport: 'supported',
       protocolCompatibility: Object.freeze({
         legacyRequests: false,
       }),

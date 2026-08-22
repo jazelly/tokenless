@@ -24,27 +24,17 @@ export type LocalHttpAttachment = {
   sha256: string
 }
 
-/** A strictly bounded outcome for cancelling a durable request intent. */
-export type LocalHttpRequestCancellation =
-  | { kind: 'cancelled_before_start' }
-  | { kind: 'turn'; turn: LocalHttpRequestCancellationTurn }
+/** A strictly bounded outcome for cancelling an existing request turn. */
+export type LocalHttpRequestCancellation = { kind: 'turn'; turn: LocalHttpRequestCancellationTurn }
 
 type LocalHttpRequestCancellationIdentity = {
   turnRef: string
   conversationRef: string
 }
 
-export type LocalHttpRequestCancellationTurn =
-  | (LocalHttpRequestCancellationIdentity & {
-    lifecycle: 'cancelled'
-    dispatchCertainty: 'not_dispatched'
-    attachmentDeliveryStatus: 'pending'
-  })
-  | (LocalHttpRequestCancellationIdentity & {
-    lifecycle: 'cancelled'
-    dispatchCertainty: 'dispatched' | 'ambiguous'
-    attachmentDeliveryStatus: 'delivered'
-  })
+export type LocalHttpRequestCancellationTurn = LocalHttpRequestCancellationIdentity & {
+  lifecycle: 'cancelled'
+}
 
 /** Browser-independent local control-plane client. Callers supply credentials and bytes explicitly. */
 export function createLocalHttpClient(options: LocalHttpClientOptions) {
@@ -111,9 +101,6 @@ export function createLocalHttpClient(options: LocalHttpClientOptions) {
     },
     async cancel(turnRef: string): Promise<TurnState> {
       return parseTurnEnvelope(await call(`${PRIVATE_PROVIDER_TURN_PATH}/turns/${encodeURIComponent(turnRefValue(turnRef))}/cancel`, jsonPost({})))
-    },
-    async resume(turnRef: string): Promise<TurnState> {
-      return parseTurnEnvelope(await call(`${PRIVATE_PROVIDER_TURN_PATH}/turns/${encodeURIComponent(turnRefValue(turnRef))}/resume`, jsonPost({})))
     },
     async cancelRequest(requestRef: string): Promise<LocalHttpRequestCancellation> {
       return parseRequestCancellation(await call(`${PRIVATE_PROVIDER_TURN_PATH}/requests/${encodeURIComponent(requestRefValue(requestRef))}/cancel`, jsonPost({})))
@@ -188,29 +175,21 @@ function parseTurnEnvelope(value: unknown): TurnState {
 
 function parseRequestCancellation(value: unknown): LocalHttpRequestCancellation {
   if (!isRecord(value) || typeof value.kind !== 'string') throw new TypeError('Invalid local request cancellation envelope.')
-  if (value.kind === 'cancelled_before_start' && Object.keys(value).length === 1) return { kind: 'cancelled_before_start' }
   if (value.kind === 'turn' && Object.keys(value).length === 2) return { kind: 'turn', turn: parseRequestCancellationTurn(value.turn) }
   throw new TypeError('Invalid local request cancellation envelope.')
 }
 
 function parseRequestCancellationTurn(value: unknown): LocalHttpRequestCancellationTurn {
-  if (!isRecord(value) || Object.keys(value).length !== 5 ||
+  if (!isRecord(value) || Object.keys(value).length !== 3 ||
     typeof value.turnRef !== 'string' || typeof value.conversationRef !== 'string' ||
-    typeof value.lifecycle !== 'string' || typeof value.dispatchCertainty !== 'string' ||
-    typeof value.attachmentDeliveryStatus !== 'string') {
+    typeof value.lifecycle !== 'string') {
     throw new TypeError('Invalid local request cancellation turn.')
   }
   const turnRef = turnRefValue(value.turnRef)
   if (!/^conversation:[a-f0-9]{32}$/.test(value.conversationRef) || value.lifecycle !== 'cancelled') {
     throw new TypeError('Invalid local request cancellation turn.')
   }
-  if (value.dispatchCertainty === 'not_dispatched' && value.attachmentDeliveryStatus === 'pending') {
-    return { turnRef, conversationRef: value.conversationRef, lifecycle: 'cancelled', dispatchCertainty: 'not_dispatched', attachmentDeliveryStatus: 'pending' }
-  }
-  if ((value.dispatchCertainty === 'dispatched' || value.dispatchCertainty === 'ambiguous') && value.attachmentDeliveryStatus === 'delivered') {
-    return { turnRef, conversationRef: value.conversationRef, lifecycle: 'cancelled', dispatchCertainty: value.dispatchCertainty, attachmentDeliveryStatus: 'delivered' }
-  }
-  throw new TypeError('Invalid local request cancellation turn.')
+  return { turnRef, conversationRef: value.conversationRef, lifecycle: 'cancelled' }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -225,8 +204,8 @@ function safeError(value: unknown) {
     ['control_auth_missing', { message: 'Local daemon authentication is required.', retryable: false }],
     ['control_auth_rejected', { message: 'Local daemon authentication was rejected.', retryable: false }],
     ['daemon_starting', { message: 'The local daemon is still starting.', retryable: true }],
-    ['web_ai_request_ref_conflict', { message: 'The request reference is already bound to a different request.', retryable: false }],
-    ['web_ai_request_cancelled', { message: 'The request reference was cancelled before a turn could be created.', retryable: false }],
+    ['web_ai_request_ref_conflict', { message: 'The request reference already has a turn; duplicate starts are not replayed.', retryable: false }],
+    ['web_ai_request_not_found', { message: 'The Web AI request was not found.', retryable: false }],
   ])
   const mapped = known.get(error.code)
   return mapped ? { code: error.code, ...mapped } : { code: 'local_http_error', message: 'The local daemon rejected the request.', retryable: false }

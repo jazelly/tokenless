@@ -44,7 +44,6 @@ import {
   daemonUrl,
   deriveTaskId,
   deleteTokenlessProfileConfig,
-  drainDaemonReplay,
   ensureDaemonReady,
   generateImage,
   getMenuBarSnapshot,
@@ -54,7 +53,6 @@ import {
   getProviderCapacity,
   inspectManagedRuntime,
   listDaemonJobs,
-  markDaemonJobReported,
   normalizeBrowserId,
   normalizeBrowserVisibility,
   openBrowserRuntimeProfile,
@@ -77,7 +75,6 @@ import {
   resolveControlExecution,
   removeControlProfile,
   resumeAgentRun,
-  resumeDaemonJob,
   semanticVersionMajor,
   stageVisibleAttachments,
   startAgentRun,
@@ -282,7 +279,6 @@ const TOP_LEVEL_USAGE = [
   'tokenless capabilities list --json',
   'tokenless limits inspect --profile <slug> --provider <provider> --json',
   'tokenless featurebench inspect --json',
-  'tokenless replay --agent-kind <kind> --agent-session-id <id> --json',
   'tokenless profiles <subcommand> [options]',
   'tokenless agents <install|status|inspect|uninstall> <codex|dsh> [options]',
   'tokenless dashboard [--profile <slug>] [--job-id <id>] [--no-open] [--json]',
@@ -378,8 +374,6 @@ try {
     await apiProxyCommand(subcommand, args)
   } else if (command === 'featurebench') {
     printPayload(await featureBenchCommand(subcommand, args), args)
-  } else if (command === 'replay') {
-    await replayCommand(args)
   } else if (command === 'provider-status' || command === 'provider-auth-status') {
     await providerStatusCommand(args)
   } else if (command === 'provider-action') {
@@ -396,8 +390,6 @@ try {
     await snapshotDomCommand(args)
   } else if (command === 'state' || command === 'status') {
     await stateCommand(args)
-  } else if (command === 'resume') {
-    await resumeCommand(args)
   } else if (command === 'cancel') {
     await cancelCommand(args)
   } else if (command === 'setup') {
@@ -801,7 +793,6 @@ function stoppedRunnerStatus() {
     pid: null,
     sessionId: null,
     safeToStop: false,
-    heartbeatAt: null,
   }
 }
 
@@ -818,7 +809,6 @@ async function embeddedRunnerStatus({
     pid: status.pid,
     sessionId: 'embedded',
     safeToStop: false,
-    heartbeatAt: null,
     started: false,
     runtime: 'embedded',
     runtimeStatus: status.status,
@@ -836,7 +826,6 @@ function browserRuntimeOpenRunnerStatus(
     pid: status.pid,
     sessionId: 'embedded',
     safeToStop: false,
-    heartbeatAt: null,
     started,
     runtime: 'embedded',
     runtimeStatus: status.status,
@@ -865,7 +854,6 @@ async function doctorRunnerStatus({
         pid: status.pid,
         sessionId: 'embedded',
         safeToStop: false,
-        heartbeatAt: null,
         runtime: 'embedded',
         runtimeStatus: status.status,
         activeProfileCount: status.activeProfileCount,
@@ -1448,29 +1436,6 @@ async function capabilitiesCommand(subcommand: string | undefined, args: CliArgs
   printPayload({ ok: true, ...catalog }, args)
 }
 
-async function replayCommand(args: CliArgs) {
-  const recipient = agentRecipientFromArgs(args, true)
-  const homeDir = tokenlessHome(args.home)
-  const daemon = (await ensureControlDaemon(args, homeDir)).daemon
-  const replay = await drainDaemonReplay({
-    homeDir,
-    daemonUrl: daemon.url,
-    agentKind: recipient.agentKind,
-    agentSessionId: recipient.agentSessionId,
-    limit: args.limit === undefined ? undefined : strictPositiveInteger(args.limit, '--limit'),
-  })
-  printPayload({
-    ok: true,
-    transport: 'daemon',
-    agent: {
-      kind: recipient.agentKind,
-      sessionId: recipient.agentSessionId,
-    },
-    count: replay.jobs.length,
-    jobs: replay.jobs,
-  }, args)
-}
-
 async function chatGptControlsCommand(args: CliArgs) {
   await executeDaemonJob({
     args: { ...args, provider: requiredChatGptProvider(args) },
@@ -1831,9 +1796,9 @@ async function executeDaemonJob({
   const taskId = executionMode === 'direct'
     ? undefined
     : deriveTaskId({
-        projectName,
-        chatName,
-        idempotencyKey: args.taskId || args.idempotencyKey || process.env.TOKENLESS_TASK_ID || process.env.TOKENLESS_IDEMPOTENCY_KEY,
+      projectName,
+      chatName,
+        taskId: args.taskId || process.env.TOKENLESS_TASK_ID,
       })
   const workspaceMode = args.workspaceMode === undefined
     ? undefined
@@ -2087,7 +2052,6 @@ async function executeDaemonJob({
       projectName,
       chatName,
       providerContext,
-      idempotencyKey: taskId,
       result: publicDaemonResult(result),
       compactOutput: result?.compactOutput,
       status: result?.status ?? statusLog.at(-1)?.status,
@@ -2222,7 +2186,6 @@ async function executeManagedPlaywrightJob({
     daemonUrl: actualDaemonUrl,
     homeDir,
     profileId: profile.id,
-    ...agentRecipientFromArgs(args),
     request: {
       ...alignedRequest,
       browserVisibility,
@@ -2255,7 +2218,6 @@ async function executeManagedPlaywrightJob({
         timeoutMs,
         cancelTimeoutMs: optionalNumber(args.cancelTimeoutMs),
         statusReporter,
-        ...agentRecipientFromArgs(args),
       })
   return {
     daemonUrl: actualDaemonUrl,
@@ -2676,7 +2638,7 @@ async function stateCommand(args: CliArgs) {
   const config = control.state.config
   const daemon = control.daemon
   const actualDaemonUrl = daemon.url
-  const requestedTaskId = args.taskId || args.idempotencyKey || (args.jobId ? undefined : deriveTaskId({
+  const requestedTaskId = args.taskId || (args.jobId ? undefined : deriveTaskId({
     projectName: args.projectName || process.env.TOKENLESS_PROJECT_NAME,
     chatName: args.chatName || process.env.TOKENLESS_CHAT_NAME,
   }))
@@ -2722,19 +2684,6 @@ async function stateCommand(args: CliArgs) {
     )
   }
   const latest = jobs[0]!
-  const recipient = agentRecipientFromArgs(args)
-  if (recipient.agentKind !== undefined && recipient.agentSessionId !== undefined) {
-    const displayedJobIds = new Set(jobs.map((job) => job.jobId))
-    await Promise.all(listedDaemonJobs
-      .filter((job) => displayedJobIds.has(job.job_id) && isReplayActionableStatus(job.status))
-      .map((job) => markDaemonJobReported({
-        homeDir,
-        daemonUrl: actualDaemonUrl,
-        jobId: job.job_id,
-        agentKind: recipient.agentKind!,
-        agentSessionId: recipient.agentSessionId!,
-      })))
-  }
   printPayload({
     ok: true,
     protocol: DAEMON_TASK_STATE_SCHEMA_ID,
@@ -2769,12 +2718,11 @@ async function limitsCommand(subcommand: string | undefined, args: CliArgs) {
     tierLabel: observation?.account?.tier.label ?? null,
     subscriptionLabel: observation?.account?.subscription ?? null,
   })
-  const eligible = capacity.eligibleAt ? t('providerCapacityNextEligible', { eligibleAt: capacity.eligibleAt }) : ''
   printPayload({
     ok: true,
     profile: publicManagedProfile(profile, profile.slug),
     capacity,
-    compactOutput: t('providerCapacity', { provider, profile: profile.slug, decision: capacity.decision, eligible }),
+    compactOutput: t('providerCapacity', { provider, profile: profile.slug, decision: capacity.decision }),
   }, args)
 }
 
@@ -2803,78 +2751,6 @@ async function resolveProfileForDaemonJob(
   return profile
 }
 
-async function resumeCommand(args: CliArgs) {
-  if (!args.jobId) {
-    throw usageError('missing_job_id', 'Usage: tokenless resume --job-id <job-id> --browser-visibility headed.')
-  }
-  const browserVisibility = requiredBrowserVisibility(args.browserVisibility)
-  if (browserVisibility !== 'headed') {
-    throw usageError('invalid_resume_browser_visibility', 'tokenless resume requires --browser-visibility headed.')
-  }
-  const homeDir = tokenlessHome(args.home)
-  const control = await ensureControlDaemon(args, homeDir)
-  const daemon = control.daemon
-  const actualDaemonUrl = daemon.url
-  const existing = await getDaemonJob({ homeDir, daemonUrl: actualDaemonUrl, jobId: args.jobId })
-  if (existing.execution_backend !== PLAYWRIGHT_EXECUTION_BACKEND || !existing.profile_id) {
-    throw usageError('invalid_resume_job', 'tokenless resume accepts only a managed Playwright job with a profile.')
-  }
-  const profile = control.state.profiles.find((candidate) => candidate.id === existing.profile_id)
-  if (!profile) throw usageError('resume_profile_not_found', 'The managed profile for this Tokenless job is not available.')
-
-  const runner = await embeddedRunnerStatus({ homeDir, daemonUrl: actualDaemonUrl })
-  const resumed = await resumeDaemonJob({
-    homeDir,
-    daemonUrl: actualDaemonUrl,
-    jobId: args.jobId,
-    browserVisibility: 'headed',
-  })
-  const statusReporter = createCliStatusReporter(args)
-  statusReporter.report({
-    event: 'playwright_job_resumed',
-    status: resumed.status,
-    backend: PLAYWRIGHT_EXECUTION_BACKEND,
-    jobId: resumed.job_id,
-    provider: resumed.provider,
-    browserVisibility: 'headed',
-  })
-  const result = await waitForJobWithInterruptCancellation({
-    homeDir,
-    daemonUrl: actualDaemonUrl,
-    jobId: resumed.job_id,
-    timeoutMs: args.timeoutMs === undefined ? undefined : Number(args.timeoutMs),
-    cancelTimeoutMs: optionalNumber(args.cancelTimeoutMs),
-    statusReporter,
-    ...agentRecipientFromArgs(args),
-  })
-  if (result?.status === 'waiting_for_user') {
-    printPayload(waitingForUserPayload({
-      job: resumed,
-      taskId: daemonTaskId(resumed),
-      provider: resumed.provider,
-      profile,
-      waitResult: result,
-      statusLog: statusReporter.events,
-    }), args)
-    return
-  }
-  assertDaemonJobSucceeded(result, statusReporter)
-  printPayload({
-    ok: true,
-    transport: 'daemon',
-    backend: PLAYWRIGHT_EXECUTION_BACKEND,
-    jobId: resumed.job_id,
-    taskId: daemonTaskId(resumed),
-    provider: resumed.provider,
-    profile: publicManagedProfile(profile, profile.slug),
-    runner,
-    result: publicDaemonResult(result),
-    compactOutput: result?.compactOutput,
-    status: result?.status,
-    statusLog: statusReporter.events,
-  }, args)
-}
-
 async function cancelCommand(args: CliArgs) {
   if (!args.jobId) throw usageError('missing_job_id', 'Usage: tokenless cancel --job-id <job-id>.')
   const homeDir = tokenlessHome(args.home)
@@ -2894,16 +2770,6 @@ async function cancelCommand(args: CliArgs) {
   }
   if (job.status !== 'canceled') {
     throw cancelFailure(args.jobId, new Error(`daemon returned status ${String(job.status)}`))
-  }
-  const recipient = agentRecipientFromArgs(args)
-  if (recipient.agentKind !== undefined && recipient.agentSessionId !== undefined) {
-    await markDaemonJobReported({
-      homeDir,
-      daemonUrl: actualDaemonUrl,
-      jobId: job.job_id,
-      agentKind: recipient.agentKind,
-      agentSessionId: recipient.agentSessionId,
-    })
   }
   printPayload({
     ok: true,
@@ -3120,14 +2986,13 @@ function agentIntervention(args: CliArgs) {
   const approvals = args.approvals.map((value) => digestBoundIntervention(value, '--approve'))
   const authenticationCompleted = args.authenticationCompleted.map((value) => digestBoundIntervention(value, '--auth-completed'))
   const answers = Object.fromEntries(args.answers.map(answerIntervention))
-  if (approvals.length === 0 && authenticationCompleted.length === 0 && Object.keys(answers).length === 0 && args.providerReady !== true) {
-    throw usageError('agent_intervention_required', 'Agent resume requires an approval, authentication completion, answer, or --provider-ready.')
+  if (approvals.length === 0 && authenticationCompleted.length === 0 && Object.keys(answers).length === 0) {
+    throw usageError('agent_intervention_required', 'Agent resume requires an approval, authentication completion, or answer.')
   }
   return {
     ...(approvals.length > 0 ? { approvals } : {}),
     ...(authenticationCompleted.length > 0 ? { authenticationCompleted } : {}),
     ...(Object.keys(answers).length > 0 ? { answers } : {}),
-    ...(args.providerReady === true ? { providerReady: true } : {}),
   }
 }
 
@@ -3190,7 +3055,7 @@ function formatAgentRunView(view: Record<string, any>) {
       lines.push(t('agentInputResume', { runId, needId: String(need.id ?? '') }))
     }
   } else if (waiting.kind === 'provider') {
-    lines.push(t('agentProviderResume', { runId }))
+    lines.push(t('agentProviderRestart'))
   }
   const final = objectRecord(view.final)
   if (typeof final.output === 'string') lines.push(final.output)
@@ -5219,7 +5084,7 @@ async function resolveProviderContextForOutput({
       })
       conversation = resolved.mapping
     } catch {
-      // A completed job can precede durable conversation observation.
+      // A completed job can precede stored conversation observation.
     }
   }
   return { project, conversation }
@@ -5243,7 +5108,6 @@ function publicDaemonJobState(job: Record<string, any>) {
     context: contextEnvelopeState(request.context),
     providerAttempts: job.provider_attempts_json ?? [],
     providerSubmittedAt: job.provider_submitted_at ?? null,
-    eligibleAt: job.eligible_at ?? null,
     browserVisibility: request.browserVisibility,
     projectName: metadata.projectName,
     chatName: metadata.chatName,
@@ -5347,9 +5211,6 @@ function waitingForUserPayload({
   const blocker = waitResult?.blocker ?? job.blocker_json ?? null
   const browser = blockerBrowserState(blocker)
   const windowOpen = browser.windowOpen !== false
-  const resumeCommand = windowOpen
-    ? `tokenless state --job-id '${String(job.job_id).replace(/'/g, `'\\''`)}' --json`
-    : `tokenless resume --job-id '${String(job.job_id).replace(/'/g, `'\\''`)}' --browser-visibility headed --json`
   return {
     ok: true,
     completed: false,
@@ -5371,10 +5232,9 @@ function waitingForUserPayload({
     userAction: {
       ...(waitResult?.userAction ?? {}),
       message: t(windowOpen ? 'cliWaitingForUser' : 'cliWaitingNoWindow'),
-      resumeCommand,
       queryGuidance: windowOpen
-        ? t('cliWaitingCheckpoint')
-        : t('cliWaitingNoWindow'),
+        ? 'The current daemon execution will continue after the visible check is complete.'
+        : 'This execution cannot continue without a visible browser; start a new job if the daemon cannot open one.',
     },
     result: publicDaemonResult(waitResult),
     statusLog,
@@ -5393,7 +5253,7 @@ function blockerBrowserState(value: unknown) {
 function daemonTaskId(job: Record<string, any>) {
   const request = objectRecord(job.request_json)
   const metadata = objectRecord(request.metadata)
-  const value = request.taskId ?? request.idempotencyKey ?? request.requestId ?? metadata.taskId ?? metadata.idempotencyKey
+  const value = request.taskId ?? request.requestId ?? metadata.taskId
   if (typeof value === 'string') return value
   const fromJobId = taskIdFromManagedPlaywrightJobId(job.job_id)
   return fromJobId ?? undefined
@@ -5433,8 +5293,6 @@ async function waitForJobWithInterruptCancellation({
   timeoutMs,
   cancelTimeoutMs,
   statusReporter,
-  agentKind,
-  agentSessionId,
 }: Record<string, any>) {
   let interrupted = false
   let interruptReject: ((error: Error) => void) | undefined
@@ -5474,8 +5332,6 @@ async function waitForJobWithInterruptCancellation({
       jobId,
       timeoutMs,
       signal: waitAbort.signal,
-      agentKind,
-      agentSessionId,
       onStatus: (event) => statusReporter.report(event),
     }).then(
       (result) => interrupted ? neverSettles : result,
@@ -5537,7 +5393,7 @@ function createCommandContracts(): CommandContract[] {
   const visibleJobOptions = [
     'home', 'json', 'quiet', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'browserVisibility',
     'executionMode', 'providerBackend', 'authContextId',
-    'runnerHeartbeatTimeoutMs', 'timeoutMs', 'cancelTimeoutMs', 'targetUrl', 'taskId', 'pageRef', 'idempotencyKey',
+    'timeoutMs', 'cancelTimeoutMs', 'targetUrl', 'taskId', 'pageRef',
     'projectName', 'chatName', 'workspaceMode', 'projectInstructions', 'projectInstructionsFile',
     'model', 'modelFallbacks', 'effort', 'thinkingEffort', 'qwenMode', 'qwenModeVariant',
     'arenaMode', 'arenaModality',
@@ -5551,8 +5407,8 @@ function createCommandContracts(): CommandContract[] {
   ] as const
   const providerInspectOptions = [
     'home', 'json', 'quiet', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs',
-    'browserVisibility', 'runnerHeartbeatTimeoutMs', 'timeoutMs', 'cancelTimeoutMs', 'targetUrl',
-    'taskId', 'pageRef', 'idempotencyKey', 'noWait', 'agentKind', 'agentSessionId',
+    'browserVisibility', 'timeoutMs', 'cancelTimeoutMs', 'targetUrl',
+    'taskId', 'pageRef', 'noWait', 'agentKind', 'agentSessionId',
   ] as const
   const providerConfigureOptions = [
     ...providerInspectOptions, 'model', 'modelFallbacks', 'effort', 'thinkingEffort', 'chatSurface',
@@ -5566,7 +5422,7 @@ function createCommandContracts(): CommandContract[] {
     { command: 'agent', subcommand: 'run', usage: [`tokenless agent run --provider ${VISIBLE_PROVIDER_USAGE} [--profile <slug>] (--prompt <text>|--prompt-file <path>) [--skill <name>] [--mcp-config <path>] [--max-turns <count>] --json`], options: ['home', 'json', 'profile', 'provider', 'prompt', 'promptFile', 'skills', 'mcpConfig', 'maxTurns', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
     { command: 'agent', subcommand: 'delegate', usage: [`tokenless agent delegate --provider ${VISIBLE_PROVIDER_USAGE} [--profile <slug>] --workspace-root <dir> (--prompt <text>|--prompt-file <path>|--prompt-stdin) [--skill <name>] [--mcp-config <path>] [--max-turns <count>] --json`], options: ['home', 'json', 'profile', 'provider', 'prompt', 'promptFile', 'promptStdin', 'workspaceRoot', 'adapterStream', 'skills', 'mcpConfig', 'maxTurns', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
     { command: 'agent', subcommand: 'read', usage: ['tokenless agent read --run-id <run-id> --json'], options: ['home', 'json', 'runId', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
-    { command: 'agent', subcommand: 'resume', usage: ['tokenless agent resume --run-id <run-id> (--approve <call-id:digest>|--auth-completed <call-id:digest>|--answer <need-id=json>|--provider-ready) --json'], options: ['home', 'json', 'runId', 'approvals', 'authenticationCompleted', 'answers', 'providerReady', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
+    { command: 'agent', subcommand: 'resume', usage: ['tokenless agent resume --run-id <run-id> (--approve <call-id:digest>|--auth-completed <call-id:digest>|--answer <need-id=json>) --json'], options: ['home', 'json', 'runId', 'approvals', 'authenticationCompleted', 'answers', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
     { command: 'agent', subcommand: 'cancel', usage: ['tokenless agent cancel --run-id <run-id> --json'], options: ['home', 'json', 'runId', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
     { command: 'capabilities', subcommand: 'list', usage: ['tokenless capabilities list --json'], options: ['json'] },
     { command: 'limits', subcommand: 'inspect', usage: ['tokenless limits inspect --profile <slug> --provider <provider> --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs'] },
@@ -5581,7 +5437,6 @@ function createCommandContracts(): CommandContract[] {
     { command: 'featurebench', subcommand: 'inspect', usage: ['tokenless featurebench inspect --json'], options: ['json'] },
     { command: 'featurebench', subcommand: 'issue-channel', usage: ['tokenless featurebench issue-channel --instance-id <id> --benchmark-run-id <id> --provider <provider> [--profile <slug>] [--execution-mode browser|direct] [--model <label>] --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'executionMode', 'model', 'effort', 'instanceId', 'benchmarkRunId', 'maxSteps', 'expiresInMs', 'providerTurnTimeoutMs'] },
     { command: 'featurebench', subcommand: 'run', usage: ['tokenless featurebench run --channel-file <path> --instruction-file <path> [--workspace /testbed] [--events-file <path>] [--max-steps <count>] --json'], options: ['json', 'channelFile', 'instructionFile', 'workspace', 'eventsFile', 'maxSteps', 'toolTimeoutMs'] },
-    { command: 'replay', usage: ['tokenless replay --agent-kind <kind> --agent-session-id <id> [--limit <count>] --json'], options: ['home', 'json', 'daemonUrl', 'daemonStartTimeoutMs', 'agentKind', 'agentSessionId', 'limit'] },
     { command: 'provider-status', usage: ['tokenless provider-status --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
     { command: 'provider-auth-status', usage: ['tokenless provider-auth-status --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
     { command: 'provider-controls', usage: ['tokenless provider-controls --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
@@ -5592,11 +5447,10 @@ function createCommandContracts(): CommandContract[] {
     { command: 'chatgpt-configure', usage: ['tokenless chatgpt-configure --profile <slug> [--model <label>] [--effort <label>] --json'], options: providerConfigureOptions },
     { command: 'provider-action', usage: [`tokenless provider-action --profile <slug> --provider <provider> --action <${PRIORITY_VISIBLE_PROVIDER_ACTION_LIST.replace(/, /g, '|')}> --json`], options: [...providerInspectOptions, 'action', 'prompt', 'promptFile', 'attachFiles', 'projectName', 'projectInstructions', 'projectInstructionsFile', 'workspaceMode', 'model', 'modelFallbacks', 'effort', 'thinkingEffort', 'qwenMode', 'qwenModeVariant', 'arenaMode', 'arenaModality', 'deepSeekMode', 'deepSeekDeepThink', 'deepSeekSearch', 'doubaoMode', 'doubaoSkill', 'kimiSearch', 'kimiPlugin', 'kimiSkill'] },
     { command: 'snapshot-dom', usage: ['tokenless snapshot-dom --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
-    { command: 'state', usage: ['tokenless state (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'idempotencyKey', 'jobId', 'projectName', 'chatName', 'limit', 'agentKind', 'agentSessionId'] },
-    { command: 'status', usage: ['tokenless status (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'idempotencyKey', 'jobId', 'projectName', 'chatName', 'limit', 'agentKind', 'agentSessionId'] },
-    { command: 'resume', usage: ['tokenless resume --job-id <job-id> --browser-visibility headed --json'], options: ['home', 'json', 'quiet', 'jobId', 'browserVisibility', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'timeoutMs', 'cancelTimeoutMs', 'agentKind', 'agentSessionId'] },
-    { command: 'cancel', usage: ['tokenless cancel --job-id <job-id> --json'], options: ['home', 'json', 'jobId', 'daemonUrl', 'daemonStartTimeoutMs', 'cancelTimeoutMs', 'agentKind', 'agentSessionId'] },
-    { command: 'setup', usage: ['tokenless setup [--browser <chrome|brave|cloak>|--anti-detect] [--browser-executable-path <absolute-path>] [--install-codex [--codex-home <dir>]] [--profile <slug>] [--provider-whitelist <list>] [--no-open] [--defaults] --json'], options: ['home', 'json', 'quiet', 'browser', 'browserExecutablePath', 'antiDetect', 'profile', 'providerWhitelist', 'noOpen', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'cancelTimeoutMs', 'timeoutMs', 'targetUrl', 'setDefault', 'setupDefaults', 'installCodex', 'codexHome'] },
+    { command: 'state', usage: ['tokenless state (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'jobId', 'projectName', 'chatName', 'limit', 'agentKind', 'agentSessionId'] },
+    { command: 'status', usage: ['tokenless status (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'jobId', 'projectName', 'chatName', 'limit', 'agentKind', 'agentSessionId'] },
+    { command: 'cancel', usage: ['tokenless cancel --job-id <job-id> --json'], options: ['home', 'json', 'jobId', 'daemonUrl', 'daemonStartTimeoutMs', 'cancelTimeoutMs'] },
+    { command: 'setup', usage: ['tokenless setup [--browser <chrome|brave|cloak>|--anti-detect] [--browser-executable-path <absolute-path>] [--install-codex [--codex-home <dir>]] [--profile <slug>] [--provider-whitelist <list>] [--no-open] [--defaults] --json'], options: ['home', 'json', 'quiet', 'browser', 'browserExecutablePath', 'antiDetect', 'profile', 'providerWhitelist', 'noOpen', 'daemonUrl', 'daemonStartTimeoutMs', 'cancelTimeoutMs', 'timeoutMs', 'targetUrl', 'setDefault', 'setupDefaults', 'installCodex', 'codexHome'] },
     { command: 'install', usage: ['tokenless install [--browser <browser>|--browsers <list>] [--repair-browser] --json'], options: ['home', 'json', 'browser', 'browsers', 'repairBrowser', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'upgrade', usage: ['tokenless upgrade [--check] [--json] [--home <dir>] [--daemon-url <url>] [--browser <browser>|--browsers <list>]'], options: ['check', 'json', 'home', 'daemonUrl', 'browser', 'browsers', 'daemonStartTimeoutMs'] },
     { command: 'doctor', usage: ['tokenless doctor --json'], options: ['home', 'json', 'browser', 'daemonUrl'] },
@@ -5607,8 +5461,8 @@ function createCommandContracts(): CommandContract[] {
     { command: 'profiles', subcommand: 'add', usage: ['tokenless profiles add --profile <slug> [--browser <managed-chromium|cloak>] [--set-default] --json'], options: ['home', 'json', 'profile', 'browser', 'providerWhitelist', 'setDefault'] },
     { command: 'profiles', subcommand: 'clear', usage: ['tokenless profiles clear (--profile <slug>|--all)'], options: ['home', 'profile', 'allProfiles'] },
     { command: 'profiles', subcommand: 'list', usage: ['tokenless profiles list --json'], options: ['home', 'json'] },
-    { command: 'profiles', subcommand: 'status', usage: ['tokenless profiles status [--profile <slug>] [--provider <provider>] --json'], options: ['home', 'json', 'quiet', 'profile', 'provider', 'browserVisibility', 'daemonStartTimeoutMs', 'daemonUrl', 'runnerHeartbeatTimeoutMs', 'targetUrl', 'taskId', 'pageRef', 'timeoutMs', 'cancelTimeoutMs'] },
-    { command: 'profiles', subcommand: 'open', usage: ['tokenless profiles open [--profile <slug>] [--provider <provider>] --json'], options: ['home', 'json', 'quiet', 'profile', 'provider', 'daemonStartTimeoutMs', 'daemonUrl', 'runnerHeartbeatTimeoutMs', 'targetUrl', 'taskId', 'pageRef', 'timeoutMs', 'cancelTimeoutMs'] },
+    { command: 'profiles', subcommand: 'status', usage: ['tokenless profiles status [--profile <slug>] [--provider <provider>] --json'], options: ['home', 'json', 'quiet', 'profile', 'provider', 'browserVisibility', 'daemonStartTimeoutMs', 'daemonUrl', 'targetUrl', 'taskId', 'pageRef', 'timeoutMs', 'cancelTimeoutMs'] },
+    { command: 'profiles', subcommand: 'open', usage: ['tokenless profiles open [--profile <slug>] [--provider <provider>] --json'], options: ['home', 'json', 'quiet', 'profile', 'provider', 'daemonStartTimeoutMs', 'daemonUrl', 'targetUrl', 'taskId', 'pageRef', 'timeoutMs', 'cancelTimeoutMs'] },
     { command: 'profiles', subcommand: 'set-default', usage: ['tokenless profiles set-default --profile <slug> --json'], options: ['home', 'json', 'profile'] },
     { command: 'profiles', subcommand: 'remove', usage: ['tokenless profiles remove --profile <slug> --confirm-delete --json'], options: ['home', 'json', 'profile', 'confirmDelete'] },
     { command: 'daemon', subcommand: 'stop', usage: ['tokenless daemon stop [--daemon-url <loopback-url>] [--timeout-ms <ms>] --json'], options: ['home', 'json', 'daemonUrl', 'timeoutMs'] },
@@ -5663,8 +5517,6 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--provider-whitelist': 'providerWhitelist',
     '--action': 'action',
     '--target-url': 'targetUrl',
-    '--idempotency-key': 'idempotencyKey',
-    '--conversation-key': 'idempotencyKey',
     '--task-id': 'taskId',
     '--job-id': 'jobId',
     '--run-id': 'runId',
@@ -5688,7 +5540,6 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--daemon-start-timeout-ms': 'daemonStartTimeoutMs',
     '--cancel-timeout-ms': 'cancelTimeoutMs',
     '--bridge-timeout-ms': 'bridgeTimeoutMs',
-    '--runner-heartbeat-timeout-ms': 'runnerHeartbeatTimeoutMs',
     '--read-delay-ms': 'readDelayMs',
     '--read-timeout-ms': 'readTimeoutMs',
     '--max-text-chars': 'maxTextChars',
@@ -5751,7 +5602,6 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--confirm-delete': 'confirmDelete',
     '--defaults': 'setupDefaults',
     '--all': 'allProfiles',
-    '--provider-ready': 'providerReady',
     '--prompt-stdin': 'promptStdin',
     '--adapter-stream': 'adapterStream',
     '--check': 'check',
@@ -5849,54 +5699,6 @@ function requiredBrowserVisibility(value: unknown) {
     throw usageError('invalid_browser_visibility', '--browser-visibility must be auto, headed, or headless.')
   }
   return visibility
-}
-
-function agentRecipientFromArgs(
-  args: CliArgs,
-  required: true
-): { agentKind: string; agentSessionId: string }
-function agentRecipientFromArgs(
-  args: CliArgs,
-  required?: false
-): { agentKind?: string; agentSessionId?: string }
-function agentRecipientFromArgs(
-  args: CliArgs,
-  required = false
-): { agentKind?: string; agentSessionId?: string } {
-  const rawKind = args.agentKind ?? process.env.TOKENLESS_AGENT_KIND
-  const rawSessionId = args.agentSessionId ?? process.env.TOKENLESS_AGENT_SESSION_ID
-  if (rawKind === undefined && rawSessionId === undefined) {
-    if (required) {
-      throw usageError(
-        'missing_agent_recipient',
-        'Agent replay requires --agent-kind and --agent-session-id, or TOKENLESS_AGENT_KIND and TOKENLESS_AGENT_SESSION_ID.'
-      )
-    }
-    return {}
-  }
-  if (rawKind === undefined || rawSessionId === undefined) {
-    throw usageError(
-      'incomplete_agent_recipient',
-      '--agent-kind and --agent-session-id must be provided together.'
-    )
-  }
-  const agentKind = String(rawKind).trim()
-  const agentSessionId = String(rawSessionId).trim()
-  if (!agentKind || Array.from(agentKind).length > 128) {
-    throw usageError('invalid_agent_kind', '--agent-kind must be a non-empty string of at most 128 characters.')
-  }
-  if (!agentSessionId || Array.from(agentSessionId).length > 256) {
-    throw usageError('invalid_agent_session_id', '--agent-session-id must be a non-empty string of at most 256 characters.')
-  }
-  return { agentKind, agentSessionId }
-}
-
-function isReplayActionableStatus(status: string) {
-  return status === 'waiting_for_user' ||
-    status === 'succeeded' ||
-    status === 'failed' ||
-    status === 'canceled' ||
-    status === 'timed_out'
 }
 
 function normalizeProvider(provider: unknown): ProviderId {
@@ -6077,7 +5879,7 @@ function assertVisibleRunArguments(args: CliArgs) {
       throw usageError('controls_unsupported_for_action', 'Image generation selects its implementation through --execution-mode; --provider-backend is not exposed.')
     }
     const unsupported = explicitlySelectedArgumentFlags(args, [
-      'targetUrl', 'idempotencyKey', 'projectName', 'chatName',
+      'targetUrl', 'projectName', 'chatName',
       'projectInstructions', 'projectInstructionsFile', 'modelFallbacks', 'effort',
       'thinkingEffort', 'qwenMode', 'qwenModeVariant',
       'deepSeekMode', 'deepSeekDeepThink', 'deepSeekSearch', 'kimiSearch', 'kimiPlugin',
@@ -6114,7 +5916,7 @@ function assertVisibleRunArguments(args: CliArgs) {
     throw usageError('task_capability_action_unsupported', '--execution-mode direct currently supports only conversation.chat.')
   }
   const unsupported = explicitlySelectedArgumentFlags(args, [
-    'targetUrl', 'taskId', 'idempotencyKey', 'projectName', 'chatName', 'workspaceMode',
+    'targetUrl', 'taskId', 'projectName', 'chatName', 'workspaceMode',
     'projectInstructions', 'projectInstructionsFile', 'model', 'modelFallbacks', 'effort',
     'thinkingEffort', 'qwenMode', 'qwenModeVariant', 'arenaMode', 'arenaModality', 'deepSeekMode', 'deepSeekDeepThink',
     'deepSeekSearch', 'kimiSearch', 'kimiPlugin', 'kimiSkill', 'chatSurface', 'longRunning',
@@ -6885,10 +6687,7 @@ function formatCompactPayload(payload: Record<string, any>) {
     const message = typeof userAction.message === 'string'
       ? userAction.message
       : t('cliWaitingForUser')
-    const resumeCommand = typeof userAction.resumeCommand === 'string'
-      ? ` ${t('cliResume')} ${userAction.resumeCommand}`
-      : ''
-    return `${message}${resumeCommand}`
+    return message
   }
 
   const command = typeof payload.command === 'string'
@@ -7046,7 +6845,6 @@ function usage(args: CliArgs) {
         `tokenless run --provider ${VISIBLE_PROVIDER_USAGE} --attach-file <path> [--attach-file <path>] --prompt <text> --json`,
         'tokenless run --long-running --provider chatgpt --prompt <text> --json',
         'tokenless state --task-id <task-id> [--profile <slug>] --json',
-        'tokenless resume --job-id <job-id> --browser-visibility headed --json',
         'tokenless cancel --job-id <job-id> --json',
       ],
     },
@@ -7240,7 +7038,6 @@ function optionUsageLabel(option: string) {
     files: '--file <path>',
     help: '-h, --help',
     home: '--home <dir>',
-    idempotencyKey: '--idempotency-key <key>',
     integrationId: '--integration-id <id>',
     installCodex: '--install-codex',
     json: '--json',
@@ -7264,7 +7061,6 @@ function optionUsageLabel(option: string) {
     clearProxy: '--clear-proxy',
     clearBrowserExecutablePath: '--clear-browser-executable-path',
     profile: '-P, --profile <slug>',
-    providerReady: '--provider-ready',
     projectInstructions: '--project-instructions <text>',
     projectInstructionsFile: '--project-instructions-file <path>',
     projectName: '--project-name <name>',
@@ -7275,7 +7071,6 @@ function optionUsageLabel(option: string) {
     provider: '-p, --provider <provider>',
     quiet: '--quiet',
     repairBrowser: '--repair-browser',
-    runnerHeartbeatTimeoutMs: '--runner-heartbeat-timeout-ms <ms>',
     runId: '--run-id <run-id>',
     setDefault: '--set-default',
     setupDefaults: '--defaults',

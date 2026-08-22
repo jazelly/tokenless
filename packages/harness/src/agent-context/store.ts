@@ -453,7 +453,6 @@ export class AgentContextStore {
 
   private initialize() {
     this.#db.exec(`
-      PRAGMA journal_mode = WAL;
       CREATE TABLE IF NOT EXISTS harness_context_records (
         kind TEXT NOT NULL,
         record_key TEXT NOT NULL,

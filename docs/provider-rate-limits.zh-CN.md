@@ -8,7 +8,7 @@ Tokenless 在 [`packages/cli/catalog/provider-rate-limits.v1.json`](../packages/
 
 一个 managed browser profile 是一个独立的 provider capacity scope。触及真实 provider 限额仍属于可恢复的预期状态。
 
-## 当前可调度知识
+## 当前 Runtime 知识
 
 | Provider | 保留的官方精确数字规则 | Runtime 解释与剩余不确定性 |
 | --- | --- | --- |
@@ -34,22 +34,21 @@ Runtime 将当前观察到的 profile subscription label 解析为标准 catalog
 1. 从现有 SQLite `jobs` 表读取不可变的 `provider_submitted_at` facts；
 2. 从每个结构化 job request 推导 prompt 与 attachment units；
 3. 隔离 provider、profile、model family、mode、action 与匹配窗口；
-4. 仅当发布的 allowance 至少为 20 units 时应用 90% 的调度 allowance；
+4. 仅当发布的 allowance 至少为 20 units 时应用 90% 的 planning allowance；
 5. 应用带 5% 有界 burst 的 GCRA cadence，并将 burst 限制为 2–8 units；以及
-6. 返回 `admit`，或带 `eligibleAt`、可解释的 `defer`。
+6. 返回 `admit` 或可解释的 `defer`，但不会创建延迟 job。
 
 对于所有非数字或不匹配规则，Tokenless 返回 `unknown` 并允许执行。这样可以保留不确定性，而不虚构 quota。
 
-Provider mutation 前，已知 defer 会先消耗经过筛选的自动 provider fallback plan。若没有剩余的 in-scope fallback，同一 job 返回 `queued` 并设置 `eligible_at`。提交前出现的可见 rate 或 plan blocker 使用有界本地 backoff。已证明或含糊的提交后工作绝不会在其他 provider 或 profile 上 replay。
+Provider mutation 前，已知 capacity defer 会在当前 execution 中先消耗经过筛选的自动 provider fallback plan。若没有剩余的 in-scope fallback，请求会清晰失败，不会延迟或重新排队。提交前出现的可见 rate 或 plan blocker 仍然是当前 execution 的失败。已证明或含糊的提交后工作绝不会在其他 provider 或 profile 上 replay。
 
-配置的 provider 列表只充当 filter。其顺序不会改变 capability、subscription、capacity、fairness 或 recovery scoring。
+配置的 provider 列表只充当 filter。其顺序不会改变 capability、subscription、capacity、fairness 或 route selection。
 
-## 持久事实与诊断
+## 已保存事实与诊断
 
 Rate-limit 状态保留在现有 `jobs` 表中：
 
 - `provider_submitted_at` 可为空、不可变，并在可见 prompt 提交成功后立即写入；
-- `eligible_at` 防止 capacity defer 后过早 claim；
 - `provider`、`profile_id` 与 `request_json` 保留重建本地用量所需的维度；以及
 - `(provider, profile_id, provider_submitted_at)` 支持有界历史查询。
 
@@ -61,7 +60,7 @@ Rate-limit 状态保留在现有 `jobs` 表中：
 tokenless limits inspect --profile <slug> --provider <provider> --json
 ```
 
-输出包括匹配的 plan、match confidence、catalog revision、适用规则、published 与 effective allowance、本地观察用量、remaining estimate、cadence、burst allowance、decision 和下一个 eligible time。
+输出包括匹配的 plan、match confidence、catalog revision、适用规则、published 与 effective allowance、本地观察用量、remaining estimate、cadence、burst allowance 和 decision。
 
 ## 验证边界
 

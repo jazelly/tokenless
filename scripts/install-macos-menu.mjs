@@ -44,7 +44,7 @@ const appProcess = spawn('open', ['-a', installedApp], {
 })
 appProcess.unref()
 
-console.log('Installed Tokenless API menu bar app / 已安装 Tokenless API 菜单栏应用。')
+console.log('Installed Tokenless menu bar app / 已安装 Tokenless 菜单栏应用。')
 console.log('The app was launched and uses the bound local CLI / 应用已启动，并使用绑定的本地 CLI。')
 
 function resolveTokenlessCommand() {

@@ -34,6 +34,7 @@ export class DoubaoProvider extends BaseProvider<'doubao'> {
       label: 'Doubao / 豆包',
       stage: 'experimental',
       setupOrder: 8,
+      subscriptionSupport: 'supported',
       protocolCompatibility: Object.freeze({
         legacyRequests: false,
       }),

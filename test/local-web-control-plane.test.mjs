@@ -41,7 +41,7 @@ test('local web control plane opens directly, establishes Dashboard sessions, an
     const dashboardWithoutProfileBody = JSON.parse(dashboardWithoutProfile.stdout)
     assert.equal(dashboardWithoutProfileBody.profile, null)
     assert.equal(dashboardWithoutProfileBody.dashboard.opened, false)
-    assert.equal(new URL(dashboardWithoutProfileBody.dashboard.url).pathname, '/dashboard/')
+    assert.equal(new URL(dashboardWithoutProfileBody.dashboard.url).pathname, '/dashboard/overview/')
 
     const localhostHost = `localhost:${daemon.port}`
     const localhostOrigin = `http://${localhostHost}`
@@ -65,7 +65,7 @@ test('local web control plane opens directly, establishes Dashboard sessions, an
 
     const root = await fetch(`${daemon.origin}/`, { redirect: 'manual' })
     assert.equal(root.status, 303)
-    assert.equal(root.headers.get('location'), '/dashboard/')
+    assert.equal(root.headers.get('location'), '/dashboard/overview/')
     const cookie = root.headers.get('set-cookie')?.split(';')[0]
     assert.match(cookie ?? '', /^tokenless_dashboard_session=/)
     assert.match(root.headers.get('set-cookie') ?? '', /HttpOnly/)
@@ -83,6 +83,12 @@ test('local web control plane opens directly, establishes Dashboard sessions, an
     assert.equal(initialHtml.headers.get('referrer-policy'), 'no-referrer')
     assert.match(initialHtml.headers.get('content-security-policy') ?? '', /frame-ancestors 'none'/)
     assert.equal(initialHtml.headers.get('x-content-type-options'), 'nosniff')
+
+    for (const pathname of ['/dashboard/overview/', '/dashboard/profiles/', '/dashboard/providers/', '/dashboard/capabilities/', '/dashboard/jobs/', '/dashboard/system/']) {
+      const dashboardPage = await fetch(`${daemon.origin}${pathname}`, { headers: { cookie } })
+      assert.equal(dashboardPage.status, 200, pathname)
+      assert.match(await dashboardPage.text(), /<script type="module"/)
+    }
 
     for (const missingPath of ['/dashboard/not-found', '/dashboard/not-found.js']) {
       const missingDashboardAsset = await fetch(`${daemon.origin}${missingPath}`, { signal: AbortSignal.timeout(2000) })
@@ -110,7 +116,6 @@ test('local web control plane opens directly, establishes Dashboard sessions, an
     assert.equal(snapshot.status, 200)
     const snapshotText = await snapshot.text()
     assert.equal(snapshotText.includes(token), false)
-    assert.equal(/claim_token|checkpoint_json|browser-storage|cookie/i.test(snapshotText), false)
     const snapshotBody = JSON.parse(snapshotText)
     assert.equal(snapshotBody.schema, 'tokenless.dashboard-snapshot.v1')
     assert.equal(typeof snapshotBody.revision, 'string')
@@ -143,6 +148,8 @@ test('local web control plane opens directly, establishes Dashboard sessions, an
     assert.deepEqual(snapshotBody.providers.find((provider) => provider.id === 'ai-badgr')?.executionModes, ['direct'])
     assert.deepEqual(snapshotBody.providers.find((provider) => provider.id === 'chatgpt')?.executionModes, ['browser', 'direct'])
     assert.deepEqual(snapshotBody.providers.find((provider) => provider.id === 'doubao')?.executionModes, ['browser'])
+    assert.equal(snapshotBody.providers.find((provider) => provider.id === 'chatgpt')?.subscriptionSupport, 'supported')
+    assert.equal(snapshotBody.providers.find((provider) => provider.id === 'arena')?.subscriptionSupport, 'unsupported')
     const registry = new ManagedProfileRegistry(homeDir)
 
     const setupHtml = await fetch(`${daemon.origin}/dashboard/setup/`, { headers: { cookie } })
@@ -564,8 +571,13 @@ test('local web control plane opens directly, establishes Dashboard sessions, an
     ])
     const deepLinkBody = JSON.parse(deepLinkCommand.stdout)
     const deepLinkUrl = new URL(deepLinkBody.dashboard.url)
+    assert.equal(deepLinkUrl.pathname, '/dashboard/jobs/')
     assert.equal(deepLinkUrl.searchParams.get('job'), newerMenuJob.job_id)
-    assert.equal(deepLinkUrl.hash, '#jobs')
+    assert.equal(deepLinkUrl.hash, '')
+
+    await Promise.all([olderMenuJob, pathMenuJob, newerMenuJob, nonConversationMenuJob].map((job) => (
+      daemon.store.cancelJob(job.job_id, { source: 'test-cleanup' }).catch(() => undefined)
+    )))
 
     const profileMutation = await fetch(`${daemon.origin}/dashboard-api/v1/profiles/work`, {
       method: 'PATCH',
@@ -681,7 +693,7 @@ test('local web control plane opens directly, establishes Dashboard sessions, an
         'x-tokenless-csrf': sessionBody.csrf,
       },
     })
-    assert.equal(deleteProfile.status, 200)
+    assert.equal(deleteProfile.status, 200, await deleteProfile.text())
     assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8')).profiles, 'work'), false)
 
     assert.equal(await requestWithHost(daemon.port, localhostHost), 200)

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -172,9 +173,12 @@ test('Codex installer patches the effective nonempty AGENTS.override.md instead 
   }
 })
 
-test('Codex integration install output follows the persisted Simplified Chinese preference', () => {
+test('Codex integration install output follows the persisted Simplified Chinese preference', async () => {
   const fixture = createFixture()
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
   try {
+    const { writeTokenlessConfig } = await import('../packages/cli/dist/src/index.js')
+    await writeTokenlessConfig({ homeDir: fixture.tokenlessHome, daemonUrl })
     const configured = runCli([
       'config',
       '--home', fixture.tokenlessHome,
@@ -190,6 +194,7 @@ test('Codex integration install output follows the persisted Simplified Chinese 
     assert.equal(installed.status, 0, installed.stderr || installed.stdout)
     assert.match(installed.stdout, /Tokenless 已安装到普通 Codex sessions/)
   } finally {
+    runCli(['daemon', 'stop', '--home', fixture.tokenlessHome, '--daemon-url', daemonUrl, '--json'])
     fixture.cleanup()
   }
 })
@@ -601,6 +606,18 @@ function createFixture() {
     tokenlessHome: path.join(directory, 'tokenless'),
     cleanup: () => fs.rmSync(directory, { recursive: true, force: true }),
   }
+}
+
+async function freePort() {
+  const server = net.createServer()
+  await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  const address = server.address()
+  await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+  assert.equal(typeof address, 'object')
+  return address.port
 }
 
 function environmentValue(command, key) {

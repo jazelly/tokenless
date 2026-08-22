@@ -9,14 +9,12 @@ import {
 
 type EphemeralJobState = {
   request: unknown
-  checkpoint?: unknown
   result?: unknown
 }
 
 type JobShape = {
   job_id: string
   request_json: unknown
-  checkpoint_json?: unknown
   result_json?: unknown
 }
 
@@ -83,16 +81,8 @@ export function hydrateEphemeralProviderJob<T extends JobShape>(job: T): T {
   return {
     ...job,
     request_json: state.request,
-    ...(state.checkpoint === undefined ? {} : { checkpoint_json: state.checkpoint }),
     ...(state.result === undefined ? {} : { result_json: state.result }),
   }
-}
-
-export function redactEphemeralProviderCheckpoint(jobId: string, checkpoint: unknown) {
-  const state = jobs.get(jobId)
-  if (!state) return checkpoint
-  state.checkpoint = checkpoint
-  return { protocol: 'tokenless.ephemeral-provider-state.v1', kind: 'checkpoint', redacted: true }
 }
 
 export function redactEphemeralProviderResult(jobId: string, result: unknown) {

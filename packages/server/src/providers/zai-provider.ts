@@ -15,6 +15,7 @@ export class ZaiProvider extends BaseProvider<'zai'> {
       label: 'Z.ai / GLM',
       stage: 'experimental',
       setupOrder: 7,
+      subscriptionSupport: 'supported',
       protocolCompatibility: Object.freeze({
         legacyRequests: false,
       }),

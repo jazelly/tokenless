@@ -1,11 +1,10 @@
-import { createHash, randomBytes, randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import type { IncomingMessage } from 'node:http'
 
 import { deriveTaskId, readTokenlessConfig } from '../../../persistence/config.js'
 import { createManagedPlaywrightJobRequest, MANAGED_PLAYWRIGHT_JOB_ACTION } from '../../../browser/job-contract.js'
 import { VISIBLE_ACTIONS, createVisibleActionRequest } from '../../../browser/actions.js'
 import { ManagedProfileRegistry } from '../../../browser/profiles/registry.js'
-import { checkpointIndicatesPromptSubmission } from '../../../browser/submission-certainty.js'
 import { getProviderInstanceById, resolveTaskCapabilityRoute, type TaskCapabilityId } from '../../../providers/registry.js'
 import { DEFAULT_MAX_VISIBLE_ATTACHMENT_BYTES, listMarkedWebAiStageBundles, removeStagedVisibleAttachmentBundle, stageVisibleAttachmentStream } from '../../../persistence/attachments.js'
 import {
@@ -18,6 +17,7 @@ import {
 import { invalidInput } from '../../../errors.js'
 import {
   WebAiRequestRefConflictError,
+  WebAiRequestNotFoundError,
   type Job,
   type JobStore,
   type WebAiBinding,
@@ -47,9 +47,7 @@ type RequestCancellationIdentity = {
   turnRef: string
   conversationRef: string
 }
-type RequestCancellationTurn =
-  | (RequestCancellationIdentity & { lifecycle: 'cancelled'; dispatchCertainty: 'not_dispatched'; attachmentDeliveryStatus: 'pending' })
-  | (RequestCancellationIdentity & { lifecycle: 'cancelled'; dispatchCertainty: 'dispatched' | 'ambiguous'; attachmentDeliveryStatus: 'delivered' })
+type RequestCancellationTurn = RequestCancellationIdentity & { lifecycle: 'cancelled' }
 
 export class PrivateProviderTurnV0Adapter {
   private readonly profiles: ManagedProfileRegistry
@@ -149,20 +147,13 @@ export class PrivateProviderTurnV0Adapter {
     } catch (error) {
       throw invalidInput(`web ai start request is invalid: ${error instanceof Error ? error.message : String(error)}`)
     }
-    const requestSha256 = canonicalStartRequestSha256(binding, request)
     const existing = this.store.getWebAiTurnByRequestRef(request.requestRef)
-    if (existing) {
-      if (existing.request_sha256 !== requestSha256) throw new WebAiRequestRefConflictError()
-      if (request.providerBindingRef !== binding.binding_ref || request.providerRef !== binding.provider_ref) {
-        throw invalidInput('web ai request binding does not match the route')
-      }
-      return this.project(existing, this.store.getJob(existing.job_id))
-    }
+    if (existing) throw new WebAiRequestRefConflictError()
     if (request.providerBindingRef !== binding.binding_ref || request.providerRef !== binding.provider_ref) {
       throw invalidInput('web ai request binding does not match the route')
     }
     if (request.conversation.mode === 'continue') {
-      return this.startContinuation(binding, request, requestSha256, payloadLifetime)
+      return this.startContinuation(binding, request, payloadLifetime)
     }
     const bootstrap = request.bootstrap!
     const attachments = bootstrap.attachments.map((requested) => {
@@ -213,7 +204,7 @@ export class PrivateProviderTurnV0Adapter {
         createVisibleActionRequest({ provider: binding.provider, action: VISIBLE_ACTIONS.RESPONSE_READ, payload: {} }),
       ],
     })
-    const durableRequestJson = ephemeral
+    const storedRequestJson = ephemeral
       ? registerEphemeralProviderJob(attachment.bundle_id, requestJson)
       : requestJson
     const turn = this.store.createWebAiTurn({
@@ -222,11 +213,10 @@ export class PrivateProviderTurnV0Adapter {
       conversation_ref: conversationRef,
       attachment_refs: attachments.map((candidate) => candidate.attachment_ref),
       request_ref: request.requestRef,
-      request_sha256: requestSha256,
       job: {
         provider: binding.provider,
         action: MANAGED_PLAYWRIGHT_JOB_ACTION,
-        request_json: durableRequestJson,
+        request_json: storedRequestJson,
         execution_backend: 'playwright',
         profile_id: binding.profile_id,
         job_id: attachment.bundle_id,
@@ -235,7 +225,7 @@ export class PrivateProviderTurnV0Adapter {
     return this.project(turn, this.store.getJob(turn.job_id))
   }
 
-  private startContinuation(binding: WebAiBinding, request: StartTurnRequest, requestSha256: string, payloadLifetime: string | undefined) {
+  private startContinuation(binding: WebAiBinding, request: StartTurnRequest, payloadLifetime: string | undefined) {
     if (request.conversation.mode !== 'continue' || !request.continuation) throw invalidInput('web ai continuation is invalid')
     const previous = this.store.getLatestWebAiTurnForConversation(request.conversation.conversationRef)
     if (!previous || previous.binding_ref !== binding.binding_ref) throw invalidInput('web ai continuation conversation was not found')
@@ -279,7 +269,7 @@ export class PrivateProviderTurnV0Adapter {
         createVisibleActionRequest({ provider: binding.provider, action: VISIBLE_ACTIONS.RESPONSE_READ, payload: {} }),
       ],
     })
-    const durableRequestJson = ephemeral
+    const storedRequestJson = ephemeral
       ? registerEphemeralProviderJob(primary.bundle_id, requestJson)
       : requestJson
     const turn = this.store.createWebAiTurn({
@@ -288,17 +278,9 @@ export class PrivateProviderTurnV0Adapter {
       conversation_ref: request.conversation.conversationRef,
       attachment_refs: attachments.map((attachment) => attachment!.attachment_ref),
       request_ref: request.requestRef,
-      request_sha256: requestSha256,
-      job: { provider: binding.provider, action: MANAGED_PLAYWRIGHT_JOB_ACTION, request_json: durableRequestJson, execution_backend: 'playwright', profile_id: binding.profile_id, job_id: primary.bundle_id },
+      job: { provider: binding.provider, action: MANAGED_PLAYWRIGHT_JOB_ACTION, request_json: storedRequestJson, execution_backend: 'playwright', profile_id: binding.profile_id, job_id: primary.bundle_id },
     })
     return this.project(turn, this.store.getJob(turn.job_id))
-  }
-
-  resume(turnRef: string) {
-    const turn = this.store.getWebAiTurn(turnRef)
-    if (!turn) throw invalidInput('web ai turn was not found')
-    const job = this.store.resumeJob(turn.job_id, { browser_visibility: 'headed' })
-    return this.project(turn, job)
   }
 
   async read(turnRef: string) {
@@ -309,9 +291,10 @@ export class PrivateProviderTurnV0Adapter {
 
   async cancel(turnRef: string) {
     const before = this.store.getWebAiTurn(turnRef)
+    const pendingAttachment = before ? this.store.getJob(before.job_id).provider_submitted_at === null : false
     const turn = this.store.cancelWebAiTurn(turnRef)
     if (!turn) throw invalidInput('web ai turn was not found')
-    if (before && turn.cancel_attachment_delivery === 'pending') {
+    if (pendingAttachment) {
       const attachment = this.store.getWebAiStagedAttachment(turn.attachment_ref)
       if (attachment) {
         dropEphemeralProviderBundle(attachment.bundle_id)
@@ -321,19 +304,19 @@ export class PrivateProviderTurnV0Adapter {
     return this.project(turn, this.store.getJob(turn.job_id))
   }
 
-  /** Cancels a durable request intent even when no opaque turn reference was returned. */
+  /** Cancels an existing request turn by its protocol correlation reference. */
   async cancelRequest(requestRef: string) {
     const cancelled = this.store.cancelWebAiRequest(requestRef)
-    if (cancelled.kind === 'cancelled_before_start') return cancelled
+    if (!cancelled) throw new WebAiRequestNotFoundError()
     const turn = cancelled.turn
-    if (turn.cancelled && turn.cancel_attachment_delivery === 'pending') {
+    if (this.store.getJob(turn.job_id).provider_submitted_at === null) {
       const attachment = this.store.getWebAiStagedAttachment(turn.attachment_ref)
       if (attachment) {
         dropEphemeralProviderBundle(attachment.bundle_id)
         await removeStagedVisibleAttachmentBundle({ homeDir: this.store.homeDir, bundleId: attachment.bundle_id }).catch(() => undefined)
       }
     }
-    return { kind: 'turn' as const, turn: this.cancellationProjection(turn, this.store.getJob(turn.job_id)) }
+    return { kind: 'turn' as const, turn: this.cancellationProjection(turn) }
   }
 
   async initializeCleanup() {
@@ -393,41 +376,26 @@ export class PrivateProviderTurnV0Adapter {
     }
     const attachment = { attachmentRef: turn.attachment_ref, sha256: this.store.getWebAiStagedAttachment(turn.attachment_ref)!.sha256 }
     const delivered = job.provider_submitted_at !== null
-    if (turn.cancelled || job.status === 'canceled') return turnState({ ...base, lifecycle: 'cancelled', dispatchCertainty: turn.cancel_dispatch_certainty, attachmentDelivery: { ...attachment, status: turn.cancel_attachment_delivery }, cancelReason: 'client_requested' })
-    if (job.status === 'queued' || job.status === 'claimed') return turnState({ ...base, lifecycle: 'queued', dispatchCertainty: 'not_dispatched', attachmentDelivery: { ...attachment, status: 'pending' } })
+    if (turn.cancelled || job.status === 'canceled') return turnState({ ...base, lifecycle: 'cancelled', attachmentDelivery: { ...attachment, status: delivered ? 'delivered' : 'pending' }, cancelReason: 'client_requested' })
+    if (job.status === 'queued') return turnState({ ...base, lifecycle: 'queued', attachmentDelivery: { ...attachment, status: 'pending' } })
     if (job.status === 'running') {
-      const ambiguous = !delivered && checkpointIndicatesPromptSubmission(job.checkpoint_json)
-      return turnState({ ...base, lifecycle: 'running', dispatchCertainty: ambiguous ? 'ambiguous' : delivered ? 'dispatched' : 'not_dispatched', attachmentDelivery: { ...attachment, status: ambiguous || delivered ? 'delivered' : 'pending' } })
+      return turnState({ ...base, lifecycle: 'running', attachmentDelivery: { ...attachment, status: delivered ? 'delivered' : 'pending' } })
     }
     if (job.status === 'waiting_for_user') {
-      const ambiguous = !delivered && checkpointIndicatesPromptSubmission(job.checkpoint_json)
-      return turnState({ ...base, lifecycle: 'waiting_for_user', dispatchCertainty: ambiguous ? 'ambiguous' : delivered ? 'dispatched' : 'not_dispatched', attachmentDelivery: { ...attachment, status: ambiguous || delivered ? 'delivered' : 'pending' }, waitingReason: ambiguous ? 'ambiguous_submission' : 'provider_blocker' })
+      return turnState({ ...base, lifecycle: 'waiting_for_user', attachmentDelivery: { ...attachment, status: delivered ? 'delivered' : 'pending' }, waitingReason: 'provider_blocker' })
     }
     if (job.status === 'succeeded') {
       const result = successfulResult(job.result_json)
-      if (delivered && result) return turnState({ ...base, lifecycle: 'succeeded', dispatchCertainty: 'dispatched', attachmentDelivery: { ...attachment, status: 'delivered' }, result })
+      if (result) return turnState({ ...base, lifecycle: 'succeeded', attachmentDelivery: { ...attachment, status: 'delivered' }, result })
     }
-    if (job.status === 'timed_out') return turnState({ ...base, lifecycle: 'failed', dispatchCertainty: delivered ? 'dispatched' : 'not_dispatched', attachmentDelivery: { ...attachment, status: delivered ? 'delivered' : 'pending' }, error: { code: 'timeout', message: 'The provider turn timed out.' } })
+    if (job.status === 'timed_out') return turnState({ ...base, lifecycle: 'failed', attachmentDelivery: { ...attachment, status: delivered ? 'delivered' : 'pending' }, error: { code: 'timeout', message: 'The provider turn timed out.' } })
     const errorCode = jobErrorCode(job.error_json)
-    if (!delivered && errorCode.includes('upload')) return turnState({ ...base, lifecycle: 'failed', dispatchCertainty: 'not_dispatched', attachmentDelivery: { ...attachment, status: 'rejected' }, error: { code: 'upload_failed', message: 'The provider rejected the staged attachment.' } })
-    if (!delivered && errorCode.includes('ambiguous')) return turnState({ ...base, lifecycle: 'failed', dispatchCertainty: 'ambiguous', attachmentDelivery: { ...attachment, status: 'delivered' }, error: { code: 'ambiguous_external_mutation', message: 'Provider submission certainty could not be established.' } })
-    return turnState({ ...base, lifecycle: 'failed', dispatchCertainty: delivered ? 'dispatched' : 'not_dispatched', attachmentDelivery: { ...attachment, status: delivered ? 'delivered' : 'pending' }, error: { code: errorCode.includes('submit') ? 'submission_failed' : errorCode.includes('provider') ? 'provider_unavailable' : 'response_failed', message: 'The provider turn did not produce a verifiable response.' } })
+    if (!delivered && errorCode.includes('upload')) return turnState({ ...base, lifecycle: 'failed', attachmentDelivery: { ...attachment, status: 'rejected' }, error: { code: 'upload_failed', message: 'The provider rejected the staged attachment.' } })
+    return turnState({ ...base, lifecycle: 'failed', attachmentDelivery: { ...attachment, status: delivered ? 'delivered' : 'pending' }, error: { code: errorCode.includes('submit') ? 'submission_failed' : errorCode.includes('provider') ? 'provider_unavailable' : 'response_failed', message: 'The provider turn did not produce a verifiable response.' } })
   }
 
-  private cancellationProjection(turn: WebAiTurn, job: Job): RequestCancellationTurn {
-    const state = this.project(turn, job)
-    const attachment = state.attachmentDelivery
-    if (!isPlainRecord(attachment) || state.lifecycle !== 'cancelled') {
-      throw invalidInput('web ai cancellation projection is invalid')
-    }
-    const identity = { turnRef: turn.turn_ref, conversationRef: turn.conversation_ref, lifecycle: 'cancelled' as const }
-    if (state.dispatchCertainty === 'not_dispatched' && attachment.status === 'pending') {
-      return { ...identity, dispatchCertainty: 'not_dispatched', attachmentDeliveryStatus: 'pending' }
-    }
-    if ((state.dispatchCertainty === 'dispatched' || state.dispatchCertainty === 'ambiguous') && attachment.status === 'delivered') {
-      return { ...identity, dispatchCertainty: state.dispatchCertainty, attachmentDeliveryStatus: 'delivered' }
-    }
-    throw invalidInput('web ai cancellation projection is invalid')
+  private cancellationProjection(turn: WebAiTurn): RequestCancellationTurn {
+    return { turnRef: turn.turn_ref, conversationRef: turn.conversation_ref, lifecycle: 'cancelled' }
   }
 }
 
@@ -487,36 +455,6 @@ function parseContinueTurnRequest(request: Record<string, unknown>): StartTurnRe
     names.add(String(attachment.name))
   }
   return request as unknown as StartTurnRequest
-}
-
-function canonicalStartRequestSha256(binding: WebAiBinding, request: StartTurnRequest) {
-  return createHash('sha256').update(JSON.stringify({
-    provider: binding.provider,
-    profileId: binding.profile_id,
-    providerRef: request.providerRef,
-    providerBindingRef: request.providerBindingRef,
-    requiredCapabilities: request.requiredCapabilities,
-    conversation: request.conversation,
-    payload: request.conversation.mode === 'new' ? {
-      text: request.bootstrap!.text,
-      attachments: request.bootstrap!.attachments.map((attachment) => ({
-        kind: attachment.kind,
-        name: attachment.name,
-        mediaType: attachment.mediaType,
-        byteLength: attachment.byteLength,
-        sha256: attachment.sha256,
-      })),
-    } : {
-      text: request.continuation!.text,
-      attachments: request.continuation!.attachments.map((attachment) => ({
-        kind: attachment.kind,
-        name: attachment.name,
-        mediaType: attachment.mediaType,
-        byteLength: attachment.byteLength,
-        sha256: attachment.sha256,
-      })),
-    },
-  })).digest('hex')
 }
 
 function turnState(value: Record<string, unknown>): TurnState {

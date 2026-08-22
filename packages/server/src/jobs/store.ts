@@ -9,15 +9,12 @@ import {
   removeStagedVisibleAttachmentBundle,
   validateVisibleAttachmentDescriptor,
 } from '../persistence/attachments.js'
-import { checkpointIndicatesPromptSubmission } from '../browser/submission-certainty.js'
 import {
   providerCapacityPolicy,
   providerRateLimitCatalog,
   type ProviderCapacityProjection,
 } from '../providers/rate-limit-policy.js'
 import {
-  claimExpired,
-  claimRejected,
   controlAuthRejected,
   invalidInput,
   invalidJobState,
@@ -34,7 +31,6 @@ import {
 export type { JobStatus } from '../errors.js'
 
 const MAX_OUTPUT_SAVINGS_SOURCE_BYTES = 4 * 1024 * 1024
-const OUTPUT_SAVINGS_HANDOFF_DELAY_MS = 750
 export const API_RESPONSE_RETENTION_MS = 24 * 60 * 60 * 1000
 export const API_RESPONSE_MAX_ENTRIES = 1_000
 
@@ -42,11 +38,8 @@ export type ExecutionBackend = 'playwright'
 
 export type Job = {
   job_id: string
-  claim_token: string
   execution_backend: ExecutionBackend
   profile_id: string | null
-  agent_kind: string | null
-  agent_session_id: string | null
   provider: string
   action: string
   status: JobStatus
@@ -54,21 +47,13 @@ export type Job = {
   result_json: unknown | null
   error_json: unknown | null
   blocker_json: unknown | null
-  checkpoint_json: unknown | null
-  resume_json: unknown | null
   provider_attempts_json: unknown
   provider_submitted_at: string | null
-  eligible_at: string | null
   created_at: string
   updated_at: string
-  claim_expires_at_ms: number | null
 }
 
-export type JobView = Omit<
-  Job,
-  'claim_token' | 'checkpoint_json' | 'resume_json' | 'claim_expires_at_ms' | 'agent_kind' | 'agent_session_id'
->
-export type JobWithClaimToken = Omit<Job, 'claim_expires_at_ms' | 'agent_kind' | 'agent_session_id'>
+export type JobView = Job
 
 export type CreateJobInput = {
   provider: string
@@ -76,10 +61,7 @@ export type CreateJobInput = {
   request_json: unknown
   execution_backend?: ExecutionBackend | undefined
   profile_id?: string | null | undefined
-  agent_kind?: string | null | undefined
-  agent_session_id?: string | null | undefined
   job_id?: string | undefined
-  claim_token?: string | undefined
 }
 
 export type ApiResponseLedgerEntry = {
@@ -90,25 +72,6 @@ export type ApiResponseLedgerEntry = {
   transcript: unknown[]
   created_at: string
   expires_at_ms: number
-}
-
-export type AgentRecipient = {
-  agent_kind: string
-  agent_session_id: string
-}
-
-export type ReplaySummary = {
-  job_id: string
-  provider: string
-  action: string
-  status: Extract<JobStatus, 'waiting_for_user' | 'succeeded' | 'failed' | 'canceled' | 'timed_out'>
-  task_id: string | null
-  updated_at: string
-  reported_at: string
-  outcome_kind: 'result' | 'error' | 'blocker' | 'none'
-  has_result: boolean
-  has_error: boolean
-  has_blocker: boolean
 }
 
 export type OutputSavingsEvent = {
@@ -132,30 +95,6 @@ export type OutputSavingsSummary = {
   last_measured_at: string | null
 }
 
-export type OutputSavingsWorkInput = {
-  response_request_id: string
-  source_text: string
-}
-
-export type OutputSavingsWork = OutputSavingsWorkInput & {
-  work_id: number
-  job_id: string
-  created_at: string
-  available_at_ms: number
-  attempt_count: number
-  last_error_code: string | null
-}
-
-export type CompletedOutputSavingsWork = {
-  estimated_output_tokens: number
-  visible_characters: number
-  estimator: string
-  estimator_revision: string
-  basis: 'visible_assistant_text'
-  source_text_sha256: string
-  measured_at: string
-}
-
 export type ListJobsInput = {
   status?: JobStatus | undefined
   execution_backend?: ExecutionBackend | undefined
@@ -167,7 +106,7 @@ export type ListJobsInput = {
   conversation_only?: boolean | undefined
 }
 
-export type ClaimNextInput = {
+export type TakeNextInput = {
   provider?: string | undefined
   action?: string | undefined
   job_id_prefix?: string | undefined
@@ -240,50 +179,39 @@ export type WebAiTurn = {
   conversation_ref: string
   attachment_ref: string
   request_ref: string | null
-  request_sha256: string | null
   job_id: string
   cancelled: boolean
-  cancel_dispatch_certainty: 'not_dispatched' | 'dispatched' | 'ambiguous'
-  cancel_attachment_delivery: 'pending' | 'delivered'
 }
 
-export type WebAiRequestCancellation =
-  | { kind: 'cancelled_before_start' }
-  | { kind: 'turn'; turn: WebAiTurn }
+export type WebAiRequestCancellation = { kind: 'turn'; turn: WebAiTurn }
 
 export class WebAiRequestRefConflictError extends Error {
   readonly code = 'web_ai_request_ref_conflict'
 
   constructor() {
-    super('web ai requestRef was already used for a different request')
+    super('web ai requestRef already has a turn; duplicate starts are not replayed')
     this.name = 'WebAiRequestRefConflictError'
   }
 }
 
-/** A durable request cancellation was recorded before a V0 turn could be created. */
-export class WebAiRequestCancelledError extends Error {
-  readonly code = 'web_ai_request_cancelled'
+export class WebAiRequestNotFoundError extends Error {
+  readonly code = 'web_ai_request_not_found'
 
   constructor() {
-    super('web ai requestRef was cancelled before turn creation')
-    this.name = 'WebAiRequestCancelledError'
+    super('web ai request was not found')
+    this.name = 'WebAiRequestNotFoundError'
   }
 }
 
 const DATABASE_FILE_NAME = 'tokenless.sqlite3'
 const CONTROL_TOKEN_FILE_NAME = 'daemon.token'
-const DEFAULT_CLAIM_LEASE_MS = 30_000
 const SECRET_TOKEN_BYTES = 32
 const SUMMARY_SCALAR_CHARS = 256
 const PROFILE_ID_CHARS = 128
-const AGENT_KIND_CHARS = 128
-const AGENT_SESSION_ID_CHARS = 256
 const MAX_VISIBLE_ATTACHMENTS = 100
 const MAX_VISIBLE_ATTACHMENT_REQUEST_BYTES = 512 * 1024 * 1024
-const ACTIVE_STATUSES = new Set<JobStatus>(['claimed', 'running', 'waiting_for_user'])
 const JOB_STATUSES = new Set<JobStatus>([
   'queued',
-  'claimed',
   'running',
   'waiting_for_user',
   'succeeded',
@@ -297,7 +225,6 @@ type RequestSummaryMetadata = {
   task_id: string | null
   project_name: string | null
   chat_name: string | null
-  idempotency_key: string | null
   task_keys: string[]
 }
 
@@ -305,26 +232,23 @@ export class JobStore {
   readonly homeDir: string
   readonly databasePath: string
   readonly controlTokenPath: string
-  readonly claimLeaseMs: number
 
   #db: DatabaseSync
   #closed = false
-  #outputSavingsWorkListener: (() => void) | undefined
 
-  static async open(homeDir = defaultHomeDir(), claimLeaseMs = DEFAULT_CLAIM_LEASE_MS) {
+  static async open(homeDir = defaultHomeDir()) {
     await ensureTokenlessHome(homeDir)
     const canonicalHome = await fs.realpath(homeDir)
-    const store = new JobStore(canonicalHome, Math.max(1, Math.floor(claimLeaseMs)))
+    const store = new JobStore(canonicalHome)
     await ensureControlToken(store.controlTokenPath)
     store.initialize()
     return store
   }
 
-  private constructor(homeDir: string, claimLeaseMs: number) {
+  private constructor(homeDir: string) {
     this.homeDir = homeDir
     this.databasePath = path.join(homeDir, DATABASE_FILE_NAME)
     this.controlTokenPath = path.join(homeDir, CONTROL_TOKEN_FILE_NAME)
-    this.claimLeaseMs = claimLeaseMs
     try {
       this.#db = new DatabaseSync(this.databasePath)
       this.#db.exec('PRAGMA foreign_keys = ON;')
@@ -433,13 +357,9 @@ export class JobStore {
     const executionBackend = input.execution_backend ?? 'playwright'
     assertExecutionBackend(executionBackend)
     const profileId = validateJobBackendProfile(executionBackend, input.profile_id ?? null)
-    const recipient = normalizeOptionalAgentRecipient(input.agent_kind, input.agent_session_id)
     const jobId = input.job_id === undefined
       ? randomUUID()
       : normalizeNonempty(input.job_id, 'job_id')
-    const claimToken = input.claim_token === undefined
-      ? generateSecretToken()
-      : normalizeNonempty(input.claim_token, 'claim_token')
     const now = nowRfc3339()
     const summary = requestSummaryMetadata(input.request_json)
     const requestJson = stringifyJson(input.request_json)
@@ -447,22 +367,17 @@ export class JobStore {
 
     this.run(
         `INSERT INTO jobs (
-          job_id, claim_token, execution_backend, profile_id, agent_kind, agent_session_id,
+          job_id, execution_backend, profile_id,
           provider, action, status, request_json,
           result_json, error_json, blocker_json, created_at, updated_at,
           provider_attempts_json,
-          summary_task_id, summary_project_name, summary_chat_name,
-          summary_idempotency_key
+          summary_task_id, summary_project_name, summary_chat_name
         ) VALUES (
-          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?,
-          ?, ?, ?, ?, ?
+          ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?
         )`,
         jobId,
-        claimToken,
         executionBackend,
         profileId,
-        recipient?.agent_kind ?? null,
-        recipient?.agent_session_id ?? null,
         provider,
         action,
         'queued',
@@ -473,13 +388,12 @@ export class JobStore {
         summary.task_id,
         summary.project_name,
         summary.chat_name,
-        summary.idempotency_key
       )
     for (const taskKey of summary.task_keys) {
       this.run('INSERT INTO job_task_keys (job_id, task_id) VALUES (?, ?)', jobId, taskKey)
     }
 
-    return this.getJobWithoutRecovery(jobId)
+    return this.getJobRecord(jobId)
   }
 
   getOrCreateWebAiBinding(input: { provider: string; profile_id: string; provider_ref: string; binding_ref: string }) {
@@ -587,15 +501,16 @@ export class JobStore {
 
   webAiBundleCleanupDisposition(bundleId: string) {
     const row = this.get(
-      `SELECT staged.consumed_turn_ref, turns.cancelled, turns.cancel_attachment_delivery
+      `SELECT staged.consumed_turn_ref, turns.cancelled, jobs.provider_submitted_at
        FROM web_ai_v0_staged_attachments AS staged
        LEFT JOIN web_ai_v0_turns AS turns ON turns.attachment_ref = staged.attachment_ref
+       LEFT JOIN jobs ON jobs.job_id = turns.job_id
        WHERE staged.bundle_id = ?`,
       mappingText(bundleId, 'bundle_id', 64),
     )
     if (!row) return 'orphan' as const
     if (row.consumed_turn_ref === null) return 'retained' as const
-    return Number(row.cancelled) === 1 && row.cancel_attachment_delivery === 'pending'
+    return Number(row.cancelled) === 1 && row.provider_submitted_at === null
       ? 'delete' as const : 'retained' as const
   }
 
@@ -627,13 +542,11 @@ export class JobStore {
     conversation_ref: string
     attachment_refs: readonly string[]
     request_ref: string
-    request_sha256: string
     job: CreateJobInput
   }) {
     const turnRef = webAiRef(input.turn_ref, 'turn_ref')
     const conversationRef = webAiRef(input.conversation_ref, 'conversation_ref')
     const requestRef = webAiRequestRef(input.request_ref)
-    const requestSha256 = webAiRequestSha256(input.request_sha256)
     const binding = this.getWebAiBinding(input.binding_ref)
     if (!binding) throw invalidInput('web ai provider binding was not found')
     const attachments = input.attachment_refs.map((attachmentRef) => this.getWebAiStagedAttachment(attachmentRef))
@@ -643,11 +556,7 @@ export class JobStore {
     }
     return this.transaction(() => {
       const existing = this.getWebAiTurnByRequestRef(requestRef)
-      if (existing) {
-        if (existing.request_sha256 !== requestSha256) throw new WebAiRequestRefConflictError()
-        return existing
-      }
-      if (this.hasWebAiRequestCancellation(requestRef)) throw new WebAiRequestCancelledError()
+      if (existing) throw new WebAiRequestRefConflictError()
       for (const candidate of attachments) {
         const unused = this.run(
           'UPDATE web_ai_v0_staged_attachments SET consumed_turn_ref = ? WHERE attachment_ref = ? AND consumed_turn_ref IS NULL',
@@ -660,8 +569,8 @@ export class JobStore {
       this.run(
         `INSERT INTO web_ai_v0_turns (
           turn_ref, binding_ref, provider_ref, conversation_ref, attachment_ref, job_id, cancelled,
-          cancel_dispatch_certainty, cancel_attachment_delivery, request_ref, request_sha256, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 0, 'not_dispatched', 'pending', ?, ?, ?)`,
+          request_ref, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)`,
         turnRef,
         binding.binding_ref,
         binding.provider_ref,
@@ -669,7 +578,6 @@ export class JobStore {
         attachment.attachment_ref,
         job.job_id,
         requestRef,
-        requestSha256,
         nowRfc3339(),
       )
       return this.getWebAiTurn(turnRef)!
@@ -679,7 +587,7 @@ export class JobStore {
   getWebAiTurn(turnRef: string) {
     const row = this.get(
       `SELECT turn_ref, binding_ref, provider_ref, conversation_ref, attachment_ref, job_id, cancelled,
-              cancel_dispatch_certainty, cancel_attachment_delivery, request_ref, request_sha256
+              request_ref
        FROM web_ai_v0_turns WHERE turn_ref = ?`,
       webAiRef(turnRef, 'turn_ref'),
     )
@@ -689,7 +597,7 @@ export class JobStore {
   getWebAiTurnByRequestRef(requestRef: string) {
     const row = this.get(
       `SELECT turn_ref, binding_ref, provider_ref, conversation_ref, attachment_ref, job_id, cancelled,
-              cancel_dispatch_certainty, cancel_attachment_delivery, request_ref, request_sha256
+              request_ref
        FROM web_ai_v0_turns WHERE request_ref = ?`,
       webAiRequestRef(requestRef),
     )
@@ -699,7 +607,7 @@ export class JobStore {
   getLatestWebAiTurnForConversation(conversationRef: string) {
     const row = this.get(
       `SELECT turn_ref, binding_ref, provider_ref, conversation_ref, attachment_ref, job_id, cancelled,
-              cancel_dispatch_certainty, cancel_attachment_delivery, request_ref, request_sha256
+              request_ref
        FROM web_ai_v0_turns WHERE conversation_ref = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`,
       webAiRef(conversationRef, 'conversation_ref'),
     )
@@ -713,168 +621,37 @@ export class JobStore {
     })
   }
 
-  /** Atomically prevents a new turn for this requestRef, or cancels its existing turn. */
-  cancelWebAiRequest(requestRef: string): WebAiRequestCancellation {
+  /** Cancels an existing turn for this requestRef. */
+  cancelWebAiRequest(requestRef: string): WebAiRequestCancellation | null {
     const canonicalRequestRef = webAiRequestRef(requestRef)
     return this.transaction(() => {
       const turn = this.getWebAiTurnByRequestRef(canonicalRequestRef)
       if (turn) return { kind: 'turn', turn: this.cancelWebAiTurnInTransaction(turn) }
-      this.run(
-        `INSERT OR IGNORE INTO web_ai_v0_request_cancellations (request_ref, created_at)
-         VALUES (?, ?)`,
-        canonicalRequestRef,
-        nowRfc3339(),
-      )
-      return { kind: 'cancelled_before_start' }
+      return null
     })
   }
 
   private cancelWebAiTurnInTransaction(turn: WebAiTurn) {
-    const job = this.getJobWithoutRecovery(turn.job_id)
+    const job = this.getJobRecord(turn.job_id)
     if (turn.cancelled || job.status === 'canceled') return turn
-    if (!['queued', 'claimed', 'running', 'waiting_for_user'].includes(job.status)) throw invalidInput('web ai turn cannot be cancelled in its current state')
-    const certainty = job.provider_submitted_at !== null
-      ? 'dispatched'
-      : (checkpointIndicatesPromptSubmission(job.checkpoint_json) ? 'ambiguous' : 'not_dispatched')
-    const delivery = certainty === 'not_dispatched' ? 'pending' : 'delivered'
+    if (!['queued', 'running', 'waiting_for_user'].includes(job.status)) throw invalidInput('web ai turn cannot be cancelled in its current state')
     const now = nowRfc3339()
     const attempts = updateCurrentProviderAttempt(job, 'canceled', null, now)
     this.run(
       `UPDATE jobs SET status = 'canceled', result_json = NULL, error_json = ?, blocker_json = NULL,
-        checkpoint_json = NULL, resume_json = NULL, provider_attempts_json = ?, updated_at = ?,
-        claim_expires_at = NULL, outcome_revision = outcome_revision + 1
-       WHERE job_id = ? AND status IN ('queued', 'claimed', 'running', 'waiting_for_user')`,
+        provider_attempts_json = ?, updated_at = ?
+       WHERE job_id = ? AND status IN ('queued', 'running', 'waiting_for_user')`,
       stringifyJson({ code: 'job_canceled', reason: 'web ai client requested cancellation' }),
       stringifyJson(attempts),
       now,
       turn.job_id,
     )
-    this.run('UPDATE web_ai_v0_turns SET cancelled = 1, cancel_dispatch_certainty = ?, cancel_attachment_delivery = ? WHERE turn_ref = ?', certainty, delivery, turn.turn_ref)
+    this.run('UPDATE web_ai_v0_turns SET cancelled = 1 WHERE turn_ref = ?', turn.turn_ref)
     return this.getWebAiTurn(turn.turn_ref)!
   }
 
-  private hasWebAiRequestCancellation(requestRef: string) {
-    return this.get(
-      'SELECT request_ref FROM web_ai_v0_request_cancellations WHERE request_ref = ?',
-      webAiRequestRef(requestRef),
-    ) !== undefined
-  }
-
-  drainReplaySummaries(recipientInput: AgentRecipient, requestedLimit?: number) {
-    const recipient = normalizeAgentRecipient(recipientInput)
-    const limit = clampLimit(requestedLimit, 100, 200)
-    this.requeueExpiredClaims()
-    return this.transaction(() => {
-      const rows = this.all(
-        `SELECT
-          job_id, provider, action, status, summary_task_id, updated_at,
-          outcome_revision, result_json, error_json, blocker_json
-         FROM jobs
-         WHERE agent_kind = ?
-           AND agent_session_id = ?
-           AND outcome_revision > 0
-           AND (
-             reported_outcome_revision IS NULL
-             OR reported_outcome_revision != outcome_revision
-           )
-           AND (
-             status IN ('succeeded', 'failed', 'canceled', 'timed_out')
-             OR (status = 'waiting_for_user' AND claim_expires_at IS NULL)
-           )
-         ORDER BY updated_at ASC, job_id ASC
-         LIMIT ?`,
-        recipient.agent_kind,
-        recipient.agent_session_id,
-        limit
-      )
-      if (rows.length === 0) return [] satisfies ReplaySummary[]
-      const reportedAt = nowRfc3339()
-      const summaries: ReplaySummary[] = []
-      for (const row of rows) {
-        const result = this.run(
-          `UPDATE jobs
-           SET replay_reported_at = ?, reported_outcome_revision = ?
-           WHERE job_id = ?
-             AND agent_kind = ?
-             AND agent_session_id = ?
-             AND outcome_revision = ?
-             AND (
-               reported_outcome_revision IS NULL
-               OR reported_outcome_revision != outcome_revision
-             )`,
-          reportedAt,
-          Number(row.outcome_revision),
-          String(row.job_id),
-          recipient.agent_kind,
-          recipient.agent_session_id,
-          Number(row.outcome_revision)
-        )
-        if (result.changes !== 1) continue
-        summaries.push(rowToReplaySummary(row, reportedAt))
-      }
-      return summaries
-    })
-  }
-
-  markJobReported(jobId: string, recipientInput: AgentRecipient) {
-    const recipient = normalizeAgentRecipient(recipientInput)
-    this.requeueExpiredClaims()
-    const normalizedJobId = normalizeNonempty(jobId, 'job_id')
-    return this.transaction(() => {
-      const row = this.get(
-        `SELECT agent_kind, agent_session_id, outcome_revision, reported_outcome_revision,
-                status, claim_expires_at
-         FROM jobs
-         WHERE job_id = ?`,
-        normalizedJobId
-      )
-      if (!row) throw jobNotFound(normalizedJobId)
-      if (
-        row.agent_kind !== recipient.agent_kind ||
-        row.agent_session_id !== recipient.agent_session_id
-      ) {
-        throw jobNotFound(normalizedJobId)
-      }
-      const outcomeRevision = Number(row.outcome_revision)
-      const reportable = outcomeRevision > 0 && (
-        row.status === 'succeeded' ||
-        row.status === 'failed' ||
-        row.status === 'canceled' ||
-        row.status === 'timed_out' ||
-        row.status === 'waiting_for_user'
-      )
-      if (!reportable || Number(row.reported_outcome_revision) === outcomeRevision) {
-        return {
-          job: this.getJobWithoutRecovery(normalizedJobId),
-          reported: false,
-        }
-      }
-      const result = this.run(
-        `UPDATE jobs
-         SET replay_reported_at = ?, reported_outcome_revision = outcome_revision
-         WHERE job_id = ?
-           AND agent_kind = ?
-           AND agent_session_id = ?
-           AND outcome_revision = ?
-           AND (
-             reported_outcome_revision IS NULL
-             OR reported_outcome_revision != outcome_revision
-           )`,
-        nowRfc3339(),
-        normalizedJobId,
-        recipient.agent_kind,
-        recipient.agent_session_id,
-        outcomeRevision
-      )
-      return {
-        job: this.getJobWithoutRecovery(normalizedJobId),
-        reported: result.changes === 1,
-      }
-    })
-  }
 
   listJobs(query: ListJobsInput = {}) {
-    this.requeueExpiredClaims()
     if (query.status !== undefined) assertJobStatus(query.status)
     if (query.execution_backend !== undefined) assertExecutionBackend(query.execution_backend)
     const profileId = query.profile_id === undefined ? undefined : normalizeProfileId(query.profile_id, 'profile_id')
@@ -883,13 +660,11 @@ export class JobStore {
     const limit = clampLimit(query.limit, 100, 1000)
 
     let sql = `SELECT
-      jobs.job_id, jobs.claim_token, jobs.execution_backend, jobs.profile_id,
-      jobs.agent_kind, jobs.agent_session_id,
+      jobs.job_id, jobs.execution_backend, jobs.profile_id,
       jobs.provider, jobs.action, jobs.status, jobs.request_json, jobs.result_json,
-      jobs.error_json, jobs.blocker_json, jobs.checkpoint_json, jobs.resume_json,
-      jobs.provider_attempts_json,
-      jobs.provider_submitted_at, jobs.eligible_at,
-      jobs.created_at, jobs.updated_at, jobs.claim_expires_at
+      jobs.error_json, jobs.blocker_json, jobs.provider_attempts_json,
+      jobs.provider_submitted_at,
+      jobs.created_at, jobs.updated_at
       FROM jobs`
     const params: SQLInputValue[] = []
     if (taskId !== undefined) {
@@ -934,8 +709,7 @@ export class JobStore {
   }
 
   getJob(jobId: string) {
-    this.requeueExpiredClaims()
-    return this.getJobWithoutRecovery(jobId)
+    return this.getJobRecord(jobId)
   }
 
   upsertProviderProject(input: {
@@ -1144,85 +918,60 @@ export class JobStore {
     return row ? rowToProviderConversation(row) : null
   }
 
-  claimJob(jobId: string, claimToken: string) {
-    const nowMs = nowUnixMillis()
-    this.requeueExpiredClaimsAt(nowMs)
-    const now = nowRfc3339()
-    const expiresAt = saturatingAdd(nowMs, this.claimLeaseMs)
-    const result = this.run(
-      `UPDATE jobs
-       SET status = ?, updated_at = ?, claim_expires_at = ?, eligible_at = NULL
-       WHERE job_id = ? AND claim_token = ? AND status = ?
-         AND (eligible_at IS NULL OR eligible_at <= ?)`,
-      'claimed',
-      now,
-      expiresAt,
-      jobId,
-      claimToken,
-      'queued',
-      now,
-    )
-    if (result.changes === 1) return this.getJobWithoutRecovery(jobId)
-    return this.explainClaimFailure(jobId, claimToken)
-  }
-
-  claimNextJob(
-    query: ClaimNextInput = {},
+  takeNextJob(
+    query: TakeNextInput = {},
     executionBackend: ExecutionBackend = 'playwright',
     profileIdInput: string | null = null
   ) {
-    const nowMs = nowUnixMillis()
     const profileId = profileIdInput === null ? null : normalizeProfileId(profileIdInput, 'profile_id')
-    validateClaimBackendProfile(executionBackend, profileId)
+    validateTakeBackendProfile(executionBackend, profileId)
     const provider = query.provider === undefined ? null : normalizeNonempty(query.provider, 'provider')
     const action = query.action === undefined ? null : normalizeNonempty(query.action, 'action')
     const jobIdPrefix = query.job_id_prefix === undefined
       ? null
       : mappingText(query.job_id_prefix, 'job_id_prefix', 192)
-    this.requeueExpiredClaimsAt(nowMs)
     const now = nowRfc3339()
-    const expiresAt = saturatingAdd(nowMs, this.claimLeaseMs)
-    const nextClaimToken = generateSecretToken()
-    const row = this.get(
-      `UPDATE jobs
-       SET status = ?, updated_at = ?, claim_expires_at = ?, claim_token = ?, eligible_at = NULL
-       WHERE job_id = (
-         SELECT job_id
+    return this.transaction(() => {
+      const row = this.get(
+        `SELECT
+         job_id, execution_backend, profile_id,
+         provider, action, status, request_json, result_json, error_json,
+         blocker_json, provider_attempts_json,
+         provider_submitted_at,
+         created_at, updated_at
          FROM jobs
-         WHERE status = ?
-           AND (eligible_at IS NULL OR eligible_at <= ?)
+         WHERE status = 'queued'
            AND execution_backend = ?
            AND ((? IS NULL AND profile_id IS NULL) OR profile_id = ?)
            AND (? IS NULL OR provider = ?)
            AND (? IS NULL OR action = ?)
            AND (? IS NULL OR substr(job_id, 1, length(?)) = ?)
          ORDER BY created_at ASC, job_id ASC
-         LIMIT 1
-       )
-       RETURNING
-         job_id, claim_token, execution_backend, profile_id, agent_kind, agent_session_id,
-         provider, action, status, request_json, result_json, error_json,
-         blocker_json, checkpoint_json, resume_json, provider_attempts_json,
-         provider_submitted_at, eligible_at,
-         created_at, updated_at, claim_expires_at`,
-      'claimed',
-      now,
-      expiresAt,
-      nextClaimToken,
-      'queued',
-      now,
-      executionBackend,
-      profileId,
-      profileId,
-      provider,
-      provider,
-      action,
-      action,
-      jobIdPrefix,
-      jobIdPrefix,
-      jobIdPrefix
-    )
-    return row ? rowToJob(row) : null
+         LIMIT 1`,
+        executionBackend,
+        profileId,
+        profileId,
+        provider,
+        provider,
+        action,
+        action,
+        jobIdPrefix,
+        jobIdPrefix,
+        jobIdPrefix,
+      )
+      if (!row) return null
+      const job = rowToJob(row)
+      const attempts = updateCurrentProviderAttempt(job, 'running')
+      const result = this.run(
+        `UPDATE jobs
+         SET status = 'running', provider_attempts_json = ?, updated_at = ?
+         WHERE job_id = ? AND status = 'queued'`,
+        stringifyJson(attempts),
+        now,
+        job.job_id,
+      )
+      return result.changes === 1 ? this.getJobRecord(job.job_id) : null
+    })
   }
 
   projectProviderCapacity(input: ProjectProviderCapacityInput): ProviderCapacityProjection {
@@ -1244,12 +993,12 @@ export class JobStore {
 
   projectJobProviderCapacity(
     jobId: string,
-    claimToken: string,
     subscription: ProviderCapacitySubscription,
   ): ProviderCapacityProjection {
-    const nowMs = nowUnixMillis()
-    const job = this.getJobWithoutRecovery(jobId)
-    assertActiveClaim(job, claimToken, nowMs)
+    const job = this.getJobRecord(jobId)
+    if (job.status !== 'running' && job.status !== 'waiting_for_user') {
+      throw invalidJobState(job.job_id, 'running or waiting_for_user', job.status)
+    }
     if (job.profile_id === null) throw invalidInput('provider capacity requires a profile-scoped job')
     if (job.provider_submitted_at !== null) {
       return providerCapacityPolicy.project({
@@ -1272,216 +1021,74 @@ export class JobStore {
     })
   }
 
-  deferJobForProviderCapacity(jobId: string, claimToken: string, projection: ProviderCapacityProjection) {
-    const nowMs = nowUnixMillis()
-    const job = this.getJobWithoutRecovery(jobId)
-    assertActiveClaim(job, claimToken, nowMs)
-    if (
-      projection.decision !== 'defer' ||
-      projection.provider !== job.provider ||
-      projection.profileId !== job.profile_id ||
-      !projection.eligibleAt
-    ) {
-      throw invalidInput('provider capacity projection cannot defer this job')
-    }
-    return this.deferClaimedJob(job, claimToken, projection.eligibleAt, {
-      code: 'provider_capacity_deferred',
-      projection,
-    }, nowMs)
-  }
-
-  recordProviderSubmission(jobId: string, claimToken: string) {
-    const nowMs = nowUnixMillis()
+  recordProviderSubmission(jobId: string) {
     const now = nowRfc3339()
-    const job = this.getJobWithoutRecovery(jobId)
-    assertActiveClaim(job, claimToken, nowMs)
+    const job = this.getJobRecord(jobId)
+    if (job.status !== 'running' && job.status !== 'waiting_for_user') {
+      throw invalidJobState(job.job_id, 'running or waiting_for_user', job.status)
+    }
     if (job.provider_submitted_at !== null) return job
     const result = this.run(
       `UPDATE jobs
        SET provider_submitted_at = ?, updated_at = ?
-       WHERE job_id = ? AND claim_token = ?
-         AND provider_submitted_at IS NULL
-         AND status IN ('claimed', 'running', 'waiting_for_user')
-         AND claim_expires_at > ?`,
-      now,
-      now,
-      jobId,
-      claimToken,
-      nowMs,
-    )
-    if (result.changes === 1) return this.getJobWithoutRecovery(jobId)
-    return this.explainActiveClaimFailure(jobId, claimToken, nowMs)
-  }
-
-  deferObservedProviderLimit(jobId: string, claimToken: string, blockerJson: unknown, delaySeconds = 300) {
-    const nowMs = nowUnixMillis()
-    const job = this.getJobWithoutRecovery(jobId)
-    assertActiveClaim(job, claimToken, nowMs)
-    if (job.provider_submitted_at !== null) {
-      throw invalidInput('a job cannot be rerouted or deferred after provider submission')
-    }
-    const boundedDelayMs = Math.min(3_600_000, Math.max(60_000, Math.floor(delaySeconds * 1000)))
-    return this.deferClaimedJob(
-      job,
-      claimToken,
-      new Date(nowMs + boundedDelayMs).toISOString(),
-      blockerJson,
-      nowMs,
-    )
-  }
-
-  renewClaim(jobId: string, claimToken: string) {
-    const nowMs = nowUnixMillis()
-    const now = nowRfc3339()
-    const expiresAt = saturatingAdd(nowMs, this.claimLeaseMs)
-    const result = this.run(
-      `UPDATE jobs
-       SET claim_expires_at = ?, updated_at = ?
        WHERE job_id = ?
-         AND claim_token = ?
-         AND status IN ('claimed', 'running', 'waiting_for_user')
-         AND claim_expires_at > ?`,
-      expiresAt,
+         AND provider_submitted_at IS NULL
+         AND status IN ('running', 'waiting_for_user')`,
+      now,
       now,
       jobId,
-      claimToken,
-      nowMs
     )
-    if (result.changes === 1) return this.getJobWithoutRecovery(jobId)
-    return this.explainActiveClaimFailure(jobId, claimToken, nowMs)
+    if (result.changes === 1) return this.getJobRecord(jobId)
+    return this.getJobRecord(jobId)
   }
 
-  markRunning(jobId: string, claimToken: string) {
-    const nowMs = nowUnixMillis()
+  markWaitingForUser(jobId: string, blockerJson: unknown) {
     const now = nowRfc3339()
-    const expiresAt = saturatingAdd(nowMs, this.claimLeaseMs)
-    const attempts = updateCurrentProviderAttempt(this.getJobWithoutRecovery(jobId), 'running')
+    const attempts = updateCurrentProviderAttempt(this.getJobRecord(jobId), 'waiting_for_user', blockerJson)
     const result = this.run(
       `UPDATE jobs
-       SET status = ?, blocker_json = NULL, claim_expires_at = ?, updated_at = ?,
+       SET status = ?, blocker_json = ?, updated_at = ?,
            provider_attempts_json = ?
        WHERE job_id = ?
-         AND claim_token = ?
-         AND status IN ('claimed', 'waiting_for_user')
-         AND claim_expires_at > ?`,
-      'running',
-      expiresAt,
-      now,
-      stringifyJson(attempts),
-      jobId,
-      claimToken,
-      nowMs
-    )
-    if (result.changes === 1) return this.getJobWithoutRecovery(jobId)
-    return this.explainRunningFailure(jobId, claimToken, nowMs)
-  }
-
-  markWaitingForUser(jobId: string, claimToken: string, blockerJson: unknown) {
-    const nowMs = nowUnixMillis()
-    const now = nowRfc3339()
-    const expiresAt = saturatingAdd(nowMs, this.claimLeaseMs)
-    const attempts = updateCurrentProviderAttempt(this.getJobWithoutRecovery(jobId), 'waiting_for_user', blockerJson)
-    const result = this.run(
-      `UPDATE jobs
-       SET status = ?, blocker_json = ?, claim_expires_at = ?, updated_at = ?,
-           provider_attempts_json = ?, outcome_revision = outcome_revision + 1
-       WHERE job_id = ?
-         AND claim_token = ?
-         AND status = 'running'
-         AND claim_expires_at > ?`,
+         AND status = 'running'`,
       'waiting_for_user',
       stringifyJson(blockerJson),
-      expiresAt,
       now,
       stringifyJson(attempts),
       jobId,
-      claimToken,
-      nowMs
     )
-    if (result.changes === 1) return this.getJobWithoutRecovery(jobId)
-    return this.explainActiveClaimFailure(jobId, claimToken, nowMs)
+    if (result.changes === 1) return this.getJobRecord(jobId)
+    throw invalidJobState(jobId, 'running', this.getJobRecord(jobId).status)
   }
 
-  checkpointJob(jobId: string, claimToken: string, checkpointJson: unknown) {
-    const nowMs = nowUnixMillis()
+  markRunning(jobId: string) {
     const now = nowRfc3339()
+    const attempts = updateCurrentProviderAttempt(this.getJobRecord(jobId), 'running')
     const result = this.run(
       `UPDATE jobs
-       SET checkpoint_json = ?, updated_at = ?
-       WHERE job_id = ?
-         AND claim_token = ?
-         AND execution_backend = 'playwright'
-         AND status IN ('claimed', 'running', 'waiting_for_user')
-         AND claim_expires_at > ?`,
-      stringifyJson(checkpointJson),
-      now,
-      jobId,
-      claimToken,
-      nowMs
-    )
-    if (result.changes === 1) return this.getJobWithoutRecovery(jobId)
-    return this.explainPlaywrightActiveFailure(
-      jobId,
-      claimToken,
-      nowMs,
-      'only playwright jobs can persist browser checkpoints',
-      'claimed, running, or waiting_for_user'
-    )
-  }
-
-  parkJob(jobId: string, claimToken: string, blockerJson: unknown, checkpointJson: unknown) {
-    const nowMs = nowUnixMillis()
-    const now = nowRfc3339()
-    const replacementToken = generateSecretToken()
-    const attempts = updateCurrentProviderAttempt(this.getJobWithoutRecovery(jobId), 'waiting_for_user', blockerJson)
-    const result = this.run(
-      `UPDATE jobs
-       SET status = ?, claim_token = ?, blocker_json = ?,
-           checkpoint_json = ?, resume_json = NULL,
-           claim_expires_at = NULL, updated_at = ?,
-           provider_attempts_json = ?, outcome_revision = outcome_revision + 1
-       WHERE job_id = ?
-         AND claim_token = ?
-         AND execution_backend = 'playwright'
-         AND status IN ('claimed', 'running', 'waiting_for_user')
-         AND claim_expires_at > ?`,
-      'waiting_for_user',
-      replacementToken,
-      stringifyJson(blockerJson),
-      stringifyJson(checkpointJson),
-      now,
+       SET status = 'running', blocker_json = NULL, provider_attempts_json = ?, updated_at = ?
+       WHERE job_id = ? AND status = 'waiting_for_user'`,
       stringifyJson(attempts),
+      now,
       jobId,
-      claimToken,
-      nowMs
     )
-    if (result.changes === 1) return this.getJobWithoutRecovery(jobId)
-    return this.explainPlaywrightActiveFailure(
-      jobId,
-      claimToken,
-      nowMs,
-      'only playwright jobs can be parked for browser resume',
-      'claimed, running, or waiting_for_user'
-    )
+    if (result.changes === 1) return this.getJobRecord(jobId)
+    throw invalidJobState(jobId, 'waiting_for_user', this.getJobRecord(jobId).status)
   }
 
   fallbackJob(input: {
     job_id: string
-    claim_token: string
     provider: string
     request_json: unknown
     blocker_json: unknown
   }) {
-    const nowMs = nowUnixMillis()
     const now = nowRfc3339()
     const provider = normalizeNonempty(input.provider, 'provider')
-    const replacementToken = generateSecretToken()
     const requestJson = stringifyJson(input.request_json)
     return this.transaction(() => {
-      const job = this.getJobWithoutRecovery(input.job_id)
-      if (job.claim_token !== input.claim_token) throw claimRejected(input.job_id)
-      if (!ACTIVE_STATUSES.has(job.status) || job.claim_expires_at_ms === null || job.claim_expires_at_ms <= nowMs) {
-        throw invalidJobState(job.job_id, 'active claimed playwright job', job.status)
+      const job = this.getJobRecord(input.job_id)
+      if (!['running', 'waiting_for_user'].includes(job.status)) {
+        throw invalidJobState(job.job_id, 'running or waiting_for_user', job.status)
       }
       if (job.execution_backend !== 'playwright') throw invalidInput('only playwright jobs can fallback providers')
       if (job.provider_submitted_at !== null) throw invalidInput('jobs cannot fallback after provider submission')
@@ -1497,158 +1104,67 @@ export class JobStore {
       const next = providerAttempt(current.attempt + 1, provider, 'queued', now)
       const result = this.run(
         `UPDATE jobs
-         SET provider = ?, request_json = ?, status = 'queued', claim_token = ?,
+         SET provider = ?, request_json = ?, status = 'running',
              result_json = NULL, error_json = NULL, blocker_json = NULL,
-             checkpoint_json = NULL, resume_json = NULL, claim_expires_at = NULL,
-             eligible_at = NULL,
-             provider_attempts_json = ?, updated_at = ?,
-             outcome_revision = outcome_revision + 1
-         WHERE job_id = ? AND claim_token = ?
-           AND status IN ('claimed', 'running', 'waiting_for_user')
-           AND claim_expires_at > ?`,
+             provider_attempts_json = ?, updated_at = ?
+         WHERE job_id = ?
+           AND status IN ('running', 'waiting_for_user')`,
         provider,
         requestJson,
-        replacementToken,
         stringifyJson([...attempts.slice(0, -1), completed, next]),
         now,
         input.job_id,
-        input.claim_token,
-        nowMs,
       )
-      if (result.changes !== 1) return this.explainActiveClaimFailure(input.job_id, input.claim_token, nowMs)
-      return this.getJobWithoutRecovery(input.job_id)
-    })
-  }
-
-  resumeJob(jobId: string, resumeJson: unknown) {
-    const nowMs = nowUnixMillis()
-    this.requeueExpiredClaimsAt(nowMs)
-    const now = nowRfc3339()
-    const replacementToken = generateSecretToken()
-    const serializedResume = stringifyJson(resumeJson)
-    return this.transaction(() => {
-      const job = this.getJobWithoutRecovery(jobId)
-      const checkpointPresent = this.exists(
-        'SELECT EXISTS (SELECT 1 FROM jobs WHERE job_id = ? AND checkpoint_json IS NOT NULL) AS present',
-        jobId
-      )
-      if (job.execution_backend !== 'playwright') {
-        throw invalidInput('only playwright jobs can be resumed with browser visibility')
-      }
-      if (
-        (job.status === 'queued' || job.status === 'claimed' || job.status === 'running') &&
-        job.resume_json !== null
-      ) {
-        return job
-      }
-      if (job.status !== 'waiting_for_user' || !checkpointPresent || job.claim_expires_at_ms !== null) {
-        throw invalidJobState(job.job_id, 'parked playwright waiting_for_user', job.status)
-      }
-      const result = this.run(
-        `UPDATE jobs
-         SET status = 'queued', claim_token = ?, resume_json = ?,
-             claim_expires_at = NULL, updated_at = ?
-         WHERE job_id = ?
-           AND execution_backend = 'playwright'
-           AND status = 'waiting_for_user'
-           AND checkpoint_json IS NOT NULL
-           AND claim_expires_at IS NULL`,
-        replacementToken,
-        serializedResume,
-        now,
-        jobId
-      )
-      if (result.changes !== 1) {
-        throw invalidJobState(jobId, 'parked playwright waiting_for_user', job.status)
-      }
-      return this.getJobWithoutRecovery(jobId)
+      if (result.changes !== 1) throw invalidJobState(input.job_id, 'running or waiting_for_user', job.status)
+      return this.getJobRecord(input.job_id)
     })
   }
 
   completeJob(
     jobId: string,
-    claimToken: string,
     completion:
-      | { result_json: unknown; output_savings_work?: readonly OutputSavingsWorkInput[] | undefined }
+      | { result_json: unknown }
       | { error_json: unknown },
   ) {
-    const nowMs = nowUnixMillis()
     const now = nowRfc3339()
     const status: JobStatus = 'result_json' in completion ? 'succeeded' : 'failed'
     const resultJson = 'result_json' in completion ? stringifyJson(completion.result_json) : null
     const errorJson = 'error_json' in completion ? stringifyJson(completion.error_json) : null
-    const job = this.getJobWithoutRecovery(jobId)
+    const job = this.getJobRecord(jobId)
     const attempts = providerAttempts(job.provider_attempts_json)
     const current = attempts.at(-1) ?? providerAttempt(1, job.provider, 'queued', job.created_at)
     const completedAttempts = [
       ...attempts.slice(0, -1),
       { ...current, status, completedAt: now },
     ]
-    let workEnqueued = false
     const completed = this.transaction(() => {
       const result = this.run(
         `UPDATE jobs
          SET status = ?, result_json = ?, error_json = ?, blocker_json = NULL,
-             checkpoint_json = NULL, resume_json = NULL,
-             provider_attempts_json = ?, updated_at = ?, claim_expires_at = NULL,
-             outcome_revision = outcome_revision + 1
+             provider_attempts_json = ?, updated_at = ?
          WHERE job_id = ?
-           AND claim_token = ?
-           AND status IN ('claimed', 'running', 'waiting_for_user')
-           AND claim_expires_at > ?`,
+           AND status IN ('running', 'waiting_for_user')`,
         status,
         resultJson,
         errorJson,
         stringifyJson(completedAttempts),
         now,
         jobId,
-        claimToken,
-        nowMs,
       )
       if (result.changes !== 1) return null
-      if ('result_json' in completion) {
-        try {
-          workEnqueued = this.enqueueOutputSavingsWork(
-            jobId,
-            completion.output_savings_work ?? [],
-            nowMs,
-            now,
-          )
-        } catch {
-          // Optional work handoff never changes the provider job outcome.
-        }
-      }
-      return this.getJobWithoutRecovery(jobId)
+      return this.getJobRecord(jobId)
     })
     if (completed) {
       if ('result_json' in completion) {
         try {
           this.recordOutputSavingsForJob(jobId, completion.result_json)
         } catch {
-          // Legacy measurement reconciliation never changes the provider job outcome.
+          // Optional measurement storage never changes the provider job outcome.
         }
       }
-      if (workEnqueued) this.#outputSavingsWorkListener?.()
       return completed
     }
-    return this.explainActiveClaimFailure(jobId, claimToken, nowMs)
-  }
-
-  reconcileOutputSavings() {
-    const rows = this.all(
-      `SELECT job_id, result_json
-       FROM jobs
-       WHERE status = 'succeeded' AND result_json IS NOT NULL
-       ORDER BY updated_at ASC, job_id ASC`
-    )
-    for (const row of rows) {
-      try {
-        this.recordOutputSavingsForJob(String(row.job_id), parseJson(row.result_json))
-      } catch {
-        // Invalid legacy results and optional measurement failures remain non-fatal.
-      }
-    }
-    return this.outputSavingsSummary()
+    throw invalidJobState(jobId, 'running or waiting_for_user', job.status)
   }
 
   outputSavingsSummary(): OutputSavingsSummary {
@@ -1684,122 +1200,19 @@ export class JobStore {
     ).map(rowToOutputSavingsEvent)
   }
 
-  pendingOutputSavingsWorkCount() {
-    const row = this.get('SELECT COUNT(*) AS count FROM output_savings_work')
-    return Number(row?.count ?? 0)
-  }
-
-  nextOutputSavingsWork(nowMs = nowUnixMillis()): OutputSavingsWork | null {
-    const row = this.get(
-      `SELECT work_id, job_id, response_request_id, source_text, created_at,
-              available_at_ms, attempt_count, last_error_code
-       FROM output_savings_work
-       WHERE available_at_ms <= ?
-       ORDER BY available_at_ms ASC, work_id ASC
-       LIMIT 1`,
-      nowMs,
-    )
-    return row ? rowToOutputSavingsWork(row) : null
-  }
-
-  nextOutputSavingsWorkAvailableAt(): number | null {
-    const row = this.get('SELECT MIN(available_at_ms) AS available_at_ms FROM output_savings_work')
-    return row?.available_at_ms === null || row?.available_at_ms === undefined
-      ? null
-      : Number(row.available_at_ms)
-  }
-
-  completeOutputSavingsWork(workId: number, measurement: CompletedOutputSavingsWork) {
-    return this.transaction(() => {
-      const work = this.get(
-        `SELECT work_id, job_id, response_request_id
-         FROM output_savings_work
-         WHERE work_id = ?`,
-        workId,
-      )
-      if (!work) return false
-      this.run(
-        `INSERT OR IGNORE INTO output_savings_events (
-           job_id, response_request_id, estimated_output_tokens, visible_characters,
-           estimator, estimator_revision, basis, source_text_sha256, measured_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        String(work.job_id),
-        String(work.response_request_id),
-        measurement.estimated_output_tokens,
-        measurement.visible_characters,
-        measurement.estimator,
-        measurement.estimator_revision,
-        measurement.basis,
-        measurement.source_text_sha256,
-        measurement.measured_at,
-      )
-      this.run('DELETE FROM output_savings_work WHERE work_id = ?', workId)
-      return true
-    })
-  }
-
-  deferOutputSavingsWork(workId: number, errorCode: string, delayMs: number) {
-    const boundedDelay = Math.max(1_000, Math.min(60_000, Math.floor(delayMs)))
-    const result = this.run(
-      `UPDATE output_savings_work
-       SET attempt_count = attempt_count + 1,
-           last_error_code = ?,
-           available_at_ms = ?
-       WHERE work_id = ?`,
-      errorCode.slice(0, 128),
-      nowUnixMillis() + boundedDelay,
-      workId,
-    )
-    if (result.changes === 1) this.#outputSavingsWorkListener?.()
-    return result.changes === 1
-  }
-
-  discardOutputSavingsWork(workId?: number) {
-    const result = workId === undefined
-      ? this.run('DELETE FROM output_savings_work')
-      : this.run('DELETE FROM output_savings_work WHERE work_id = ?', workId)
-    return Number(result.changes)
-  }
-
-  setOutputSavingsWorkListener(listener: (() => void) | undefined) {
-    this.#outputSavingsWorkListener = listener
-  }
-
   clearOutputSavings() {
     return this.transaction(() => {
-      const clearedThrough = nowRfc3339()
-      this.run(
-        `INSERT OR IGNORE INTO output_savings_cleared_events (
-           job_id, response_request_id, estimator_revision, cleared_at
-         )
-         SELECT job_id, response_request_id, estimator_revision, ?
-         FROM output_savings_events`,
-        clearedThrough,
-      )
       const completedJobs = this.all(
         `SELECT job_id, result_json
          FROM jobs
          WHERE status = 'succeeded' AND result_json IS NOT NULL`,
       )
       for (const job of completedJobs) {
-        let events: OutputSavingsEvent[] = []
         let resultJson: unknown
         try {
           resultJson = parseJson(job.result_json)
-          events = outputSavingsEventsFromResult(String(job.job_id), resultJson)
         } catch {
           continue
-        }
-        for (const event of events) {
-          this.run(
-            `INSERT OR IGNORE INTO output_savings_cleared_events (
-               job_id, response_request_id, estimator_revision, cleared_at
-             ) VALUES (?, ?, ?, ?)`,
-            event.job_id,
-            event.response_request_id,
-            event.estimator_revision,
-            clearedThrough,
-          )
         }
         const stripped = stripOutputSavingsMeasurements(resultJson)
         if (stripped.changed) {
@@ -1810,13 +1223,6 @@ export class JobStore {
           )
         }
       }
-      this.run(
-        `INSERT INTO output_savings_state (singleton, cleared_through)
-         VALUES (1, ?)
-         ON CONFLICT(singleton) DO UPDATE SET cleared_through = excluded.cleared_through`,
-        clearedThrough,
-      )
-      this.run('DELETE FROM output_savings_work')
       const result = this.run('DELETE FROM output_savings_events')
       return { cleared: Number(result.changes) }
     })
@@ -1826,21 +1232,9 @@ export class JobStore {
     const events = outputSavingsEventsFromResult(jobId, resultJson)
     if (events.length === 0) return
     this.transaction(() => {
-      const state = this.get(
-        'SELECT cleared_through FROM output_savings_state WHERE singleton = 1',
-      )
-      const clearedThrough = nullableString(state?.cleared_through)
       for (const event of events) {
-        if (clearedThrough !== null && event.measured_at <= clearedThrough) continue
-        if (this.exists(
-          `SELECT 1 FROM output_savings_cleared_events
-           WHERE job_id = ? AND response_request_id = ? AND estimator_revision = ?`,
-          event.job_id,
-          event.response_request_id,
-          event.estimator_revision,
-        )) continue
         this.run(
-          `INSERT OR IGNORE INTO output_savings_events (
+          `INSERT INTO output_savings_events (
              job_id, response_request_id, estimated_output_tokens, visible_characters,
              estimator, estimator_revision, basis, source_text_sha256, measured_at
            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -1858,242 +1252,29 @@ export class JobStore {
     })
   }
 
-  private enqueueOutputSavingsWork(
-    jobId: string,
-    work: readonly OutputSavingsWorkInput[],
-    nowMs: number,
-    now: string,
-  ) {
-    let enqueued = false
-    for (const candidate of work) {
-      if (!isOutputSavingsWorkInput(candidate)) continue
-      const result = this.run(
-        `INSERT OR IGNORE INTO output_savings_work (
-           job_id, response_request_id, source_text, created_at, available_at_ms
-         ) VALUES (?, ?, ?, ?, ?)`,
-        jobId,
-        candidate.response_request_id,
-        candidate.source_text,
-        now,
-        nowMs + OUTPUT_SAVINGS_HANDOFF_DELAY_MS,
-      )
-      enqueued ||= result.changes === 1
-    }
-    return enqueued
-  }
-
   async cancelJob(jobId: string, reason: unknown | undefined) {
     const now = nowRfc3339()
     const errorJson = stringifyJson(reason === undefined || reason === null
       ? { code: 'job_canceled' }
       : { code: 'job_canceled', reason })
-    const attempts = updateCurrentProviderAttempt(this.getJobWithoutRecovery(jobId), 'canceled', null, now)
+    const attempts = updateCurrentProviderAttempt(this.getJobRecord(jobId), 'canceled', null, now)
     const result = this.run(
       `UPDATE jobs
        SET status = ?, result_json = NULL, error_json = ?, blocker_json = NULL,
-           checkpoint_json = NULL, resume_json = NULL,
-           provider_attempts_json = ?, updated_at = ?, claim_expires_at = NULL,
-           outcome_revision = outcome_revision + 1
-       WHERE job_id = ? AND status IN ('queued', 'claimed', 'running', 'waiting_for_user')`,
+           provider_attempts_json = ?, updated_at = ?
+       WHERE job_id = ? AND status IN ('queued', 'running', 'waiting_for_user')`,
       'canceled',
       errorJson,
       stringifyJson(attempts),
       now,
       jobId
     )
-    const job = this.getJobWithoutRecovery(jobId)
+    const job = this.getJobRecord(jobId)
     if (result.changes === 1) {
       await cleanupVisibleAttachmentBundlesForRequest(this.homeDir, job.request_json).catch(() => undefined)
       return job
     }
-    throw invalidJobState(jobId, 'queued, claimed, running, or waiting_for_user', job.status)
-  }
-
-  recoverActiveClaim(jobId: string, claimToken: string) {
-    const now = nowRfc3339()
-    return this.transaction(() => {
-      const row = this.get(
-        `SELECT
-          job_id, claim_token, execution_backend, profile_id, agent_kind, agent_session_id,
-          provider, action, status, request_json, result_json, error_json,
-          blocker_json, checkpoint_json, resume_json, provider_attempts_json,
-          provider_submitted_at, eligible_at,
-          created_at, updated_at, claim_expires_at
-         FROM jobs
-         WHERE job_id = ?`,
-        jobId
-      )
-      if (!row) return null
-      const job = rowToJob(row)
-      if (
-        job.claim_token !== claimToken ||
-        !ACTIVE_STATUSES.has(job.status)
-      ) {
-        return null
-      }
-      if (job.status === 'claimed' || job.status === 'running') {
-        const result = this.run(
-          `UPDATE jobs
-           SET status = 'queued', claim_token = ?, claim_expires_at = NULL,
-               blocker_json = NULL, resume_json = NULL, updated_at = ?
-           WHERE job_id = ?
-             AND claim_token = ?
-             AND status IN ('claimed', 'running')`,
-          generateSecretToken(),
-          now,
-          jobId,
-          claimToken
-        )
-        return result.changes === 1 ? this.getJobWithoutRecovery(jobId) : null
-      }
-      if (job.execution_backend === 'playwright' && row.checkpoint_json !== null) {
-        const result = this.run(
-          `UPDATE jobs
-           SET claim_token = ?, blocker_json = ?,
-               claim_expires_at = NULL, resume_json = NULL,
-               updated_at = ?, outcome_revision = outcome_revision + 1
-           WHERE job_id = ?
-             AND claim_token = ?
-             AND status = 'waiting_for_user'
-             AND execution_backend = 'playwright'
-             AND checkpoint_json IS NOT NULL`,
-          generateSecretToken(),
-          stringifyJson(parkedResumeBlockerJson(job.blocker_json)),
-          now,
-          jobId,
-          claimToken
-        )
-        return result.changes === 1 ? this.getJobWithoutRecovery(jobId) : null
-      }
-      const errorJson = stringifyJson(expiredWaitingClaimErrorJson())
-      const result = this.run(
-        `UPDATE jobs
-         SET status = 'failed', error_json = ?, result_json = NULL,
-             blocker_json = NULL, checkpoint_json = NULL, resume_json = NULL,
-             claim_expires_at = NULL, updated_at = ?,
-             outcome_revision = outcome_revision + 1
-         WHERE job_id = ?
-           AND claim_token = ?
-           AND status = 'waiting_for_user'`,
-        errorJson,
-        now,
-        jobId,
-        claimToken
-      )
-      return result.changes === 1 ? this.getJobWithoutRecovery(jobId) : null
-    })
-  }
-
-  requeueExpiredClaims() {
-    return this.requeueExpiredClaimsAt(nowUnixMillis())
-  }
-
-  private requeueExpiredClaimsAt(nowMs: number) {
-    const now = nowRfc3339()
-    this.parkExpiredCheckpointedWaitingClaimsAt(nowMs)
-    this.failExpiredWaitingClaimsAt(nowMs)
-    const exists = this.exists(
-      `SELECT EXISTS (
-        SELECT 1 FROM jobs
-        WHERE status IN ('claimed', 'running')
-          AND (claim_expires_at IS NULL OR claim_expires_at <= ?)
-      ) AS present`,
-      nowMs
-    )
-    if (!exists) return 0
-    return this.transaction(() => {
-      const expiredJobIds = this.all(
-        `SELECT job_id
-         FROM jobs
-         WHERE status IN ('claimed', 'running')
-           AND (claim_expires_at IS NULL OR claim_expires_at <= ?)
-         ORDER BY job_id ASC`,
-        nowMs
-      ).map((row) => String(row.job_id))
-      let requeued = 0
-      for (const jobId of expiredJobIds) {
-        const result = this.run(
-          `UPDATE jobs
-           SET status = 'queued', claim_token = ?, claim_expires_at = NULL,
-               blocker_json = NULL, resume_json = NULL, updated_at = ?
-           WHERE job_id = ?
-             AND status IN ('claimed', 'running')
-             AND (claim_expires_at IS NULL OR claim_expires_at <= ?)`,
-          generateSecretToken(),
-          now,
-          jobId,
-          nowMs
-        )
-        requeued += Number(result.changes)
-      }
-      return requeued
-    })
-  }
-
-  private parkExpiredCheckpointedWaitingClaimsAt(nowMs: number) {
-    const now = nowRfc3339()
-    const exists = this.exists(
-      `SELECT EXISTS (
-        SELECT 1 FROM jobs
-        WHERE status = 'waiting_for_user'
-          AND execution_backend = 'playwright'
-          AND checkpoint_json IS NOT NULL
-          AND claim_expires_at <= ?
-      ) AS present`,
-      nowMs
-    )
-    if (!exists) return 0
-    return this.transaction(() => {
-      const expiredJobs = this.all(
-        `SELECT job_id, blocker_json
-         FROM jobs
-         WHERE status = 'waiting_for_user'
-           AND execution_backend = 'playwright'
-           AND checkpoint_json IS NOT NULL
-           AND claim_expires_at <= ?
-         ORDER BY job_id ASC`,
-        nowMs
-      )
-      let parked = 0
-      for (const row of expiredJobs) {
-        const result = this.run(
-          `UPDATE jobs
-           SET claim_token = ?, blocker_json = ?,
-               claim_expires_at = NULL, resume_json = NULL,
-               updated_at = ?, outcome_revision = outcome_revision + 1
-           WHERE job_id = ?
-             AND status = 'waiting_for_user'
-             AND execution_backend = 'playwright'
-             AND checkpoint_json IS NOT NULL
-             AND claim_expires_at <= ?`,
-          generateSecretToken(),
-          stringifyJson(parkedResumeBlockerJson(parseOptionalJson(row.blocker_json))),
-          now,
-          String(row.job_id),
-          nowMs
-        )
-        parked += Number(result.changes)
-      }
-      return parked
-    })
-  }
-
-  private failExpiredWaitingClaimsAt(nowMs: number) {
-    const now = nowRfc3339()
-    const errorJson = stringifyJson(expiredWaitingClaimErrorJson())
-    return this.run(
-      `UPDATE jobs
-       SET status = 'failed', error_json = ?, result_json = NULL,
-           blocker_json = NULL, checkpoint_json = NULL, resume_json = NULL,
-           claim_expires_at = NULL, updated_at = ?,
-           outcome_revision = outcome_revision + 1
-       WHERE status = 'waiting_for_user'
-         AND (execution_backend != 'playwright' OR checkpoint_json IS NULL)
-         AND (claim_expires_at IS NULL OR claim_expires_at <= ?)`,
-      errorJson,
-      now,
-      nowMs
-    ).changes
+    throw invalidJobState(jobId, 'queued, running, or waiting_for_user', job.status)
   }
 
   private providerSubmissionHistory(providerId: string, profileId: string, now: string) {
@@ -2121,116 +1302,79 @@ export class JobStore {
     }))
   }
 
-  private deferClaimedJob(
-    job: Job,
-    claimToken: string,
-    eligibleAtInput: string,
-    blockerJson: unknown,
-    nowMs: number,
-  ) {
-    const eligibleMs = Date.parse(eligibleAtInput)
-    if (!Number.isFinite(eligibleMs) || eligibleMs <= nowMs) {
-      throw invalidInput('eligible_at must be a future RFC 3339 timestamp')
-    }
-    const now = new Date(nowMs).toISOString()
-    const result = this.run(
-      `UPDATE jobs
-       SET status = 'queued', claim_token = ?, claim_expires_at = NULL,
-           blocker_json = ?, eligible_at = ?, updated_at = ?
-       WHERE job_id = ? AND claim_token = ?
-         AND provider_submitted_at IS NULL
-         AND status IN ('claimed', 'running', 'waiting_for_user')
-         AND claim_expires_at > ?`,
-      generateSecretToken(),
-      stringifyJson(blockerJson),
-      new Date(eligibleMs).toISOString(),
-      now,
-      job.job_id,
-      claimToken,
-      nowMs,
-    )
-    if (result.changes === 1) return this.getJobWithoutRecovery(job.job_id)
-    return this.explainActiveClaimFailure(job.job_id, claimToken, nowMs)
-  }
-
   private initialize() {
-    this.exec('PRAGMA journal_mode = DELETE;')
     this.exec('PRAGMA foreign_keys = ON;')
     this.createBaseTables()
-    this.ensureWebAiStagedAttachmentMultiplicity()
-    this.ensureWebAiTurnColumns()
-    this.migrateJobsTable()
+    this.removeLegacyJobClaimColumns()
     this.createIndexes()
+    this.failInterruptedJobs()
     restrictFilePermissionsSync(this.databasePath)
   }
 
-  private ensureWebAiStagedAttachmentMultiplicity() {
-    const table = this.get("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'web_ai_v0_staged_attachments'")
-    if (!String(table?.sql ?? '').includes('consumed_turn_ref TEXT UNIQUE')) return
-    this.exec('PRAGMA foreign_keys = OFF;')
-    try {
-      this.exec(`
-        BEGIN IMMEDIATE;
-        CREATE TABLE web_ai_v0_staged_attachments_next (
-          attachment_ref TEXT PRIMARY KEY NOT NULL CHECK (length(attachment_ref) BETWEEN 1 AND 128),
-          binding_ref TEXT NOT NULL REFERENCES web_ai_v0_bindings(binding_ref) ON DELETE CASCADE,
-          bundle_id TEXT NOT NULL CHECK (length(bundle_id) BETWEEN 1 AND 64),
-          attachment_id TEXT NOT NULL CHECK (length(attachment_id) BETWEEN 1 AND 64),
-          media_type TEXT NOT NULL CHECK (media_type = 'text/markdown'),
-          byte_length INTEGER NOT NULL CHECK (byte_length BETWEEN 1 AND 1048576),
-          sha256 TEXT NOT NULL CHECK (length(sha256) = 64 AND sha256 NOT GLOB '*[^0-9a-f]*'),
-          consumed_turn_ref TEXT,
-          created_at TEXT NOT NULL
-        );
-        INSERT INTO web_ai_v0_staged_attachments_next
-          SELECT * FROM web_ai_v0_staged_attachments;
-        DROP TABLE web_ai_v0_staged_attachments;
-        ALTER TABLE web_ai_v0_staged_attachments_next RENAME TO web_ai_v0_staged_attachments;
-        COMMIT;
-      `)
-    } catch (error) {
-      try { this.exec('ROLLBACK;') } catch {}
-      throw error
-    } finally {
-      this.exec('PRAGMA foreign_keys = ON;')
-    }
-    const violation = this.get('PRAGMA foreign_key_check')
-    if (violation) throw sqliteError(new Error('Web AI attachment migration violated a foreign key.'))
+  private removeLegacyJobClaimColumns() {
+    const columns = new Set(
+      this.all('PRAGMA table_info(jobs)').map((row) => String(row.name)),
+    )
+    if (!columns.has('claim_token') && !columns.has('claim_expires_at')) return
+
+    this.transaction(() => {
+      this.exec('DROP INDEX IF EXISTS jobs_claim_expires_at_idx')
+      if (columns.has('claim_token')) {
+        this.exec('ALTER TABLE jobs DROP COLUMN claim_token')
+      }
+      if (columns.has('claim_expires_at')) {
+        this.exec('ALTER TABLE jobs DROP COLUMN claim_expires_at')
+      }
+    })
   }
 
-  private ensureWebAiTurnColumns() {
-    const tables = new Set(this.all("SELECT name FROM sqlite_master WHERE type = 'table'").map((row) => String(row.name)))
-    if (!tables.has('web_ai_v0_turns')) return
-    const columns = new Set(this.all('PRAGMA table_info(web_ai_v0_turns)').map((row) => String(row.name)))
-    if (!columns.has('cancel_dispatch_certainty')) this.exec("ALTER TABLE web_ai_v0_turns ADD COLUMN cancel_dispatch_certainty TEXT NOT NULL DEFAULT 'not_dispatched'")
-    if (!columns.has('cancel_attachment_delivery')) this.exec("ALTER TABLE web_ai_v0_turns ADD COLUMN cancel_attachment_delivery TEXT NOT NULL DEFAULT 'pending'")
-    if (!columns.has('request_ref')) this.exec('ALTER TABLE web_ai_v0_turns ADD COLUMN request_ref TEXT')
-    if (!columns.has('request_sha256')) this.exec('ALTER TABLE web_ai_v0_turns ADD COLUMN request_sha256 TEXT')
+  private failInterruptedJobs() {
+    const now = nowRfc3339()
+    const error = {
+      code: 'job_interrupted',
+      message: 'The daemon restarted before this job completed; start a new job.',
+      retryable: false,
+    }
+    this.transaction(() => {
+      for (const row of this.all(
+        `SELECT
+           job_id, execution_backend, profile_id,
+           provider, action, status, request_json, result_json, error_json,
+           blocker_json, provider_attempts_json, provider_submitted_at,
+           created_at, updated_at
+         FROM jobs
+         WHERE status IN ('queued', 'running', 'waiting_for_user')`,
+      )) {
+        const job = rowToJob(row)
+        this.run(
+          `UPDATE jobs
+           SET status = 'failed', result_json = NULL, error_json = ?, blocker_json = NULL,
+               provider_attempts_json = ?, updated_at = ?
+           WHERE job_id = ?`,
+          stringifyJson(error),
+          stringifyJson(updateCurrentProviderAttempt(job, 'failed', null, now)),
+          now,
+          job.job_id,
+        )
+      }
+    })
   }
 
   private createBaseTables() {
     this.exec(`
       CREATE TABLE IF NOT EXISTS jobs (
         job_id TEXT PRIMARY KEY NOT NULL,
-        claim_token TEXT NOT NULL,
         execution_backend TEXT NOT NULL DEFAULT 'playwright' CHECK (
           execution_backend = 'playwright'
         ),
         profile_id TEXT CHECK (
           profile_id IS NULL OR length(profile_id) BETWEEN 1 AND 128
         ),
-        agent_kind TEXT CHECK (
-          agent_kind IS NULL OR length(agent_kind) BETWEEN 1 AND 128
-        ),
-        agent_session_id TEXT CHECK (
-          agent_session_id IS NULL OR length(agent_session_id) BETWEEN 1 AND 256
-        ),
         provider TEXT NOT NULL,
         action TEXT NOT NULL,
         status TEXT NOT NULL CHECK (
           status IN (
             'queued',
-            'claimed',
             'running',
             'waiting_for_user',
             'succeeded',
@@ -2243,14 +1387,10 @@ export class JobStore {
         result_json TEXT,
         error_json TEXT,
         blocker_json TEXT,
-        checkpoint_json TEXT,
-        resume_json TEXT,
         provider_attempts_json TEXT NOT NULL DEFAULT '[]',
         provider_submitted_at TEXT,
-        eligible_at TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
-        claim_expires_at INTEGER,
         summary_task_id TEXT CHECK (
           summary_task_id IS NULL OR length(summary_task_id) <= 256
         ),
@@ -2259,18 +1399,6 @@ export class JobStore {
         ),
         summary_chat_name TEXT CHECK (
           summary_chat_name IS NULL OR length(summary_chat_name) <= 256
-        ),
-        summary_idempotency_key TEXT CHECK (
-          summary_idempotency_key IS NULL OR length(summary_idempotency_key) <= 256
-        ),
-        replay_reported_at TEXT,
-        outcome_revision INTEGER NOT NULL DEFAULT 0 CHECK (outcome_revision >= 0),
-        reported_outcome_revision INTEGER CHECK (
-          reported_outcome_revision IS NULL OR reported_outcome_revision >= 0
-        ),
-        CHECK (
-          (agent_kind IS NULL AND agent_session_id IS NULL)
-          OR (agent_kind IS NOT NULL AND agent_session_id IS NOT NULL)
         )
       );
       CREATE TABLE IF NOT EXISTS output_savings_events (
@@ -2285,28 +1413,6 @@ export class JobStore {
           length(source_text_sha256) = 64 AND source_text_sha256 NOT GLOB '*[^0-9a-f]*'
         ),
         measured_at TEXT NOT NULL,
-        PRIMARY KEY (job_id, response_request_id, estimator_revision)
-      );
-      CREATE TABLE IF NOT EXISTS output_savings_work (
-        work_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        job_id TEXT NOT NULL REFERENCES jobs(job_id) ON DELETE CASCADE,
-        response_request_id TEXT NOT NULL CHECK (length(response_request_id) BETWEEN 1 AND 128),
-        source_text TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        available_at_ms INTEGER NOT NULL,
-        attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
-        last_error_code TEXT CHECK (last_error_code IS NULL OR length(last_error_code) BETWEEN 1 AND 128),
-        UNIQUE (job_id, response_request_id)
-      );
-      CREATE TABLE IF NOT EXISTS output_savings_state (
-        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-        cleared_through TEXT
-      );
-      CREATE TABLE IF NOT EXISTS output_savings_cleared_events (
-        job_id TEXT NOT NULL REFERENCES jobs(job_id) ON DELETE CASCADE,
-        response_request_id TEXT NOT NULL,
-        estimator_revision TEXT NOT NULL,
-        cleared_at TEXT NOT NULL,
         PRIMARY KEY (job_id, response_request_id, estimator_revision)
       );
       CREATE TABLE IF NOT EXISTS job_task_keys (
@@ -2375,15 +1481,7 @@ export class JobStore {
         attachment_ref TEXT NOT NULL UNIQUE REFERENCES web_ai_v0_staged_attachments(attachment_ref) ON DELETE RESTRICT,
         job_id TEXT NOT NULL UNIQUE REFERENCES jobs(job_id) ON DELETE RESTRICT,
         cancelled INTEGER NOT NULL DEFAULT 0 CHECK (cancelled IN (0, 1)),
-        cancel_dispatch_certainty TEXT NOT NULL DEFAULT 'not_dispatched' CHECK (cancel_dispatch_certainty IN ('not_dispatched', 'dispatched', 'ambiguous')),
-        cancel_attachment_delivery TEXT NOT NULL DEFAULT 'pending' CHECK (cancel_attachment_delivery IN ('pending', 'delivered')),
         request_ref TEXT CHECK (request_ref IS NULL OR (length(request_ref) = 40 AND substr(request_ref, 1, 8) = 'request:' AND substr(request_ref, 9) NOT GLOB '*[^0-9a-f]*')),
-        request_sha256 TEXT CHECK (request_sha256 IS NULL OR (length(request_sha256) = 64 AND request_sha256 NOT GLOB '*[^0-9a-f]*')),
-        created_at TEXT NOT NULL,
-        CHECK ((request_ref IS NULL AND request_sha256 IS NULL) OR (request_ref IS NOT NULL AND request_sha256 IS NOT NULL))
-      );
-      CREATE TABLE IF NOT EXISTS web_ai_v0_request_cancellations (
-        request_ref TEXT PRIMARY KEY NOT NULL CHECK (length(request_ref) = 40 AND substr(request_ref, 1, 8) = 'request:' AND substr(request_ref, 9) NOT GLOB '*[^0-9a-f]*'),
         created_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS api_response_ledger (
@@ -2407,12 +1505,8 @@ export class JobStore {
         ON jobs(status, created_at);
       CREATE INDEX IF NOT EXISTS jobs_provider_action_idx
         ON jobs(provider, action);
-      CREATE INDEX IF NOT EXISTS jobs_claim_expires_at_idx
-        ON jobs(claim_expires_at);
       CREATE INDEX IF NOT EXISTS jobs_backend_profile_status_fifo_idx
         ON jobs(execution_backend, profile_id, status, created_at, job_id);
-      CREATE INDEX IF NOT EXISTS jobs_backend_profile_status_eligible_fifo_idx
-        ON jobs(execution_backend, profile_id, status, eligible_at, created_at, job_id);
       CREATE INDEX IF NOT EXISTS jobs_provider_profile_submitted_idx
         ON jobs(provider, profile_id, provider_submitted_at);
       CREATE TRIGGER IF NOT EXISTS jobs_provider_submitted_at_immutable
@@ -2424,8 +1518,6 @@ export class JobStore {
         END;
       CREATE INDEX IF NOT EXISTS job_task_keys_task_id_idx
         ON job_task_keys(task_id, job_id);
-      CREATE INDEX IF NOT EXISTS jobs_replay_outcome_recipient_idx
-        ON jobs(agent_kind, agent_session_id, reported_outcome_revision, outcome_revision, updated_at, job_id);
       CREATE INDEX IF NOT EXISTS provider_projects_exact_name_idx
         ON provider_projects(provider, profile_id, name, resource_id);
       CREATE INDEX IF NOT EXISTS provider_conversations_task_idx
@@ -2434,8 +1526,6 @@ export class JobStore {
         ON provider_task_conversations(proved_job_id);
       CREATE INDEX IF NOT EXISTS output_savings_measured_at_idx
         ON output_savings_events(measured_at, job_id);
-      CREATE INDEX IF NOT EXISTS output_savings_work_available_idx
-        ON output_savings_work(available_at_ms, work_id);
       CREATE INDEX IF NOT EXISTS web_ai_v0_staged_attachments_abandoned_idx
         ON web_ai_v0_staged_attachments(consumed_turn_ref, created_at);
       CREATE UNIQUE INDEX IF NOT EXISTS web_ai_v0_staged_attachments_bundle_attachment_idx
@@ -2446,110 +1536,20 @@ export class JobStore {
     `)
   }
 
-  private migrateJobsTable() {
-    {
-      for (const [column, definition] of [
-        ['checkpoint_json', 'TEXT'],
-        ['resume_json', 'TEXT'],
-        ['provider_attempts_json', "TEXT NOT NULL DEFAULT '[]'"],
-        ['provider_submitted_at', 'TEXT'],
-        ['eligible_at', 'TEXT'],
-        ['claim_expires_at', 'INTEGER'],
-        ['summary_task_id', 'TEXT CHECK (summary_task_id IS NULL OR length(summary_task_id) <= 256)'],
-        ['summary_project_name', 'TEXT CHECK (summary_project_name IS NULL OR length(summary_project_name) <= 256)'],
-        ['summary_chat_name', 'TEXT CHECK (summary_chat_name IS NULL OR length(summary_chat_name) <= 256)'],
-        ['summary_idempotency_key', 'TEXT CHECK (summary_idempotency_key IS NULL OR length(summary_idempotency_key) <= 256)'],
-        ['agent_kind', 'TEXT CHECK (agent_kind IS NULL OR length(agent_kind) BETWEEN 1 AND 128)'],
-        ['agent_session_id', 'TEXT CHECK (agent_session_id IS NULL OR length(agent_session_id) BETWEEN 1 AND 256)'],
-        ['replay_reported_at', 'TEXT'],
-        ['outcome_revision', 'INTEGER NOT NULL DEFAULT 0 CHECK (outcome_revision >= 0)'],
-        ['reported_outcome_revision', 'INTEGER CHECK (reported_outcome_revision IS NULL OR reported_outcome_revision >= 0)'],
-      ] as const) {
-        this.ensureJobsColumn(column, definition)
-      }
-      this.exec(`
-        UPDATE jobs
-        SET outcome_revision = 1
-        WHERE outcome_revision = 0
-          AND (
-            status IN ('succeeded', 'failed', 'canceled', 'timed_out')
-            OR status = 'waiting_for_user'
-          )
-      `)
-      const columns = new Set(this.all('PRAGMA table_info(jobs)').map((row) => String(row.name)))
-      if (columns.has('replay_reported_job_updated_at')) {
-        this.exec(`
-          UPDATE jobs
-          SET reported_outcome_revision = outcome_revision
-          WHERE reported_outcome_revision IS NULL
-            AND outcome_revision > 0
-            AND replay_reported_job_updated_at = updated_at
-        `)
-      }
-    }
-  }
-
-  private ensureJobsColumn(column: string, definition: string) {
-    const columns = new Set(this.all('PRAGMA table_info(jobs)').map((row) => String(row.name)))
-    if (columns.has(column)) return
-    this.exec(`ALTER TABLE jobs ADD COLUMN ${column} ${definition}`)
-  }
-
-  private getJobWithoutRecovery(jobId: string) {
+  private getJobRecord(jobId: string) {
     const row = this.get(
       `SELECT
-        job_id, claim_token, execution_backend, profile_id, agent_kind, agent_session_id,
+        job_id, execution_backend, profile_id,
         provider, action, status, request_json, result_json, error_json,
-        blocker_json, checkpoint_json, resume_json,
-        provider_attempts_json,
-        provider_submitted_at, eligible_at,
-        created_at, updated_at, claim_expires_at
+        blocker_json, provider_attempts_json,
+        provider_submitted_at,
+        created_at, updated_at
        FROM jobs
        WHERE job_id = ?`,
       jobId
     )
     if (!row) throw jobNotFound(jobId)
     return rowToJob(row)
-  }
-
-  private explainClaimFailure(jobId: string, claimToken: string): never {
-    const job = this.getJobWithoutRecovery(jobId)
-    if (job.claim_token !== claimToken) throw claimRejected(jobId)
-    throw invalidJobState(jobId, 'queued', job.status)
-  }
-
-  private explainActiveClaimFailure(jobId: string, claimToken: string, nowMs: number): never {
-    const job = this.getJobWithoutRecovery(jobId)
-    if (job.claim_token !== claimToken) throw claimRejected(jobId)
-    if (ACTIVE_STATUSES.has(job.status) && (job.claim_expires_at_ms === null || job.claim_expires_at_ms <= nowMs)) {
-      throw claimExpired(jobId)
-    }
-    throw invalidJobState(jobId, 'claimed, running, or waiting_for_user', job.status)
-  }
-
-  private explainRunningFailure(jobId: string, claimToken: string, nowMs: number): never {
-    const job = this.getJobWithoutRecovery(jobId)
-    if (job.claim_token !== claimToken) throw claimRejected(jobId)
-    if (ACTIVE_STATUSES.has(job.status) && (job.claim_expires_at_ms === null || job.claim_expires_at_ms <= nowMs)) {
-      throw claimExpired(jobId)
-    }
-    throw invalidJobState(jobId, 'claimed or waiting_for_user', job.status)
-  }
-
-  private explainPlaywrightActiveFailure(
-    jobId: string,
-    claimToken: string,
-    nowMs: number,
-    backendMessage: string,
-    expected: string
-  ): never {
-    const job = this.getJobWithoutRecovery(jobId)
-    if (job.claim_token !== claimToken) throw claimRejected(jobId)
-    if (ACTIVE_STATUSES.has(job.status) && (job.claim_expires_at_ms === null || job.claim_expires_at_ms <= nowMs)) {
-      throw claimExpired(jobId)
-    }
-    if (job.execution_backend !== 'playwright') throw invalidInput(backendMessage)
-    throw invalidJobState(job.job_id, expected, job.status)
   }
 
   private exec(sql: string) {
@@ -2585,11 +1585,6 @@ export class JobStore {
     }
   }
 
-  private exists(sql: string, ...params: SQLInputValue[]) {
-    const row = this.get(sql, ...params)
-    return Boolean(row && Number(Object.values(row)[0]) !== 0)
-  }
-
   private transaction<T>(callback: () => T) {
     this.exec('BEGIN')
     try {
@@ -2621,30 +1616,6 @@ export function publicView(job: Job): JobView {
     blocker_json: job.blocker_json,
     provider_attempts_json: job.provider_attempts_json,
     provider_submitted_at: job.provider_submitted_at,
-    eligible_at: job.eligible_at,
-    created_at: job.created_at,
-    updated_at: job.updated_at,
-  }
-}
-
-export function withClaimToken(job: Job): JobWithClaimToken {
-  return {
-    job_id: job.job_id,
-    claim_token: job.claim_token,
-    execution_backend: job.execution_backend,
-    profile_id: job.profile_id,
-    provider: job.provider,
-    action: job.action,
-    status: job.status,
-    request_json: job.request_json,
-    result_json: job.result_json,
-    error_json: job.error_json,
-    blocker_json: job.blocker_json,
-    checkpoint_json: job.checkpoint_json,
-    resume_json: job.resume_json,
-    provider_attempts_json: job.provider_attempts_json,
-    provider_submitted_at: job.provider_submitted_at,
-    eligible_at: job.eligible_at,
     created_at: job.created_at,
     updated_at: job.updated_at,
   }
@@ -2701,11 +1672,8 @@ function rowToJob(row: Record<string, unknown>): Job {
   assertJobStatus(status)
   return {
     job_id: String(row.job_id),
-    claim_token: String(row.claim_token),
     execution_backend: executionBackend,
     profile_id: nullableString(row.profile_id),
-    agent_kind: nullableString(row.agent_kind),
-    agent_session_id: nullableString(row.agent_session_id),
     provider: String(row.provider),
     action: String(row.action),
     status,
@@ -2713,14 +1681,10 @@ function rowToJob(row: Record<string, unknown>): Job {
     result_json: parseOptionalJson(row.result_json),
     error_json: parseOptionalJson(row.error_json),
     blocker_json: parseOptionalJson(row.blocker_json),
-    checkpoint_json: parseOptionalJson(row.checkpoint_json),
-    resume_json: parseOptionalJson(row.resume_json),
     provider_attempts_json: parseJson(row.provider_attempts_json),
     provider_submitted_at: nullableString(row.provider_submitted_at),
-    eligible_at: nullableString(row.eligible_at),
     created_at: String(row.created_at),
     updated_at: String(row.updated_at),
-    claim_expires_at_ms: nullableNumber(row.claim_expires_at),
   }
 }
 
@@ -2741,13 +1705,6 @@ function apiResponseId(value: unknown) {
 function webAiRequestRef(value: unknown) {
   if (typeof value !== 'string' || !/^request:[a-f0-9]{32}$/.test(value)) {
     throw invalidInput('request_ref is invalid')
-  }
-  return value
-}
-
-function webAiRequestSha256(value: unknown) {
-  if (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)) {
-    throw invalidInput('request_sha256 is invalid')
   }
   return value
 }
@@ -2801,12 +1758,8 @@ function rowToWebAiTurn(row: Record<string, unknown>): WebAiTurn {
     conversation_ref: webAiRef(row.conversation_ref, 'conversation_ref'),
     attachment_ref: webAiRef(row.attachment_ref, 'attachment_ref'),
     request_ref: row.request_ref === null ? null : webAiRequestRef(row.request_ref),
-    request_sha256: row.request_sha256 === null ? null : webAiRequestSha256(row.request_sha256),
     job_id: normalizeNonempty(String(row.job_id), 'job_id'),
     cancelled: Number(row.cancelled) === 1,
-    cancel_dispatch_certainty: row.cancel_dispatch_certainty === 'dispatched' || row.cancel_dispatch_certainty === 'ambiguous'
-      ? row.cancel_dispatch_certainty : 'not_dispatched',
-    cancel_attachment_delivery: row.cancel_attachment_delivery === 'delivered' ? 'delivered' : 'pending',
   }
 }
 
@@ -2897,30 +1850,6 @@ function rowToOutputSavingsEvent(row: Record<string, unknown>): OutputSavingsEve
     source_text_sha256: String(row.source_text_sha256),
     measured_at: String(row.measured_at),
   }
-}
-
-function rowToOutputSavingsWork(row: Record<string, unknown>): OutputSavingsWork {
-  return {
-    work_id: Number(row.work_id),
-    job_id: String(row.job_id),
-    response_request_id: String(row.response_request_id),
-    source_text: String(row.source_text),
-    created_at: String(row.created_at),
-    available_at_ms: Number(row.available_at_ms),
-    attempt_count: Number(row.attempt_count),
-    last_error_code: nullableString(row.last_error_code),
-  }
-}
-
-function isOutputSavingsWorkInput(value: unknown): value is OutputSavingsWorkInput {
-  return Boolean(value) &&
-    typeof value === 'object' &&
-    !Array.isArray(value) &&
-    typeof (value as OutputSavingsWorkInput).response_request_id === 'string' &&
-    (value as OutputSavingsWorkInput).response_request_id.length >= 1 &&
-    (value as OutputSavingsWorkInput).response_request_id.length <= 128 &&
-    typeof (value as OutputSavingsWorkInput).source_text === 'string' &&
-    Buffer.byteLength((value as OutputSavingsWorkInput).source_text, 'utf8') <= MAX_OUTPUT_SAVINGS_SOURCE_BYTES
 }
 
 function outputSavingsEventsFromResult(jobId: string, resultJson: unknown): OutputSavingsEvent[] {
@@ -3017,36 +1946,6 @@ function canonicalMappingUrl(value: unknown) {
   return parsed.toString()
 }
 
-function rowToReplaySummary(row: Record<string, unknown>, reportedAt: string): ReplaySummary {
-  const status = String(row.status)
-  assertJobStatus(status)
-  if (
-    status !== 'waiting_for_user' &&
-    status !== 'succeeded' &&
-    status !== 'failed' &&
-    status !== 'canceled' &&
-    status !== 'timed_out'
-  ) {
-    throw invalidJobState(String(row.job_id), 'waiting_for_user or terminal', status)
-  }
-  const hasResult = row.result_json !== null && row.result_json !== undefined
-  const hasError = row.error_json !== null && row.error_json !== undefined
-  const hasBlocker = row.blocker_json !== null && row.blocker_json !== undefined
-  return {
-    job_id: String(row.job_id),
-    provider: String(row.provider),
-    action: String(row.action),
-    status,
-    task_id: nullableString(row.summary_task_id),
-    updated_at: String(row.updated_at),
-    reported_at: reportedAt,
-    outcome_kind: hasResult ? 'result' : hasError ? 'error' : hasBlocker ? 'blocker' : 'none',
-    has_result: hasResult,
-    has_error: hasError,
-    has_blocker: hasBlocker,
-  }
-}
-
 function parseJson(value: unknown) {
   if (typeof value !== 'string') throw jsonError(new Error('expected JSON text'))
   try {
@@ -3125,52 +2024,16 @@ function requestSummaryMetadata(request: unknown): RequestSummaryMetadata {
   const requestValue = (key: string) => boundedNonemptySummaryValue(requestObject?.[key])
   const metadataValue = (key: string) => boundedNonemptySummaryValue(metadataObject?.[key])
   const requestTaskId = requestValue('taskId')
-  const requestIdempotencyKey = requestValue('idempotencyKey')
-  const requestId = requestValue('requestId')
   const metadataTaskId = metadataValue('taskId')
-  const metadataIdempotencyKey = metadataValue('idempotencyKey')
   const taskKeys: string[] = []
-  for (const key of [requestTaskId, requestIdempotencyKey, requestId, metadataTaskId, metadataIdempotencyKey]) {
+  for (const key of [requestTaskId, metadataTaskId]) {
     if (key && !taskKeys.includes(key)) taskKeys.push(key)
   }
   return {
     task_id: metadataTaskId ?? requestTaskId ?? null,
     project_name: metadataValue('projectName') ?? requestValue('projectName') ?? null,
     chat_name: metadataValue('chatName') ?? requestValue('chatName') ?? null,
-    idempotency_key: metadataIdempotencyKey ?? requestIdempotencyKey ?? null,
     task_keys: taskKeys,
-  }
-}
-
-function parkedResumeBlockerJson(blockerJson: unknown) {
-  const browser = {
-    windowOpen: false,
-    resumeRequired: true,
-  }
-  if (blockerJson && typeof blockerJson === 'object' && !Array.isArray(blockerJson)) {
-    const object = { ...blockerJson as Record<string, unknown> }
-    if (object.browser && typeof object.browser === 'object' && !Array.isArray(object.browser)) {
-      object.browser = {
-        ...object.browser as Record<string, unknown>,
-        windowOpen: false,
-        resumeRequired: true,
-      }
-    } else {
-      object.browser = browser
-    }
-    return object
-  }
-  if (blockerJson !== null) {
-    return { blocker: blockerJson, browser }
-  }
-  return { browser }
-}
-
-function expiredWaitingClaimErrorJson() {
-  return {
-    code: 'playwright_user_handover_lease_lost',
-    message: 'The managed Playwright job lost its lease while waiting for user handover; retry from the same task state instead of replaying partial page actions.',
-    retryable: true,
   }
 }
 
@@ -3181,9 +2044,9 @@ function validateJobBackendProfile(executionBackend: ExecutionBackend, profileId
   return normalized
 }
 
-function validateClaimBackendProfile(executionBackend: ExecutionBackend, profileId: string | null) {
+function validateTakeBackendProfile(executionBackend: ExecutionBackend, profileId: string | null) {
   assertExecutionBackend(executionBackend)
-  if (profileId === null) throw invalidInput('playwright claims require profile_id')
+  if (profileId === null) throw invalidInput('playwright jobs require profile_id')
 }
 
 function assertJobStatus(value: string): asserts value is JobStatus {
@@ -3207,14 +2070,6 @@ function normalizeOptionalText(value: string | null | undefined) {
   return normalizeNonempty(String(value), 'optional text').slice(0, 120)
 }
 
-function assertActiveClaim(job: Job, claimToken: string, nowMs: number) {
-  if (job.claim_token !== claimToken) throw claimRejected(job.job_id)
-  if (!ACTIVE_STATUSES.has(job.status)) {
-    throw invalidJobState(job.job_id, 'claimed, running, or waiting_for_user', job.status)
-  }
-  if (job.claim_expires_at_ms === null || job.claim_expires_at_ms <= nowMs) throw claimExpired(job.job_id)
-}
-
 function normalizeSummaryFilter(value: string, field: string) {
   const normalized = normalizeNonempty(value, field)
   if (Array.from(normalized).length > SUMMARY_SCALAR_CHARS) {
@@ -3229,37 +2084,6 @@ function normalizeProfileId(value: string, field: string) {
     throw invalidInput(`${field} must be at most ${PROFILE_ID_CHARS} characters`)
   }
   return normalized
-}
-
-function normalizeOptionalAgentRecipient(
-  agentKind: string | null | undefined,
-  agentSessionId: string | null | undefined
-) {
-  const kindPresent = agentKind !== undefined && agentKind !== null
-  const sessionPresent = agentSessionId !== undefined && agentSessionId !== null
-  if (kindPresent !== sessionPresent) {
-    throw invalidInput('agent_kind and agent_session_id must be provided together')
-  }
-  if (!kindPresent || !sessionPresent) return null
-  return normalizeAgentRecipient({
-    agent_kind: agentKind,
-    agent_session_id: agentSessionId,
-  })
-}
-
-function normalizeAgentRecipient(recipient: AgentRecipient): AgentRecipient {
-  const agentKind = normalizeNonempty(String(recipient.agent_kind ?? ''), 'agent_kind')
-  const agentSessionId = normalizeNonempty(String(recipient.agent_session_id ?? ''), 'agent_session_id')
-  if (Array.from(agentKind).length > AGENT_KIND_CHARS) {
-    throw invalidInput(`agent_kind must be at most ${AGENT_KIND_CHARS} characters`)
-  }
-  if (Array.from(agentSessionId).length > AGENT_SESSION_ID_CHARS) {
-    throw invalidInput(`agent_session_id must be at most ${AGENT_SESSION_ID_CHARS} characters`)
-  }
-  return {
-    agent_kind: agentKind,
-    agent_session_id: agentSessionId,
-  }
 }
 
 function boundedNonemptySummaryValue(value: unknown) {
@@ -3287,17 +2111,8 @@ function nowUnixMillis() {
   return Date.now()
 }
 
-function saturatingAdd(left: number, right: number) {
-  const result = left + right
-  return Number.isSafeInteger(result) ? result : Number.MAX_SAFE_INTEGER
-}
-
 function nullableString(value: unknown) {
   return value === null || value === undefined ? null : String(value)
-}
-
-function nullableNumber(value: unknown) {
-  return value === null || value === undefined ? null : Number(value)
 }
 
 function jsonRecord(value: unknown): Record<string, unknown> | null {

@@ -220,30 +220,6 @@ export class PersistentContextManager {
     return await current
   }
 
-  async runWithProfileObservation<T>(
-    profile: ManagedBrowserProfile,
-    visibility: BrowserVisibility,
-    operation: (context: ManagedBrowserContext) => Promise<T>,
-  ): Promise<T> {
-    if (this.shuttingDown) {
-      throw tokenlessError('playwright_manager_closed', 'Managed Playwright context manager is shutting down.', { retryable: true })
-    }
-    try {
-      const context = await this.ensureContext(profile, visibility)
-      return await operation(context)
-    } catch (error) {
-      const active = this.contexts.get(profile.id)
-      if (isBrowserClosedError(error) && (!active || active.closing || !isManagedBrowserConnected(active))) {
-        await this.closeProfile(profile.id).catch(() => undefined)
-        throw tokenlessError('playwright_browser_closed', 'The visible managed browser window was closed during the observation.', {
-          retryable: true,
-          cause: error,
-        })
-      }
-      throw error
-    }
-  }
-
   async ensureContext(
     profile: ManagedBrowserProfile,
     visibility: BrowserVisibility = 'headed'

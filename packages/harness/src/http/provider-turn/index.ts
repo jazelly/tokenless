@@ -12,7 +12,6 @@ export type {
   CapabilityDocument,
   Citation,
   ConversationRef,
-  DispatchCertainty,
   DeliveredAttachmentDelivery,
   Lifecycle,
   ProviderBindingRef,

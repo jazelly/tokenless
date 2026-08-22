@@ -53,7 +53,7 @@ type HarnessRunRecord = {
   requestRef: string
   catalog: readonly HarnessToolCatalogEntry[]
   pendingProviderRequest?: ProviderTurnRequest | undefined
-  pendingProviderOperation?: { kind: 'resume' | 'cancel'; requestRef: string; turnRef?: string | undefined } | undefined
+  pendingProviderOperation?: { kind: 'cancel'; requestRef: string; turnRef?: string | undefined } | undefined
   providerTurn?: ProviderTurnState | undefined
   batch?: HarnessActionBatch | undefined
   batchId?: string | undefined
@@ -120,7 +120,6 @@ class InMemoryWebAgentHarness implements WebAgentHarness {
       if (record.phase === 'discovering_tools') record = await this.discoverTools(record)
       else if (record.phase === 'submitting_provider') record = await this.submitPending(record)
       else if (record.phase === 'awaiting_provider') record = await this.readProvider(record)
-      else if (record.phase === 'resuming_provider') record = await this.resumeProvider(record)
       else if (record.phase === 'cancelling_provider') record = await this.cancelProvider(record)
       else if (record.phase === 'executing_batch') record = await this.executeAndContinue(record)
       return publicView(record)
@@ -136,19 +135,10 @@ class InMemoryWebAgentHarness implements WebAgentHarness {
     try {
       if (isTerminal(record.status)) return publicView(record)
       if (record.providerTurn?.lifecycle === 'waiting_for_user') {
-        if (record.providerTurn.waitingReason === 'ambiguous_submission') {
-          throw new HarnessSkillError(
-            'harness_provider_submission_ambiguous',
-            'Provider submission certainty is ambiguous; this in-memory run cannot resume.',
-          )
-        }
-        if (intervention.providerReady !== true) throw new HarnessSkillError('harness_provider_resume_invalid', 'Provider intervention must be explicitly confirmed.')
-        record = this.update(runId, (current) => ({
-          ...current,
-          phase: 'resuming_provider',
-          pendingProviderOperation: { kind: 'resume', requestRef: current.requestRef, turnRef: current.providerTurn!.turnRef },
-        }))
-        return publicView(await this.resumeProvider(record))
+        throw new HarnessSkillError(
+          'harness_provider_restart_required',
+          'Provider intervention cannot resume this run; start a new run after completing the visible step.',
+        )
       } else if (record.status === 'waiting_for_approval') {
         const approvals = new Map((intervention.approvals ?? []).map((item) => [item.callId, item.argumentsDigest]))
         const calls = record.calls.map((call) => {
@@ -223,34 +213,6 @@ class InMemoryWebAgentHarness implements WebAgentHarness {
 
   close() { this.runs.clear() }
 
-  private async resumeProvider(record: HarnessRunRecord) {
-    const turn = record.providerTurn
-    if (!turn || record.pendingProviderOperation?.kind !== 'resume') throw new HarnessSkillError('harness_provider_intent_missing', 'Harness provider resume intent is missing.')
-    assertProviderTurnIdentity(record, turn)
-    try {
-      const providerTurn = await this.provider.resume({
-        runId: record.runId, requestRef: record.requestRef, turn: record.turn, nonce: record.nonce,
-        provider: record.spec.provider, profileId: record.spec.profileId, stagingRoot: record.spec.stagingRoot,
-        turnRef: turn.turnRef, providerRef: turn.providerRef, providerBindingRef: turn.providerBindingRef,
-        conversationRef: turn.conversationRef, expectedDeliverySha256: turn.deliverySha256,
-      })
-      assertProviderTurnIdentity(record, providerTurn)
-      const terminal = providerTurn.lifecycle === 'failed' || providerTurn.lifecycle === 'cancelled'
-      return this.update(record.runId, (current) => ({
-        ...current,
-        providerTurn,
-        pendingProviderOperation: undefined,
-        status: providerStatus(providerTurn.lifecycle),
-        phase: terminal ? 'terminal' : 'awaiting_provider',
-        ...(providerTurn.lifecycle === 'failed'
-          ? { error: providerTurn.error ?? { code: 'harness_provider_failed', message: 'Provider turn failed.' } }
-          : {}),
-      }))
-    } catch (error) {
-      return this.fail(record, error)
-    }
-  }
-
   private async cancelProvider(record: HarnessRunRecord) {
     const operation = record.pendingProviderOperation
     if (operation?.kind !== 'cancel') throw new HarnessSkillError('harness_provider_intent_missing', 'Harness provider cancel intent is missing.')
@@ -266,11 +228,6 @@ class InMemoryWebAgentHarness implements WebAgentHarness {
         } : {}),
       })
       assertProviderCancellationIdentity(record.requestRef, cancellation)
-      if (cancellation.kind === 'cancelled_before_start') {
-        return this.update(record.runId, (current) => ({
-          ...current, status: 'cancelled', phase: 'terminal', pendingProviderRequest: undefined, pendingProviderOperation: undefined,
-        }))
-      }
       assertProviderTurnIdentity(record, cancellation.turn)
       const terminal = cancellation.turn.lifecycle === 'cancelled' || cancellation.turn.lifecycle === 'failed'
       return this.update(record.runId, (current) => ({

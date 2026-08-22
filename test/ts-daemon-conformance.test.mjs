@@ -53,39 +53,6 @@ test('TS daemon embeds the managed Playwright scheduler without idle browser lau
   }
 })
 
-test('JobStore normalizes a legacy WAL database for direct read compatibility', {
-  timeout: 60_000,
-}, async () => {
-  requireBuiltArtifacts()
-  const homeDir = tempHome('tokenless-legacy-wal-')
-  const databasePath = path.join(homeDir, 'tokenless.sqlite3')
-  const legacyDatabase = new DatabaseSync(databasePath)
-  try {
-    assert.equal(String(legacyDatabase.prepare('PRAGMA journal_mode = WAL').get().journal_mode).toLowerCase(), 'wal')
-  } finally {
-    legacyDatabase.close()
-  }
-
-  const moduleUrl = pathToFileURL(path.join(cliDir, 'dist/server/src/jobs/store.js')).href + '?test=' + randomUUID()
-  const { JobStore } = await import(moduleUrl)
-  let store
-  try {
-    store = await JobStore.open(homeDir)
-    store.close()
-    store = undefined
-
-    const readOnlyDatabase = new DatabaseSync(databasePath, { readOnly: true })
-    try {
-      assert.equal(String(readOnlyDatabase.prepare('PRAGMA journal_mode').get().journal_mode).toLowerCase(), 'delete')
-    } finally {
-      readOnlyDatabase.close()
-    }
-    assert.equal(fs.existsSync(databasePath + '-wal'), false)
-  } finally {
-    store?.close()
-    fs.rmSync(homeDir, { recursive: true, force: true })
-  }
-})
 test('TS daemon rejects unsupported Playwright providers', {
   timeout: 60_000,
 }, async () => {
@@ -117,7 +84,7 @@ test('TS daemon rejects unsupported Playwright providers', {
   }
 })
 
-test('TS daemon rejects under-declared capability routes before durable job creation', {
+test('TS daemon rejects under-declared capability routes before job creation', {
   timeout: 60_000,
 }, async () => {
   requireBuiltArtifacts()
@@ -411,443 +378,162 @@ test('TS daemon rejects raw image jobs that bypass the shared image/download con
   }
 })
 
-test('agent replay drains each durable job once, survives restart, and keeps full job state queryable', {
-  timeout: 60_000,
-}, async () => {
+test('SQLite completes current jobs and marks active jobs interrupted on reopen', async () => {
   requireBuiltArtifacts()
-  const homeDir = tempHome('tokenless-ts-agent-replay-')
-  let daemon = await startTsDaemon(homeDir)
-  const agentA = { agent_kind: 'codex', agent_session_id: `session-a-${randomUUID()}` }
-  const agentB = { agent_kind: 'codex', agent_session_id: `session-b-${randomUUID()}` }
-  const agentC = { agent_kind: 'codex', agent_session_id: `session-c-${randomUUID()}` }
-  const agentD = { agent_kind: 'codex', agent_session_id: `session-d-${randomUUID()}` }
-  const agentE = { agent_kind: 'codex', agent_session_id: `session-e-${randomUUID()}` }
-  const jobA = randomUUID()
-  const jobB = randomUUID()
-  const jobC = randomUUID()
-  const jobD = randomUUID()
-  const jobE = randomUUID()
-  const unaddressedJob = randomUUID()
+  const homeDir = tempHome('tokenless-job-lifecycle-')
+  const moduleUrl = pathToFileURL(path.join(cliDir, 'dist/server/src/jobs/store.js')).href + '?test=' + randomUUID()
+  const { JobStore } = await import(moduleUrl)
+  let store = await JobStore.open(homeDir)
   try {
-    const token = readControlToken(homeDir)
-    await daemonRequest(daemon.url, token, 'POST', '/v1/private/control/browser-runtime/quiesce')
-    for (const invalidRecipient of [
-      { agent_kind: null },
-      { agent_kind: null, agent_session_id: null },
-    ]) {
-      const response = await fetch(`${daemon.url}/v1/private/jobs`, {
-        method: 'POST',
-        headers: jsonHeaders(token),
-        body: JSON.stringify({
-          provider: 'chatgpt',
-          action: managedPlaywrightJobAction,
-          execution_backend: 'playwright',
-          profile_id: randomUUID(),
-          request_json: { malformed: true },
-          ...invalidRecipient,
-        }),
-      })
-      assert.equal(response.status, 400)
-      assert.equal((await response.json()).error.code, 'invalid_input')
-    }
-    for (const invalidLimit of [null, 201]) {
-      const invalidReplayLimit = await fetch(`${daemon.url}/v1/private/replay/drain`, {
-        method: 'POST',
-        headers: jsonHeaders(token),
-        body: JSON.stringify({
-          ...agentA,
-          limit: invalidLimit,
-        }),
-      })
-      assert.equal(invalidReplayLimit.status, 400)
-      assert.equal((await invalidReplayLimit.json()).error.code, 'invalid_input')
-    }
-
-    for (const [jobId, recipient] of [
-      [jobA, agentA],
-      [jobB, agentB],
-      [unaddressedJob, null],
-    ]) {
-      await daemonRequest(daemon.url, token, 'POST', '/v1/private/jobs', {
-        provider: 'chatgpt',
-        action: managedPlaywrightJobAction,
-        execution_backend: 'playwright',
-        profile_id: randomUUID(),
-        job_id: jobId,
-        ...(recipient ?? {}),
-        request_json: {
-          malformed: true,
-          taskId: `task-${jobId}`,
-        },
-      })
-      await daemonRequest(daemon.url, token, 'POST', `/v1/private/jobs/${encodeURIComponent(jobId)}/cancel`, {
-        reason: { code: 'replay_test', detail: 'x'.repeat(2_000) },
-      })
-    }
-
-    const isolated = await daemonRequest(daemon.url, token, 'POST', '/v1/private/replay/drain', {
-      agent_kind: agentA.agent_kind,
-      agent_session_id: `unknown-${randomUUID()}`,
-    })
-    assert.deepEqual(isolated.jobs, [])
-
-    await daemonRequest(daemon.url, token, 'POST', '/v1/private/jobs', {
+    const created = store.createJob({
       provider: 'chatgpt',
       action: managedPlaywrightJobAction,
-      execution_backend: 'playwright',
-      profile_id: randomUUID(),
-      job_id: jobC,
-      ...agentC,
-      request_json: { malformed: true, taskId: `task-${jobC}` },
+      request_json: { taskId: 'fresh-lifecycle' },
+      profile_id: 'fresh-profile',
     })
-    const waitingDatabase = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'))
+    const running = store.takeNextJob({}, 'playwright', 'fresh-profile')
+    assert.ok(running)
+    assert.equal(running.job_id, created.job_id)
+    assert.equal(running.status, 'running')
+    assert.equal(running.provider_attempts_json.at(-1).status, 'running')
+    const completed = store.completeJob(running.job_id, { result_json: { ok: true } })
+    assert.equal(completed.status, 'succeeded')
+
+    const active = store.createJob({
+      provider: 'chatgpt',
+      action: managedPlaywrightJobAction,
+      request_json: { taskId: 'interrupted-lifecycle' },
+      profile_id: 'fresh-profile',
+    })
+    const activeJobState = store.takeNextJob({}, 'playwright', 'fresh-profile')
+    assert.ok(activeJobState)
+    assert.equal(activeJobState.job_id, active.job_id)
+    assert.equal(activeJobState.status, 'running')
+    const waiting = store.markWaitingForUser(active.job_id, { code: 'user_input_required' })
+    assert.equal(waiting.provider_attempts_json.at(-1).status, 'waiting_for_user')
+    const resumed = store.markRunning(active.job_id)
+    assert.equal(resumed.provider_attempts_json.at(-1).status, 'running')
+    store.close()
+    store = await JobStore.open(homeDir)
+    const interrupted = store.getJob(active.job_id)
+    assert.equal(interrupted.status, 'failed')
+    assert.equal(interrupted.error_json.code, 'job_interrupted')
+    assert.equal(interrupted.provider_attempts_json.at(-1).status, 'failed')
+
+    const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'), { readOnly: true })
     try {
-      waitingDatabase.prepare(
-        `UPDATE jobs
-         SET status = 'waiting_for_user', blocker_json = ?, checkpoint_json = ?,
-             claim_expires_at = NULL, updated_at = ?,
-             outcome_revision = outcome_revision + 1
-         WHERE job_id = ?`
-      ).run(
-        JSON.stringify({ code: 'user_action_required' }),
-        JSON.stringify({ cursor: 'durable-checkpoint' }),
-        new Date(1_000).toISOString(),
-        jobC
+      const tables = new Set(database.prepare(
+        "SELECT name FROM sqlite_schema WHERE type = 'table'",
+      ).all().map((row) => String(row.name)))
+      assert.deepEqual(
+        ['output_savings_work', 'output_savings_state', 'output_savings_cleared_events', 'web_ai_v0_request_cancellations']
+          .filter((table) => tables.has(table)),
+        [],
       )
-    } finally {
-      waitingDatabase.close()
-    }
-    const waitingReplay = await daemonRequest(daemon.url, token, 'POST', '/v1/private/replay/drain', agentC)
-    assert.deepEqual(waitingReplay.jobs.map((job) => [job.job_id, job.status]), [[jobC, 'waiting_for_user']])
-    const sameTimestampDatabase = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'))
-    try {
-      sameTimestampDatabase.prepare(
-        `UPDATE jobs
-         SET status = 'canceled', error_json = ?, blocker_json = NULL, checkpoint_json = NULL,
-             outcome_revision = outcome_revision + 1
-         WHERE job_id = ?`
-      ).run(JSON.stringify({ code: 'job_canceled', reason: { code: 'after_waiting_report' } }), jobC)
-    } finally {
-      sameTimestampDatabase.close()
-    }
-    const finalRevisionReplay = await daemonRequest(daemon.url, token, 'POST', '/v1/private/replay/drain', agentC)
-    assert.deepEqual(finalRevisionReplay.jobs.map((job) => [job.job_id, job.status]), [[jobC, 'canceled']])
-    assert.equal(finalRevisionReplay.jobs[0].updated_at, waitingReplay.jobs[0].updated_at)
-    assert.deepEqual((await daemonRequest(daemon.url, token, 'POST', '/v1/private/replay/drain', agentC)).jobs, [])
-
-    const createdJobD = await daemonRequest(daemon.url, token, 'POST', '/v1/private/jobs', {
-      provider: 'chatgpt',
-      action: managedPlaywrightJobAction,
-      execution_backend: 'playwright',
-      profile_id: randomUUID(),
-      job_id: jobD,
-      ...agentD,
-      request_json: { malformed: true },
-    })
-    assert.equal(Object.hasOwn(createdJobD, 'agent_kind'), false)
-    assert.equal(Object.hasOwn(createdJobD, 'agent_session_id'), false)
-    await daemonRequest(daemon.url, token, 'POST', `/v1/private/jobs/${encodeURIComponent(jobD)}/cancel`)
-    const mismatchedReceipt = await fetch(`${daemon.url}/v1/private/jobs/${encodeURIComponent(jobD)}/report`, {
-      method: 'POST',
-      headers: jsonHeaders(token),
-      body: JSON.stringify({
-        agent_kind: agentD.agent_kind,
-        agent_session_id: `wrong-${randomUUID()}`,
-      }),
-    })
-    assert.equal(mismatchedReceipt.status, 404)
-    const mismatchedReceiptBody = await mismatchedReceipt.json()
-    assert.equal(mismatchedReceiptBody.error.code, 'job_not_found')
-    assert.equal(Object.hasOwn(mismatchedReceiptBody, 'job'), false)
-    const runtime = await importCli()
-    const firstReceipt = await runtime.markDaemonJobReported({
-      homeDir,
-      daemonUrl: daemon.url,
-      jobId: jobD,
-      agentKind: agentD.agent_kind,
-      agentSessionId: agentD.agent_session_id,
-    })
-    assert.equal(firstReceipt.reported, true)
-    const repeatedReceipt = await runtime.markDaemonJobReported({
-      homeDir,
-      daemonUrl: daemon.url,
-      jobId: jobD,
-      agentKind: agentD.agent_kind,
-      agentSessionId: agentD.agent_session_id,
-    })
-    assert.equal(repeatedReceipt.reported, false)
-    assert.deepEqual((await daemonRequest(daemon.url, token, 'POST', '/v1/private/replay/drain', agentD)).jobs, [])
-
-    await daemonRequest(daemon.url, token, 'POST', '/v1/private/jobs', {
-      provider: 'chatgpt',
-      action: managedPlaywrightJobAction,
-      execution_backend: 'playwright',
-      profile_id: randomUUID(),
-      job_id: jobE,
-      ...agentE,
-      request_json: { malformed: true },
-    })
-    const activeWaitingDatabase = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'))
-    try {
-      activeWaitingDatabase.prepare(
-        `UPDATE jobs
-         SET status = 'waiting_for_user', blocker_json = ?,
-             claim_expires_at = ?, outcome_revision = outcome_revision + 1
-         WHERE job_id = ?`
-      ).run(
-        JSON.stringify({ code: 'active_user_handover' }),
-        Date.now() + 60_000,
-        jobE
+      const jobColumns = new Set(database.prepare('PRAGMA table_info(jobs)').all().map((row) => String(row.name)))
+      assert.deepEqual(
+        [
+          'claim_token', 'claim_expires_at', 'checkpoint_json', 'resume_json', 'eligible_at',
+          'agent_kind', 'agent_session_id', 'summary_idempotency_key', 'replay_reported_at',
+          'outcome_revision', 'reported_outcome_revision',
+        ].filter((column) => jobColumns.has(column)),
+        [],
       )
-    } finally {
-      activeWaitingDatabase.close()
-    }
-    const activeWaitingReceipt = await runtime.markDaemonJobReported({
-      homeDir,
-      daemonUrl: daemon.url,
-      jobId: jobE,
-      agentKind: agentE.agent_kind,
-      agentSessionId: agentE.agent_session_id,
-    })
-    assert.equal(activeWaitingReceipt.reported, true)
-    const repeatedActiveWaitingReceipt = await runtime.markDaemonJobReported({
-      homeDir,
-      daemonUrl: daemon.url,
-      jobId: jobE,
-      agentKind: agentE.agent_kind,
-      agentSessionId: agentE.agent_session_id,
-    })
-    assert.equal(repeatedActiveWaitingReceipt.reported, false)
-    assert.deepEqual((await daemonRequest(daemon.url, token, 'POST', '/v1/private/replay/drain', agentE)).jobs, [])
-
-    const cliReplay = runCli([
-      'replay',
-      '--home',
-      homeDir,
-      '--agent-kind',
-      agentA.agent_kind,
-      '--agent-session-id',
-      agentA.agent_session_id,
-      '--json',
-    ])
-    assert.equal(cliReplay.status, 0, cliReplay.stderr || cliReplay.stdout)
-    const cliPayload = JSON.parse(cliReplay.stdout)
-    assert.equal(cliPayload.ok, true)
-    assert.equal(cliPayload.count, 1)
-    assert.equal(cliPayload.jobs[0].job_id, jobA)
-    assert.equal(cliPayload.jobs[0].status, 'canceled')
-    assert.equal(cliPayload.jobs[0].task_id, `task-${jobA}`)
-    assert.equal(cliPayload.jobs[0].outcome_kind, 'error')
-    assert.equal(cliPayload.jobs[0].has_error, true)
-    assert.equal(Object.hasOwn(cliPayload.jobs[0], 'preview'), false)
-    assert.equal(Object.hasOwn(cliPayload.jobs[0], 'request_json'), false)
-
-    const emptySecondDrain = await daemonRequest(daemon.url, token, 'POST', '/v1/private/replay/drain', agentA)
-    assert.deepEqual(emptySecondDrain.jobs, [])
-
-    await shutdownDaemon(daemon)
-    daemon = await startTsDaemon(homeDir)
-    const restartedToken = readControlToken(homeDir)
-    const emptyAfterRestart = await daemonRequest(daemon.url, restartedToken, 'POST', '/v1/private/replay/drain', agentA)
-    assert.deepEqual(emptyAfterRestart.jobs, [])
-
-    const fullJob = await daemonRequest(
-      daemon.url,
-      restartedToken,
-      'GET',
-      `/v1/private/jobs/${encodeURIComponent(jobA)}`
-    )
-    assert.equal(fullJob.job_id, jobA)
-    assert.equal(fullJob.status, 'canceled')
-    assert.equal(fullJob.error_json.reason.detail.length, 2_000)
-    assert.equal(Object.hasOwn(fullJob, 'agent_kind'), false)
-    assert.equal(Object.hasOwn(fullJob, 'agent_session_id'), false)
-
-    const otherAgent = await daemonRequest(daemon.url, restartedToken, 'POST', '/v1/private/replay/drain', agentB)
-    assert.deepEqual(otherAgent.jobs.map((job) => job.job_id), [jobB])
-    assert.equal(otherAgent.jobs.some((job) => job.job_id === unaddressedJob), false)
-  } finally {
-    await shutdownDaemon(daemon).catch(() => undefined)
-    await terminateChildrenForHome(homeDir)
-    fs.rmSync(homeDir, { recursive: true, force: true })
-  }
-})
-
-test('daemon startup reconciles an expired running lease before becoming ready', {
-  timeout: 60_000,
-}, async () => {
-  requireBuiltArtifacts()
-  const homeDir = tempHome('tokenless-ts-startup-recovery-')
-  let daemon = await startTsDaemon(homeDir)
-  const jobId = randomUUID()
-  try {
-    const token = readControlToken(homeDir)
-    await daemonRequest(daemon.url, token, 'POST', '/v1/private/control/browser-runtime/quiesce')
-    await daemonRequest(daemon.url, token, 'POST', '/v1/private/jobs', {
-      provider: 'chatgpt',
-      action: managedPlaywrightJobAction,
-      execution_backend: 'playwright',
-      profile_id: randomUUID(),
-      job_id: jobId,
-      request_json: { malformed: true },
-    })
-    await shutdownDaemon(daemon)
-
-    const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'))
-    try {
-      database.prepare(
-        `UPDATE jobs
-         SET status = 'running', claim_token = ?, claim_expires_at = ?, updated_at = ?
-         WHERE job_id = ?`
-      ).run(`stale-${randomUUID()}`, 1, new Date(0).toISOString(), jobId)
-    } finally {
-      database.close()
-    }
-
-    daemon = await startTsDaemon(homeDir)
-    const restartedToken = readControlToken(homeDir)
-    const recovered = await daemonRequest(
-      daemon.url,
-      restartedToken,
-      'GET',
-      `/v1/private/jobs/${encodeURIComponent(jobId)}`
-    )
-    assert.equal(recovered.status, 'queued')
-    const recoveredDatabase = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'), { readOnly: true })
-    try {
-      const row = recoveredDatabase.prepare(
-        'SELECT status, claim_expires_at FROM jobs WHERE job_id = ?'
-      ).get(jobId)
-      assert.equal(row.status, 'queued')
-      assert.equal(row.claim_expires_at, null)
-    } finally {
-      recoveredDatabase.close()
-    }
-  } finally {
-    await shutdownDaemon(daemon).catch(() => undefined)
-    await terminateChildrenForHome(homeDir)
-    fs.rmSync(homeDir, { recursive: true, force: true })
-  }
-})
-
-test('replay migration initializes durable outcome revisions and preserves an existing receipt', {
-  timeout: 60_000,
-}, async () => {
-  requireBuiltArtifacts()
-  const homeDir = tempHome('tokenless-ts-replay-migration-')
-  let daemon = await startTsDaemon(homeDir)
-  const recipient = { agent_kind: 'codex', agent_session_id: `migration-${randomUUID()}` }
-  const replayableJobId = randomUUID()
-  const alreadyReportedJobId = randomUUID()
-  const activeWaitingJobId = randomUUID()
-  const activeWaitingReportedJobId = randomUUID()
-  try {
-    const token = readControlToken(homeDir)
-    await daemonRequest(daemon.url, token, 'POST', '/v1/private/control/browser-runtime/quiesce')
-    for (const jobId of [replayableJobId, alreadyReportedJobId]) {
-      await daemonRequest(daemon.url, token, 'POST', '/v1/private/jobs', {
-        provider: 'chatgpt',
-        action: managedPlaywrightJobAction,
-        execution_backend: 'playwright',
-        profile_id: randomUUID(),
-        job_id: jobId,
-        ...recipient,
-        request_json: { malformed: true },
-      })
-      await daemonRequest(daemon.url, token, 'POST', `/v1/private/jobs/${encodeURIComponent(jobId)}/cancel`)
-    }
-    for (const jobId of [activeWaitingJobId, activeWaitingReportedJobId]) {
-      await daemonRequest(daemon.url, token, 'POST', '/v1/private/jobs', {
-        provider: 'chatgpt',
-        action: managedPlaywrightJobAction,
-        execution_backend: 'playwright',
-        profile_id: randomUUID(),
-        job_id: jobId,
-        ...recipient,
-        request_json: { malformed: true },
-      })
-    }
-    await shutdownDaemon(daemon)
-
-    const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'))
-    try {
-      database.exec('ALTER TABLE jobs ADD COLUMN replay_reported_job_updated_at TEXT')
-      database.prepare(
-        `UPDATE jobs
-         SET outcome_revision = 0, reported_outcome_revision = NULL,
-             replay_reported_at = NULL, replay_reported_job_updated_at = NULL
-         WHERE job_id = ?`
-      ).run(replayableJobId)
-      database.prepare(
-        `UPDATE jobs
-         SET outcome_revision = 0, reported_outcome_revision = NULL,
-             replay_reported_at = updated_at, replay_reported_job_updated_at = updated_at
-         WHERE job_id = ?`
-      ).run(alreadyReportedJobId)
-      database.prepare(
-        `UPDATE jobs
-         SET status = 'waiting_for_user', blocker_json = ?, claim_expires_at = ?,
-             outcome_revision = 0, reported_outcome_revision = NULL,
-             replay_reported_at = NULL, replay_reported_job_updated_at = NULL
-         WHERE job_id = ?`
-      ).run(
-        JSON.stringify({ code: 'legacy_active_waiting' }),
-        Date.now() + 60_000,
-        activeWaitingJobId
-      )
-      database.prepare(
-        `UPDATE jobs
-         SET status = 'waiting_for_user', blocker_json = ?, claim_expires_at = ?,
-             outcome_revision = 0, reported_outcome_revision = NULL,
-             replay_reported_at = updated_at, replay_reported_job_updated_at = updated_at
-         WHERE job_id = ?`
-      ).run(
-        JSON.stringify({ code: 'legacy_active_waiting_reported' }),
-        Date.now() + 60_000,
-        activeWaitingReportedJobId
+      const turnColumns = new Set(database.prepare('PRAGMA table_info(web_ai_v0_turns)').all().map((row) => String(row.name)))
+      assert.equal(turnColumns.has('request_sha256'), false)
+      assert.deepEqual(
+        ['cancel_dispatch_certainty', 'cancel_attachment_delivery'].filter((column) => turnColumns.has(column)),
+        [],
       )
     } finally {
       database.close()
     }
+  } finally {
+    store?.close()
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
 
-    daemon = await startTsDaemon(homeDir)
-    const restartedToken = readControlToken(homeDir)
-    const replay = await daemonRequest(daemon.url, restartedToken, 'POST', '/v1/private/replay/drain', recipient)
-    assert.deepEqual(replay.jobs.map((job) => job.job_id), [replayableJobId])
-    assert.deepEqual((await daemonRequest(daemon.url, restartedToken, 'POST', '/v1/private/replay/drain', recipient)).jobs, [])
-    const runtime = await importCli()
-    const migratedActiveReceipt = await runtime.markDaemonJobReported({
-      homeDir,
-      daemonUrl: daemon.url,
-      jobId: activeWaitingJobId,
-      agentKind: recipient.agent_kind,
-      agentSessionId: recipient.agent_session_id,
+test('SQLite removes obsolete job claim columns from an existing database', async () => {
+  requireBuiltArtifacts()
+  const homeDir = tempHome('tokenless-remove-job-claims-')
+  const databasePath = path.join(homeDir, 'tokenless.sqlite3')
+  const legacyDatabase = new DatabaseSync(databasePath)
+  try {
+    legacyDatabase.exec(`
+      CREATE TABLE jobs (
+        job_id TEXT PRIMARY KEY NOT NULL,
+        claim_token TEXT NOT NULL,
+        execution_backend TEXT NOT NULL DEFAULT 'playwright',
+        profile_id TEXT,
+        provider TEXT NOT NULL,
+        action TEXT NOT NULL,
+        status TEXT NOT NULL,
+        request_json TEXT NOT NULL,
+        result_json TEXT,
+        error_json TEXT,
+        blocker_json TEXT,
+        provider_attempts_json TEXT NOT NULL DEFAULT '[]',
+        provider_submitted_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        claim_expires_at TEXT,
+        summary_task_id TEXT,
+        summary_project_name TEXT,
+        summary_chat_name TEXT
+      );
+      CREATE INDEX jobs_claim_expires_at_idx ON jobs(claim_expires_at);
+      INSERT INTO jobs (
+        job_id, claim_token, execution_backend, profile_id, provider, action, status,
+        request_json, result_json, error_json, blocker_json, provider_attempts_json,
+        provider_submitted_at, created_at, updated_at,
+        summary_task_id, summary_project_name, summary_chat_name, claim_expires_at
+      ) VALUES (
+        'existing-job', 'obsolete-claim', 'playwright', 'existing-profile',
+        'chatgpt', 'visible_provider_actions', 'succeeded',
+        '{}', '{"ok":true}', NULL, NULL, '[]', NULL,
+        '2026-08-22T00:00:00.000Z', '2026-08-22T00:00:00.000Z',
+        NULL, NULL, NULL, NULL
+      );
+    `)
+  } finally {
+    legacyDatabase.close()
+  }
+
+  const moduleUrl = pathToFileURL(path.join(cliDir, 'dist/server/src/jobs/store.js')).href + '?test=' + randomUUID()
+  const { JobStore } = await import(moduleUrl)
+  let store
+  try {
+    store = await JobStore.open(homeDir)
+    assert.equal(store.getJob('existing-job').status, 'succeeded')
+    const created = store.createJob({
+      provider: 'arena',
+      action: managedPlaywrightJobAction,
+      request_json: { taskId: 'after-claim-removal' },
+      profile_id: 'existing-profile',
     })
-    assert.equal(migratedActiveReceipt.reported, true)
-    const migratedExistingReceipt = await runtime.markDaemonJobReported({
-      homeDir,
-      daemonUrl: daemon.url,
-      jobId: activeWaitingReportedJobId,
-      agentKind: recipient.agent_kind,
-      agentSessionId: recipient.agent_session_id,
-    })
-    assert.equal(migratedExistingReceipt.reported, false)
-    const migratedDatabase = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'), { readOnly: true })
+    assert.equal(created.status, 'queued')
+    store.close()
+    store = undefined
+
+    const migratedDatabase = new DatabaseSync(databasePath, { readOnly: true })
     try {
-      const rows = migratedDatabase.prepare(
-        `SELECT job_id, outcome_revision, reported_outcome_revision
-         FROM jobs
-         WHERE job_id IN (?, ?)
-         ORDER BY job_id`
-      ).all(activeWaitingJobId, activeWaitingReportedJobId)
-      assert.equal(rows.every((row) => row.outcome_revision === 1), true)
-      assert.equal(rows.every((row) => row.reported_outcome_revision === 1), true)
+      const columns = new Set(
+        migratedDatabase.prepare('PRAGMA table_info(jobs)').all().map((row) => String(row.name)),
+      )
+      assert.equal(columns.has('claim_token'), false)
+      assert.equal(columns.has('claim_expires_at'), false)
+      assert.equal(
+        migratedDatabase.prepare(
+          "SELECT 1 FROM sqlite_schema WHERE type = 'index' AND name = 'jobs_claim_expires_at_idx'",
+        ).get(),
+        undefined,
+      )
     } finally {
       migratedDatabase.close()
     }
   } finally {
-    await shutdownDaemon(daemon).catch(() => undefined)
-    await terminateChildrenForHome(homeDir)
+    store?.close()
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
@@ -914,7 +600,7 @@ test('SQLite preserves exact provider Project and conversation mappings across s
         actions: [],
       },
     })
-    const isolatedClaim = store.claimNextJob(
+    const isolatedJobState = store.takeNextJob(
       {
         action: managedPlaywrightJobAction,
         job_id_prefix: 'tlp_e2e-run-',
@@ -922,7 +608,7 @@ test('SQLite preserves exact provider Project and conversation mappings across s
       'playwright',
       'profile-mapping',
     )
-    assert.equal(isolatedClaim.job_id, e2eJob.job_id)
+    assert.equal(isolatedJobState.job_id, e2eJob.job_id)
     assert.equal(store.getJob(job.job_id).status, 'queued')
     store.close()
     store = await JobStore.open(homeDir)
@@ -1242,7 +928,7 @@ test('built Playwright validators enforce the current internal schema IDs', {
   )
 })
 
-test('SQLite atomically preserves provider fallback attempts under one durable job id', async () => {
+test('SQLite preserves provider fallback attempts under one current job id', async () => {
   requireBuiltArtifacts()
   const homeDir = tempHome('tokenless-provider-fallback-store-')
   const { JobStore } = await import(`${pathToFileURL(path.join(cliDir, 'dist/server/src/jobs/store.js')).href}?test=${randomUUID()}`)
@@ -1298,8 +984,8 @@ test('SQLite atomically preserves provider fallback attempts under one durable j
       request_json: request,
       profile_id: 'fallback-profile',
     })
-    const claimed = store.claimJob(created.job_id, created.claim_token)
-    store.markRunning(claimed.job_id, claimed.claim_token)
+    const selectedJob = store.takeNextJob({}, 'playwright', 'fallback-profile')
+    assert.ok(selectedJob)
     const fallbackRequest = playwright.validateManagedPlaywrightJobRequest({
       ...request,
       provider: alternative.provider,
@@ -1310,23 +996,20 @@ test('SQLite atomically preserves provider fallback attempts under one durable j
       actions: request.actions.map((action) => ({ ...action, provider: alternative.provider })),
     })
     const queued = store.fallbackJob({
-      job_id: claimed.job_id,
-      claim_token: claimed.claim_token,
+      job_id: selectedJob.job_id,
       provider: 'claude',
       request_json: fallbackRequest,
       blocker_json: { blocker: { code: 'visible_cloudflare_turnstile' } },
     })
     assert.equal(queued.job_id, created.job_id)
     assert.equal(queued.provider, 'claude')
-    assert.equal(queued.status, 'queued')
+    assert.equal(queued.status, 'running')
     assert.equal(queued.provider_attempts_json.length, 2)
     assert.equal(queued.provider_attempts_json[0].status, 'blocked')
     assert.equal(queued.provider_attempts_json[0].blocker.blocker.code, 'visible_cloudflare_turnstile')
     assert.deepEqual(queued.request_json.context, request.context)
-    const fallbackClaim = store.claimJob(queued.job_id, queued.claim_token)
-    store.markRunning(fallbackClaim.job_id, fallbackClaim.claim_token)
     assert.equal(queued.request_json.pageRef, request.pageRef)
-    store.completeJob(fallbackClaim.job_id, fallbackClaim.claim_token, { result_json: { provider: 'claude' } })
+    store.completeJob(queued.job_id, { result_json: { provider: 'claude' } })
     store.close()
     store = await JobStore.open(homeDir)
     const completed = store.getJob(created.job_id)
@@ -1445,7 +1128,7 @@ test('TS daemon browser runtime control is authenticated, quiesces queued work, 
   }
 })
 
-test('SQLite durably and idempotently attributes measured visible output to its triggering job', async () => {
+test('SQLite attributes measured visible output to its triggering job', async () => {
   requireBuiltArtifacts()
   const homeDir = tempHome('tokenless-output-savings-store-')
   const { JobStore } = await import(`${pathToFileURL(path.join(cliDir, 'dist/server/src/jobs/store.js')).href}?test=${randomUUID()}`)
@@ -1457,8 +1140,8 @@ test('SQLite durably and idempotently attributes measured visible output to its 
       request_json: { taskId: 'savings-task' },
       profile_id: 'savings-profile',
     })
-    const claimed = store.claimJob(created.job_id, created.claim_token)
-    store.markRunning(claimed.job_id, claimed.claim_token)
+    const selectedJob = store.takeNextJob({}, 'playwright', 'savings-profile')
+    assert.ok(selectedJob)
     const result = {
       protocol: 'tokenless.playwright.job.v3',
       provider: 'chatgpt',
@@ -1487,9 +1170,7 @@ test('SQLite durably and idempotently attributes measured visible output to its 
         error: null,
       }],
     }
-    store.completeJob(claimed.job_id, claimed.claim_token, { result_json: result })
-    store.reconcileOutputSavings()
-    store.reconcileOutputSavings()
+    store.completeJob(selectedJob.job_id, { result_json: result })
     assert.deepEqual(store.outputSavingsSummary(), {
       estimated_output_tokens: 2,
       visible_characters: 11,
@@ -1513,7 +1194,6 @@ test('SQLite durably and idempotently attributes measured visible output to its 
     store = await JobStore.open(homeDir)
     assert.equal(store.outputSavingsSummary().estimated_output_tokens, 2)
     assert.deepEqual(store.clearOutputSavings(), { cleared: 1 })
-    store.reconcileOutputSavings()
     assert.deepEqual(store.outputSavingsSummary(), {
       estimated_output_tokens: 0,
       visible_characters: 0,
@@ -1528,99 +1208,6 @@ test('SQLite durably and idempotently attributes measured visible output to its 
     )
   } finally {
     store.close()
-    fs.rmSync(homeDir, { recursive: true, force: true })
-  }
-})
-
-test('SQLite completes the provider job before durable output savings work is processed', async () => {
-  requireBuiltArtifacts()
-  const homeDir = tempHome('tokenless-output-savings-handoff-')
-  const { JobStore } = await import(`${pathToFileURL(path.join(cliDir, 'dist/server/src/jobs/store.js')).href}?test=${randomUUID()}`)
-  let store = await JobStore.open(homeDir)
-  try {
-    const created = store.createJob({
-      provider: 'chatgpt',
-      action: managedPlaywrightJobAction,
-      request_json: { taskId: 'savings-handoff-task' },
-      profile_id: 'savings-profile',
-    })
-    const claimed = store.claimJob(created.job_id, created.claim_token)
-    store.markRunning(claimed.job_id, claimed.claim_token)
-    const result = {
-      protocol: 'tokenless.playwright.job.v3',
-      provider: 'chatgpt',
-      responses: [{
-        protocol: 'tokenless.playwright.visible-action.v3',
-        requestId: 'savings-handoff-response',
-        provider: 'chatgpt',
-        action: 'response.read',
-        ok: true,
-        result: {
-          text: 'hello world',
-          citations: [],
-          visibleProof: 'visible-answer-read',
-        },
-        error: null,
-      }],
-    }
-    const completed = store.completeJob(claimed.job_id, claimed.claim_token, {
-      result_json: result,
-      output_savings_work: [{
-        response_request_id: 'savings-handoff-response',
-        source_text: 'hello world',
-      }],
-    })
-    assert.equal(completed.status, 'succeeded')
-    assert.deepEqual(completed.result_json, result)
-    assert.equal(JSON.stringify(completed.result_json).includes('source_text'), false)
-    assert.equal(store.outputSavingsSummary().estimated_output_tokens, 0)
-    assert.equal(store.pendingOutputSavingsWorkCount(), 1)
-
-    store.close()
-    store = await JobStore.open(homeDir)
-    const work = store.nextOutputSavingsWork(Date.now() + 10_000)
-    assert.equal(work.job_id, created.job_id)
-    assert.equal(work.response_request_id, 'savings-handoff-response')
-    assert.equal(work.source_text, 'hello world')
-  } finally {
-    store.close()
-    fs.rmSync(homeDir, { recursive: true, force: true })
-  }
-})
-
-test('TS daemon closes when the embedded managed Playwright scheduler exits fatally', {
-  timeout: 30_000,
-}, async () => {
-  requireBuiltArtifacts()
-  const homeDir = tempHome('tokenless-ts-embedded-scheduler-fatal-')
-  createMalformedManagedProfileRegistry(homeDir)
-  const port = await freePort()
-  const url = `http://127.0.0.1:${port}`
-  const child = spawn(process.execPath, [
-    tsDaemonEntry,
-    '--home',
-    homeDir,
-    'serve',
-    '--host',
-    '127.0.0.1',
-    '--port',
-    String(port),
-  ], {
-    cwd: root,
-    env: { ...process.env, TOKENLESS_HOME: homeDir },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-  trackChild(child, homeDir)
-  let stderr = ''
-  child.stderr?.on('data', (chunk) => {
-    stderr += chunk.toString('utf8')
-  })
-  try {
-    const exit = await waitForExitResult(child, 10_000)
-    assert.equal(exit.code, 1, `expected scheduler fatal exit; got ${JSON.stringify(exit)}\nstderr:\n${stderr}`)
-    await assert.rejects(fetch(`${url}/ready?challenge=${randomBytes(32).toString('base64url')}`))
-  } finally {
-    await terminateChildrenForHome(homeDir)
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
@@ -1780,14 +1367,6 @@ function assertProfileDirectoryEmpty(profileDir) {
   assert.deepEqual(fs.readdirSync(profileDir).sort(), [])
 }
 
-function createMalformedManagedProfileRegistry(homeDir) {
-  const browserDir = path.join(homeDir, 'browser')
-  const profilesRoot = path.join(browserDir, 'profiles')
-  fs.mkdirSync(profilesRoot, { recursive: true, mode: 0o700 })
-  const registryPath = path.join(browserDir, 'profiles.json')
-  fs.writeFileSync(registryPath, '{}\n', { mode: 0o600 })
-}
-
 async function waitForDaemonJobStatus(daemonUrl, token, jobId, status, timeoutMs) {
   const deadline = Date.now() + timeoutMs
   let latest
@@ -1861,23 +1440,6 @@ function waitForExit(child, timeoutMs) {
     const onExit = () => {
       clearTimeout(timeout)
       resolve()
-    }
-    child.once('exit', onExit)
-  })
-}
-
-function waitForExitResult(child, timeoutMs) {
-  if (child.exitCode !== null || child.signalCode !== null) {
-    return Promise.resolve({ code: child.exitCode, signal: child.signalCode })
-  }
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      child.off('exit', onExit)
-      reject(new Error(`process ${child.pid} did not exit within ${timeoutMs} ms`))
-    }, timeoutMs)
-    const onExit = (code, signal) => {
-      clearTimeout(timeout)
-      resolve({ code, signal })
     }
     child.once('exit', onExit)
   })

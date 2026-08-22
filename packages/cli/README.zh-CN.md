@@ -88,7 +88,7 @@ tokenless run \
   --json
 ```
 
-普通隐式路由会保存兼容的 provider alternatives。在 prompt 提交前遇到 auth、CAPTCHA、capacity 或 plan blocker 时，同一 durable job 可重新排队到下一个满足完整 capability 的 provider；显式 provider、精确 continuation 和不可重建操作会 fail closed。
+普通隐式路由会为当前 execution 保留兼容的 provider alternatives。在 prompt 提交前遇到 auth、CAPTCHA、capacity 或 plan blocker 时，会立即尝试下一个满足完整 capability 的 provider；显式 provider、精确 continuation 和不可重建操作会 fail closed。
 
 ## Providers
 

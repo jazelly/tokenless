@@ -302,8 +302,6 @@ export class FeatureBenchChannelManager {
       request_json: requestJson,
       execution_backend: 'playwright',
       profile_id: channel.profileId,
-      agent_kind: 'featurebench',
-      agent_session_id: channel.channelId,
     })
     await this.wake()
     const settled = await this.awaitTerminalJob(job.job_id, channel.providerTurnTimeoutMs)

@@ -44,7 +44,7 @@ export function createLocalHttpProviderTurnClient(options: { baseUrl: string; to
           providerRef: binding.capabilities.providerRef,
           providerBindingRef: binding.providerBindingRef,
         })
-      }, 'submission')
+      })
     },
 
     async continue(request) {
@@ -67,7 +67,7 @@ export function createLocalHttpProviderTurnClient(options: { baseUrl: string; to
           ...(request.payloadLifetime === undefined ? {} : { payloadLifetime: request.payloadLifetime }),
         })
         return project(request, started.turnState, started.resultSha256, continuation)
-      }, 'submission')
+      })
     },
 
     async read(request) {
@@ -90,14 +90,6 @@ export function createLocalHttpProviderTurnClient(options: { baseUrl: string; to
       return { ...project(request, completed.turnState, resultSha256, request), modelResponse: completed.response }
     },
 
-    async resume(request) {
-      const client = createLocalHttpClient(options)
-      const current = await dispatch(() => client.read(request.turnRef))
-      if (current.lifecycle !== 'waiting_for_user') return project(request, current, request.expectedDeliverySha256, request)
-      const turn = await dispatch(() => client.resume(request.turnRef))
-      return project(request, turn, request.expectedDeliverySha256, request)
-    },
-
     async cancel(request) {
       const client = createLocalHttpClient(options)
       if (request.turnRef) {
@@ -109,40 +101,27 @@ export function createLocalHttpProviderTurnClient(options: { baseUrl: string; to
         return { protocol: PROVIDER_TURN_PROTOCOL, requestRef: request.requestRef, kind: 'turn', turn: project(request, turn, undefined, request) }
       }
       const cancellation = await dispatch(() => client.cancelRequest(request.requestRef))
-      if (cancellation.kind === 'cancelled_before_start') {
-        return { protocol: PROVIDER_TURN_PROTOCOL, requestRef: request.requestRef, kind: 'cancelled_before_start' }
-      }
       const turn = await dispatch(() => client.read(cancellation.turn.turnRef))
       return { protocol: PROVIDER_TURN_PROTOCOL, requestRef: request.requestRef, kind: 'turn', turn: project(request, turn) }
     },
   }
 }
 
-async function dispatch<T>(operation: () => Promise<T>, mode: 'submission' | 'reconciliation' = 'reconciliation'): Promise<T> {
+async function dispatch<T>(operation: () => Promise<T>): Promise<T> {
   try {
     return await operation()
   } catch (error) {
     if (error instanceof ProviderTurnDispatchError) throw error
     if (error instanceof LocalHttpError) {
-      const errorCode = error.error?.code ?? 'harness_provider_http_error'
-      const retryableSubmission = mode === 'submission' && error.status >= 500 && error.status < 600 && errorCode === 'daemon_starting'
-      const dispatch: 'deterministic' | 'retryable' | 'ambiguous' = retryableSubmission
-        ? 'retryable'
-        : error.status >= 500 && error.status < 600
-          ? 'ambiguous'
-          : error.error?.retryable
-            ? 'ambiguous'
-            : 'deterministic'
       throw new ProviderTurnDispatchError(
-        dispatch,
-        errorCode,
+        error.error?.code ?? 'harness_provider_http_error',
         error.error?.message ?? 'Local provider dispatch failed.',
       )
     }
     if (error instanceof HarnessSkillError) {
-      throw new ProviderTurnDispatchError('deterministic', 'harness_provider_dispatch_invalid', 'Local provider dispatch was rejected before acceptance.')
+      throw new ProviderTurnDispatchError('harness_provider_dispatch_invalid', 'Local provider dispatch was rejected before acceptance.')
     }
-    throw new ProviderTurnDispatchError('ambiguous', 'harness_provider_dispatch_ambiguous', 'Local provider dispatch outcome is ambiguous.')
+    throw new ProviderTurnDispatchError('harness_provider_dispatch_failed', 'Local provider dispatch failed.')
   }
 }
 
@@ -173,7 +152,7 @@ function project(
     lifecycle: turn.lifecycle,
     ...(deliverySha256 ? { deliverySha256 } : {}),
     ...(turn.lifecycle === 'waiting_for_user' ? { waitingReason: turn.waitingReason } : {}),
-    ...(turn.lifecycle === 'succeeded' ? { responseText: turn.result.text } : {}),
+    ...(turn.lifecycle === 'succeeded' && turn.result ? { responseText: turn.result.text } : {}),
     ...(turn.lifecycle === 'failed' ? { error: turn.error } : {}),
   }
 }

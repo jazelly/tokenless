@@ -44,7 +44,6 @@ import {
 } from '../jobs/store.js'
 import type { BrowserRuntimeController } from '../runtime/browser-controller.js'
 import { OUTPUT_SAVINGS_ESTIMATOR } from '../output-savings/catalog.js'
-import type { OutputSavingsProcessor } from '../output-savings/processor.js'
 import { OutputSavingsRuntimeManager } from '../output-savings/runtime-manager.js'
 import type {
   DashboardConfig,
@@ -72,7 +71,6 @@ import type {
 export type DashboardApplicationServicesOptions = {
   store: JobStore
   runtimeController?: BrowserRuntimeController | undefined
-  outputSavingsProcessor?: OutputSavingsProcessor | undefined
   origin: () => string
   startedAt: number
 }
@@ -84,7 +82,6 @@ export class TokenlessApplicationServices {
   readonly outputSavingsRuntimeManager: OutputSavingsRuntimeManager
 
   private readonly runtimeController: BrowserRuntimeController | undefined
-  private readonly outputSavingsProcessor: OutputSavingsProcessor | undefined
   private readonly origin: () => string
   private readonly startedAt: number
 
@@ -94,7 +91,6 @@ export class TokenlessApplicationServices {
     this.runtimeManager = new BrowserRuntimeManager({ homeDir: options.store.homeDir })
     this.outputSavingsRuntimeManager = new OutputSavingsRuntimeManager(options.store.homeDir)
     this.runtimeController = options.runtimeController
-    this.outputSavingsProcessor = options.outputSavingsProcessor
     this.origin = options.origin
     this.startedAt = options.startedAt
   }
@@ -122,10 +118,10 @@ export class TokenlessApplicationServices {
         label: provider.label,
         stage: provider.stage,
         executionModes: provider.executionModes,
+        subscriptionSupport: provider.subscriptionSupport,
         homeUrl: provider.navigation.entryUrl,
       }))
     const capabilityRoutes = listProviderTaskCapabilityRoutes()
-    this.store.reconcileOutputSavings()
     const outputSavings = await this.outputSavingsState(config)
     const [nativeBrowser, setup] = await Promise.all([
       this.inspectConfiguredBrowser(config),
@@ -422,22 +418,25 @@ export class TokenlessApplicationServices {
     if (clearAll === (input.profile !== undefined)) {
       throw applicationError('profile_clear_target_required', 'Exactly one profile or all profiles must be selected.')
     }
-    if (this.runtimeController?.status().activeJobCount) {
-      throw applicationError('profile_mutation_unsafe', 'A profile cannot be removed while browser jobs are active.')
-    }
-    await this.runtimeController?.quiesce()
     const targets = clearAll
       ? await this.profiles.listProfiles()
       : [await this.profiles.resolveProfile(input.profile)]
-    const cleared = []
-    for (const profile of targets) {
-      const removed = await this.profiles.removeProfile(profile.slug, { confirmDelete: true })
-      await deleteTokenlessProfileConfig({ homeDir: this.store.homeDir, slug: profile.slug })
-      cleared.push({ slug: removed.slug, id: removed.id })
-    }
-    return {
-      cleared,
-      defaultProfile: (await this.profiles.read()).defaultProfile,
+    this.assertProfilesHaveNoPendingJobs(targets)
+    await this.runtimeController?.quiesce()
+    try {
+      this.assertProfilesHaveNoPendingJobs(targets)
+      const cleared = []
+      for (const profile of targets) {
+        const removed = await this.profiles.removeProfile(profile.slug, { confirmDelete: true })
+        await deleteTokenlessProfileConfig({ homeDir: this.store.homeDir, slug: profile.slug })
+        cleared.push({ slug: removed.slug, id: removed.id })
+      }
+      return {
+        cleared,
+        defaultProfile: (await this.profiles.read()).defaultProfile,
+      }
+    } finally {
+      await this.runtimeController?.wake()
     }
   }
 
@@ -447,13 +446,17 @@ export class TokenlessApplicationServices {
   }
 
   async removeControlProfile(slug: string) {
-    if (this.runtimeController?.status().activeJobCount) {
-      throw applicationError('profile_mutation_unsafe', 'A profile cannot be removed while browser jobs are active.')
-    }
+    const target = await this.profiles.resolveProfile(slug)
+    this.assertProfilesHaveNoPendingJobs([target])
     await this.runtimeController?.quiesce()
-    const profile = await this.profiles.removeProfile(slug, { confirmDelete: true })
-    await deleteTokenlessProfileConfig({ homeDir: this.store.homeDir, slug })
-    return { profile, defaultProfile: (await this.profiles.read()).defaultProfile }
+    try {
+      this.assertProfilesHaveNoPendingJobs([target])
+      const profile = await this.profiles.removeProfile(slug, { confirmDelete: true })
+      await deleteTokenlessProfileConfig({ homeDir: this.store.homeDir, slug })
+      return { profile, defaultProfile: (await this.profiles.read()).defaultProfile }
+    } finally {
+      await this.runtimeController?.wake()
+    }
   }
 
   async updateControlProfileObservation(slug: string, input: ProviderStatus) {
@@ -523,7 +526,6 @@ export class TokenlessApplicationServices {
   }
 
   async controlOutputSavingsState() {
-    this.store.reconcileOutputSavings()
     const config = await this.migratedConfig()
     const runtime = await this.outputSavingsRuntimeManager.inspect()
     const state = {
@@ -535,7 +537,6 @@ export class TokenlessApplicationServices {
       runtime,
       summary: this.store.outputSavingsSummary(),
     }
-    this.outputSavingsProcessor?.wake()
     return state
   }
 
@@ -544,7 +545,6 @@ export class TokenlessApplicationServices {
       homeDir: this.store.homeDir,
       outputSavings: { enabled: false },
     })
-    await this.discardPendingOutputSavingsWork()
     return await this.outputSavingsState(config)
   }
 
@@ -560,7 +560,6 @@ export class TokenlessApplicationServices {
       homeDir: this.store.homeDir,
       outputSavings: { enabled: false },
     })
-    await this.discardPendingOutputSavingsWork()
     await this.outputSavingsRuntimeManager.remove()
     return await this.outputSavingsState(config)
   }
@@ -573,20 +572,11 @@ export class TokenlessApplicationServices {
         'Output savings history removal requires explicit confirmation.',
       )
     }
-    await this.discardPendingOutputSavingsWork()
     const cleared = this.store.clearOutputSavings().cleared
     return {
       ...await this.outputSavingsState(),
       cleared,
     }
-  }
-
-  private async discardPendingOutputSavingsWork() {
-    if (this.outputSavingsProcessor) {
-      await this.outputSavingsProcessor.discardPending()
-      return
-    }
-    this.store.discardOutputSavingsWork()
   }
 
   async updateConfig(input: DashboardConfigUpdate): Promise<DashboardConfig> {
@@ -818,14 +808,31 @@ export class TokenlessApplicationServices {
   }
 
   async removeProfile(slug: string): Promise<DashboardProfileRemoval> {
-    const status = this.runtimeController?.status()
-    if (status?.activeJobCount) {
-      throw applicationError('profile_mutation_unsafe', 'A profile cannot be removed while browser jobs are active.')
-    }
+    const target = await this.profiles.resolveProfile(slug)
+    this.assertProfilesHaveNoPendingJobs([target])
     await this.runtimeController?.quiesce()
-    const profile = await this.profiles.removeProfile(slug, { confirmDelete: true })
-    await deleteTokenlessProfileConfig({ homeDir: this.store.homeDir, slug })
-    return { slug: profile.slug, removed: true }
+    try {
+      this.assertProfilesHaveNoPendingJobs([target])
+      const profile = await this.profiles.removeProfile(slug, { confirmDelete: true })
+      await deleteTokenlessProfileConfig({ homeDir: this.store.homeDir, slug })
+      return { slug: profile.slug, removed: true }
+    } finally {
+      await this.runtimeController?.wake()
+    }
+  }
+
+  private assertProfilesHaveNoPendingJobs(profiles: readonly ManagedProfileRecord[]) {
+    for (const profile of profiles) {
+      const pending = (['queued', 'running', 'waiting_for_user'] as const).some((status) => (
+        this.store.listJobs({ profile_id: profile.id, status, limit: 1 }).length > 0
+      ))
+      if (pending) {
+        throw applicationError(
+          'profile_mutation_unsafe',
+          `Profile '${profile.slug}' cannot be removed while it has pending browser jobs.`,
+        )
+      }
+    }
   }
 
   async providerAction(slug: string, providerValue: string, action: DashboardProviderAction): Promise<DashboardJobSummary> {
@@ -956,12 +963,6 @@ export class TokenlessApplicationServices {
 
   async cancelJob(jobId: string): Promise<DashboardJobDetail> {
     return publicJobDetail(await this.store.cancelJob(jobId, { source: 'ui' }), await this.profiles.listProfiles())
-  }
-
-  async resumeJob(jobId: string): Promise<DashboardJobDetail> {
-    const job = this.store.resumeJob(jobId, { browser_visibility: 'headed' })
-    await this.runtimeController?.wake()
-    return publicJobDetail(job, await this.profiles.listProfiles())
   }
 
   private async migratedConfig() {
@@ -1284,9 +1285,6 @@ function publicJobSummary(
       ? (response === null ? null : outputTokens)
       : estimatedTextTokens(prompt) + outputTokens,
     capabilityRoute: record(request?.capabilityRoute),
-    agent: 'agent_kind' in job && job.agent_kind && job.agent_session_id
-      ? { kind: job.agent_kind, sessionId: job.agent_session_id }
-      : null,
     blocker: publicError(job.blocker_json),
     outputSavings: publicJobOutputSavings(outputSavings),
     createdAt: job.created_at,

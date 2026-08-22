@@ -55,7 +55,6 @@ export type ProfileRegistryPaths = {
   browserDir: string
   profilesRoot: string
   databasePath: string
-  legacyRegistryFile: string
 }
 
 export class ManagedProfileRegistry {
@@ -68,7 +67,6 @@ export class ManagedProfileRegistry {
       browserDir: join(resolvedHome, 'browser'),
       profilesRoot: join(resolvedHome, 'browser', 'profiles'),
       databasePath: join(resolvedHome, 'tokenless.sqlite3'),
-      legacyRegistryFile: join(resolvedHome, 'browser', 'profiles.json'),
     }
   }
 
@@ -273,7 +271,6 @@ export class ManagedProfileRegistry {
       db = new DatabaseSync(this.paths.databasePath)
       db.exec('PRAGMA busy_timeout = 30000;')
       initializeProfileSchema(db)
-      migrateLegacyRegistry(db, this.paths)
       await chmodFile(this.paths.databasePath, 0o600)
       return await operation(db)
     } finally {
@@ -302,9 +299,7 @@ export class ManagedProfileRegistry {
 export async function readManagedProfileRegistryReadOnly(tokenlessHome = tokenlessHomeFromEnv()): Promise<ManagedProfileRegistryData> {
   const registry = new ManagedProfileRegistry(tokenlessHome)
   if (!fsSync.existsSync(registry.paths.databasePath)) {
-    return fsSync.existsSync(registry.paths.legacyRegistryFile)
-      ? await registry.read()
-      : emptyRegistry()
+    return emptyRegistry()
   }
 
   const db = new DatabaseSync(registry.paths.databasePath, { readOnly: true })
@@ -323,9 +318,7 @@ export async function readManagedProfileRegistryReadOnly(tokenlessHome = tokenle
   } finally {
     db.close()
   }
-  return fsSync.existsSync(registry.paths.legacyRegistryFile)
-    ? await registry.read()
-    : emptyRegistry()
+  return emptyRegistry()
 }
 
 export function tokenlessHomeFromEnv() {
@@ -365,38 +358,9 @@ function initializeProfileSchema(db: DatabaseSync) {
       version INTEGER NOT NULL CHECK (version = 1),
       default_profile TEXT
     );
+    INSERT OR IGNORE INTO browser_profile_registry_state (singleton, version, default_profile)
+    VALUES (1, ${PROFILE_SCHEMA_VERSION}, NULL);
   `)
-}
-
-function migrateLegacyRegistry(db: DatabaseSync, paths: ProfileRegistryPaths) {
-  const existing = db.prepare(
-    'SELECT singleton FROM browser_profile_registry_state WHERE singleton = 1',
-  ).get()
-  if (existing) return
-
-  const legacy = readLegacyRegistry(paths.legacyRegistryFile, paths.profilesRoot)
-  transaction(db, () => {
-    const current = db.prepare(
-      'SELECT singleton FROM browser_profile_registry_state WHERE singleton = 1',
-    ).get()
-    if (current) return
-    if (legacy) writeRegistryToDatabase(db, legacy, false)
-    db.prepare(
-      `INSERT INTO browser_profile_registry_state (singleton, version, default_profile)
-       VALUES (1, ?, ?)`,
-    ).run(PROFILE_SCHEMA_VERSION, legacy?.defaultProfile ?? null)
-  })
-}
-
-function readLegacyRegistry(registryFile: string, profilesRoot: string): ManagedProfileRegistryData | undefined {
-  let payload: string
-  try {
-    payload = fsSync.readFileSync(registryFile, 'utf8')
-  } catch (error) {
-    if (isMissingFile(error)) return undefined
-    throw error
-  }
-  return parseRegistry(JSON.parse(payload) as unknown, profilesRoot)
 }
 
 function readRegistryFromDatabase(db: DatabaseSync, profilesRoot: string): ManagedProfileRegistryData {
@@ -494,8 +458,8 @@ function updateDefaultProfile(db: DatabaseSync, defaultProfile: string | null) {
   ).run(defaultProfile)
 }
 
-function writeRegistryToDatabase(db: DatabaseSync, data: ManagedProfileRegistryData, clearExisting = true) {
-  if (clearExisting) db.exec('DELETE FROM browser_profiles')
+function writeRegistryToDatabase(db: DatabaseSync, data: ManagedProfileRegistryData) {
+  db.exec('DELETE FROM browser_profiles')
   for (const profile of Object.values(data.profiles)) insertProfile(db, profile)
   updateDefaultProfile(db, data.defaultProfile)
 }
@@ -729,10 +693,6 @@ function isUuid(value: string) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
-}
-
-function isMissingFile(error: unknown) {
-  return isRecord(error) && error.code === 'ENOENT'
 }
 
 async function chmodFile(path: string, mode: number) {

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { randomBytes, timingSafeEqual } from 'node:crypto'
+import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import fsSync from 'node:fs'
 import fs from 'node:fs/promises'
 import net from 'node:net'
@@ -1193,7 +1193,7 @@ function safeSegment(value: unknown) {
 
 async function writeJsonAtomic(file: string, payload: unknown, mode: number) {
   await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 })
-  const temporary = `${file}.${process.pid}.${Date.now()}.tmp`
+  const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`
   await fs.writeFile(temporary, `${JSON.stringify(payload, null, 2)}\n`, { mode })
   await fs.rename(temporary, file)
 }
