@@ -37,7 +37,7 @@
     data-state={savingsState}
     title={savingsTitle}
   >
-    <a href="/dashboard/system/" aria-label={t('manageOutputSavings')} data-dashboard-section="system">
+    <a href={`/dashboard/system/?profile=${encodeURIComponent(selectedProfile)}`} aria-label={t('manageOutputSavings')} data-dashboard-section="system">
       <span class="top-header-icon dark"><Calculator size={17} /></span>
       <span class="top-header-value">
         <small>{t('tokensSavedShort')}</small>
@@ -55,7 +55,7 @@
     </a>
   </div>
 
-  <a class="top-header-jobs" href="/dashboard/jobs/" data-dashboard-section="jobs">
+  <a class="top-header-jobs" href={`/dashboard/jobs/?profile=${encodeURIComponent(selectedProfile)}`} data-dashboard-section="jobs">
     <span class:ok={snapshot.runtime.status === 'running'} class="status-dot"></span>
     <span class="top-header-runtime">
       <small>{t('runtime')}</small>
@@ -84,7 +84,7 @@
       </span>
     </label>
 
-    <a class="top-header-settings" href="/dashboard/system/" aria-label={`${t('system')} · ${t('version')} ${snapshot.daemon.version}`} data-dashboard-section="system">
+    <a class="top-header-settings" href={`/dashboard/system/?profile=${encodeURIComponent(selectedProfile)}`} aria-label={`${t('system')} · ${t('version')} ${snapshot.daemon.version}`} data-dashboard-section="system">
       <span class="top-header-icon"><Settings size={16} /></span>
       <span>
         <small>{t('system')}</small>

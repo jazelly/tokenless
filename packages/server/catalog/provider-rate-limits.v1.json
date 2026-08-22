@@ -78,14 +78,6 @@
         "modelFamily": "*",
         "promptAction": "interactive.usage"
       },
-      "ai-badgr": {
-        "modelFamily": "*",
-        "promptAction": "interactive.usage"
-      },
-      "airforce": {
-        "modelFamily": "*",
-        "promptAction": "interactive.usage"
-      },
       "black-forest-labs": {
         "modelFamily": "*",
         "promptAction": "interactive.usage"

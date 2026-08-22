@@ -26,8 +26,11 @@
   const sections = new Set<Section>(['overview', 'profiles', 'providers', 'capabilities', 'jobs', 'system'])
   const initialLanguage: Language = normalizeTokenlessLanguage(document.documentElement.lang) ?? DEFAULT_TOKENLESS_LANGUAGE
 
-  function parseSection(pathname: string): Section {
-    const candidate = /^\/dashboard\/([^/]+)\/?$/.exec(pathname)?.[1] as Section | undefined
+  function parseSection(pathname: string, hash = ''): Section {
+    const pathCandidate = /^\/dashboard\/([^/]+)\/?$/.exec(pathname)?.[1]
+    const candidate = (pathname === '/dashboard' || pathname === '/dashboard/'
+      ? hash.replace(/^#/, '')
+      : pathCandidate) as Section | undefined
     return candidate && sections.has(candidate) ? candidate : 'overview'
   }
 
@@ -44,7 +47,7 @@
   let setupRoute = $state(isSetupPath(location.pathname))
   let selectedProfile = $state(new URL(location.href).searchParams.get('profile') ?? '')
   let harnessPairingId = $state(new URL(location.href).searchParams.get('harnessPairing') ?? '')
-  let section = $state<Section>(parseSection(location.pathname))
+  let section = $state<Section>(parseSection(location.pathname, location.hash))
   let toastTimer = 0
   let pollTimer = 0
   const client = new DashboardClient(() => language)
@@ -99,6 +102,12 @@
   })
 
   onMount(() => {
+    if (!setupRoute) {
+      const url = new URL(location.href)
+      url.pathname = sectionPath(section)
+      url.hash = ''
+      if (url.href !== location.href) history.replaceState(history.state, '', url)
+    }
     const skipLink = document.querySelector<HTMLAnchorElement>('.skip-link')
     const skipToContent = (event: MouseEvent) => {
       event.preventDefault()
@@ -108,7 +117,7 @@
     }
     const popState = () => {
       setupRoute = isSetupPath(location.pathname)
-      section = parseSection(location.pathname)
+      section = parseSection(location.pathname, location.hash)
       queueMicrotask(() => document.querySelector<HTMLElement>('#main')?.focus())
     }
     const visibilityChange = () => { if (!document.hidden) void refresh() }
@@ -198,10 +207,8 @@
     return `${url.pathname}${url.search}`
   }
 
-  function navigate(next: Section) {
-    const url = new URL(location.href)
-    url.pathname = sectionPath(next)
-    url.hash = ''
+  function navigate(next: Section, href: string) {
+    const url = new URL(href, location.href)
     if (url.href !== location.href) history.pushState(history.state, '', url)
     section = next
     setupRoute = false
@@ -212,9 +219,9 @@
     if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
     const anchor = (event.target as Element).closest<HTMLAnchorElement>('a[data-dashboard-section]')
     const next = anchor?.dataset.dashboardSection as Section | undefined
-    if (!next || !sections.has(next)) return
+    if (!anchor || !next || !sections.has(next)) return
     event.preventDefault()
-    navigate(next)
+    navigate(next, anchor.href)
   }
 
   async function perform<Result>(operation: DashboardOperation<Result>, announce = true): Promise<Result> {
@@ -294,7 +301,7 @@
     onsetup={setup}
   />
 {:else}
-  <div class:profiles-active={section === 'profiles'} class="app-shell" data-testid="app-shell" onclick={handleDashboardNavigation}>
+  <div class:profiles-active={section === 'profiles'} class="app-shell" data-testid="app-shell">
     <aside class="rail">
       <div class="rail-brand"><img src="/dashboard/mark.png" alt="Tokenless" width="28" height="28" translate="no" /></div>
       <nav aria-label={t('primaryNavigation')}>
@@ -380,3 +387,4 @@
 {/if}
 
 <svelte:head><meta name="theme-color" content="#f6f5f2" /></svelte:head>
+<svelte:window onclick={handleDashboardNavigation} />

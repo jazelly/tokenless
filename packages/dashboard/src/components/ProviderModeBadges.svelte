@@ -20,9 +20,25 @@
   function status(mode: DashboardProviderExecutionMode) {
     return !supported(mode) ? t('notSupported') : configured(mode) ? t('configured') : t('notConfigured')
   }
+
+  function tooltip(mode: DashboardProviderExecutionMode) {
+    const modeLabel = mode === 'browser' ? t('browserMode') : t('directMode')
+    const help = !supported(mode)
+      ? t('modeUnsupportedHelp')
+      : mode === 'browser'
+        ? t('browserModeHelp')
+        : t('directModeHelp')
+    return `${provider.label} · ${modeLabel} · ${status(mode)} · ${help}`
+  }
 </script>
 
 <span class="provider-mode-badges" data-testid={`provider-mode-badges-${provider.id}`}>
-  <span class:configured={configured('browser')} class:unsupported={!supported('browser')} class="provider-mode-badge" title={`${t('browserMode')} · ${status('browser')}`} aria-label={`${t('browserMode')} · ${status('browser')}`} data-mode="browser"><Monitor size={12} /><span>{t('browserMode')}</span></span>
-  <span class:configured={configured('direct')} class:unsupported={!supported('direct')} class="provider-mode-badge" title={`${t('directMode')} · ${status('direct')}`} aria-label={`${t('directMode')} · ${status('direct')}`} data-mode="direct"><Link2 size={12} /><span>{t('directMode')}</span></span>
+  <span class="provider-mode-tooltip hover-tooltip">
+    <span class:configured={configured('browser')} class:unsupported={!supported('browser')} class="provider-mode-badge" aria-label={tooltip('browser')} data-mode="browser"><Monitor size={12} /><span>{t('browserMode')}</span></span>
+    <span class="hover-tooltip-content" aria-hidden="true">{tooltip('browser')}</span>
+  </span>
+  <span class="provider-mode-tooltip hover-tooltip">
+    <span class:configured={configured('direct')} class:unsupported={!supported('direct')} class="provider-mode-badge" aria-label={tooltip('direct')} data-mode="direct"><Link2 size={12} /><span>{t('directMode')}</span></span>
+    <span class="hover-tooltip-content" aria-hidden="true">{tooltip('direct')}</span>
+  </span>
 </span>

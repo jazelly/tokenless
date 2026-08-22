@@ -12,11 +12,13 @@
 
   let {
     providerId,
+    providerLabel,
     subscriptionSupport,
     observation,
     t,
   }: {
     providerId: string
+    providerLabel: string
     subscriptionSupport: 'supported' | 'unsupported'
     observation: DashboardProviderProfileState['observation'] | undefined
     t: (key: MessageKey) => string
@@ -35,18 +37,20 @@
         ? 'paid'
         : 'unknown')
   let paidLevel = $derived(planKind === 'paid' ? paidPlanLevel(providerId, planLabel) : 0)
-  let authLabel = $derived(auth === 'authenticated'
+  let authStatus = $derived(auth === 'authenticated'
     ? t('signedIn')
     : auth === 'unauthenticated'
       ? t('signedOut')
       : observation
         ? t('signInUnknown')
         : t('neverChecked'))
-  let planTitle = $derived(planKind === 'free'
+  let authLabel = $derived(`${providerLabel} · ${authStatus}`)
+  let planStatus = $derived(planKind === 'free'
     ? access === 'guest' ? t('guestAccess') : t('freePlan')
     : planKind === 'paid'
-      ? `${planLabel ? `${planLabel} · ` : ''}${t('paidPlan')} ${paidLevel}/3`
+      ? planLabel ?? `${t('paidPlan')} ${paidLevel}/3`
       : t('planUnknown'))
+  let planTitle = $derived(`${providerLabel} · ${t('subscriptionTier')}: ${planStatus}`)
 
   function paidPlanLevel(id: string, label: string | null): 1 | 2 | 3 {
     const normalized = label?.trim().toLowerCase() ?? ''
@@ -67,7 +71,7 @@
   data-subscription-support={subscriptionSupport}
   data-paid-level={paidLevel || undefined}
 >
-  <span class={`provider-access-indicator auth-${auth}`} title={authLabel} aria-label={authLabel}>
+  <span class={`provider-access-indicator auth-${auth} hover-tooltip`} aria-label={authLabel}>
     {#if auth === 'authenticated'}
       <UserRoundCheck size={15} />
     {:else if auth === 'unauthenticated'}
@@ -75,10 +79,11 @@
     {:else}
       <UserRoundSearch size={15} />
     {/if}
+    <span class="hover-tooltip-content" aria-hidden="true">{authLabel}</span>
   </span>
 
   {#if planKind !== 'none'}
-    <span class={`provider-access-indicator plan-${planKind}`} title={planTitle} aria-label={planTitle}>
+    <span class={`provider-access-indicator plan-${planKind} hover-tooltip`} aria-label={planTitle}>
       {#if planKind === 'free'}
         <Gift size={15} />
       {:else if planKind === 'paid'}
@@ -88,6 +93,7 @@
       {:else}
         <BadgeQuestionMark size={15} />
       {/if}
+      <span class="hover-tooltip-content" aria-hidden="true">{planTitle}</span>
     </span>
   {/if}
 </span>
