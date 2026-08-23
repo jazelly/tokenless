@@ -27,11 +27,10 @@ private struct LocalizedText {
     }
 }
 
-private struct MenuBarBinding: Decodable {
-    let schema: String?
-    let nodeExecutable: String
-    let cliEntrypoint: String
-    let homeDirectory: String
+private struct EmbeddedRuntime {
+    let nodeExecutable: URL
+    let cliEntrypoint: URL
+    let homeDirectory: URL
 }
 
 private struct CLIErrorPayload: Decodable {
@@ -121,8 +120,8 @@ private enum UpdateState {
 }
 
 private enum TokenlessAppError: LocalizedError {
-    case bindingUnavailable
-    case bindingInvalid
+    case runtimeUnavailable
+    case runtimeInvalid
     case processLaunchFailed
     case processFailed
     case invalidJSON
@@ -130,10 +129,10 @@ private enum TokenlessAppError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .bindingUnavailable:
-            return "Tokenless is not installed yet. Run the local macOS installer."
-        case .bindingInvalid:
-            return "The local Tokenless binding is invalid. Run the local macOS installer again."
+        case .runtimeUnavailable:
+            return "Tokenless embedded runtime is unavailable. Rebuild and reinstall the macOS app."
+        case .runtimeInvalid:
+            return "Tokenless embedded runtime is invalid. Rebuild and reinstall the macOS app."
         case .processLaunchFailed:
             return "Tokenless could not start its local CLI."
         case .processFailed:
@@ -159,7 +158,7 @@ private final class AppModel: ObservableObject {
     @Published var launchAtLogin = false
 
     private var refreshTask: Task<Void, Never>?
-    private var binding: MenuBarBinding?
+    private var runtime: EmbeddedRuntime?
 
     init() {
         launchAtLogin = SMAppService.mainApp.status == .enabled
@@ -316,26 +315,12 @@ private final class AppModel: ObservableObject {
 
     func upgrade() {
         guard !updateState.isBusy else { return }
-        updateState = .upgrading
+        updateState = .unavailable
         updateMessage = nil
-        errorMessage = nil
-        Task { [weak self] in
-            guard let self else { return }
-            do {
-                let response = try await invokeJSON(["upgrade", "--json"])
-                let payload = try decode(CLIResponse.self, from: response)
-                try requireOK(payload.ok, error: payload.error)
-                updateState = .upgraded
-                updateMessage = versionMessage(
-                    english: "Upgrade complete.",
-                    chinese: "升级完成。"
-                )
-                await refresh()
-            } catch {
-                updateState = .unavailable
-                errorMessage = localizedError(error)
-            }
-        }
+        errorMessage = versionMessage(
+            english: "Install the latest Tokenless app to upgrade.",
+            chinese: "请安装最新的 Tokenless app 以完成升级。"
+        )
     }
 
     func setLaunchAtLogin(_ enabled: Bool) {
@@ -417,28 +402,26 @@ private final class AppModel: ObservableObject {
     }
 
     private func invokeJSON(_ arguments: [String]) async throws -> CLIInvocationResult {
-        let binding = try loadBinding()
-        var commandArguments = [binding.cliEntrypoint]
+        let runtime = try loadEmbeddedRuntime()
+        var commandArguments = [runtime.cliEntrypoint.path]
         commandArguments.append(contentsOf: arguments)
-        commandArguments.append(contentsOf: ["--home", binding.homeDirectory])
+        commandArguments.append(contentsOf: ["--home", runtime.homeDirectory.path])
 
-        let nodeURL = URL(fileURLWithPath: binding.nodeExecutable)
-        let entrypointURL = URL(fileURLWithPath: binding.cliEntrypoint)
-        guard nodeURL.isFileURL, entrypointURL.isFileURL,
-              FileManager.default.isExecutableFile(atPath: nodeURL.path),
-              FileManager.default.isReadableFile(atPath: entrypointURL.path) else {
-            throw TokenlessAppError.bindingInvalid
+        guard runtime.nodeExecutable.isFileURL, runtime.cliEntrypoint.isFileURL,
+              FileManager.default.isExecutableFile(atPath: runtime.nodeExecutable.path),
+              FileManager.default.isReadableFile(atPath: runtime.cliEntrypoint.path) else {
+            throw TokenlessAppError.runtimeInvalid
         }
 
         return try await withCheckedThrowingContinuation { continuation in
             let process = Process()
             let outputPipe = Pipe()
-            process.executableURL = nodeURL
+            process.executableURL = runtime.nodeExecutable
             process.arguments = commandArguments
             process.standardOutput = outputPipe
             process.standardError = FileHandle.nullDevice
             var environment = ProcessInfo.processInfo.environment
-            let nodeBin = nodeURL.deletingLastPathComponent().path
+            let nodeBin = runtime.nodeExecutable.deletingLastPathComponent().path
             let existingPath = environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
             environment["PATH"] = "\(nodeBin):\(existingPath)"
             process.environment = environment
@@ -457,25 +440,33 @@ private final class AppModel: ObservableObject {
         }
     }
 
-    private func loadBinding() throws -> MenuBarBinding {
-        if let binding {
-            return binding
+    private func loadEmbeddedRuntime() throws -> EmbeddedRuntime {
+        if let runtime {
+            return runtime
         }
-        let url = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Tokenless API", isDirectory: true)
-            .appendingPathComponent("menubar-binding.json", isDirectory: false)
-        guard let data = try? Data(contentsOf: url) else {
-            throw TokenlessAppError.bindingUnavailable
+        guard let resourcesURL = Bundle.main.resourceURL else {
+            throw TokenlessAppError.runtimeUnavailable
         }
-        guard let decoded = try? JSONDecoder().decode(MenuBarBinding.self, from: data),
-              !decoded.nodeExecutable.isEmpty,
-              !decoded.cliEntrypoint.isEmpty,
-              !decoded.homeDirectory.isEmpty else {
-            throw TokenlessAppError.bindingInvalid
+        let runtimeURL = resourcesURL.appendingPathComponent("runtime", isDirectory: true)
+        let nodeURL = runtimeURL.appendingPathComponent("node", isDirectory: false)
+        let cliEntrypointURL = runtimeURL
+            .appendingPathComponent("cli", isDirectory: true)
+            .appendingPathComponent("dist", isDirectory: true)
+            .appendingPathComponent("src", isDirectory: true)
+            .appendingPathComponent("tokenless.mjs", isDirectory: false)
+        let homeURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".tokenless", isDirectory: true)
+        guard FileManager.default.isExecutableFile(atPath: nodeURL.path),
+              FileManager.default.isReadableFile(atPath: cliEntrypointURL.path) else {
+            throw TokenlessAppError.runtimeInvalid
         }
-        binding = decoded
-        return decoded
+        let loadedRuntime = EmbeddedRuntime(
+            nodeExecutable: nodeURL,
+            cliEntrypoint: cliEntrypointURL,
+            homeDirectory: homeURL
+        )
+        runtime = loadedRuntime
+        return loadedRuntime
     }
 
     private func decode<T: Decodable>(_ type: T.Type, from result: CLIInvocationResult) throws -> T {
@@ -507,10 +498,10 @@ private final class AppModel: ObservableObject {
 
     private func sanitizedMessage(_ message: String) -> String {
         var value = message
-        if let binding {
-            value = value.replacingOccurrences(of: binding.homeDirectory, with: "Tokenless home")
-            value = value.replacingOccurrences(of: binding.nodeExecutable, with: "bound Node")
-            value = value.replacingOccurrences(of: binding.cliEntrypoint, with: "bound CLI")
+        if let runtime {
+            value = value.replacingOccurrences(of: runtime.homeDirectory.path, with: "Tokenless home")
+            value = value.replacingOccurrences(of: runtime.nodeExecutable.path, with: "embedded Node")
+            value = value.replacingOccurrences(of: runtime.cliEntrypoint.path, with: "embedded CLI")
         }
         return value.replacingOccurrences(of: NSHomeDirectory(), with: "~")
     }
@@ -529,10 +520,10 @@ private final class AppModel: ObservableObject {
                     return description
                 }
                 switch tokenlessError {
-                case TokenlessAppError.bindingUnavailable:
-                    return "Tokenless 尚未安装。请运行本地 macOS installer。"
-                case TokenlessAppError.bindingInvalid:
-                    return "本地 Tokenless binding 无效。请重新运行本地 macOS installer。"
+                case TokenlessAppError.runtimeUnavailable:
+                    return "Tokenless 内置 runtime 不可用。请重新构建并安装 macOS app。"
+                case TokenlessAppError.runtimeInvalid:
+                    return "Tokenless 内置 runtime 无效。请重新构建并安装 macOS app。"
                 case TokenlessAppError.processLaunchFailed:
                     return "Tokenless 无法启动本地 CLI。"
                 case TokenlessAppError.processFailed:

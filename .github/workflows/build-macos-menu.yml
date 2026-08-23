@@ -17,13 +17,11 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
-      - name: Build Tokenless API
-        run: npm run build
       - name: Build macOS menu bar app
         run: npm run build:macos-menu
       - name: Upload macOS menu bar app
         uses: actions/upload-artifact@v4
         with:
-          name: tokenless-api-macos-menu
+          name: tokenless-macos-menu
           path: dist/macos/*.zip
           if-no-files-found: error

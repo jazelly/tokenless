@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { execFileSync, spawn } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -10,65 +10,58 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 const sourceApp = path.join(repositoryRoot, 'dist', 'macos', 'Tokenless API.app')
 const applicationsDirectory = path.join(os.homedir(), 'Applications')
 const installedApp = path.join(applicationsDirectory, 'Tokenless API.app')
-const bindingDirectory = path.join(os.homedir(), 'Library', 'Application Support', 'Tokenless API')
-const bindingPath = path.join(bindingDirectory, 'menubar-binding.json')
 
-if (!fs.existsSync(sourceApp)) {
-  throw new Error('Built macOS app not found. Run npm run build:macos-menu first. / 找不到已构建的 macOS app，请先运行 npm run build:macos-menu。')
-}
-
-const cliCommand = resolveTokenlessCommand()
-const cliEntrypoint = cliCommand
-const nodeExecutable = fs.realpathSync(process.execPath)
-const homeDirectory = path.resolve(process.env.TOKENLESS_HOME || path.join(os.homedir(), '.tokenless'))
-
-validateCliEntrypoint(cliEntrypoint)
+requireDirectory(sourceApp, 'built macOS app')
+requireExecutable(path.join(sourceApp, 'Contents', 'MacOS', 'TokenlessMenuBar'), 'built menu app executable')
+requireExecutable(path.join(sourceApp, 'Contents', 'Resources', 'runtime', 'node'), 'bundled Node runtime')
+requireFile(
+  path.join(sourceApp, 'Contents', 'Resources', 'runtime', 'cli', 'dist', 'src', 'tokenless.mjs'),
+  'bundled CLI entrypoint',
+)
 
 fs.mkdirSync(applicationsDirectory, { recursive: true })
 fs.rmSync(installedApp, { recursive: true, force: true })
-fs.cpSync(sourceApp, installedApp, { recursive: true })
+fs.cpSync(sourceApp, installedApp, { recursive: true, dereference: true })
 
-fs.mkdirSync(bindingDirectory, { recursive: true, mode: 0o700 })
-const binding = {
-  schema: 'tokenless.macos-menu-binding.v1',
-  nodeExecutable,
-  cliEntrypoint,
-  homeDirectory,
-}
-fs.writeFileSync(bindingPath, `${JSON.stringify(binding, null, 2)}\n`, { mode: 0o600 })
-fs.chmodSync(bindingPath, 0o600)
-
-const appProcess = spawn('open', ['-a', installedApp], {
+const appProcess = spawn('/usr/bin/open', ['-a', installedApp], {
   detached: true,
   stdio: 'ignore',
 })
 appProcess.unref()
 
-console.log('Installed Tokenless menu bar app / 已安装 Tokenless 菜单栏应用。')
-console.log('The app was launched and uses the bound local CLI / 应用已启动，并使用绑定的本地 CLI。')
+console.log('Installed and launched Tokenless menu bar app / 已安装并启动 Tokenless 菜单栏应用。')
 
-function resolveTokenlessCommand() {
-  let command
+function requireExecutable(filePath, label) {
+  const resolvedPath = resolveRealPath(filePath, label)
+  const stat = fs.statSync(resolvedPath)
+  if (!stat.isFile()) {
+    throw new Error(`${label} is not a regular file / ${label} 不是普通文件：${filePath}`)
+  }
   try {
-    command = execFileSync('which', ['tokenless'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim()
+    fs.accessSync(resolvedPath, fs.constants.R_OK | fs.constants.X_OK)
   } catch {
-    throw new Error('Cannot resolve tokenless with which. Build or link the CLI, then rerun the macOS installer. / 无法用 which 解析 tokenless；请先 build 或 link CLI，再重新运行 macOS installer。')
+    throw new Error(`${label} is not readable and executable / ${label} 不可读或不可执行：${filePath}`)
   }
-  if (!command || !path.isAbsolute(command)) {
-    throw new Error('which tokenless did not return an absolute CLI path. / which tokenless 未返回绝对 CLI 路径。')
-  }
-  return command
 }
 
-function validateCliEntrypoint(command) {
+function requireFile(filePath, label) {
+  const resolvedPath = resolveRealPath(filePath, label)
+  if (!fs.statSync(resolvedPath).isFile()) {
+    throw new Error(`${label} is not a regular file / ${label} 不是普通文件：${filePath}`)
+  }
+}
+
+function requireDirectory(directoryPath, label) {
+  const resolvedPath = resolveRealPath(directoryPath, label)
+  if (!fs.statSync(resolvedPath).isDirectory()) {
+    throw new Error(`${label} is not a directory / ${label} 不是目录：${directoryPath}`)
+  }
+}
+
+function resolveRealPath(filePath, label) {
   try {
-    const entry = fs.lstatSync(command)
-    if (!entry.isFile() && !entry.isSymbolicLink()) throw new Error('not a file or symlink')
-    fs.accessSync(command, fs.constants.R_OK)
+    return fs.realpathSync(filePath)
   } catch {
-    throw new Error(`The tokenless CLI entrypoint resolved by which is not a readable file or symlink / which 解析出的 tokenless CLI entrypoint 不是可读文件或 symlink：${command}`)
+    throw new Error(`${label} is missing / 缺少 ${label}：${filePath}`)
   }
 }

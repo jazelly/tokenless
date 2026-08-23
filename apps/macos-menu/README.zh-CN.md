@@ -1,25 +1,29 @@
 # Tokenless macOS 菜单栏应用
 
-本地 macOS 菜单栏应用使用原生 SwiftUI 为 Tokenless API daemon 提供以下界面：
+本地 macOS 菜单栏应用使用原生 SwiftUI 为 Tokenless daemon 提供以下界面：
 
 - daemon 状态和版本；
 - Dashboard 以及最近十个对话；
-- 重启、退出、检查更新、升级和登录时启动 Tokenless；
+- 重启、退出、检查更新和登录时启动 Tokenless；
 - 根据持久化 Tokenless language 选择 English 或简体中文标签。
 
 ## 本地构建和安装
 
-在这台 Apple Silicon Mac 上运行：
+在安装好仓库依赖的 Apple Silicon Mac 上运行：
 
 ```bash
 npm run build:macos-menu
 npm run install:macos-menu
 ```
 
-构建会生成 `dist/macos/Tokenless API.app` 和 `dist/macos/Tokenless API.zip`。它面向 macOS 13 或更高版本，使用仓库中的 `assets/tokenless-mark.png`，并为本地使用执行 ad-hoc 签名。Developer ID 签名、notarization 和对外分发暂时保留。
+`build:macos-menu` 会先构建 CLI，再生成 `dist/macos/Tokenless API.app` 和 `dist/macos/Tokenless API.zip`。磁盘上的旧 app 路径会保留，以兼容已有登录启动项；应用显示名称是 `Tokenless`。它面向 macOS 13 或更高版本，并内置 arm64 Node runtime、CLI、daemon 及 production Node dependencies，不使用安装机器上的 Node、nvm、Homebrew 或全局 `tokenless` 命令。
 
-安装器会替换 `~/Applications/Tokenless API.app`，在调用安装器的 shell 中解析 `which tokenless`，并在 `~/Library/Application Support/Tokenless API/menubar-binding.json` 写入 mode-0600 binding。binding 保存绝对 Node executable、`which tokenless` 本身返回的绝对 command path（不解引用 symlink）、CLI entrypoint 和 Tokenless home，因此 GUI 不依赖 shell PATH，并能跟随 npm global upgrade。
+安装器会替换并启动 `~/Applications/Tokenless API.app`。菜单应用使用内置 runtime 和用户默认的 `~/.tokenless` home，不创建也不依赖 `menubar-binding.json`；已有 binding 文件会被忽略。
 
 Bundle identifier 使用本地专用的 `local.tokenless.api.menubar`。应用设置为 agent application（`LSUIElement=true`），所以只出现在菜单栏，不会显示 Dock 图标。
 
-应用启动时会立即执行 `tokenless menubar status --json`，确保 Tokenless API daemon 已就绪。因此开启“登录时启动 Tokenless”就会启动完整的本地 Tokenless API 控制面，包括由 daemon 提供的 Dashboard；provider 浏览器仍然按需启动。
+应用启动时会立即执行内置的 `tokenless menubar status --json`，确保 Tokenless daemon 已就绪。因此开启“登录时启动 Tokenless”就会启动完整的本地 Tokenless 控制面，包括由 daemon 提供的 Dashboard；provider 浏览器仍然按需启动。
+
+基础 app 会刻意排除 G4F Python virtual environment 和浏览器二进制。它们仍是独立的按需 runtime，只有用户显式配置对应 provider/runtime 时才会启动，不会随登录启动自动运行。
+
+菜单里的更新检查只提供信息。要升级内置 runtime，请安装最新的 macOS app package；应用不会执行全局 npm upgrade。

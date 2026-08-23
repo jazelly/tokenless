@@ -37,7 +37,7 @@ export class G4fRuntimeManager {
     this.runtimeDirectory = path.join(homeDir, 'runtime', 'g4f-service', G4F_VERSION)
     this.authRoot = path.join(homeDir, 'provider-auth', 'g4f')
     this.paRoot = path.join(this.runtimeDirectory, 'pa-providers')
-    this.sourceDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../runtime/g4f-service')
+    this.sourceDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../../runtime/g4f-service')
   }
 
   async inspect(): Promise<G4fRuntimeStatus> {
