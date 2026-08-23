@@ -221,6 +221,7 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       await activateNavigation(page, 'jobs')
       assert.equal(new URL(page.url()).pathname, '/dashboard/jobs/')
       await page.getByTestId('job-search').fill('web-ui-durable-work')
+      await page.getByTestId('job-filters-toggle').click()
       await page.getByTestId('job-status').selectOption('canceled')
       const workRow = page.getByTestId(`job-${work.job_id}`)
       await workRow.waitFor()
