@@ -16,9 +16,9 @@ npm run build:macos-menu
 npm run install:macos-menu
 ```
 
-`build:macos-menu` 会先构建 CLI，再生成 `dist/macos/Tokenless API.app` 和 `dist/macos/Tokenless API.zip`。磁盘上的旧 app 路径会保留，以兼容已有登录启动项；应用显示名称是 `Tokenless`。它面向 macOS 13 或更高版本，并内置 arm64 Node runtime、CLI、daemon 及 production Node dependencies，不使用安装机器上的 Node、nvm、Homebrew 或全局 `tokenless` 命令。
+`build:macos-menu` 会先构建 CLI，再生成 `dist/macos/Tokenless.app` 和 `dist/macos/Tokenless.zip`。它面向 macOS 13 或更高版本，并内置 arm64 Node runtime、CLI、daemon 及 production Node dependencies，不使用安装机器上的 Node、nvm、Homebrew 或全局 `tokenless` 命令。
 
-安装器会替换并启动 `~/Applications/Tokenless API.app`。菜单应用使用内置 runtime 和用户默认的 `~/.tokenless` home，不创建也不依赖 `menubar-binding.json`；已有 binding 文件会被忽略。
+安装器会替换并启动 `~/Applications/Tokenless.app`。菜单应用使用内置 runtime 和用户默认的 `~/.tokenless` home，不创建也不依赖 `menubar-binding.json`；已有 binding 文件会被忽略。
 
 Bundle identifier 使用本地专用的 `local.tokenless.api.menubar`。应用设置为 agent application（`LSUIElement=true`），所以只出现在菜单栏，不会显示 Dock 图标。
 

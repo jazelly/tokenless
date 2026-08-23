@@ -7,9 +7,9 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const sourceApp = path.join(repositoryRoot, 'dist', 'macos', 'Tokenless API.app')
+const sourceApp = path.join(repositoryRoot, 'dist', 'macos', 'Tokenless.app')
 const applicationsDirectory = path.join(os.homedir(), 'Applications')
-const installedApp = path.join(applicationsDirectory, 'Tokenless API.app')
+const installedApp = path.join(applicationsDirectory, 'Tokenless.app')
 
 requireDirectory(sourceApp, 'built macOS app')
 requireExecutable(path.join(sourceApp, 'Contents', 'MacOS', 'TokenlessMenuBar'), 'built menu app executable')

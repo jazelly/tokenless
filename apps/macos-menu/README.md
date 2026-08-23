@@ -16,9 +16,9 @@ npm run build:macos-menu
 npm run install:macos-menu
 ```
 
-`build:macos-menu` first builds the CLI and then creates `dist/macos/Tokenless API.app` and `dist/macos/Tokenless API.zip`. The legacy on-disk app path is retained for existing login-item compatibility; the app displays as `Tokenless`. It targets macOS 13 or newer and contains its own arm64 Node runtime, CLI, daemon, and production Node dependencies. It does not use the installing machine's Node, nvm, Homebrew, or a global `tokenless` command.
+`build:macos-menu` first builds the CLI and then creates `dist/macos/Tokenless.app` and `dist/macos/Tokenless.zip`. It targets macOS 13 or newer and contains its own arm64 Node runtime, CLI, daemon, and production Node dependencies. It does not use the installing machine's Node, nvm, Homebrew, or a global `tokenless` command.
 
-The installer replaces `~/Applications/Tokenless API.app` and launches it. The menu app invokes the embedded runtime with the user's default `~/.tokenless` home; it does not create or require a `menubar-binding.json` file. Existing binding files are ignored.
+The installer replaces `~/Applications/Tokenless.app` and launches it. The menu app invokes the embedded runtime with the user's default `~/.tokenless` home; it does not create or require a `menubar-binding.json` file. Existing binding files are ignored.
 
 The bundle identifier is the local-only `local.tokenless.api.menubar`. The app is an agent application (`LSUIElement=true`), so it appears in the menu bar without a Dock icon.
 
