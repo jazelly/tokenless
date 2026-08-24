@@ -13,47 +13,24 @@ const daemonServer = pathToFileURL(path.join(root, 'packages/server/dist/src/htt
 const daemonStore = pathToFileURL(path.join(root, 'packages/server/dist/src/jobs/store.js')).href
 const profileRegistry = pathToFileURL(path.join(root, 'packages/server/dist/src/browser/profiles/registry.js')).href
 const startExample = JSON.parse(fs.readFileSync(path.join(root, 'packages/contracts/examples/v0/start-turn-request.json'), 'utf8'))
-const markerName = '.tokenless-web-ai-v0-stage'
 const maxStageBytes = 1024 * 1024
-
-test('marker cleanup only targets V0 markers', async () => {
-  await withHome(async (homeDir) => {
-    let daemon = await startControlPlane(homeDir)
-    try {
-      await daemon.close()
-      const attachments = path.join(homeDir, 'attachments')
-      const orphan = path.join(attachments, 'marker-orphan')
-      const ordinary = path.join(attachments, 'ordinary-bundle')
-      fs.mkdirSync(orphan, { recursive: true })
-      fs.mkdirSync(ordinary, { recursive: true })
-      fs.writeFileSync(path.join(orphan, markerName), 'tokenless-web-ai-interaction-v0\n')
-      fs.writeFileSync(path.join(ordinary, 'ordinary.bin'), 'ordinary')
-      daemon = await startControlPlane(homeDir)
-      assert.equal(fs.existsSync(orphan), false)
-      assert.equal(fs.existsSync(ordinary), true)
-      assert.equal(fs.existsSync(path.join(ordinary, 'ordinary.bin')), true)
-    } finally {
-      await daemon.close()
-    }
-  })
-})
 
 test('oversize stage is bounded and sanitized', async () => {
   await withHome(async (homeDir) => {
     const daemon = await startControlPlane(homeDir)
     try {
       const { client, binding, token } = await configuredClient(homeDir, daemon, 'chatgpt', 'oversize')
-      const before = markerBundles(homeDir)
+      const before = attachmentBundles(homeDir)
       const bytes = new Uint8Array(maxStageBytes + 1)
       await assertLocalHttpError(client.stage(binding.providerBindingRef, bytes), 400, 'invalid_input')
-      assert.deepEqual(markerBundles(homeDir), before)
+      assert.deepEqual(attachmentBundles(homeDir), before)
       assert.equal(daemon.store.webAiCounts().stagedAttachments, 0)
       const raw = await fetch(`${daemon.origin}/v1/private/provider-turn/bindings/${encodeURIComponent(binding.providerBindingRef)}/attachments`, {
         method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'text/markdown' }, body: bytes,
       })
       assert.equal(raw.status, 400)
       assertSanitized(await raw.json(), token)
-      assert.deepEqual(markerBundles(homeDir), before)
+      assert.deepEqual(attachmentBundles(homeDir), before)
       assert.equal(daemon.store.webAiCounts().stagedAttachments, 0)
     } finally {
       await daemon.close()
@@ -103,17 +80,17 @@ test('unsupported binding stages through local-http but fails closed before job 
     try {
       const { ManagedProfileRegistry } = await import(profileRegistry)
       const registry = new ManagedProfileRegistry(homeDir)
-      const profile = await registry.addProfile({ slug: 'unsupported', lifecycle: 'ready' })
+      const profile = await registry.addProfile({ slug: 'unsupported' })
       const token = fs.readFileSync(path.join(homeDir, 'daemon.token'), 'utf8').trim()
       const client = createLocalHttpClient({ baseUrl: daemon.origin, token })
-      const body = JSON.stringify({ provider: 'perplexity', profileId: profile.id })
+      const body = JSON.stringify({ provider: 'perplexity', profileId: profile.slug })
       const missing = await fetch(`${daemon.origin}/v1/private/provider-turn/bindings`, { method: 'POST', headers: { 'content-type': 'application/json' }, body })
       assert.equal(missing.status, 401)
       const wrong = await fetch(`${daemon.origin}/v1/private/provider-turn/bindings`, { method: 'POST', headers: { authorization: 'Bearer wrong', 'content-type': 'application/json' }, body })
       assert.equal(wrong.status, 403)
       const legacy = await fetch(`${daemon.origin}/v1/web-ai/bindings`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body })
       assert.equal(legacy.status, 404)
-      const binding = await client.bind('perplexity', profile.id)
+      const binding = await client.bind('perplexity', profile.slug)
       assert.deepEqual(binding.capabilities.supportedCapabilities, ['conversation.chat'])
       const attachment = await client.stage(binding.providerBindingRef, new TextEncoder().encode('# system prompt\n'))
       const request = requestFor(binding, attachment, '4')
@@ -134,7 +111,7 @@ test('continuation reuses the proved provider conversation in the same process',
       const first = await startTurn(client, binding, 'a', 'bootstrap')
       const firstMapping = daemon.store.getWebAiTurn(first.turnRef)
       const firstJob = daemon.store.getJob(firstMapping.job_id)
-      const firstJobState = daemon.store.takeNextJob({ job_id_prefix: firstJob.job_id }, 'playwright', firstJob.profile_id)
+      const firstJobState = daemon.store.takeNextJob({ job_id_prefix: firstJob.job_id }, firstJob.profile_id)
       assert.ok(firstJobState)
       daemon.store.recordProviderSubmission(firstJobState.job_id)
       daemon.store.upsertProviderTaskConversation({
@@ -193,7 +170,7 @@ test('authenticated V0 routes sanitize internal configuration failures', async (
       fs.writeFileSync(path.join(homeDir, 'config.json'), poison)
       const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' }
       const bind = await fetch(`${daemon.origin}/v1/private/provider-turn/bindings`, {
-        method: 'POST', headers, body: JSON.stringify({ provider: 'chatgpt', profileId: '00000000-0000-0000-0000-000000000000' }),
+        method: 'POST', headers, body: JSON.stringify({ provider: 'chatgpt', profileId: 'sanitizer' }),
       })
       assert.equal(bind.status, 500)
       const bindBody = await bind.json()
@@ -339,7 +316,7 @@ test('requestRef cancellation returns not-found before start and compact cancell
   })
 })
 
-test('queued cancellation deletes its bundle and restart removes a retained cancelled marker', async () => {
+test('queued cancellation deletes its bundle and restart forgets its transient turn', async () => {
   await withHome(async (homeDir) => {
     let daemon = await startControlPlane(homeDir)
     try {
@@ -353,14 +330,10 @@ test('queued cancellation deletes its bundle and restart removes a retained canc
       assert.equal(cancelled.attachmentDelivery.status, 'pending')
       const bundle = path.join(homeDir, 'attachments', staged.bundle_id)
       assert.equal(fs.existsSync(bundle), false)
-      fs.mkdirSync(bundle, { recursive: true })
-      fs.writeFileSync(path.join(bundle, markerName), 'tokenless-web-ai-interaction-v0\n')
       await daemon.close()
       daemon = await startControlPlane(homeDir)
       assert.equal(fs.existsSync(bundle), false)
-      const afterRestart = await createLocalHttpClient({ baseUrl: daemon.origin, token }).read(turn.turnRef)
-      assert.equal(afterRestart.turnRef, turn.turnRef)
-      assert.equal(afterRestart.lifecycle, 'cancelled')
+      await assertLocalHttpError(createLocalHttpClient({ baseUrl: daemon.origin, token }).read(turn.turnRef), 400, 'invalid_input')
     } finally {
       await daemon.close()
     }
@@ -370,10 +343,10 @@ test('queued cancellation deletes its bundle and restart removes a retained canc
 async function configuredClient(homeDir, daemon, provider, slug) {
   const { ManagedProfileRegistry } = await import(profileRegistry)
   const registry = new ManagedProfileRegistry(homeDir)
-  const profile = await registry.addProfile({ slug, lifecycle: 'ready' })
+  const profile = await registry.addProfile({ slug })
   const token = fs.readFileSync(path.join(homeDir, 'daemon.token'), 'utf8').trim()
   const client = createLocalHttpClient({ baseUrl: daemon.origin, token })
-  const binding = await client.bind(provider, profile.id)
+  const binding = await client.bind(provider, profile.slug)
   return { client, binding, token }
 }
 
@@ -438,10 +411,10 @@ function assertSanitized(value, token, secret = '') {
   assert.equal(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(serialized), false)
 }
 
-function markerBundles(homeDir) {
+function attachmentBundles(homeDir) {
   const attachments = path.join(homeDir, 'attachments')
   if (!fs.existsSync(attachments)) return []
-  return fs.readdirSync(attachments).filter((entry) => fs.existsSync(path.join(attachments, entry, markerName))).sort()
+  return fs.readdirSync(attachments).sort()
 }
 
 async function withHome(run) {

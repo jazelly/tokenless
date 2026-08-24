@@ -22,7 +22,6 @@ export type DashboardJobStatus =
   | 'succeeded'
   | 'failed'
   | 'canceled'
-  | 'timed_out'
 
 export type DashboardProviderAccess =
   | 'guest'
@@ -55,6 +54,14 @@ export type DashboardProxy = {
 }
 
 export type DashboardProfileConfig = {
+  runtimeBinding?: {
+    runtimeId: string
+    family: string
+    browserId: string
+    executablePath: string
+    createdWithVersion: string
+    profileFormat: number
+  }
   roleLabel: string
   enabledProviders: string[]
   providerModes: { [provider: string]: DashboardProviderExecutionMode[] }
@@ -154,11 +161,7 @@ export type DashboardBrowserBinding = {
 
 export type DashboardProfile = {
   slug: string
-  id: string
-  lifecycle: 'created' | 'ready' | 'removed' | 'failed'
   isDefault: boolean
-  createdAt: string
-  updatedAt: string
   browserMode: 'native' | 'managed'
   browserBinding: DashboardBrowserBinding
   roleLabel: string

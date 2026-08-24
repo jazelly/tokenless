@@ -3,7 +3,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import { tokenlessHome } from '../bootstrap/home.js'
-import { DaemonRuntimeState } from '#tokenless-server/runtime/state.js'
+import { readTokenlessConfig } from '#tokenless-server/persistence/config.js'
 
 export const DEFAULT_DAEMON_URL = 'http://127.0.0.1:7331'
 export const MAX_DAEMON_REQUEST_BYTES = 900 * 1024
@@ -22,14 +22,12 @@ export type AgentRunClientOptions = DaemonClientOptions & {
   body?: Record<string, unknown> | undefined
 }
 
-export type DaemonJobStatus = 'queued' | 'running' | 'waiting_for_user' | 'succeeded' | 'failed' | 'canceled' | 'timed_out'
+export type DaemonJobStatus = 'queued' | 'running' | 'waiting_for_user' | 'succeeded' | 'failed' | 'canceled'
 
 export type DaemonJob = {
   job_id: string
-  execution_backend?: 'playwright'
-  profile_id?: string | null
+  profile_id: string
   provider: string
-  action: string
   status: DaemonJobStatus
   request_json: unknown
   result_json: unknown | null
@@ -43,10 +41,8 @@ export type DaemonJob = {
 
 export type CreateDaemonJobOptions = DaemonClientOptions & {
   provider: string
-  action: string
   requestJson?: unknown
-  executionBackend?: 'playwright' | undefined
-  profileId?: string | undefined
+  profileId: string
   jobId?: string | undefined
 }
 
@@ -56,7 +52,6 @@ export type GetDaemonJobOptions = DaemonClientOptions & {
 
 export type ListDaemonJobsOptions = DaemonClientOptions & {
   status?: string | undefined
-  executionBackend?: 'playwright' | undefined
   profileId?: string | undefined
   provider?: string | undefined
   taskId?: string | undefined
@@ -227,11 +222,7 @@ export type MenuBarSnapshot = {
 
 export type ControlProfile = {
   slug: string
-  id: string
   directory: string
-  lifecycle: 'created' | 'ready' | 'removed' | 'failed'
-  createdAt: string
-  updatedAt: string
   runtimeBinding?: {
     runtimeId: string
     family: string
@@ -258,6 +249,8 @@ export type ResolveControlProfileResponse = {
   config: Record<string, any> & { profiles: Record<string, any> }
 }
 
+export type ControlProfileRemoval = { slug: string; removed: true }
+
 type DaemonError = Error & {
   code?: string
   retryable?: boolean
@@ -266,10 +259,23 @@ type DaemonError = Error & {
 }
 
 export function daemonUrl(explicitUrl?: string) {
-  const value = explicitUrl || process.env.TOKENLESS_DAEMON_URL || DEFAULT_DAEMON_URL
+  const value = explicitUrl === undefined ? DEFAULT_DAEMON_URL : explicitUrl
   const normalized = value.replace(/\/+$/, '')
   validateDaemonUrl(normalized)
   return normalized
+}
+
+export async function resolveDaemonUrl({
+  explicitUrl,
+  homeDir = tokenlessHome(),
+}: {
+  explicitUrl?: string | undefined
+  homeDir?: string | undefined
+} = {}) {
+  const configuredUrl = explicitUrl === undefined
+    ? (await readTokenlessConfig(homeDir)).daemonUrl
+    : explicitUrl
+  return daemonUrl(configuredUrl ?? undefined)
 }
 
 export async function readDaemonToken({ homeDir = tokenlessHome() }: DaemonClientOptions = {}) {
@@ -329,15 +335,12 @@ export async function createDaemonJob({
   requestTimeoutMs,
   signal,
   provider,
-  action,
   requestJson = {},
-  executionBackend,
   profileId,
   jobId,
 }: CreateDaemonJobOptions) {
   assertDaemonRequestSize({
     provider,
-    action,
     request_json: requestJson,
   })
   const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
@@ -346,9 +349,7 @@ export async function createDaemonJob({
     path: '/v1/private/jobs',
     body: {
       provider,
-      action,
       request_json: requestJson,
-      execution_backend: executionBackend,
       profile_id: profileId,
       job_id: jobId,
     },
@@ -472,7 +473,6 @@ export async function listDaemonJobs({
   requestTimeoutMs,
   signal,
   status,
-  executionBackend,
   profileId,
   provider,
   taskId,
@@ -481,7 +481,6 @@ export async function listDaemonJobs({
   const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
   const query = new URLSearchParams()
   if (status) query.set('status', status)
-  if (executionBackend) query.set('execution_backend', executionBackend)
   if (profileId) query.set('profile_id', profileId)
   if (provider) query.set('provider', provider)
   if (taskId) query.set('task_id', taskId)
@@ -860,7 +859,7 @@ export async function clearControlProfiles(options: DaemonClientOptions & {
   profile?: string | undefined
   all?: boolean | undefined
 }) {
-  return controlRequest<{ cleared: Array<{ slug: string; id: string }>; defaultProfile: string | null }>(
+  return controlRequest<{ cleared: ControlProfileRemoval[]; defaultProfile: string | null }>(
     options,
     '/v1/private/control/profiles/clear',
     'POST',
@@ -878,7 +877,7 @@ export async function setDefaultControlProfile(options: DaemonClientOptions & { 
 }
 
 export async function removeControlProfile(options: DaemonClientOptions & { profile: string }) {
-  return controlRequest<{ profile: ControlProfile; defaultProfile: string | null }>(
+  return controlRequest<{ profile: ControlProfileRemoval; defaultProfile: string | null }>(
     options,
     `/v1/private/control/profiles/${encodeURIComponent(options.profile)}`,
     'DELETE',
@@ -1004,7 +1003,6 @@ export async function waitDaemonJobResult({
         status: job.status,
         jobId,
         provider: job.provider,
-        action: job.action,
         elapsedMs,
       })
     } else if (heartbeatMs > 0 && Date.now() - lastHeartbeatAt >= heartbeatMs) {
@@ -1014,7 +1012,6 @@ export async function waitDaemonJobResult({
         status: job.status,
         jobId,
         provider: job.provider,
-        action: job.action,
         elapsedMs,
       })
     }
@@ -1027,15 +1024,15 @@ export async function waitDaemonJobResult({
         compactOutput: compactDaemonOutput(job.result_json),
       }
     }
-    if (job.status === 'failed' || job.status === 'canceled' || job.status === 'timed_out') {
+    if (job.status === 'failed' || job.status === 'canceled') {
       return {
         ok: false,
         status: job.status,
         job,
         error: job.error_json ?? {
-          code: job.status === 'canceled' ? 'job_canceled' : 'daemon_job_timed_out',
+          code: job.status === 'canceled' ? 'job_canceled' : 'daemon_job_failed',
           message: `Daemon job ended with status ${job.status}.`,
-          retryable: job.status === 'timed_out',
+          retryable: false,
         },
       }
     }
@@ -1216,6 +1213,9 @@ function validateDaemonUrl(value: string) {
   if (parsed.protocol !== 'http:' || !isLoopbackHostname(parsed.hostname)) {
     throw daemonClientError('invalid_daemon_url', 'Tokenless daemon URL must be a loopback HTTP URL.', false)
   }
+  if (parsed.port === '0') {
+    throw daemonClientError('invalid_daemon_url', 'Tokenless daemon URL must use a positive TCP port.', false)
+  }
 }
 
 function isLoopbackHostname(hostname: string) {
@@ -1337,29 +1337,28 @@ async function authenticatedDaemonAccess({
   const { ensureDaemonReady, probeDaemonReady } = await import('../bootstrap/runtime.js')
   const timeoutMs = Math.min(normalizedTimeoutMs(requestTimeoutMs), 1_000)
   let lastReady: Awaited<ReturnType<typeof probeDaemonReady>> | null = null
-  for (const candidateUrl of await daemonEndpointCandidates({ explicitDaemonUrl, homeDir })) {
-    const ready = await probeDaemonReady({
-      daemonUrl: candidateUrl,
+  const candidateUrl = await resolveDaemonUrl({ explicitUrl: explicitDaemonUrl, homeDir })
+  const ready = await probeDaemonReady({
+    daemonUrl: candidateUrl,
+    homeDir,
+    daemonToken: token,
+    timeoutMs,
+  })
+  lastReady = ready
+  if (ready.ok) return { token, daemonUrl: ready.url }
+  if (
+    ready.identityVerified === true &&
+    ready.sameHomeVerified === true &&
+    (ready.code === 'daemon_version_mismatch' || ready.code === 'daemon_control_api_revision_mismatch')
+  ) {
+    const replacement = await ensureDaemonReady({
       homeDir,
-      daemonToken: token,
-      timeoutMs,
+      daemonUrl: ready.url,
+      timeoutMs: Math.max(10_000, normalizedTimeoutMs(requestTimeoutMs)),
     })
-    lastReady = ready
-    if (ready.ok) return { token, daemonUrl: ready.url }
-    if (
-      ready.identityVerified === true &&
-      ready.sameHomeVerified === true &&
-      (ready.code === 'daemon_version_mismatch' || ready.code === 'daemon_control_api_revision_mismatch')
-    ) {
-      const replacement = await ensureDaemonReady({
-        homeDir,
-        daemonUrl: ready.url,
-        timeoutMs: Math.max(10_000, normalizedTimeoutMs(requestTimeoutMs)),
-      })
-      return {
-        token: await readDaemonToken({ homeDir }),
-        daemonUrl: replacement.url,
-      }
+    return {
+      token: await readDaemonToken({ homeDir }),
+      daemonUrl: replacement.url,
     }
   }
   const failedReady = lastReady && !lastReady.ok ? lastReady : null
@@ -1368,26 +1367,6 @@ async function authenticatedDaemonAccess({
     failedReady?.message ?? 'Tokenless daemon identity could not be verified; refusing to send its control token.',
     failedReady?.code === 'daemon_unavailable'
   )
-}
-
-async function daemonEndpointCandidates({
-  explicitDaemonUrl,
-  homeDir,
-}: {
-  explicitDaemonUrl?: string | undefined
-  homeDir: string
-}) {
-  const preferredUrl = daemonUrl(explicitDaemonUrl)
-  const urls: string[] = []
-  const state = await DaemonRuntimeState.openIfExists(homeDir)
-  try {
-    const endpoint = state?.endpoint()
-    if (endpoint?.origin) urls.push(endpoint.origin)
-  } finally {
-    state?.close()
-  }
-  urls.push(preferredUrl)
-  return [...new Set(urls)]
 }
 
 function combinedRequestSignal(timeoutMs: number | undefined, signal?: AbortSignal) {

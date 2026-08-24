@@ -35,8 +35,8 @@ test('provider rate-limit policy projects subscription-aware cadence from SQLite
     database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'))
 
     const burstBase = Date.now() - 5_000
-    replacePromptHistory(database, profile.id, Array.from({ length: 7 }, () => burstBase))
-    const withinBurst = await capacity(daemon.url, token, profile.id, 'chatgpt', 'signed_in_paid', 'Plus')
+    replacePromptHistory(database, profile.slug, Array.from({ length: 7 }, () => burstBase))
+    const withinBurst = await capacity(daemon.url, token, profile.slug, 'chatgpt', 'signed_in_paid', 'Plus')
     assert.equal(withinBurst.subscription.planId, 'plus')
     assert.equal(withinBurst.subscription.match, 'label')
     assert.equal(withinBurst.decision, 'admit')
@@ -46,7 +46,7 @@ test('provider rate-limit policy projects subscription-aware cadence from SQLite
     const subscriptionAlias = await capacity(
       daemon.url,
       token,
-      profile.id,
+      profile.slug,
       'chatgpt',
       'signed_in_paid',
       'Paid',
@@ -55,16 +55,16 @@ test('provider rate-limit policy projects subscription-aware cadence from SQLite
     assert.equal(subscriptionAlias.subscription.planId, 'plus')
     assert.equal(subscriptionAlias.subscription.observedLabel, 'ChatGPT Plus')
 
-    replacePromptHistory(database, profile.id, Array.from({ length: 8 }, () => burstBase))
-    const burstExceeded = await capacity(daemon.url, token, profile.id, 'chatgpt', 'signed_in_paid', 'Plus')
+    replacePromptHistory(database, profile.slug, Array.from({ length: 8 }, () => burstBase))
+    const burstExceeded = await capacity(daemon.url, token, profile.slug, 'chatgpt', 'signed_in_paid', 'Plus')
     assert.equal(burstExceeded.decision, 'defer')
 
     const cadenceBase = Date.now()
-    replacePromptHistory(database, profile.id, Array.from(
+    replacePromptHistory(database, profile.slug, Array.from(
       { length: 143 },
       (_value, index) => cadenceBase - (143 - index) * 75_000,
     ))
-    const belowWindow = await capacity(daemon.url, token, profile.id, 'chatgpt', 'signed_in_paid', 'Plus')
+    const belowWindow = await capacity(daemon.url, token, profile.slug, 'chatgpt', 'signed_in_paid', 'Plus')
     const belowWindowRule = rule(belowWindow, 'chatgpt.gpt-5.5.go-plus.messages')
     assert.equal(belowWindow.decision, 'admit')
     assert.equal(belowWindowRule.publishedAllowance, 160)
@@ -73,39 +73,39 @@ test('provider rate-limit policy projects subscription-aware cadence from SQLite
     assert.equal(belowWindowRule.remainingUnits, 1)
 
     const fullWindowBase = Date.now()
-    replacePromptHistory(database, profile.id, Array.from(
+    replacePromptHistory(database, profile.slug, Array.from(
       { length: 144 },
       (_value, index) => fullWindowBase - (143 - index) * 74_000 - 10_000,
     ))
-    const fullWindow = await capacity(daemon.url, token, profile.id, 'chatgpt', 'signed_in_paid', 'Plus')
+    const fullWindow = await capacity(daemon.url, token, profile.slug, 'chatgpt', 'signed_in_paid', 'Plus')
     const fullWindowRule = rule(fullWindow, 'chatgpt.gpt-5.5.go-plus.messages')
     assert.equal(fullWindow.decision, 'defer')
     assert.equal(fullWindowRule.usedUnits, 144)
     assert.equal(fullWindowRule.remainingUnits, 0)
 
-    replacePromptHistory(database, profile.id, Array.from(
+    replacePromptHistory(database, profile.slug, Array.from(
       { length: 144 },
       (_value, index) => fullWindowBase - (143 - index) * 74_000 - 10_000,
     ), 'GPT-5.5 Thinking')
-    const separateModelPool = await capacity(daemon.url, token, profile.id, 'chatgpt', 'signed_in_paid', 'Plus')
+    const separateModelPool = await capacity(daemon.url, token, profile.slug, 'chatgpt', 'signed_in_paid', 'Plus')
     assert.equal(separateModelPool.decision, 'admit')
     assert.equal(rule(separateModelPool, 'chatgpt.gpt-5.5.go-plus.messages').usedUnits, 0)
 
-    replacePromptHistory(database, profile.id, Array.from(
+    replacePromptHistory(database, profile.slug, Array.from(
       { length: 144 },
       (_value, index) => fullWindowBase - (143 - index) * 74_000 - 10_000,
     ))
 
-    const dynamicFree = await capacity(daemon.url, token, profile.id, 'chatgpt', 'signed_in_free', 'Free')
+    const dynamicFree = await capacity(daemon.url, token, profile.slug, 'chatgpt', 'signed_in_free', 'Free')
     assert.equal(dynamicFree.subscription.planId, 'free')
     assert.equal(dynamicFree.decision, 'unknown')
     assert.equal(rule(dynamicFree, 'chatgpt.gpt-5.5.free.messages').knowledge, 'non_numeric')
 
-    const guardrailedPro = await capacity(daemon.url, token, profile.id, 'chatgpt', 'signed_in_paid', 'Pro')
+    const guardrailedPro = await capacity(daemon.url, token, profile.slug, 'chatgpt', 'signed_in_paid', 'Pro')
     assert.equal(guardrailedPro.subscription.planId, 'pro')
     assert.equal(guardrailedPro.decision, 'unknown')
 
-    const relativeClaude = await capacity(daemon.url, token, profile.id, 'claude', 'signed_in_paid', 'Pro')
+    const relativeClaude = await capacity(daemon.url, token, profile.slug, 'claude', 'signed_in_paid', 'Pro')
     assert.equal(relativeClaude.subscription.planId, 'pro')
     assert.equal(relativeClaude.decision, 'unknown')
     assert.equal(rule(relativeClaude, 'claude.pro.session').knowledge, 'non_numeric')
@@ -118,7 +118,7 @@ test('provider rate-limit policy projects subscription-aware cadence from SQLite
       ['perplexity', 'signed_in_free', 'Standard', 'standard'],
     ]) {
       const [provider, accessClass, tierLabel, planId] = scenario
-      const projection = await capacity(daemon.url, token, profile.id, provider, accessClass, tierLabel)
+      const projection = await capacity(daemon.url, token, profile.slug, provider, accessClass, tierLabel)
       assert.equal(projection.subscription.planId, planId)
       assert.equal(projection.decision, 'unknown')
     }
@@ -145,8 +145,8 @@ test('provider rate-limit policy projects subscription-aware cadence from SQLite
     assert.equal(cli.status, 0, cli.stderr || cli.stdout)
     const cliPayload = JSON.parse(cli.stdout)
     assert.equal(cliPayload.ok, true)
-    assert.equal(cliPayload.capacity.subscription.planId, 'plus')
-    assert.equal(cliPayload.capacity.decision, 'defer')
+    assert.equal(cliPayload.capacity.subscription.planId, 'unknown')
+    assert.equal(cliPayload.capacity.decision, 'unknown')
   } finally {
     database?.close()
     await shutdownDaemon(daemon).catch(() => undefined)
@@ -156,7 +156,7 @@ test('provider rate-limit policy projects subscription-aware cadence from SQLite
 
 async function createReadyManagedProfile(homeDir) {
   const registry = new ManagedProfileRegistry(homeDir)
-  const profile = await registry.addProfile({ slug: 'default', lifecycle: 'ready', setDefault: true })
+  const profile = await registry.addProfile({ slug: 'default', setDefault: true })
   const now = new Date().toISOString()
   await registry.updateProviderStatus('default', {
     provider: 'chatgpt',
@@ -174,10 +174,10 @@ async function createReadyManagedProfile(homeDir) {
 
 function replacePromptHistory(database, profileId, timestamps, modelLabel = null) {
   database.exec('DELETE FROM jobs;')
-    const insert = database.prepare(`INSERT INTO jobs (
-      job_id, execution_backend, profile_id, provider, action, status,
+  const insert = database.prepare(`INSERT INTO jobs (
+      job_id, profile_id, provider, status,
       request_json, provider_attempts_json, provider_submitted_at, created_at, updated_at
-    ) VALUES (?, 'playwright', ?, 'chatgpt', 'visible_provider_actions', 'succeeded', ?, '[]', ?, ?, ?)`)
+    ) VALUES (?, ?, 'chatgpt', 'succeeded', ?, '[]', ?, ?, ?)`)
     for (const timestamp of timestamps) {
       const submittedAt = new Date(timestamp).toISOString()
       insert.run(

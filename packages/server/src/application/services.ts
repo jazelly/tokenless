@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import {
-  deleteTokenlessProfileConfig,
+  configPath,
   readTokenlessConfig,
   upsertTokenlessProfileConfig,
   writeTokenlessConfig,
@@ -14,7 +14,6 @@ import { normalizeBrowserVisibility } from '../browser-visibility.js'
 import {
   createManagedPlaywrightJobRequest,
   MANAGED_PLAYWRIGHT_JOB_ACTION,
-  PLAYWRIGHT_EXECUTION_BACKEND,
 } from '../browser/job-contract.js'
 import { VISIBLE_ACTIONS } from '../providers/contracts.js'
 import { isG4fDirectOnlyProvider } from '../providers/direct/g4f-map.js'
@@ -26,7 +25,6 @@ import {
   normalizeTaskCapabilityRequirements,
   resolveTaskCapabilityRoutes,
   TASK_CAPABILITY_CATALOG_SCHEMA_ID,
-  type ProviderAccessClass,
   type ProviderId,
 } from '../providers/registry.js'
 import {
@@ -96,14 +94,12 @@ export class TokenlessApplicationServices {
   }
 
   async snapshot(): Promise<DashboardSnapshot> {
-    await this.reconcileProviderObservations()
     const [config, profileData, jobs] = await Promise.all([
-      this.migratedConfig(),
+      this.readConfig(),
       this.profiles.read(),
       Promise.resolve(this.store.listJobs({ limit: 200 })),
     ])
     const profiles = Object.values(profileData.profiles)
-      .filter((profile) => profile.lifecycle !== 'removed')
       .sort((left, right) => left.slug.localeCompare(right.slug))
     const runtime = this.runtimeController?.status() ?? {
       status: 'stopped' as const,
@@ -207,7 +203,6 @@ export class TokenlessApplicationServices {
       Promise.resolve(this.store.listJobs({ limit: 10, order_by: 'updated_at', conversation_only: true })),
     ])
     const profiles = Object.values(registry.profiles)
-      .filter((profile) => profile.lifecycle !== 'removed')
     const runtime = this.runtimeController?.status() ?? {
       status: 'stopped' as const,
       activeProfileCount: 0,
@@ -236,17 +231,16 @@ export class TokenlessApplicationServices {
 
   async controlState() {
     const [config, registry, outputSavings] = await Promise.all([
-      this.migratedConfig(),
+      this.readConfig(),
       this.profiles.read(),
       this.outputSavingsState(),
     ])
     return {
       config,
       profiles: Object.values(registry.profiles)
-        .filter((profile) => profile.lifecycle !== 'removed')
         .sort((left, right) => left.slug.localeCompare(right.slug)),
       defaultProfile: registry.defaultProfile,
-      profileRegistryPath: this.profiles.paths.databasePath,
+      profileRegistryPath: configPath(this.store.homeDir),
       runtime: this.runtimeController?.status() ?? {
         status: 'stopped' as const,
         activeProfileCount: 0,
@@ -261,7 +255,7 @@ export class TokenlessApplicationServices {
     const [profile, registry, config] = await Promise.all([
       this.profiles.resolveProfile(slug),
       this.profiles.read(),
-      this.migratedConfig(),
+      this.readConfig(),
     ])
     return {
       profile,
@@ -293,7 +287,7 @@ export class TokenlessApplicationServices {
     requireKnownFields(input, ['profile', 'provider', 'requirements', 'executionMode'])
     const requirements = normalizeTaskCapabilityRequirements(input.requirements)
     const profile = await this.profiles.resolveProfile(input.profile)
-    const config = await this.migratedConfig()
+    const config = await this.readConfig()
     const configured = profileConfig(config, profile.slug)
     const explicitProvider = input.provider === undefined
       ? undefined
@@ -311,7 +305,7 @@ export class TokenlessApplicationServices {
         ok: false as const,
         code: 'provider_not_enabled',
         message: `Provider '${explicitProvider}' is not enabled for profile '${profile.slug}'.`,
-        context: { profile: { slug: profile.slug, id: profile.id }, provider: explicitProvider },
+        context: { profile: { slug: profile.slug }, provider: explicitProvider },
       }
     }
     const candidates = explicitProvider
@@ -348,7 +342,7 @@ export class TokenlessApplicationServices {
         ? `No configured provider is currently usable for profile '${profile.slug}'. Run "tokenless setup" or sign in to a provider, then rerun the command.`
         : decision.message,
       context: {
-        profile: { slug: profile.slug, id: profile.id },
+        profile: { slug: profile.slug },
         requirements: decision.requirements,
         providers: providerUnavailable ? candidates : decision.evaluated,
         usableProviders: explicitProvider
@@ -391,10 +385,9 @@ export class TokenlessApplicationServices {
     const profile = await this.profiles.addProfile({
       slug: input.slug,
       setDefault: input.setDefault === true,
-      lifecycle: 'ready',
       ...(runtimeBinding === undefined ? {} : { runtimeBinding }),
     })
-    const config = await this.migratedConfig()
+    const config = await this.readConfig()
     const configured = config.profiles[profile.slug]
     if (!configured) {
       throw applicationError('profile_not_configured', `Managed profile '${profile.slug}' has no configuration.`)
@@ -428,8 +421,7 @@ export class TokenlessApplicationServices {
       const cleared = []
       for (const profile of targets) {
         const removed = await this.profiles.removeProfile(profile.slug, { confirmDelete: true })
-        await deleteTokenlessProfileConfig({ homeDir: this.store.homeDir, slug: profile.slug })
-        cleared.push({ slug: removed.slug, id: removed.id })
+        cleared.push(removed)
       }
       return {
         cleared,
@@ -452,7 +444,6 @@ export class TokenlessApplicationServices {
     try {
       this.assertProfilesHaveNoPendingJobs([target])
       const profile = await this.profiles.removeProfile(slug, { confirmDelete: true })
-      await deleteTokenlessProfileConfig({ homeDir: this.store.homeDir, slug })
       return { profile, defaultProfile: (await this.profiles.read()).defaultProfile }
     } finally {
       await this.runtimeController?.wake()
@@ -490,7 +481,7 @@ export class TokenlessApplicationServices {
     ])
     let browserExecutablePath = input.browserExecutablePath
     if (typeof browserExecutablePath === 'string') {
-      const current = await this.migratedConfig()
+      const current = await this.readConfig()
       const browser = normalizeBrowserSelection(input.browser ?? current.browser)
       if (browser !== 'chrome' && browser !== 'brave') {
         throw applicationError('native_chrome_required', 'Tokenless native mode supports Google Chrome or Brave Browser.')
@@ -526,7 +517,7 @@ export class TokenlessApplicationServices {
   }
 
   async controlOutputSavingsState() {
-    const config = await this.migratedConfig()
+    const config = await this.readConfig()
     const runtime = await this.outputSavingsRuntimeManager.inspect()
     const state = {
       enabled: config.outputSavings.enabled,
@@ -581,7 +572,7 @@ export class TokenlessApplicationServices {
 
   async updateConfig(input: DashboardConfigUpdate): Promise<DashboardConfig> {
     requireKnownFields(input, ['browser', 'browserExecutablePath', 'browserVisibility', 'language', 'router'])
-    const current = await this.migratedConfig()
+    const current = await this.readConfig()
     const browserVisibility = input.browserVisibility === undefined
       ? 'headed'
       : normalizeBrowserVisibility(input.browserVisibility)
@@ -652,7 +643,7 @@ export class TokenlessApplicationServices {
       ? 'headed'
       : requiredVisibility(input.browserVisibility)
     requireNativeChromeVisibility(browserVisibility)
-    const currentConfig = await this.migratedConfig()
+    const currentConfig = await this.readConfig()
     const language = input.language === undefined ? currentConfig.language : input.language
     if (language !== 'en' && language !== 'zh-CN') {
       throw applicationError('invalid_language', 'Language must be en or zh-CN.')
@@ -731,7 +722,6 @@ export class TokenlessApplicationServices {
     if (!profile) {
       profile = await this.profiles.addProfile({
         slug,
-        lifecycle: 'ready',
         runtimeBinding: bindingForProfile,
         setDefault: input.setDefault === true,
       })
@@ -740,7 +730,7 @@ export class TokenlessApplicationServices {
     }
     if (input.setDefault === true) profile = await this.profiles.setDefault(slug)
     await this.updateProfileConfig(profile, profileConfiguration)
-    const savedConfig = await this.migratedConfig()
+    const savedConfig = await this.readConfig()
     const configured = profileConfig(savedConfig, profile.slug)
     return publicProfile(
       profile,
@@ -769,12 +759,11 @@ export class TokenlessApplicationServices {
     }
     const profile = await this.profiles.addProfile({
       slug,
-      lifecycle: 'ready',
       setDefault: input.setDefault === true,
     })
     try {
       await this.updateProfileConfig(profile, profileConfiguration)
-      const config = await this.migratedConfig()
+      const config = await this.readConfig()
       const browser = await this.inspectConfiguredBrowser(config)
       return publicProfile(profile, (await this.profiles.read()).defaultProfile, profileConfig(config, profile.slug), config.browser, browser.runtime?.actualVersion ?? null)
     } catch (error) {
@@ -786,7 +775,7 @@ export class TokenlessApplicationServices {
   async updateProfile(slug: string, input: DashboardProfileUpdate): Promise<DashboardProfile> {
     requireKnownFields(input, ['roleLabel', 'enabledProviders', 'providerModes', 'browserVisibility', 'setDefault'])
     let profile = await this.profiles.resolveProfile(slug)
-    const current = profileConfig(await this.migratedConfig(), profile.slug)
+    const current = profileConfig(await this.readConfig(), profile.slug)
     const browserVisibility = input.browserVisibility === undefined
       ? current.browserVisibility
       : requiredVisibility(input.browserVisibility)
@@ -802,7 +791,7 @@ export class TokenlessApplicationServices {
     }
     if (input.setDefault === true) profile = await this.profiles.setDefault(slug)
     await this.updateProfileConfig(profile, next)
-    const config = await this.migratedConfig()
+    const config = await this.readConfig()
     const browser = await this.inspectConfiguredBrowser(config)
     return publicProfile(profile, (await this.profiles.read()).defaultProfile, profileConfig(config, profile.slug), config.browser, browser.runtime?.actualVersion ?? null)
   }
@@ -814,7 +803,6 @@ export class TokenlessApplicationServices {
     try {
       this.assertProfilesHaveNoPendingJobs([target])
       const profile = await this.profiles.removeProfile(slug, { confirmDelete: true })
-      await deleteTokenlessProfileConfig({ homeDir: this.store.homeDir, slug })
       return { slug: profile.slug, removed: true }
     } finally {
       await this.runtimeController?.wake()
@@ -824,7 +812,7 @@ export class TokenlessApplicationServices {
   private assertProfilesHaveNoPendingJobs(profiles: readonly ManagedProfileRecord[]) {
     for (const profile of profiles) {
       const pending = (['queued', 'running', 'waiting_for_user'] as const).some((status) => (
-        this.store.listJobs({ profile_id: profile.id, status, limit: 1 }).length > 0
+        this.store.listJobs({ profile_id: profile.slug, status, limit: 1 }).length > 0
       ))
       if (pending) {
         throw applicationError(
@@ -842,7 +830,7 @@ export class TokenlessApplicationServices {
       throw applicationError('provider_not_supported', 'Provider is not supported.')
     }
     assertBrowserProviderActionAllowed(provider.id)
-    const configured = profileConfig(await this.migratedConfig(), profile.slug)
+    const configured = profileConfig(await this.readConfig(), profile.slug)
     if (!configured.enabledProviders.includes(provider.id)) {
       throw applicationError('provider_not_enabled', 'Enable the provider for this profile before opening it.')
     }
@@ -854,7 +842,7 @@ export class TokenlessApplicationServices {
 
   async refreshProviderReadiness(slug: string): Promise<DashboardProviderReadinessRefresh> {
     const profile = await this.profiles.resolveProfile(slug)
-    const configured = profileConfig(await this.migratedConfig(), profile.slug)
+    const configured = profileConfig(await this.readConfig(), profile.slug)
     const enabled = new Set(configured.enabledProviders)
     const batchId = randomUUID()
     const jobs = listProviderInstances()
@@ -897,10 +885,8 @@ export class TokenlessApplicationServices {
     })
     const job = this.store.createJob({
       provider,
-      action: MANAGED_PLAYWRIGHT_JOB_ACTION,
       request_json: request,
-      execution_backend: PLAYWRIGHT_EXECUTION_BACKEND,
-      profile_id: profile.id,
+      profile_id: profile.slug,
       ...(identity === undefined ? {} : { job_id: identity.jobId }),
     })
     return publicJobSummary(publicView(job), [profile])
@@ -923,7 +909,7 @@ export class TokenlessApplicationServices {
       throw applicationError('provider_not_supported', 'Provider is not supported.')
     }
     assertBrowserProviderActionAllowed(provider.id)
-    const configured = profileConfig(await this.migratedConfig(), profile.slug)
+    const configured = profileConfig(await this.readConfig(), profile.slug)
     if (!configured.enabledProviders.includes(provider.id)) {
       throw applicationError('provider_not_enabled', 'Enable the provider for this profile before changing controls.')
     }
@@ -940,10 +926,8 @@ export class TokenlessApplicationServices {
     })
     const job = this.store.createJob({
       provider: provider.id,
-      action: MANAGED_PLAYWRIGHT_JOB_ACTION,
       request_json: request,
-      execution_backend: PLAYWRIGHT_EXECUTION_BACKEND,
-      profile_id: profile.id,
+      profile_id: profile.slug,
     })
     await this.runtimeController?.wake()
     return publicJobSummary(job, [profile])
@@ -952,7 +936,7 @@ export class TokenlessApplicationServices {
   async openProfile(slug: string): Promise<DashboardRuntimeOpenResult> {
     const profile = await this.profiles.resolveProfile(slug)
     if (!this.runtimeController) throw applicationError('browser_runtime_unavailable', 'Browser runtime is unavailable.')
-    return await this.runtimeController.openProfile(profile.id, 'headed')
+    return await this.runtimeController.openProfile(profile.slug, 'headed')
   }
 
   async quiesceRuntime(): Promise<DashboardRuntimeStatus> {
@@ -965,7 +949,7 @@ export class TokenlessApplicationServices {
     return publicJobDetail(await this.store.cancelJob(jobId, { source: 'ui' }), await this.profiles.listProfiles())
   }
 
-  private async migratedConfig() {
+  private async readConfig() {
     return await readTokenlessConfig(this.store.homeDir)
   }
 
@@ -1037,7 +1021,7 @@ export class TokenlessApplicationServices {
       },
       {
         id: 'profiles',
-        state: profiles.some((profile) => profile.lifecycle === 'ready') ? 'ok' : 'action_required',
+        state: profiles.length > 0 ? 'ok' : 'action_required',
         message: profiles.length === 0 ? 'No managed profile is configured.' : `${profiles.length} managed profile(s) registered.`,
       },
       {
@@ -1060,7 +1044,7 @@ export class TokenlessApplicationServices {
   }
 
   private async outputSavingsState(config?: TokenlessConfig) {
-    const resolvedConfig = config ?? await this.migratedConfig()
+    const resolvedConfig = config ?? await this.readConfig()
     const runtime = await this.outputSavingsRuntimeManager.inspect()
     return {
       enabled: resolvedConfig.outputSavings.enabled,
@@ -1071,43 +1055,6 @@ export class TokenlessApplicationServices {
       basis: 'visible_assistant_text' as const,
       runtime,
       summary: publicOutputSavingsSummary(this.store.outputSavingsSummary()),
-    }
-  }
-
-  private async reconcileProviderObservations() {
-    const profiles = await this.profiles.listProfiles()
-    const byId = new Map(profiles.map((profile) => [profile.id, profile]))
-    for (const job of this.store.listJobs({ status: 'succeeded', limit: 200 })) {
-      const request = record(job.request_json)
-      if (!job.profile_id || !request || typeof request.taskId !== 'string' || !request.taskId.startsWith('ui:readiness:')) continue
-      const profile = byId.get(job.profile_id)
-      if (!profile) continue
-      const result = record(job.result_json)
-      const responses = Array.isArray(result?.responses) ? result.responses : []
-      const response = responses.find((entry) => record(entry)?.action === VISIBLE_ACTIONS.AUTH_STATUS)
-      const responseRecord = record(response)
-      const observation = responseRecord?.ok === true ? record(responseRecord.result) : null
-      if (!observation || !['authenticated', 'unauthenticated', 'unknown'].includes(String(observation.state))) continue
-      const current = profile.lastObservedAuth[job.provider as ProviderId]
-      if (current && Date.parse(current.checkedAt) >= Date.parse(job.updated_at)) continue
-      const account = record(observation.account)
-      const tier = record(account?.tier)
-      await this.profiles.updateProviderStatus(profile.slug, {
-        provider: job.provider as ProviderId,
-        auth: observation.state as 'authenticated' | 'unauthenticated' | 'unknown',
-        access: observation.access as ProviderAccessClass,
-        checkedAt: job.updated_at,
-        ...(observation.state === 'authenticated' && account && tier ? {
-          account: {
-            name: typeof account.name === 'string' ? account.name : null,
-            subscription: typeof account.subscription === 'string' ? account.subscription : null,
-            tier: {
-              class: tier.class as 'signed_in_free' | 'signed_in_paid' | 'signed_in_unknown',
-              label: typeof tier.label === 'string' ? tier.label : null,
-            },
-          },
-        } : {}),
-      })
     }
   }
 
@@ -1151,11 +1098,7 @@ function publicProfile(
       }
   return {
     slug: profile.slug,
-    id: profile.id,
-    lifecycle: profile.lifecycle,
     isDefault: profile.slug === defaultSlug,
-    createdAt: profile.createdAt,
-    updatedAt: profile.updatedAt,
     browserMode: browserBinding.family === 'system' ? 'native' as const : 'managed' as const,
     browserBinding,
     roleLabel: configured.roleLabel,
@@ -1198,7 +1141,7 @@ function providerProfileState(
       id: route.capability,
       support: route.support,
     })),
-    controls: latestProviderControls(jobs, profile.id, provider),
+    controls: latestProviderControls(jobs, profile.slug, provider),
   }
 }
 
@@ -1271,9 +1214,9 @@ function publicJobSummary(
   return {
     jobId: job.job_id,
     profileId: job.profile_id,
-    profileSlug: profiles.find((profile) => profile.id === job.profile_id)?.slug ?? null,
+    profileSlug: profiles.find((profile) => profile.slug === job.profile_id)?.slug ?? null,
     provider: job.provider,
-    action: job.action,
+    action: MANAGED_PLAYWRIGHT_JOB_ACTION,
     status: job.status,
     taskId: typeof request?.taskId === 'string' ? request.taskId : null,
     chatTitle: publicChatTitle(request),
@@ -1297,7 +1240,7 @@ function menuBarConversation(job: JobView | Job, profiles: ManagedProfileRecord[
   const prompt = publicPrompt(request)
   const title = menuBarTitle(request, prompt)
   if (!title) return null
-  const profile = profiles.find((candidate) => candidate.id === job.profile_id)
+  const profile = profiles.find((candidate) => candidate.slug === job.profile_id)
   const providers = publicProviders(job)
   return {
     jobId: job.job_id,

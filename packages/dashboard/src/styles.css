@@ -146,7 +146,7 @@ a.data-row:hover, button.data-row:hover { background: #faf9f7; }
 .status-dot.ok { background: var(--green); }
 .job-state { display: block; width: 8px; height: 8px; flex: 0 0 auto; border-radius: 999px; background: var(--subtle); }
 .job-state.succeeded { background: var(--green); }
-.job-state.failed, .job-state.canceled, .job-state.timed_out { background: var(--red); }
+.job-state.failed, .job-state.canceled { background: var(--red); }
 .job-state.queued, .job-state.running, .job-state.waiting_for_user { background: var(--amber); }
 .mono-label { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
 .badge { display: inline-flex; width: fit-content; min-height: 22px; align-items: center; padding: 0 8px; border-radius: 999px; font-size: 11px; font-weight: 650; }

@@ -16,10 +16,8 @@ import type { ChildProcess } from 'node:child_process'
 import type { BrowserRuntimeBinding } from '../../browser/runtime/types.js'
 
 export type ManagedBrowserProfile = {
-  id: string
-  slug?: string | undefined
+  slug: string
   directory: string
-  lifecycle?: 'created' | 'ready' | 'removed' | 'failed'
   runtimeBinding?: BrowserRuntimeBinding | undefined
   proxy?: { server: string, bypass: readonly string[] } | null | undefined
   lastObservedAuth?: Partial<Record<string, {
@@ -196,15 +194,15 @@ export class PersistentContextManager {
       throw tokenlessError('playwright_manager_closed', 'Managed Playwright context manager is shutting down.', { retryable: true })
     }
     const { visibility, operation } = normalizeRunWithProfileArgs(visibilityOrOperation, maybeOperation)
-    const previous = this.lanes.get(profile.id) ?? Promise.resolve()
+    const previous = this.lanes.get(profile.slug) ?? Promise.resolve()
     const current = previous.catch(() => undefined).then(async () => {
       try {
         const context = await this.ensureContext(profile, visibility)
         return await operation(context)
       } catch (error) {
-        const active = this.contexts.get(profile.id)
+        const active = this.contexts.get(profile.slug)
         if (isBrowserClosedError(error) && (!active || active.closing || !isManagedBrowserConnected(active))) {
-          await this.closeProfile(profile.id).catch(() => undefined)
+        await this.closeProfile(profile.slug).catch(() => undefined)
           throw tokenlessError('playwright_browser_closed', 'The visible managed browser window was closed during the operation.', {
             retryable: true,
             cause: error,
@@ -214,9 +212,9 @@ export class PersistentContextManager {
       }
     })
     const lane = current.catch(() => undefined).finally(() => {
-      if (this.lanes.get(profile.id) === lane) this.lanes.delete(profile.id)
+      if (this.lanes.get(profile.slug) === lane) this.lanes.delete(profile.slug)
     })
-    this.lanes.set(profile.id, lane)
+    this.lanes.set(profile.slug, lane)
     return await current
   }
 
@@ -229,7 +227,7 @@ export class PersistentContextManager {
     const effectiveVisibility = browserTarget.launchPolicy === 'native'
       ? nativeChromeVisibility(requestedVisibility)
       : resolveEffectiveBrowserVisibility(requestedVisibility)
-    const existing = this.contexts.get(profile.id)
+    const existing = this.contexts.get(profile.slug)
     if (
       existing &&
       !existing.closing &&
@@ -247,7 +245,7 @@ export class PersistentContextManager {
       if (this.shuttingDown) {
         throw tokenlessError('playwright_manager_closed', 'Managed Playwright context manager is shutting down.', { retryable: true })
       }
-      const current = this.contexts.get(profile.id)
+      const current = this.contexts.get(profile.slug)
       if (
         current &&
         !current.closing &&
@@ -261,7 +259,7 @@ export class PersistentContextManager {
         return this.wrap(current)
       }
       if (current && !current.closing) {
-        await this.closeActiveContext(profile.id, current)
+      await this.closeActiveContext(profile.slug, current)
       } else if (current?.closePromise) {
         await current.closePromise
       }
@@ -305,9 +303,9 @@ export class PersistentContextManager {
         browserTarget,
         closing: false,
       }
-      this.contexts.set(profile.id, active)
+    this.contexts.set(profile.slug, active)
       browserContext.once('close', () => {
-        if (!active.closing) void this.closeActiveContext(profile.id, active).catch(() => undefined)
+        if (!active.closing) void this.closeActiveContext(profile.slug, active).catch(() => undefined)
       })
       return this.wrap(active)
     })
@@ -536,7 +534,7 @@ export class PersistentContextManager {
         return await manager.switchProfileVisibility(active.profile, visibility)
       },
       async close() {
-        await manager.closeProfile(active.profile.id)
+        await manager.closeProfile(active.profile.slug)
       },
     }
   }

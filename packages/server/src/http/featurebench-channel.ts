@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypt
 import http, { type IncomingMessage, type ServerResponse } from 'node:http'
 
 import { readTokenlessConfig } from '../persistence/config.js'
-import { createManagedPlaywrightJobRequest, MANAGED_PLAYWRIGHT_JOB_ACTION } from '../browser/job-contract.js'
+import { createManagedPlaywrightJobRequest } from '../browser/job-contract.js'
 import { VISIBLE_ACTIONS, createVisibleActionRequest } from '../browser/actions.js'
 import { ManagedProfileRegistry } from '../browser/profiles/registry.js'
 import { getProviderInstanceById, type ProviderId } from '../providers/registry.js'
@@ -93,9 +93,6 @@ export class FeatureBenchChannelManager {
       throw new FeatureBenchChannelError(400, 'featurebench_direct_provider_unsupported', 'channel', 'Direct FeatureBench turns support only ChatGPT and Perplexity.')
     }
     const profile = await this.profiles.resolveProfile(input.profile)
-    if (profile.lifecycle !== 'ready') {
-      throw new FeatureBenchChannelError(503, 'featurebench_profile_not_ready', 'channel', 'The selected Tokenless profile is not ready.')
-    }
     const config = await readTokenlessConfig(this.store.homeDir)
     const enabledProviders = config.profiles[profile.slug]?.enabledProviders ?? []
     if (!enabledProviders.includes(provider.id)) {
@@ -125,7 +122,7 @@ export class FeatureBenchChannelManager {
       instanceId,
       benchmarkRunId,
       provider: provider.id,
-      profileId: profile.id,
+      profileId: profile.slug,
       executionMode,
       model,
       effort,
@@ -147,7 +144,7 @@ export class FeatureBenchChannelManager {
       benchmarkCommit: FEATUREBENCH_BENCHMARK_COMMIT,
       datasetRevision: FEATUREBENCH_DATASET_REVISION,
       provider: provider.id,
-      profileId: profile.id,
+      profileId: profile.slug,
       model,
       executionMode,
       maxTurns,
@@ -298,9 +295,7 @@ export class FeatureBenchChannelManager {
     }
     const job = this.store.createJob({
       provider: channel.provider,
-      action: MANAGED_PLAYWRIGHT_JOB_ACTION,
       request_json: requestJson,
-      execution_backend: 'playwright',
       profile_id: channel.profileId,
     })
     await this.wake()
@@ -452,5 +447,5 @@ function executionModeValue(value: unknown): FeatureBenchExecutionMode {
 }
 
 function isTerminal(status: Job['status']) {
-  return status === 'succeeded' || status === 'failed' || status === 'canceled' || status === 'timed_out'
+  return status === 'succeeded' || status === 'failed' || status === 'canceled'
 }

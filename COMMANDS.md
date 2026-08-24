@@ -19,8 +19,8 @@ This document is the public inventory of the `tokenless` command-line interface.
 | `tokenless config` | Read or update persistent Tokenless configuration. | None |
 | `tokenless upgrade` | Upgrade the global CLI, skills, local runtime, and run doctor. | None |
 | `tokenless profiles add` | Create a logical Tokenless profile for tabs and provider configuration. | None |
-| `tokenless profiles list` | List profiles and their last saved provider observations. | None |
-| `tokenless profiles status` | Check one provider live and save the observation to the profile registry. | Yes |
+| `tokenless profiles list` | List profiles and the current process's provider observations. | None |
+| `tokenless profiles status` | Check one provider live and keep the observation in current process memory. | Yes |
 | `tokenless profiles open` | Open a managed profile headed, optionally navigating to one provider. | Optional |
 | `tokenless profiles set-default` | Select the default managed profile. | None |
 | `tokenless profiles clear` | Delete one or all managed profiles as a human maintenance action. | None |
@@ -259,7 +259,7 @@ Performs a read-only health report over Node.js, installed skills, packaged runt
 tokenless doctor --json
 ```
 
-`doctor` does not open provider pages, refresh authentication, start the daemon, or repair state. Each `checks.configuration.issues` entry includes a code, localized message, and next action. `checks.managedProfile.ok` reports registry/profile health, while `checks.profileRuntime.ok` independently reports whether that profile has a resolvable browser binding. Provider readiness comes from the last saved profile observation. `checks.providerReadiness.ok` reports whether configured providers have recorded observations; `usableProviders` lists the cached providers eligible for implicit routing. Because the daemon is on demand, a normally stopped daemon and embedded browser runtime are reported as healthy stopped state rather than installation damage.
+`doctor` does not open provider pages, refresh authentication, start the daemon, or repair state. Each `checks.configuration.issues` entry includes a code, localized message, and next action. `checks.managedProfile.ok` reports profile/config health, while `checks.profileRuntime.ok` independently reports whether that profile has a resolvable browser binding. Provider readiness comes from the current process's profile observation. `checks.providerReadiness.ok` reports whether configured providers have current observations; `usableProviders` lists the providers eligible for implicit routing. Because the daemon is on demand, a normally stopped daemon and embedded browser runtime are reported as healthy stopped state rather than installation damage.
 
 Main options: `--browser`, `--daemon-url`, `--home`, and `--json`.
 
@@ -304,7 +304,7 @@ Configurable values:
 
 Provider membership belongs only to the selected entry in `profiles`. Routing requires that entry and never falls back to a global provider list.
 
-Tokenless API migrates the concrete legacy per-profile side table once by combining it with the registered browser profiles. A registered profile missing from the old table receives the old root provider list as its explicit `enabledProviders`; canonical config never retains either legacy key. The undocumented legacy `--preferred-providers` flag remains accepted as a CLI alias.
+`config.json` is the only profile source. A profile slug is its identity, its browser directory is derived as `<TOKENLESS_HOME>/browser/profiles/<slug>`, and runtime binding plus creation/update timestamps live beside the profile's provider settings. Provider authentication observations are process-local and are not persisted.
 
 The config shape is:
 
@@ -312,6 +312,7 @@ The config shape is:
 {
   "protocol": "tokenless.config.v1",
   "updatedAt": "2026-08-02T02:09:40.254Z",
+  "defaultProfile": "default",
   "profiles": {
     "default": {
       "roleLabel": "Personal",
@@ -331,7 +332,7 @@ The config shape is:
 
 `browserExecutablePath` is a verified cache, not an immutable override: Tokenless executes the browser's version command to validate it, falls back to standard-path discovery if validation fails, and rewrites the cache after a successful fallback. If both checks fail, use the CLI flag above or paste an absolute path into **System → Browser executable path** in the dashboard. The dashboard exposes only whether a path is configured; it does not send the private path back to browser JavaScript.
 
-Human-readable command output and the default provider response language follow `language`; an explicit language request in the prompt takes precedence. Command names, flags, JSON keys, error codes, status values, and other integration terms remain stable. `daemonUrl` is the preferred start endpoint, not mutable runtime status. Tokenless never rewrites it when that port is busy; the daemon records its actual bound endpoint in the SQLite runtime-state row.
+Human-readable command output and the default provider response language follow `language`; an explicit language request in the prompt takes precedence. Command names, flags, JSON keys, error codes, status values, and other integration terms remain stable. `daemonUrl` is the configured start and stop endpoint, not mutable runtime status. Tokenless never rewrites it when that port is busy; clients verify the configured endpoint through `/ready` and stop it through authenticated `/shutdown`.
 
 Tokenless always controls managed Chromium through CDP while exposing Playwright's browser, page, and locator APIs internally. The resident browser can therefore outlive one daemon connection and be reattached by a later daemon without a user-selectable connection mode.
 
@@ -357,7 +358,7 @@ tokenless daemon stop --json
 
 Options: `--home`, `--daemon-url`, `--timeout-ms`, and `--json`.
 
-The command discovers the actual endpoint from SQLite and does not kill an unverified or incompatible process merely because it occupies the preferred port.
+The command verifies the configured endpoint and does not kill an unverified or incompatible process merely because it occupies the preferred port.
 
 ## Tokenless Profiles
 
@@ -373,9 +374,9 @@ tokenless profiles add -P work --set-default --json
 
 ### `tokenless profiles list`
 
-Reads the profile registry and returns every managed profile.
+Reads profiles from `config.json` and returns every managed profile.
 
-The registry is stored in `<TOKENLESS_HOME>/tokenless.sqlite3`.
+The shared `<TOKENLESS_HOME>/tokenless.sqlite3` stores jobs and provider history; it does not store profile records.
 
 ```bash
 tokenless profiles list
@@ -386,7 +387,7 @@ This command is fast, read-only, and has no browser side effects. Provider field
 
 ### `tokenless profiles status`
 
-Performs a live authentication check against one provider, then writes `auth`, visible username, visible subscription, and a new `checkedAt` value to the selected profile.
+Performs a live authentication check against one provider, then updates `auth`, visible username, visible subscription, and a new `checkedAt` value in the current process. The observation is not persisted.
 
 ```bash
 tokenless profiles status -P work -p chatgpt --json
@@ -612,7 +613,7 @@ Performs a live provider authentication action and returns the result.
 tokenless provider-status -P default -p chatgpt --json
 ```
 
-For a live check that also updates the profile registry, use `tokenless profiles status`.
+For a live check that also updates the current process's profile observation, use `tokenless profiles status`.
 
 ### `tokenless provider-controls`
 
@@ -767,22 +768,22 @@ The three similarly named status workflows have different persistence behavior:
 
 ```text
 profiles list
-    reads only the saved profile registry
+    reads only saved profiles from config.json
 
 profiles status
     visits one provider, checks auth/account controls,
-    and saves auth, username, subscription, and checkedAt
+    and keeps auth, username, subscription, and checkedAt in current process memory
 
 provider-status
     visits one provider and returns a live auth result,
-    but is not the profile-registry refresh workflow
+    but is not the profile-observation refresh workflow
 ```
 
 Commands that may open or operate a provider page are `setup`, `profiles status`, `profiles open`, `run`, every provider inspection/configuration/action command, and `snapshot-dom`.
 
 ## Manual Real-Browser Acceptance
 
-The authenticated provider capability harness reads the complete home named by `TOKENLESS_TEST_HOME`, derives its root `config.json`, and uses only the adjacent production registry's default profile. Profile slugs remain developer-owned because each developer chooses that default outside the harness. The home must remain outside every repository/worktree; before browser automation, the harness validates the profile directory, private permissions, lifecycle, executable, and exact runtime binding.
+The authenticated provider capability harness reads the complete home named by `TOKENLESS_TEST_HOME`, derives its root `config.json`, and uses only its `defaultProfile`. Profile slugs remain developer-owned because each developer chooses that default outside the harness. The home must remain outside every repository/worktree; before browser automation, the harness validates the derived profile directory, private permissions, executable, and exact runtime binding.
 
 Create a repository-local `.env`, then manually authenticate the config's default profile:
 

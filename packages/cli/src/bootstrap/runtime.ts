@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
+import { randomBytes, timingSafeEqual } from 'node:crypto'
 import fsSync from 'node:fs'
 import fs from 'node:fs/promises'
 import net from 'node:net'
@@ -11,20 +11,15 @@ import {
   snapshotsDir,
   tokenlessHome,
 } from '#tokenless-server/persistence/config.js'
-import { daemonUrl as normalizeDaemonUrl, readDaemonToken, shutdownDaemon } from '../http/daemon-client.js'
+import { daemonUrl as normalizeDaemonUrl, readDaemonToken, resolveDaemonUrl, shutdownDaemon } from '../http/daemon-client.js'
 import { getProviderInstanceById, getProviderInstanceForUrl, listProviderDescriptors } from '#tokenless-server/providers/registry.js'
 import {
   DAEMON_CONTROL_API_REVISION,
-  DAEMON_PROCESS_SCHEMA_ID,
   DAEMON_SNAPSHOT_SCHEMA_ID,
 } from '#tokenless-server/schema-ids.js'
 import { tokenlessPackageVersion } from '#tokenless-server/platform-package.js'
 import { daemonReadyProof } from '#tokenless-server/runtime/ready-proof.js'
 import { BrowserRuntimeManager } from '#tokenless-server/browser/runtime/manager.js'
-import {
-  DaemonRuntimeState,
-  type DaemonRuntimeEndpoint,
-} from '#tokenless-server/runtime/state.js'
 import type {
   SnapshotDiagnosticElement,
   SnapshotResponseCandidate,
@@ -34,7 +29,6 @@ import type {
 
 export {
   DAEMON_CONTROL_API_REVISION,
-  DAEMON_PROCESS_SCHEMA_ID,
   DAEMON_SNAPSHOT_SCHEMA_ID,
   MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID,
   MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID_V3,
@@ -42,7 +36,6 @@ export {
   VISIBLE_ACTION_SCHEMA_ID,
   VISIBLE_ACTION_SCHEMA_ID_V3,
 } from '#tokenless-server/schema-ids.js'
-export const DAEMON_PID_FILE = 'daemon.pid.json'
 export const DAEMON_LOG_FILE = 'daemon.log'
 
 const DEFAULT_DAEMON_START_TIMEOUT_MS = 10_000
@@ -342,84 +335,58 @@ export async function ensureDaemonReady({
 }: EnsureDaemonOptions = {}) {
   assertLocalProviderSupport(requiredProvider)
   await fs.mkdir(homeDir, { recursive: true, mode: 0o700 })
-  const preferredUrl = normalizeDaemonUrl(daemonUrl)
-  const runtimeState = await DaemonRuntimeState.open(homeDir)
+  const preferredUrl = await resolveDaemonUrl({ explicitUrl: daemonUrl, homeDir })
   const deadline = Date.now() + timeoutMs
+  const initial = await probeDaemonReady({ daemonUrl: preferredUrl, homeDir })
+  if (initial.ok) return daemonReadyResult(initial, false, null)
+  if (isReplaceableDaemonCompatibilityMismatch(initial)) {
+    await stopDaemon({ homeDir, daemonUrl: preferredUrl, timeoutMs })
+  }
+
+  const daemonEntryPath = binaryPath ?? bundledTypeScriptDaemonEntryPath(bundledRoot)
+  await assertDaemonEntryRunnable(daemonEntryPath)
+  const parsedUrl = new URL(preferredUrl)
+  const host = daemonBindHost(parsedUrl.hostname)
+  const port = parsedUrl.port ? Number(parsedUrl.port) : 80
+  const logPath = path.join(homeDir, DAEMON_LOG_FILE)
+  const child = await spawnDaemon({
+    daemonEntryPath,
+    homeDir,
+    host,
+    port,
+    logPath,
+  })
+
   try {
-    const initial = await probeDaemonEndpointCandidates({ runtimeState, preferredUrl, homeDir })
-    if (initial.ready) {
-      return daemonReadyResult(initial.ready, false, null, await readDaemonPid(homeDir))
-    }
-    if (initial.replaceable) {
-      await stopDaemon({ homeDir, daemonUrl: initial.replaceable.url, timeoutMs })
-    }
-
-    const daemonEntryPath = binaryPath ?? bundledTypeScriptDaemonEntryPath(bundledRoot)
-    await assertDaemonEntryRunnable(daemonEntryPath)
-    const parsedUrl = new URL(preferredUrl)
-    const host = daemonBindHost(parsedUrl.hostname)
-    const port = parsedUrl.port ? Number(parsedUrl.port) : 80
-    const logPath = path.join(homeDir, DAEMON_LOG_FILE)
-    const child = await spawnDaemon({
-      daemonEntryPath,
-      homeDir,
-      host,
-      port,
-      logPath,
-    })
-    const pidPayload = {
-      protocol: DAEMON_PROCESS_SCHEMA_ID,
-      pid: child.pid,
-      homeDir: await canonicalPath(homeDir),
-      daemonUrl: parsedUrl.origin,
-      binaryPath: process.execPath,
-      daemonEntryPath,
-      logPath,
-      startedAt: new Date().toISOString(),
-    }
-    await writeJsonAtomic(path.join(homeDir, DAEMON_PID_FILE), pidPayload, 0o600)
-
-    try {
-      let lastProbe = initial.lastProbe
-      while (Date.now() < deadline) {
-        const candidate = await probeDaemonEndpointCandidates({ runtimeState, preferredUrl, homeDir })
-        if (candidate.ready) {
-          lastProbe = candidate.ready
-          const actualPid = daemonPidFromReady(lastProbe) ?? child.pid
-          const actualUrl = lastProbe.url
-          const actualPidPayload = {
-            ...pidPayload,
-            pid: actualPid,
-            daemonUrl: actualUrl,
-          }
-          await writeJsonAtomic(path.join(homeDir, DAEMON_PID_FILE), actualPidPayload, 0o600)
-          child.unref()
-          return {
-            ...lastProbe,
-            started: true,
-            binaryPath: process.execPath,
-            daemonEntryPath,
-            pid: actualPid,
-            logPath,
-          }
+    let lastProbe: DaemonReadyProbe = initial
+    while (Date.now() < deadline) {
+      const candidate = await probeDaemonReady({ daemonUrl: preferredUrl, homeDir })
+      if (candidate.ok) {
+        lastProbe = candidate
+        const actualPid = daemonPidFromReady(lastProbe) ?? child.pid
+        child.unref()
+        return {
+          ...lastProbe,
+          started: true,
+          binaryPath: process.execPath,
+          daemonEntryPath,
+          pid: actualPid,
+          logPath,
         }
-        lastProbe = candidate.lastProbe
-        if (child.exitCode !== null) break
-        await delay(100)
       }
-
-      const failedProbe = lastProbe && !lastProbe.ok ? lastProbe : null
-      throw runtimeError(
-        'daemon_start_failed',
-        `Tokenless TypeScript daemon did not become ready for ${homeDir}. See ${logPath}. Last check: ${failedProbe?.message ?? failedProbe?.code ?? 'unknown error'}`,
-        true
-      )
-    } catch (error) {
-      await terminateSpawnedDaemonChild(child, homeDir)
-      throw error
+      lastProbe = candidate
+      if (child.exitCode !== null) break
+      await delay(100)
     }
-  } finally {
-    runtimeState.close()
+    const failedProbe = !lastProbe.ok ? lastProbe : null
+    throw runtimeError(
+      'daemon_start_failed',
+      `Tokenless TypeScript daemon did not become ready for ${homeDir}. See ${logPath}. Last check: ${failedProbe?.message ?? failedProbe?.code ?? 'unknown error'}`,
+      true
+    )
+  } catch (error) {
+    await terminateSpawnedDaemonChild(child)
+    throw error
   }
 }
 
@@ -449,22 +416,11 @@ export async function stopDaemon({
   timeoutMs?: number | undefined
 } = {}): Promise<StopDaemonResult> {
   const stopTimeoutMs = normalizeStopTimeoutMs(timeoutMs)
-  const preferredUrl = normalizeDaemonUrl(daemonUrl)
-  let url = preferredUrl
-  const runtimeState = await DaemonRuntimeState.openIfExists(homeDir)
-  try {
-    if (runtimeState) {
-      const existing = await probeDaemonEndpointCandidates({ runtimeState, preferredUrl, homeDir })
-      if (existing.ready) url = existing.ready.url
-      else if (existing.replaceable) url = existing.replaceable.url
-    }
-  } finally {
-    runtimeState?.close()
-  }
+  const preferredUrl = await resolveDaemonUrl({ explicitUrl: daemonUrl, homeDir })
+  const url = preferredUrl
   const expectedHome = await canonicalPath(homeDir)
   const reachable = await probeDaemonReachable(url, Math.min(stopTimeoutMs, 1_000))
   if (!reachable.reachable) {
-    await clearPersistedEndpointIfOwned(homeDir, { url })
     return {
       ok: true,
       status: 'not_running',
@@ -535,8 +491,6 @@ export async function stopDaemon({
       true
     )
   }
-  if (pid !== undefined) await removePidIfOwned(ready.actualHome ?? expectedHome, pid)
-  await clearPersistedEndpointIfOwned(homeDir, { url, pid })
   return {
     ok: true,
     status: 'stopped',
@@ -833,39 +787,6 @@ function setupDaemonReadyResult(
   }
 }
 
-async function probeDaemonEndpointCandidates({
-  runtimeState,
-  preferredUrl,
-  homeDir,
-}: {
-  runtimeState: DaemonRuntimeState
-  preferredUrl: string
-  homeDir: string
-}) {
-  const endpoint = runtimeState.endpoint()
-  const candidates = daemonEndpointCandidates(endpoint, preferredUrl)
-  let replaceable: DaemonReadyProbe | null = null
-  let lastProbe: DaemonReadyProbe | null = null
-  for (const candidateUrl of candidates) {
-    const probe = await probeDaemonReady({ daemonUrl: candidateUrl, homeDir })
-    lastProbe = probe
-    if (probe.ok) return { ready: probe, replaceable: null, lastProbe: probe }
-    if (!replaceable && isReplaceableDaemonCompatibilityMismatch(probe)) replaceable = probe
-  }
-  return {
-    ready: null,
-    replaceable,
-    lastProbe: lastProbe ?? await probeDaemonReady({ daemonUrl: preferredUrl, homeDir }),
-  }
-}
-
-function daemonEndpointCandidates(endpoint: DaemonRuntimeEndpoint | null, preferredUrl: string) {
-  const urls: string[] = []
-  if (endpoint?.origin) urls.push(endpoint.origin)
-  urls.push(preferredUrl)
-  return [...new Set(urls)]
-}
-
 function daemonReadyResult(
   probe: DaemonReadyProbe & { ok: true },
   started: boolean,
@@ -877,18 +798,6 @@ function daemonReadyResult(
     started,
     binaryPath,
     pid: daemonPidFromReady(probe) ?? fallbackPid ?? undefined,
-  }
-}
-
-async function clearPersistedEndpointIfOwned(
-  homeDir: string,
-  { url, pid }: { url: string; pid?: number | undefined },
-) {
-  const runtimeState = await DaemonRuntimeState.openIfExists(homeDir)
-  try {
-    runtimeState?.clearEndpoint({ origin: url, pid })
-  } finally {
-    runtimeState?.close()
   }
 }
 
@@ -932,18 +841,6 @@ function failedBuildInfo(code: string, error: string, buildInfo: JsonRecord | nu
   return { ok: false, code, error, buildInfo }
 }
 
-function pidIsAlive(pid: number) {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code
-    if (code === 'EPERM') return true
-    if (code === 'ESRCH') return false
-    return false
-  }
-}
-
 function isReplaceableDaemonCompatibilityMismatch(probe: DaemonReadyProbe) {
   return !probe.ok &&
     (probe.code === 'daemon_version_mismatch' || probe.code === 'daemon_control_api_revision_mismatch') &&
@@ -969,26 +866,7 @@ function supportedVisibleProviderList() {
     .join(', ')
 }
 
-async function readDaemonPid(homeDir: string) {
-  try {
-    const payload = JSON.parse(await fs.readFile(path.join(homeDir, DAEMON_PID_FILE), 'utf8')) as JsonRecord
-    return Number.isInteger(payload.pid) && pidIsAlive(payload.pid) ? payload.pid as number : null
-  } catch {
-    return null
-  }
-}
-
-async function removePidIfOwned(homeDir: string, pid: number) {
-  const pidPath = path.join(homeDir, DAEMON_PID_FILE)
-  try {
-    const payload = JSON.parse(await fs.readFile(pidPath, 'utf8')) as JsonRecord
-    if (payload.pid === pid) await fs.rm(pidPath, { force: true })
-  } catch {
-    // Best-effort cleanup after a failed start.
-  }
-}
-
-async function terminateSpawnedDaemonChild(child: ReturnType<typeof spawn> & { pid: number }, homeDir: string) {
+async function terminateSpawnedDaemonChild(child: ReturnType<typeof spawn> & { pid: number }) {
   if (child.exitCode === null && child.signalCode === null) {
     try {
       child.kill('SIGTERM')
@@ -1006,7 +884,6 @@ async function terminateSpawnedDaemonChild(child: ReturnType<typeof spawn> & { p
       }
     }
   }
-  await removePidIfOwned(homeDir, child.pid)
 }
 
 function readyHomeFromBody(body: JsonRecord) {
@@ -1189,13 +1066,6 @@ function safeSegment(value: unknown) {
     .replace(/[^a-z0-9._-]+/g, '-')
     .replace(/^-+|-+$/g, '')
   return normalized || 'provider'
-}
-
-async function writeJsonAtomic(file: string, payload: unknown, mode: number) {
-  await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 })
-  const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`
-  await fs.writeFile(temporary, `${JSON.stringify(payload, null, 2)}\n`, { mode })
-  await fs.rename(temporary, file)
 }
 
 async function execFileJson(command: string, args: string[]) {

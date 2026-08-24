@@ -1,6 +1,4 @@
 import {
-  MANAGED_PLAYWRIGHT_JOB_ACTION,
-  PLAYWRIGHT_EXECUTION_BACKEND,
   createManagedPlaywrightJobRequest,
   validateManagedPlaywrightJobRequest,
 } from '#tokenless-server/browser/job-contract.js'
@@ -64,9 +62,7 @@ export async function submitManagedPlaywrightJob(options: SubmitManagedPlaywrigh
   return createDaemonJob({
     ...daemonOptions(options),
     provider: request.provider,
-    action: MANAGED_PLAYWRIGHT_JOB_ACTION,
     requestJson: request,
-    executionBackend: PLAYWRIGHT_EXECUTION_BACKEND,
     profileId: options.profileId,
     jobId: options.jobId,
   })
@@ -75,7 +71,6 @@ export async function submitManagedPlaywrightJob(options: SubmitManagedPlaywrigh
 export async function listManagedPlaywrightJobs(options: ListManagedPlaywrightJobsOptions = {}) {
   return listDaemonJobs({
     ...daemonOptions(options),
-    executionBackend: PLAYWRIGHT_EXECUTION_BACKEND,
     profileId: options.profileId,
     provider: options.provider,
     status: options.status,
@@ -121,14 +116,8 @@ function daemonOptions(options: ManagedPlaywrightJobApiOptions) {
 }
 
 function validateManagedDaemonJob(job: DaemonJob, profileId: string) {
-  if (job.execution_backend !== PLAYWRIGHT_EXECUTION_BACKEND) {
-    throw tokenlessError('invalid_playwright_job_backend', 'Managed Playwright job lookup returned a non-Playwright job.')
-  }
   if (job.profile_id !== profileId) {
     throw tokenlessError('invalid_playwright_job_profile', 'Managed Playwright job lookup returned a job for a different profile.')
-  }
-  if (job.action !== MANAGED_PLAYWRIGHT_JOB_ACTION) {
-    throw tokenlessError('invalid_playwright_job_action', 'Managed Playwright job lookup returned an unsupported action.')
   }
   validateManagedPlaywrightJobRequest(job.request_json)
 }

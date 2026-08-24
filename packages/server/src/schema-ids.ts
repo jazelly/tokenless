@@ -1,4 +1,3 @@
-export const DAEMON_PROCESS_SCHEMA_ID = 'tokenless.daemon-process.v1' as const
 // Increment whenever a current client requires a changed daemon control surface.
 export const DAEMON_CONTROL_API_REVISION = 2 as const
 export const DAEMON_SNAPSHOT_SCHEMA_ID = 'tokenless.daemon-snapshot.v1' as const

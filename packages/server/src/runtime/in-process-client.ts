@@ -16,11 +16,9 @@ export function createInProcessDaemonClient(store: JobStore): ManagedDaemonClien
       const job = store.takeNextJob(
         {
           provider: options.provider,
-          action: options.action,
           job_id_prefix: options.jobIdPrefix,
         },
-        options.executionBackend,
-        options.profileId ?? null,
+        options.profileId,
       )
       return { job: job ? jobView(job) : null }
     }),

@@ -177,7 +177,7 @@ export class BrowserRuntimeController {
           }
         }
         const runtime = await runtimeManager.resolveForProfile({
-          slug: profile.id,
+          slug: profile.slug,
           runtimeBinding: profile.runtimeBinding,
         })
         return {

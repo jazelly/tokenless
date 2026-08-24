@@ -2,7 +2,6 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { normalizeBrowserVisibility } from '../browser-visibility.js'
 import type { TokenlessLanguage } from 'tokenless-internal-shared/i18n'
 import { TOKENLESS_CONFIG_SCHEMA_ID } from '../schema-ids.js'
 import { providerRegistry } from '../providers/registry.js'
@@ -10,11 +9,9 @@ import type { ProviderExecutionMode } from '../providers/provider-identity.js'
 import type { BrowserVisibility } from '../browser-visibility.js'
 import {
   BROWSER_SELECTIONS,
-  isSystemBrowserId,
   normalizeBrowserSelection,
-  type BrowserSelection,
+  type BrowserRuntimeBinding,
 } from '../browser/runtime/types.js'
-import { readManagedProfileRegistryReadOnly } from '../browser/profiles/registry.js'
 
 export { TOKENLESS_CONFIG_SCHEMA_ID } from '../schema-ids.js'
 
@@ -22,11 +19,16 @@ export const SUPPORTED_BROWSER_IDS = BROWSER_SELECTIONS
 
 type JsonRecord = Record<string, unknown>
 
+// Serialize read-modify-write mutations for one canonical home within this
+// process. The config file remains the only persisted source of truth.
+const configMutationLanes = new Map<string, Promise<void>>()
+
 export type TokenlessConfig = {
   protocol: typeof TOKENLESS_CONFIG_SCHEMA_ID
   updatedAt: string | null
+  defaultProfile: string | null
   profiles: Record<string, ManagedProfileConfig>
-  browser: BrowserSelection
+  browser: ConfigBrowser
   browserExecutablePath: string | null
   browserVisibility: BrowserVisibility
   daemonUrl: string | null
@@ -37,6 +39,8 @@ export type TokenlessConfig = {
   directProvider: DirectProviderConfig
   router: RouterConfig
 }
+
+export type ConfigBrowser = 'chrome' | 'brave'
 
 export type OutputSavingsConfig = {
   enabled: boolean
@@ -79,6 +83,7 @@ export type RouterProviderRule = {
 }
 
 export type ManagedProfileConfig = {
+  runtimeBinding?: BrowserRuntimeBinding
   roleLabel: string
   enabledProviders: string[]
   providerModes: Record<string, ProviderExecutionMode[]>
@@ -127,17 +132,8 @@ export function deriveTaskId({
 
 export async function readTokenlessConfig(
   homeDir = tokenlessHome(),
-  { persistMigrations = true }: { persistMigrations?: boolean } = {}
 ): Promise<TokenlessConfig> {
-  const initial = await readTokenlessConfigUnlocked(homeDir)
-  if (!initial.needsWrite || !persistMigrations) return initial.config
-  return await withConfigWriteDirectory(homeDir, async () => {
-    const latest = await readTokenlessConfigUnlocked(homeDir)
-    if (!latest.needsWrite) return latest.config
-    latest.config.updatedAt = new Date().toISOString()
-    await writeJsonAtomic(configPath(homeDir), latest.config, 0o600)
-    return latest.config
-  })
+  return await readTokenlessConfigUnlocked(homeDir)
 }
 
 async function readTokenlessConfigUnlocked(homeDir: string) {
@@ -148,8 +144,7 @@ async function readTokenlessConfigUnlocked(homeDir: string) {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
       const config = emptyTokenlessConfig()
-      config.profiles = await configuredProfiles(homeDir, {})
-      return { config, needsWrite: Object.keys(config.profiles).length > 0 }
+      return config
     }
     throw configError(
       'tokenless_config_unreadable',
@@ -162,23 +157,22 @@ async function readTokenlessConfigUnlocked(homeDir: string) {
   if (payload.profiles !== undefined && !isJsonRecord(payload.profiles)) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
-  if (payload.providerWhitelist !== undefined && !Array.isArray(payload.providerWhitelist)) {
-    throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
+  if (payload.defaultProfile !== undefined && payload.defaultProfile !== null && typeof payload.defaultProfile !== 'string') {
+    throw configError('tokenless_config_invalid', `Invalid Tokenless default profile at ${file}.`)
   }
-  if (payload.preferredProviders !== undefined && !Array.isArray(payload.preferredProviders)) {
-    throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
+  for (const legacyField of ['providerWhitelist', 'preferredProviders', 'profilePreferences', 'semanticRouter']) {
+    if (Object.hasOwn(payload, legacyField)) {
+      throw configError('tokenless_config_invalid', `Legacy Tokenless config field '${legacyField}' is not supported.`)
+    }
   }
-  if (payload.profilePreferences !== undefined && !isJsonRecord(payload.profilePreferences)) {
-    throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
-  }
-  if (payload.browser !== undefined && payload.browser !== null && !normalizeBrowserId(payload.browser)) {
+  if (payload.browser !== undefined && !isConfigBrowser(payload.browser)) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
   if (payload.browserExecutablePath !== undefined && !isConfigBrowserExecutablePath(payload.browserExecutablePath)) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
-  if (payload.browserVisibility !== undefined && !normalizeBrowserVisibility(payload.browserVisibility)) {
-    throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
+  if (payload.browserVisibility !== undefined && payload.browserVisibility !== 'headed') {
+    throw configError('tokenless_config_invalid', `Invalid Tokenless browser visibility at ${file}; expected headed.`)
   }
   if (payload.daemonUrl !== undefined && payload.daemonUrl !== null && !normalizeDaemonUrl(payload.daemonUrl)) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
@@ -198,22 +192,18 @@ async function readTokenlessConfigUnlocked(homeDir: string) {
   if (payload.directProvider !== undefined && !isDirectProviderConfig(payload.directProvider)) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
-  if (payload.router !== undefined && !isRouterConfig(payload.router) && !isLegacyRouterConfig(payload.router)) {
+  if (payload.router !== undefined && !isRouterConfig(payload.router)) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
-  if (payload.semanticRouter !== undefined && !isLegacySemanticRouterConfig(payload.semanticRouter)) {
-    throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
-  }
-  const normalizedBrowser = normalizeBrowserId(payload.browser)
-  const browser = normalizedBrowser === 'brave' ? 'brave' : 'chrome'
-  const browserExecutablePath = normalizedBrowser === 'chrome' || normalizedBrowser === 'brave'
+  const browser = payload.browser === undefined ? 'chrome' : payload.browser
+  const browserExecutablePath = browser === 'chrome' || browser === 'brave'
     ? normalizeConfigBrowserExecutablePath(payload.browserExecutablePath)
     : null
-  validateConfigBrowserExecutablePathScope(homeDir, browser, browserExecutablePath, file)
   const config: TokenlessConfig = {
     protocol: TOKENLESS_CONFIG_SCHEMA_ID,
     updatedAt: typeof payload.updatedAt === 'string' ? payload.updatedAt : null,
-    profiles: await configuredProfiles(homeDir, payload),
+    defaultProfile: normalizeDefaultProfile(payload.defaultProfile, payload.profiles),
+    profiles: configuredProfiles(payload),
     browser,
     browserExecutablePath,
     browserVisibility: 'headed',
@@ -223,13 +213,14 @@ async function readTokenlessConfigUnlocked(homeDir: string) {
     apiProxy: normalizeApiProxyConfig(payload.apiProxy),
     g4f: normalizeG4fConfig(payload.g4f),
     directProvider: normalizeDirectProviderConfig(payload.directProvider),
-    router: normalizeRouterConfig(payload.router, payload.semanticRouter),
+    router: normalizeRouterConfig(payload.router),
   }
-  return { config, needsWrite: JSON.stringify(payload) !== JSON.stringify(config) }
+  return config
 }
 
 export async function writeTokenlessConfig({
   homeDir = tokenlessHome(),
+  defaultProfile,
   profiles,
   browser,
   browserExecutablePath,
@@ -243,6 +234,7 @@ export async function writeTokenlessConfig({
   router,
 }: {
   homeDir?: string
+  defaultProfile?: unknown
   profiles?: unknown
   browser?: unknown
   browserExecutablePath?: unknown
@@ -255,31 +247,29 @@ export async function writeTokenlessConfig({
   directProvider?: unknown
   router?: unknown
 } = {}) {
-  return await withConfigWriteDirectory(homeDir, async () => {
-    const current = (await readTokenlessConfigUnlocked(homeDir)).config
-    const requestedBrowserSelection = browser === undefined ? current.browser : validateConfigBrowser(browser)
-    const requestedBrowser = requestedBrowserSelection === 'brave' ? 'brave' : 'chrome'
+  return await withConfigMutationLane(homeDir, async () => await withConfigWriteDirectory(homeDir, async () => {
+    const current = await readTokenlessConfigUnlocked(homeDir)
+    const requestedBrowser = browser === undefined ? current.browser : validateConfigBrowser(browser)
     const requestedBrowserExecutablePath = browserExecutablePath === undefined
-      ? requestedBrowser === current.browser && (
-          requestedBrowserSelection === 'chrome' || requestedBrowserSelection === 'brave'
-        )
+      ? requestedBrowser === current.browser
         ? current.browserExecutablePath
         : null
-      : requestedBrowserSelection === 'chrome' || requestedBrowserSelection === 'brave'
-        ? validateConfigBrowserExecutablePath(browserExecutablePath)
-        : null
-    validateConfigBrowserExecutablePathScope(
-      homeDir,
-      requestedBrowser,
-      requestedBrowserExecutablePath,
-      configPath(homeDir),
-    )
+      : validateConfigBrowserExecutablePath(browserExecutablePath)
+    if (browserVisibility !== undefined && browserVisibility !== 'headed') {
+      throw configError('tokenless_config_invalid', 'Invalid Tokenless browser visibility; expected headed.')
+    }
+    const requestedProfiles = profiles === undefined ? current.profiles : validateProfiles(profiles)
+    const nextProfiles = Object.fromEntries(Object.entries(requestedProfiles).map(([slug, profile]) => [
+      slug,
+      current.profiles[slug] ? { ...current.profiles[slug], ...profile } : profile,
+    ]))
     const config: TokenlessConfig = {
       protocol: TOKENLESS_CONFIG_SCHEMA_ID,
       updatedAt: new Date().toISOString(),
-      profiles: await configuredProfiles(homeDir, {
-        profiles: profiles === undefined ? current.profiles : validateProfiles(profiles),
-      }),
+      defaultProfile: defaultProfile === undefined
+        ? normalizeDefaultProfile(current.defaultProfile, nextProfiles)
+        : normalizeDefaultProfile(defaultProfile, nextProfiles),
+      profiles: configuredProfiles({ profiles: nextProfiles }),
       browser: requestedBrowser,
       browserExecutablePath: requestedBrowserExecutablePath,
       browserVisibility: 'headed',
@@ -299,7 +289,7 @@ export async function writeTokenlessConfig({
     }
     await writeJsonAtomic(configPath(homeDir), config, 0o600)
     return config
-  })
+  }))
 }
 
 export async function upsertTokenlessProfileConfig({
@@ -313,18 +303,51 @@ export async function upsertTokenlessProfileConfig({
 }) {
   const normalized = validateProfiles({ [slug]: profile })[slug]
   if (!normalized) throw configError('tokenless_config_invalid', `Invalid Tokenless profile configuration for '${slug}'.`)
-  return await withConfigWriteDirectory(homeDir, async () => {
-    const current = (await readTokenlessConfigUnlocked(homeDir)).config
+  return await withConfigMutationLane(homeDir, async () => await withConfigWriteDirectory(homeDir, async () => {
+    const current = await readTokenlessConfigUnlocked(homeDir)
+    const merged = current.profiles[slug]
+      ? { ...current.profiles[slug], ...normalized }
+      : normalized
     const config = {
       ...current,
       updatedAt: new Date().toISOString(),
-      profiles: await configuredProfiles(homeDir, {
-        profiles: { ...current.profiles, [slug]: normalized },
+      profiles: configuredProfiles({
+        profiles: { ...current.profiles, [slug]: merged },
       }),
     }
     await writeJsonAtomic(configPath(homeDir), config, 0o600)
     return config
-  })
+  }))
+}
+
+export async function createTokenlessProfileConfig({
+  homeDir = tokenlessHome(),
+  slug,
+  profile,
+  setDefault = false,
+}: {
+  homeDir?: string
+  slug: string
+  profile: unknown
+  setDefault?: boolean
+}) {
+  const normalized = validateProfiles({ [slug]: profile })[slug]
+  if (!normalized) throw configError('tokenless_config_invalid', `Invalid Tokenless profile configuration for '${slug}'.`)
+  return await withConfigMutationLane(homeDir, async () => await withConfigWriteDirectory(homeDir, async () => {
+    const current = await readTokenlessConfigUnlocked(homeDir)
+    if (current.profiles[slug]) {
+      throw configError('profile_already_exists', `Managed profile '${slug}' already exists.`)
+    }
+    const profiles = configuredProfiles({ profiles: { ...current.profiles, [slug]: normalized } })
+    const config = {
+      ...current,
+      updatedAt: new Date().toISOString(),
+      defaultProfile: setDefault || !current.defaultProfile ? slug : current.defaultProfile,
+      profiles,
+    }
+    await writeJsonAtomic(configPath(homeDir), config, 0o600)
+    return config
+  }))
 }
 
 export async function deleteTokenlessProfileConfig({
@@ -334,18 +357,36 @@ export async function deleteTokenlessProfileConfig({
   homeDir?: string
   slug: string
 }) {
-  return await withConfigWriteDirectory(homeDir, async () => {
-    const current = (await readTokenlessConfigUnlocked(homeDir)).config
+  return await withConfigMutationLane(homeDir, async () => await withConfigWriteDirectory(homeDir, async () => {
+    const current = await readTokenlessConfigUnlocked(homeDir)
     const profiles = { ...current.profiles }
     delete profiles[slug]
     const config = {
       ...current,
       updatedAt: new Date().toISOString(),
-      profiles: await configuredProfiles(homeDir, { profiles }),
+      defaultProfile: current.defaultProfile === slug
+        ? Object.keys(profiles).sort()[0] ?? null
+        : current.defaultProfile,
+      profiles: configuredProfiles({ profiles }),
     }
     await writeJsonAtomic(configPath(homeDir), config, 0o600)
     return config
-  })
+  }))
+}
+
+async function withConfigMutationLane<T>(homeDir: string, operation: () => Promise<T>): Promise<T> {
+  const canonicalHome = path.resolve(homeDir)
+  const previous = configMutationLanes.get(canonicalHome) ?? Promise.resolve()
+  let release!: () => void
+  const current = new Promise<void>((resolve) => { release = resolve })
+  configMutationLanes.set(canonicalHome, current)
+  await previous
+  try {
+    return await operation()
+  } finally {
+    release()
+    if (configMutationLanes.get(canonicalHome) === current) configMutationLanes.delete(canonicalHome)
+  }
 }
 
 async function withConfigWriteDirectory<T>(homeDir: string, operation: () => Promise<T>) {
@@ -358,6 +399,7 @@ function emptyTokenlessConfig(): TokenlessConfig {
   return {
     protocol: TOKENLESS_CONFIG_SCHEMA_ID,
     updatedAt: null,
+    defaultProfile: null,
     profiles: {},
     browser: 'chrome',
     browserExecutablePath: null,
@@ -441,21 +483,6 @@ function isRouterConfig(value: unknown): value is RouterConfig {
   return isRouterProviderRules(value.providers)
 }
 
-type LegacyRouterModel = { id: string; label: string; suitableTasks: string }
-
-function isLegacyRouterConfig(value: unknown): value is { enabled: boolean; engine: RouterEngine; models: LegacyRouterModel[] } {
-  return isJsonRecord(value) &&
-    Object.keys(value).length === 3 &&
-    typeof value.enabled === 'boolean' &&
-    ROUTER_ENGINES.includes(value.engine as RouterEngine) &&
-    Array.isArray(value.models) &&
-    isLegacyRouterModels(value.models)
-}
-
-function isLegacySemanticRouterConfig(value: unknown): value is { models: LegacyRouterModel[] } {
-  return isJsonRecord(value) && Object.keys(value).length === 1 && Array.isArray(value.models) && isLegacyRouterModels(value.models)
-}
-
 function isRouterProviderRules(providers: unknown[]): providers is RouterProviderRule[] {
   if (providers.length > 20) return false
   const ids = new Set<string>()
@@ -468,36 +495,8 @@ function isRouterProviderRules(providers: unknown[]): providers is RouterProvide
   return true
 }
 
-function isLegacyRouterModels(models: unknown[]): models is LegacyRouterModel[] {
-  if (models.length > 20) return false
-  const ids = new Set<string>()
-  return models.every((model) => {
-    if (!isJsonRecord(model) || Object.keys(model).length !== 3) return false
-    if (typeof model.id !== 'string' || !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(model.id) || ids.has(model.id)) return false
-    if (typeof model.label !== 'string' || !model.label.trim() || model.label.length > 80) return false
-    if (typeof model.suitableTasks !== 'string' || !model.suitableTasks.trim() || model.suitableTasks.length > 500) return false
-    ids.add(model.id)
-    return true
-  })
-}
-
-function normalizeRouterConfig(value: unknown, legacyValue?: unknown): RouterConfig {
-  if (isRouterConfig(value)) return copyRouterConfig(value)
-  if (isLegacyRouterConfig(value)) {
-    return {
-      enabled: value.enabled,
-      engine: value.engine,
-      providers: providerRulesFromLegacyModels(value.models),
-    }
-  }
-  if (isLegacySemanticRouterConfig(legacyValue)) {
-    return {
-      enabled: true,
-      engine: 'chrome-prompt-api',
-      providers: providerRulesFromLegacyModels(legacyValue.models),
-    }
-  }
-  return defaultRouterConfig()
+function normalizeRouterConfig(value: unknown): RouterConfig {
+  return isRouterConfig(value) ? copyRouterConfig(value) : defaultRouterConfig()
 }
 
 function validateRouterConfig(value: unknown): RouterConfig {
@@ -522,12 +521,6 @@ function defaultRouterConfig(): RouterConfig {
   return { enabled: false, engine: 'chrome-prompt-api', providers: [] }
 }
 
-function providerRulesFromLegacyModels(models: LegacyRouterModel[]) {
-  return models.flatMap((model) => providerRegistry.resolve(model.id)
-    ? [{ id: model.id, suitableTasks: model.suitableTasks.trim() }]
-    : [])
-}
-
 function isOutputSavingsConfig(value: unknown): value is OutputSavingsConfig {
   return isJsonRecord(value) &&
     Object.keys(value).length === 1 &&
@@ -545,13 +538,6 @@ function validateOutputSavingsConfig(value: unknown): OutputSavingsConfig {
   return { enabled: value.enabled }
 }
 
-function defaultProviderWhitelist() {
-  return [...providerRegistry.descriptors()]
-    .filter((provider) => provider.stage !== 'disabled')
-    .sort((left, right) => left.setupOrder - right.setupOrder)
-    .map((provider) => provider.id)
-}
-
 function validateProfiles(value: unknown) {
   if (!isJsonRecord(value)) {
     throw configError('tokenless_config_invalid', 'Invalid Tokenless profiles configuration.')
@@ -564,7 +550,12 @@ function normalizeProfiles(value: unknown): Record<string, ManagedProfileConfig>
   const profiles: Record<string, ManagedProfileConfig> = {}
   for (const [profileId, candidate] of Object.entries(value)) {
     if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(profileId) || !isJsonRecord(candidate)) continue
+    const runtimeBinding = normalizeProfileRuntimeBinding(candidate.runtimeBinding)
+    if (candidate.runtimeBinding !== undefined && !runtimeBinding) {
+      throw configError('tokenless_config_invalid', `Invalid runtime binding for profile '${profileId}'.`)
+    }
     profiles[profileId] = {
+      ...(runtimeBinding ? { runtimeBinding } : {}),
       roleLabel: normalizeRoleLabel(candidate.roleLabel),
       enabledProviders: normalizeProviderList(candidate.enabledProviders),
       providerModes: normalizeProviderModes(candidate.providerModes),
@@ -575,32 +566,37 @@ function normalizeProfiles(value: unknown): Record<string, ManagedProfileConfig>
   return profiles
 }
 
-async function configuredProfiles(homeDir: string, payload: JsonRecord): Promise<Record<string, ManagedProfileConfig>> {
-  const registrySlugs = await readRegisteredProfileSlugs(homeDir)
-  const configured = normalizeProfiles(payload.profiles)
-  const legacy = normalizeProfiles(payload.profilePreferences)
-  const legacyProviders = configuredLegacyProviders(payload)
-  return Object.fromEntries(registrySlugs.map((slug) => [slug, configured[slug] ?? legacy[slug] ?? {
-    roleLabel: '',
-    enabledProviders: legacyProviders,
-    providerModes: normalizeProviderModes(undefined),
-    browserVisibility: 'headed' as const,
-    proxy: null,
-  }]))
+function configuredProfiles(payload: JsonRecord): Record<string, ManagedProfileConfig> {
+  return normalizeProfiles(payload.profiles)
 }
 
-function configuredLegacyProviders(payload: JsonRecord) {
-  if (payload.providerWhitelist !== undefined) return normalizeProviderList(payload.providerWhitelist)
-  const preferred = normalizeProviderList(payload.preferredProviders)
-  return preferred.length > 0 ? preferred : defaultProviderWhitelist()
+function normalizeDefaultProfile(value: unknown, profilesValue: unknown) {
+  if (value === null || value === undefined || typeof value !== 'string') return null
+  const slug = value.trim().toLowerCase()
+  if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(slug)) return null
+  const profiles = normalizeProfiles(profilesValue)
+  return profiles[slug] ? slug : null
 }
 
-async function readRegisteredProfileSlugs(homeDir: string) {
-  const registry = await readManagedProfileRegistryReadOnly(homeDir)
-  return Object.values(registry.profiles)
-    .filter((profile) => profile.lifecycle !== 'removed')
-    .map((profile) => profile.slug)
-    .sort()
+function normalizeProfileRuntimeBinding(value: unknown): BrowserRuntimeBinding | undefined {
+  if (!isJsonRecord(value)) return undefined
+  const family = value.family
+  if (family !== 'system' && family !== 'managed-chromium' && family !== 'cloak' && family !== 'test') return undefined
+  if (
+    typeof value.runtimeId !== 'string' || !value.runtimeId || value.runtimeId.length > 160 ||
+    typeof value.browserId !== 'string' || !value.browserId || value.browserId.length > 64 ||
+    typeof value.executablePath !== 'string' || !path.isAbsolute(value.executablePath) || value.executablePath.length > 4096 ||
+    typeof value.createdWithVersion !== 'string' || !/^\d+\.\d+\.\d+\.\d+(?:\.\d+)?$/.test(value.createdWithVersion) ||
+    value.profileFormat !== 1
+  ) return undefined
+  return {
+    runtimeId: value.runtimeId,
+    family,
+    browserId: value.browserId,
+    executablePath: value.executablePath,
+    createdWithVersion: value.createdWithVersion,
+    profileFormat: 1,
+  }
 }
 
 function normalizeRoleLabel(value: unknown) {
@@ -627,16 +623,18 @@ export function normalizeManagedProfileProxy(value: unknown) {
   return { server: parsed.toString(), bypass }
 }
 
-function validateConfigBrowser(value: unknown): BrowserSelection {
-  if (value === null || value === undefined || value === '') return 'auto'
-  const browser = normalizeBrowserId(value)
-  if (!browser) {
+function isConfigBrowser(value: unknown): value is ConfigBrowser {
+  return value === 'chrome' || value === 'brave'
+}
+
+function validateConfigBrowser(value: unknown): ConfigBrowser {
+  if (!isConfigBrowser(value)) {
     throw configError(
       'tokenless_config_invalid',
-      'Invalid Tokenless browser; expected auto, a supported system browser, managed-chromium, or cloak.',
+      'Invalid Tokenless browser; expected chrome or brave.',
     )
   }
-  return browser
+  return value
 }
 
 function isConfigBrowserExecutablePath(value: unknown) {
@@ -661,29 +659,6 @@ function validateConfigBrowserExecutablePath(value: unknown) {
   return normalizeConfigBrowserExecutablePath(value)
 }
 
-function validateConfigBrowserExecutablePathScope(
-  homeDir: string,
-  browser: BrowserSelection,
-  executablePath: string | null,
-  file: string,
-) {
-  if (!executablePath || isSystemBrowserId(browser)) return
-  const managedRuntimeRoot = path.join(path.resolve(homeDir), 'browser', 'runtimes')
-  if (
-    (browser === 'managed-chromium' || browser === 'cloak') &&
-    isPathInside(managedRuntimeRoot, executablePath)
-  ) return
-  throw configError(
-    'tokenless_config_invalid',
-    `Invalid Tokenless browser executable path scope at ${file}.`,
-  )
-}
-
-function isPathInside(root: string, candidate: string) {
-  const relative = path.relative(root, candidate)
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
-}
-
 function validateConfigLanguage(value: unknown): TokenlessLanguage {
   const language = normalizeTokenlessLanguage(value)
   if (!language) throw configError('tokenless_config_invalid', 'Invalid Tokenless language; expected en or zh-CN.')
@@ -706,14 +681,6 @@ export async function hasConfiguredTokenlessLanguage(homeDir = tokenlessHome()) 
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
     throw error
   }
-}
-
-function validateConfigBrowserVisibility(value: unknown): BrowserVisibility {
-  const visibility = normalizeBrowserVisibility(value)
-  if (!visibility) {
-    throw configError('tokenless_config_invalid', 'Invalid Tokenless browser visibility.')
-  }
-  return visibility
 }
 
 function normalizeNonemptyString(value: unknown) {
@@ -762,6 +729,7 @@ function normalizeDaemonUrl(value: unknown) {
     return null
   }
   if (parsed.protocol !== 'http:' || !isLoopbackHostname(parsed.hostname)) return null
+  if (parsed.port === '0') return null
   return parsed.href.replace(/\/+$/, '')
 }
 

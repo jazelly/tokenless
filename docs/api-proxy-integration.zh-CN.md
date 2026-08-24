@@ -531,7 +531,6 @@ Anthropic：
 | 502 | `upstream_error` | provider 页面没有产生可见回复：登录 blocker、CAPTCHA 或 job 失败 | 用户清除 blocker 后可重试 |
 | 502 | `provider_output_protocol_error` | Tool 或 structured-final 校验失败；只有 correlated outer `kind: final` string-escaping failure 会获得一次 bounded correction | 不再重试 |
 | 503 | `api_proxy_disabled` | proxy 未开启 | 否 —— 请先开启 |
-| 503 | `profile_not_ready` | managed profile 需要先执行 `tokenless setup` | 否 —— 请先完成 setup |
 | 503 | `model_not_available` | 该 provider 未在解析出的 profile 上启用 | 否 —— 请先启用 |
 | 503 | `auto_route_unavailable` | 没有 enabled、当前可用且有 evidence 的 provider 能满足完整 request | 否 —— 调整 scope 或 provider readiness |
 | 504 | `completion_timeout` | provider 在 10 分钟内没有回复 | 先检查当前 job 再决定 |

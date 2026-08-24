@@ -43,7 +43,6 @@ import {
   createDaemonJob,
   daemonUrl,
   deriveTaskId,
-  deleteTokenlessProfileConfig,
   ensureDaemonReady,
   generateImage,
   getMenuBarSnapshot,
@@ -88,6 +87,7 @@ import {
   updateControlProfileObservation,
   updateOutputSavings,
   writeTokenlessConfig,
+  configPath,
   API_PROXY_CONVERSATION_MODES,
   type ApiProxyConversationMode,
 } from './index.js'
@@ -112,7 +112,6 @@ import {
   inspectTokenlessSkills,
 } from './bootstrap/setup-workflow.js'
 import { reconcileTokenlessMaintenance } from './bootstrap/maintenance.js'
-import { DaemonRuntimeState } from '#tokenless-server/runtime/state.js'
 import { fetchTokenlessLatestVersion } from './http/npm-registry.js'
 import {
   createSetupPresenter,
@@ -540,7 +539,8 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
     const runner = stoppedRunnerStatus()
     printPayload({
       ok: true,
-      profile: publicManagedProfile(result.profile, result.defaultProfile),
+      profile: result.profile,
+      defaultProfile: result.defaultProfile,
       runner,
     }, args)
     return
@@ -628,7 +628,7 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
     const opened = await openBrowserRuntimeProfile({
       daemonUrl: actualDaemonUrl,
       homeDir,
-      profileId: profile.id,
+      profileId: profile.slug,
       browserVisibility: 'headed',
     })
     const runner = browserRuntimeOpenRunnerStatus(opened.status, daemon.started)
@@ -637,7 +637,7 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
       status: opened.status.status,
       backend: PLAYWRIGHT_EXECUTION_BACKEND,
       action: 'profiles.open',
-      profileId: profile.id,
+      profileId: profile.slug,
       browserVisibility: opened.browserVisibility,
       effectiveBrowserVisibility: opened.effectiveBrowserVisibility,
     })
@@ -677,7 +677,7 @@ async function dashboardCommand(args: CliArgs) {
   const dashboard = await openTokenlessDashboard({
     homeDir,
     daemonUrl: daemon.url,
-    ...(profile === null ? {} : { profileId: profile.id }),
+    ...(profile === null ? {} : { profileId: profile.slug }),
     ...(args.jobId === undefined ? {} : { jobId: String(args.jobId) }),
     open: args.noOpen !== true,
   })
@@ -685,7 +685,7 @@ async function dashboardCommand(args: CliArgs) {
     ok: true,
     command: 'dashboard',
     daemon: { url: daemon.url, started: daemon.started, pid: daemon.pid },
-    profile: profile === null ? null : { slug: profile.slug, id: profile.id },
+    profile: profile === null ? null : { slug: profile.slug },
     dashboard: {
       url: dashboard.url,
       opened: dashboard.opened !== null,
@@ -1199,14 +1199,10 @@ async function defaultProfileSlug(registry: ManagedProfileRegistry) {
   return (await registry.read()).defaultProfile
 }
 
-function publicManagedProfile(profile: Pick<ManagedProfileRecord, 'slug' | 'id' | 'lifecycle' | 'createdAt' | 'updatedAt' | 'lastObservedAuth'>, defaultSlug: string | null) {
+function publicManagedProfile(profile: Pick<ManagedProfileRecord, 'slug' | 'lastObservedAuth'>, defaultSlug: string | null) {
   return {
     slug: profile.slug,
-    id: profile.id,
-    lifecycle: profile.lifecycle,
     isDefault: profile.slug === defaultSlug,
-    createdAt: profile.createdAt,
-    updatedAt: profile.updatedAt,
     browserMode: 'native',
     lastObservedAuth: profile.lastObservedAuth,
     providers: Object.fromEntries(Object.entries(profile.lastObservedAuth).map(([provider, status]) => [
@@ -1256,7 +1252,7 @@ async function preflightControlExecutionBeforeDaemonStart({
     throw usageError('profile_not_configured', 'No managed profile was specified and no default profile is configured.')
   }
   const profile = registry.profiles[slug]
-  if (!profile || profile.lifecycle === 'removed') {
+  if (!profile) {
     throw usageError('profile_not_found' as LocalizedErrorCode, `Managed profile '${slug}' is not registered.`)
   }
   const enabledProviders = requiredProfileConfig(config, profile.slug).enabledProviders
@@ -1296,7 +1292,7 @@ async function preflightControlExecutionBeforeDaemonStart({
       : decision.message,
   )
   error.context = {
-    profile: { slug: profile.slug, id: profile.id },
+    profile: { slug: profile.slug },
     requirements: decision.requirements,
     providers: providerUnavailable ? providers : decision.evaluated,
     usableProviders: explicitProvider
@@ -1885,7 +1881,7 @@ async function executeDaemonJob({
       homeDir,
       daemonUrl: configuredDaemonUrl,
       daemonStartTimeoutMs: optionalNumber(args.daemonStartTimeoutMs),
-      profileId: profileForTarget.id,
+      profileId: profileForTarget.slug,
     })
     const fallbackAlternatives = automaticProviderFallbackAllowed({
       args,
@@ -1906,7 +1902,7 @@ async function executeDaemonJob({
             homeDir,
             daemonUrl: configuredDaemonUrl,
             daemonStartTimeoutMs: optionalNumber(args.daemonStartTimeoutMs),
-            profileId: profileForTarget.id,
+            profileId: profileForTarget.slug,
           })
           return {
             provider: alternateProvider,
@@ -2021,7 +2017,7 @@ async function executeDaemonJob({
       homeDir,
       daemonUrl: submitted.daemonUrl,
       provider: resolvedProvider,
-      profileId: submitted.profile.id,
+      profileId: submitted.profile.slug,
       projectName,
       taskId,
     })
@@ -2185,7 +2181,7 @@ async function executeManagedPlaywrightJob({
   const job = await submitManagedPlaywrightJob({
     daemonUrl: actualDaemonUrl,
     homeDir,
-    profileId: profile.id,
+    profileId: profile.slug,
     request: {
       ...alignedRequest,
       browserVisibility,
@@ -2199,7 +2195,7 @@ async function executeManagedPlaywrightJob({
     jobId: job.job_id,
     taskId: effectiveTaskId,
     provider,
-    action: job.action,
+    action: statusEventAction,
   })
   const waitResult = noWait
     ? (statusReporter.report({
@@ -2209,7 +2205,7 @@ async function executeManagedPlaywrightJob({
         jobId: job.job_id,
         taskId: effectiveTaskId,
         provider,
-        action: job.action,
+        action: statusEventAction,
       }), null)
     : await waitForJobWithInterruptCancellation({
         homeDir,
@@ -2663,8 +2659,7 @@ async function stateCommand(args: CliArgs) {
         homeDir,
         taskId: requestedTaskId,
         provider,
-        executionBackend: PLAYWRIGHT_EXECUTION_BACKEND,
-        profileId: profile.id,
+        profileId: profile.slug,
         limit: Math.max(1, Number(args.limit) || 10),
       })
   const jobs = listedDaemonJobs
@@ -2673,7 +2668,7 @@ async function stateCommand(args: CliArgs) {
       if (job.backend !== PLAYWRIGHT_EXECUTION_BACKEND) return false
       if (requestedTaskId && job.taskId !== requestedTaskId) return false
       if (provider && job.provider !== provider) return false
-      if (job.profile?.id !== profile.id) return false
+      if (job.profile?.slug !== profile.slug) return false
       return true
     })
     .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
@@ -2713,7 +2708,7 @@ async function limitsCommand(subcommand: string | undefined, args: CliArgs) {
     homeDir,
     daemonUrl: daemon.url,
     provider,
-    profileId: profile.id,
+    profileId: profile.slug,
     accessClass: observation?.account?.tier.class ?? observation?.access ?? 'unknown',
     tierLabel: observation?.account?.tier.label ?? null,
     subscriptionLabel: observation?.account?.subscription ?? null,
@@ -2727,7 +2722,7 @@ async function limitsCommand(subcommand: string | undefined, args: CliArgs) {
 }
 
 async function resolveProfileForDaemonJob(
-  profiles: Array<Pick<ManagedProfileRecord, 'slug' | 'id' | 'lifecycle' | 'createdAt' | 'updatedAt' | 'lastObservedAuth'>>,
+  profiles: Array<Pick<ManagedProfileRecord, 'slug' | 'lastObservedAuth'>>,
   job: Awaited<ReturnType<typeof getDaemonJob>>,
   requestedProfile: string | undefined
 ) {
@@ -2739,12 +2734,12 @@ async function resolveProfileForDaemonJob(
     if (!explicitProfile) {
       throw usageError('task_state_profile_not_found', 'The managed profile for this Tokenless job is not available.')
     }
-    if (explicitProfile.id !== job.profile_id) {
+    if (explicitProfile.slug !== job.profile_id) {
       throw usageError('task_state_not_found', `No daemon-backed Tokenless task state found for ${job.job_id}.`)
     }
     return explicitProfile
   }
-  const profile = profiles.find((candidate) => candidate.id === job.profile_id)
+  const profile = profiles.find((candidate) => candidate.slug === job.profile_id)
   if (!profile) {
     throw usageError('task_state_profile_not_found', 'The managed profile for this Tokenless job is not available.')
   }
@@ -2819,7 +2814,7 @@ async function agentCommand(subcommand: string | undefined, args: CliArgs) {
       ...client,
       body: {
         provider,
-        profileId: profile.id,
+        profileId: profile.slug,
         taskPrompt,
         ...(subcommand === 'delegate'
           ? { workspaceRoot: requiredWorkspaceRoot(args.workspaceRoot) }
@@ -3705,7 +3700,7 @@ async function setupCommand(args: CliArgs) {
       ? await openTokenlessDashboard({
           homeDir,
           daemonUrl: localRuntime.url,
-          profileId: updatedProfile.id,
+          profileId: updatedProfile.slug,
           open: true,
         }).then((value) => ({
           opened: value.opened !== null,
@@ -3946,7 +3941,6 @@ async function ensureSetupManagedProfile({
   }
 
   if (selected) {
-    if (selected.lifecycle !== 'ready') selected = await registry.updateLifecycle(selected.slug, 'ready')
     const selectedSlug = selected.slug
     if (args.setDefault === true || prompt) {
       await presenter.withProgress(t('setupSetDefaultProfile', { profile: selectedSlug }), () => registry.setDefault(selectedSlug))
@@ -3961,7 +3955,6 @@ async function ensureSetupManagedProfile({
     () => registry.addProfile({
       slug,
       setDefault: true,
-      lifecycle: 'ready',
     }),
   )
 }
@@ -4024,12 +4017,6 @@ async function ensureSetupRuntimeBoundProfile({
   }
 
   if (selected) {
-    if (selected.lifecycle !== 'ready') {
-      throw usageError(
-        'setup_profile_not_ready',
-        `Managed profile '${selected.slug}' is ${selected.lifecycle}; choose another ready profile or create a clean profile.`,
-      )
-    }
     if (args.setDefault === true || prompt) {
       await presenter.withProgress(t('setupSetDefaultManagedProfile', { profile: selected.slug }), () => registry.setDefault(selected.slug))
     }
@@ -4043,7 +4030,6 @@ async function ensureSetupRuntimeBoundProfile({
     () => registry.addProfile({
       slug,
       setDefault: true,
-      lifecycle: 'ready',
       runtimeBinding: browserRuntimeBinding(runtime),
     }),
   )
@@ -4286,7 +4272,7 @@ async function ensureSetupProviderReviewTabs({
     const result = await presenter.withProgress(t('setupOpeningProviderTabs'), () => openBrowserRuntimeProviderTabs({
       daemonUrl: actualDaemonUrl,
       homeDir,
-      profileId: profile.id,
+      profileId: profile.slug,
       providers,
       browserVisibility: 'headed',
     }))
@@ -4382,7 +4368,7 @@ async function doctorCommand(args: CliArgs) {
   let config: Pick<TokenlessConfig, 'profiles'> & Record<string, any> = { profiles: {}, browser: null, daemonUrl: null }
   let configCheck: Record<string, any>
   try {
-    config = await readTokenlessConfig(homeDir, { persistMigrations: false })
+    config = await readTokenlessConfig(homeDir)
     configCheck = { ok: true, path: `${homeDir}/config.json`, value: config }
   } catch (error) {
     configCheck = {
@@ -4454,25 +4440,9 @@ async function doctorCommand(args: CliArgs) {
   let daemon: Record<string, any>
   const daemonLogPath = path.join(homeDir, 'daemon.log')
   const daemonLogExists = await fileExists(daemonLogPath)
-  const runtimeEndpoint = await DaemonRuntimeState.readEndpointIfExists(homeDir)
-  const daemonProbeUrls = [...new Set([
-    runtimeEndpoint?.origin,
-    configuredDaemonUrl,
-  ].filter((value): value is string => typeof value === 'string' && value.length > 0))]
   let daemonStatusUrl = configuredDaemonUrl
   try {
-    let ready: Awaited<ReturnType<typeof probeDaemonReady>> | null = null
-    for (const candidateUrl of daemonProbeUrls) {
-      const candidate = await probeDaemonReady({
-        homeDir,
-        daemonUrl: candidateUrl,
-      })
-      ready = candidate
-      if (candidate.ok) break
-    }
-    if (!ready) {
-      ready = await probeDaemonReady({ homeDir, daemonUrl: configuredDaemonUrl })
-    }
+    const ready = await probeDaemonReady({ homeDir, daemonUrl: configuredDaemonUrl })
     daemonStatusUrl = ready.ok ? ready.url : configuredDaemonUrl
     const expectedVersion = tokenlessPackageVersion()
     const runningVersion = typeof ready.body?.version === 'string' ? ready.body.version : null
@@ -4543,10 +4513,8 @@ async function doctorCommand(args: CliArgs) {
     } else {
       const profile = profileReport.profile
       managedProfile = {
-        ok: profile.lifecycle === 'ready',
+        ok: true,
         slug: profile.slug,
-        id: profile.id,
-        lifecycle: profile.lifecycle,
         browserMode: 'native',
         runtime: await runtimeManager.inspect(profile, {
           browserExecutablePath: profile.runtimeBinding?.browserId === config.browser
@@ -4735,37 +4703,32 @@ async function sameExistingPath(left: string, right: string | null) {
 }
 
 async function readManagedProfileReadOnly(homeDir: string) {
-  const registry = new ManagedProfileRegistry(homeDir)
   const data = await readManagedProfileRegistryReadOnly(homeDir)
   const defaultSlug = data.defaultProfile
   const profile = defaultSlug ? data.profiles[defaultSlug] : undefined
-  if (!profile || profile.lifecycle === 'removed') {
+  if (!profile) {
     return {
       ok: false,
-      path: registry.paths.databasePath,
+      path: configPath(homeDir),
       profile: null,
       message: defaultSlug ? 'Default managed profile is not available.' : 'No default managed profile is configured.',
     }
   }
   return {
     ok: true,
-    path: registry.paths.databasePath,
+    path: configPath(homeDir),
     profile,
   }
 }
 
 async function configCommand(args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
-  const control = await ensureControlDaemon(
-    args.daemonUrl === undefined ? args : { ...args, daemonUrl: undefined },
-    homeDir,
-  )
+  const control = await ensureControlDaemon(args, homeDir)
   if (args.profile !== undefined) {
     if (
       args.browser !== undefined ||
       args.browserExecutablePath !== undefined ||
       args.clearBrowserExecutablePath === true ||
-      args.daemonUrl !== undefined ||
       args.language !== undefined
     ) {
       throw usageError('profile_config_scope_invalid', '--profile can scope only provider membership and headed browser visibility.')
@@ -5097,10 +5060,10 @@ function publicDaemonJobState(job: Record<string, any>) {
     jobId: job.job_id,
     taskId: daemonTaskId(job),
     pageRef: request.pageRef ?? null,
-    backend: job.execution_backend ?? 'playwright',
+    backend: PLAYWRIGHT_EXECUTION_BACKEND,
     profile: job.profile_id === undefined || job.profile_id === null
       ? null
-      : { id: job.profile_id },
+      : { slug: job.profile_id },
     provider: job.provider,
     action: job.action,
     capabilityRoute: request.capabilityRoute ?? null,
@@ -6626,7 +6589,7 @@ function normalizeStatusEvent(event: StatusEvent, startedAt: number) {
 
 function formatStatusEvent(event: StatusEvent, args: CliArgs) {
   const colorEnabled = !args.json && cliColorEnabled(args, process.stderr)
-  const eventColor: CliColor = event.status === 'failed' || event.status === 'timed_out' || event.status === 'canceled'
+  const eventColor: CliColor = event.status === 'failed' || event.status === 'canceled'
     ? 'red'
     : event.status === 'waiting_for_user'
       ? 'yellow'

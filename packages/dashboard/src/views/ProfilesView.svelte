@@ -245,7 +245,7 @@
         <section class="settings-section">
           <div class="settings-section-title"><h3>{t('connection')}</h3></div>
           <div class="settings-list">
-            <div class="settings-row"><span>{t('status')}</span><strong class="status-value"><span class="status-dot ok"></span>{profile.lifecycle ? stateLabel(language, profile.lifecycle) : t('profileReady')}</strong></div>
+            <div class="settings-row"><span>{t('status')}</span><strong class="status-value"><span class="status-dot ok"></span>{t('profileReady')}</strong></div>
           </div>
         </section>
       </div>

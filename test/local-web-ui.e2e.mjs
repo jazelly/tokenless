@@ -196,14 +196,12 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       const workProfile = await registry.resolveProfile('work')
       const work = daemon.store.createJob({
         provider: 'chatgpt',
-        action: 'web-ui-display-check',
         request_json: {
           taskId: 'api-proxy:web-ui-durable-work',
           executionMode: 'browser',
           actions: [{ action: 'prompt.input', payload: { text: 'Summarize the dashboard work.' } }],
         },
-        execution_backend: 'playwright',
-        profile_id: workProfile.id,
+        profile_id: workProfile.slug,
       })
       await daemon.store.cancelJob(work.job_id, { source: 'web-ui-e2e' })
       await page.waitForTimeout(3300)

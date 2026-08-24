@@ -5,7 +5,6 @@ import { DAEMON_CONTROL_API_REVISION } from '../schema-ids.js'
 import { normalizeBrowserVisibility } from '../browser-visibility.js'
 import { listProviderInstances } from '../providers/registry.js'
 import {
-  MANAGED_PLAYWRIGHT_JOB_ACTION,
   validateManagedPlaywrightJobRequest,
 } from '../browser/job-contract.js'
 import {
@@ -24,7 +23,7 @@ import {
   toDaemonError,
   type DaemonError,
 } from '../errors.js'
-import { JobStore, WebAiRequestNotFoundError, WebAiRequestRefConflictError, publicView, type ExecutionBackend, type JobStatus } from '../jobs/store.js'
+import { JobStore, WebAiRequestNotFoundError, WebAiRequestRefConflictError, publicView, type JobStatus } from '../jobs/store.js'
 import { TokenlessApplicationServices } from '../application/services.js'
 import { TokenlessDashboardServer } from './dashboard/server.js'
 import { DashboardSessionManager } from './dashboard/session.js'
@@ -92,7 +91,6 @@ export async function serveHttp({
   g4fService,
   agentRunHandlerFactory,
   beforeClose,
-  afterStoreClose,
 }: {
   store: JobStore
   host: string
@@ -101,7 +99,6 @@ export async function serveHttp({
   g4fService?: G4fServiceProcess | undefined
   agentRunHandlerFactory?: AgentRunHttpHandlerFactory | undefined
   beforeClose?: (() => Promise<void>) | undefined
-  afterStoreClose?: (() => Promise<void>) | undefined
 }) {
   validateLoopbackHost(host)
   let active = false
@@ -117,7 +114,7 @@ export async function serveHttp({
     closePromise ??= closeServer(server, store, async () => {
       await featureBench.close()
       await beforeClose?.()
-    }, afterStoreClose)
+    })
     return closePromise
   }
   const startedAt = Date.now()
@@ -147,7 +144,6 @@ export async function serveHttp({
     resolveHarnessRunHandler: async () => resolveAgentRunHandler?.(origin()),
   })
   const privateProviderTurn = new PrivateProviderTurnV0Adapter(store)
-  await privateProviderTurn.initializeCleanup()
   const apiProxy = new ApiProxyAdapter(store, async () => await runtimeController?.wake(), g4fService?.client)
   const imageGeneration = new ImageGenerationAdapter(store, async () => await runtimeController?.wake(), g4fService?.client)
   server = http.createServer((request, response) => {
@@ -302,7 +298,7 @@ async function handleRequest(
       const controlState = await applicationServices.controlState()
       const defaultProfileId = controlState.defaultProfile === null
         ? null
-        : controlState.profiles.find((profile) => profile.slug === controlState.defaultProfile)?.id ?? null
+        : controlState.profiles.find((profile) => profile.slug === controlState.defaultProfile)?.slug ?? null
       writeJson(response, 200, {
         ...snapshot,
         dashboardUrl: dashboardServer.dashboardUrl(defaultProfileId),
@@ -573,9 +569,7 @@ async function handleRequest(
       const body = await readJsonObject(request)
       const createJobFields = new Set([
         'provider',
-        'action',
         'request_json',
-        'execution_backend',
         'profile_id',
         'job_id',
       ])
@@ -583,24 +577,16 @@ async function handleRequest(
         throw invalidInput('request body must be valid JSON: unknown field')
       }
       const provider = requiredString(body.provider, 'provider')
-      const action = requiredString(body.action, 'action')
-      const executionBackend = optionalExecutionBackend(body.execution_backend)
-      if (executionBackend === 'playwright' && !supportedProviderSet().has(provider)) {
-        throw invalidInput(`unsupported playwright provider: ${provider}`)
-      }
+      if (!supportedProviderSet().has(provider)) throw invalidInput(`unsupported provider: ${provider}`)
       const rawRequestJson = requireField(body, 'request_json')
-      const requestJson = action === MANAGED_PLAYWRIGHT_JOB_ACTION && hasManagedPlaywrightProtocol(rawRequestJson)
-        ? validateManagedPlaywrightRequestInput(rawRequestJson)
-        : rawRequestJson
+      const requestJson = validateManagedPlaywrightRequestInput(rawRequestJson)
       const job = store.createJob({
         provider,
-        action,
         request_json: requestJson,
-        execution_backend: executionBackend,
-        profile_id: optionalString(body.profile_id),
+        profile_id: requiredString(body.profile_id, 'profile_id'),
         job_id: optionalString(body.job_id) ?? undefined,
       })
-      if (job.execution_backend === 'playwright') await runtimeController?.wake()
+      await runtimeController?.wake()
       writeJson(response, 200, publicView(job))
       return
     }
@@ -629,7 +615,6 @@ async function handleRequest(
     if (method === 'GET' && url.pathname === '/v1/private/jobs') {
       const jobs = store.listJobs({
         status: optionalJobStatus(url.searchParams.get('status')),
-        execution_backend: optionalQueryExecutionBackend(url.searchParams.get('execution_backend')),
         profile_id: optionalQueryString(url.searchParams.get('profile_id')),
         provider: optionalQueryString(url.searchParams.get('provider')),
         task_id: optionalQueryString(url.searchParams.get('task_id')),
@@ -784,10 +769,6 @@ function writePrivateProviderTurnError(response: ServerResponse, error: unknown)
       retryable: requestRefConflict || requestNotFound ? false : !invalid,
     },
   })
-}
-
-function hasManagedPlaywrightProtocol(value: unknown) {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value) && Object.hasOwn(value, 'protocol'))
 }
 
 function validateManagedPlaywrightRequestInput(value: unknown) {
@@ -1211,32 +1192,15 @@ function optionalBodyLimit(value: unknown) {
 
 function optionalJobStatus(value: string | null) {
   if (value === null) return undefined
-  const statuses: JobStatus[] = ['queued', 'running', 'waiting_for_user', 'succeeded', 'failed', 'canceled', 'timed_out']
+  const statuses: JobStatus[] = ['queued', 'running', 'waiting_for_user', 'succeeded', 'failed', 'canceled']
   if (!statuses.includes(value as JobStatus)) throw invalidInput(`invalid status: ${value}`)
   return value as JobStatus
-}
-
-function optionalExecutionBackend(value: unknown) {
-  if (value === undefined || value === null) return undefined
-  if (value !== 'playwright') {
-    throw invalidInput(`invalid execution_backend: ${String(value)}`)
-  }
-  return value as ExecutionBackend
-}
-
-function optionalQueryExecutionBackend(value: string | null) {
-  if (value === null) return undefined
-  if (value !== 'playwright') {
-    throw invalidInput('query parameters are invalid: Failed to deserialize query string')
-  }
-  return value
 }
 
 async function closeServer(
   server: http.Server,
   store: JobStore,
   beforeClose: (() => Promise<void>) | undefined,
-  afterStoreClose: (() => Promise<void>) | undefined
 ) {
   const results = await Promise.allSettled([beforeClose?.() ?? Promise.resolve()])
   results.push(...await Promise.allSettled([new Promise<void>((resolve, reject) => {
@@ -1246,7 +1210,6 @@ async function closeServer(
     })
   })]))
   store.close()
-  results.push(...await Promise.allSettled([afterStoreClose?.() ?? Promise.resolve()]))
   const failed = results.find((result) => result.status === 'rejected')
   if (failed?.status === 'rejected') throw failed.reason
 }

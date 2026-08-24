@@ -21,7 +21,7 @@
   let busy = $state(false)
   let error = $state('')
   let approved = $state(false)
-  let profile = $derived(snapshot.profiles.find((entry) => entry.id === profileId))
+  let profile = $derived(snapshot.profiles.find((entry) => entry.slug === profileId))
   let providers = $derived(snapshot.providers.filter((entry) => profile?.enabledProviders.includes(entry.id)))
 
   $effect(() => {
@@ -29,9 +29,9 @@
   })
 
   onMount(async () => {
-    profileId = snapshot.profiles.find((profile) => profile.slug === selectedProfile)?.id
-      ?? snapshot.profiles.find((profile) => profile.isDefault)?.id
-      ?? snapshot.profiles[0]?.id
+    profileId = snapshot.profiles.find((profile) => profile.slug === selectedProfile)?.slug
+      ?? snapshot.profiles.find((profile) => profile.isDefault)?.slug
+      ?? snapshot.profiles[0]?.slug
       ?? ''
     try {
       request = await client.getHarnessExtensionPairing(pairingId)
@@ -78,7 +78,7 @@
         <label class="field">
           <span>{t('profile')}</span>
           <select name="harnessExtensionProfile" bind:value={profileId} disabled={busy}>
-            {#each snapshot.profiles as entry (entry.id)}<option value={entry.id}>{entry.slug}</option>{/each}
+            {#each snapshot.profiles as entry (entry.slug)}<option value={entry.slug}>{entry.slug}</option>{/each}
           </select>
         </label>
         <label class="field">

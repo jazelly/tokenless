@@ -179,7 +179,7 @@
       setupRoute = true
     }
     if (snapshot.config?.language === 'en' || snapshot.config?.language === 'zh-CN') language = snapshot.config.language
-    const requestedProfile = snapshot.profiles.find((profile) => profile.slug === selectedProfile || profile.id === selectedProfile)
+    const requestedProfile = snapshot.profiles.find((profile) => profile.slug === selectedProfile)
     if (requestedProfile && requestedProfile.slug !== selectedProfile) {
       selectProfile(requestedProfile.slug)
     } else if (!requestedProfile) {

@@ -6,7 +6,6 @@ import http from 'node:http'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
 import test from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -51,9 +50,15 @@ test('ensureDaemonReady installs the packaged daemon and reports OpenAPI v1 read
 test('built CLI profile, config, API proxy, and savings commands cross the private HTTP control boundary', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-http-control-')))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
-  const env = { TOKENLESS_DAEMON_URL: daemonUrl, TOKENLESS_HOME: homeDir }
+  const env = { TOKENLESS_HOME: homeDir }
   let pid
   try {
+    const runtime = await importCli()
+    await runtime.writeTokenlessConfig({ homeDir, daemonUrl })
+    const ready = await runtime.ensureDaemonReady({ homeDir, timeoutMs: 10_000 })
+    pid = ready.pid
+    const directState = await runtime.getControlState({ homeDir })
+    assert.equal(directState.runtime.pid, pid)
     const added = runCli(['profiles', 'add', '--home', homeDir, '--profile', 'http-control', '--set-default', '--json'], env)
     assert.equal(added.status, 0, added.stderr || added.stdout)
     const addedPayload = JSON.parse(added.stdout)
@@ -120,11 +125,15 @@ test('built CLI profile, config, API proxy, and savings commands cross the priva
       '--json',
     ], env)
     assert.equal(removed.status, 0, removed.stderr || removed.stdout)
-    assert.equal(JSON.parse(removed.stdout).profile.lifecycle, 'removed')
+    assert.deepEqual(JSON.parse(removed.stdout).profile, { slug: 'http-control', removed: true })
 
-    const stopped = runCli(['daemon', 'stop', '--home', homeDir, '--json'], env)
-    assert.equal(stopped.status, 0, stopped.stderr || stopped.stdout)
+    const stopped = await runtime.stopDaemon({ homeDir })
+    assert.equal(stopped.status, 'stopped')
+    assert.equal(stopped.pid, pid)
     assert.equal(await pidExited(pid), true)
+    const repeated = runCli(['daemon', 'stop', '--home', homeDir, '--json'], env)
+    assert.equal(repeated.status, 0, repeated.stderr || repeated.stdout)
+    assert.equal(JSON.parse(repeated.stdout).status, 'not_running')
     pid = undefined
   } finally {
     if (pid) await stopPid(pid)
@@ -221,6 +230,24 @@ test('ensureDaemonReady fails clearly when the fixed daemon port is already boun
   try {
     const runtime = await importCli()
     await assert.rejects(
+      runtime.ensureDaemonReady({ homeDir, daemonUrl: 'http://127.0.0.1:0', timeoutMs: 2_000 }),
+      (error) => {
+        assert.equal(error.code, 'invalid_daemon_url')
+        return true
+      },
+    )
+    fs.writeFileSync(path.join(homeDir, 'config.json'), `${JSON.stringify({
+      protocol: 'tokenless.config.v1',
+      daemonUrl: 'http://127.0.0.1:0',
+    })}\n`, { mode: 0o600 })
+    await assert.rejects(
+      runtime.ensureDaemonReady({ homeDir, timeoutMs: 2_000 }),
+      (error) => {
+        assert.equal(error.code, 'tokenless_config_invalid')
+        return true
+      },
+    )
+    await assert.rejects(
       runtime.ensureDaemonReady({ homeDir, daemonUrl, timeoutMs: 2_000 }),
       (error) => {
         assert.equal(error.code, 'daemon_start_failed')
@@ -257,7 +284,6 @@ test('playwright daemon client verifies /ready before sending the bearer token',
         provider: 'chatgpt',
         action: 'visible_provider_actions',
         requestJson: {},
-        executionBackend: 'playwright',
         profileId: 'default',
       }),
       (error) => {
@@ -393,7 +419,6 @@ test('daemon stop uses bearer-authenticated self-shutdown for a verified daemon'
     assert.equal(payload.ok, true)
     assert.equal(payload.status, 'stopped')
     assert.equal(payload.pid, pid)
-    assert.equal(fs.existsSync(path.join(homeDir, 'daemon.pid.json')), false)
     assert.equal(await pidExited(pid), true)
     const repeated = runCli(['daemon', 'stop', '--home', homeDir, '--daemon-url', daemonUrl, '--json'])
     assert.equal(repeated.status, 0, repeated.stderr || repeated.stdout)
@@ -440,7 +465,6 @@ test('daemon shutdown endpoint uses bearer authentication', async () => {
     const acceptedBody = await accepted.json()
     assert.equal(acceptedBody.status, 'shutting_down')
     assert.equal(await pidExited(pid), true)
-    assert.equal(readRuntimeEndpoint(homeDir), null)
     pid = undefined
   } finally {
     if (pid) await stopPid(pid)
@@ -596,20 +620,6 @@ function closeHttpServer(server) {
   })
   server.closeAllConnections()
   return closing
-}
-
-function readRuntimeEndpoint(homeDir) {
-  const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'), { readOnly: true })
-  try {
-    const row = database.prepare(
-      `SELECT origin, pid
-       FROM daemon_endpoint
-       WHERE id = 'daemon'`
-    ).get()
-    return row ?? null
-  } finally {
-    database.close()
-  }
 }
 
 function writeJson(response, status, body) {

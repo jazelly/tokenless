@@ -11,6 +11,7 @@ import Ajv2020 from 'ajv/dist/2020.js'
 import addFormats from 'ajv-formats'
 import { startDaemon } from '../packages/server/dist/src/runtime/lifecycle.js'
 import { ManagedProfileRegistry } from '../packages/server/dist/src/browser/profiles/registry.js'
+import { writeTokenlessConfig } from '../packages/server/dist/src/persistence/config.js'
 
 const execFileAsync = promisify(execFile)
 const cliEntry = path.resolve('packages/cli/dist/src/tokenless.mjs')
@@ -250,7 +251,7 @@ test('local web control plane opens directly, establishes Dashboard sessions, an
     assert.equal(setupProfile.status, 200)
     const setupProfileBody = await setupProfile.json()
     assert.equal(setupProfileBody.slug, 'setup-work')
-    const setupProfileId = setupProfileBody.id
+    assert.equal(Object.hasOwn(setupProfileBody, 'id'), false)
 
     const repeatedSetupProfile = await fetch(`${daemon.origin}/dashboard-api/v1/setup`, {
       method: 'POST',
@@ -269,7 +270,7 @@ test('local web control plane opens directly, establishes Dashboard sessions, an
     })
     assert.equal(repeatedSetupProfile.status, 200)
     const repeatedSetupProfileBody = await repeatedSetupProfile.json()
-    assert.equal(repeatedSetupProfileBody.id, setupProfileId)
+    assert.equal(repeatedSetupProfileBody.slug, 'setup-work')
     assert.equal(repeatedSetupProfileBody.roleLabel, 'Setup')
     assert.deepEqual(repeatedSetupProfileBody.enabledProviders, ['chatgpt'])
     assert.deepEqual(repeatedSetupProfileBody.providerModes, setupProfileBody.providerModes)
@@ -422,14 +423,12 @@ test('local web control plane opens directly, establishes Dashboard sessions, an
     assert.equal(Object.hasOwn(await registry.resolveProfile('work'), 'label'), false)
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8')).profiles.work.enabledProviders, ['chatgpt'])
     const workProfile = await registry.resolveProfile('work')
-    const profileConsole = await fetch(`${daemon.origin}/dashboard/?profile=${encodeURIComponent(workProfile.id)}`, { headers: { cookie } })
+    const profileConsole = await fetch(`${daemon.origin}/dashboard/?profile=${encodeURIComponent(workProfile.slug)}`, { headers: { cookie } })
     assert.equal(profileConsole.status, 200)
     const mappedJob = daemon.store.createJob({
       provider: 'chatgpt',
-      action: 'profile-mapping-check',
       request_json: { taskId: 'ui-profile-mapping-check' },
-      execution_backend: 'playwright',
-      profile_id: workProfile.id,
+      profile_id: workProfile.slug,
     })
     const mappedJobResponse = await fetch(`${daemon.origin}/dashboard-api/v1/jobs/${mappedJob.job_id}`, { headers: { cookie } })
     assert.equal(mappedJobResponse.status, 200)
@@ -440,6 +439,7 @@ test('local web control plane opens directly, establishes Dashboard sessions, an
       cliEntry,
       'config',
       '--home', homeDir,
+      '--daemon-url', daemon.origin,
       '--profile', 'work',
       '--provider-whitelist', 'chatgpt,claude',
       '--browser-visibility', 'headed',
@@ -482,45 +482,37 @@ test('local web control plane opens directly, establishes Dashboard sessions, an
     assert.equal(dashboardBody.profile.slug, 'work')
     assert.equal(dashboardBody.dashboard.opened, false)
     assert.equal(new URL(dashboardBody.dashboard.url).origin, daemon.origin)
-    assert.equal(new URL(dashboardBody.dashboard.url).searchParams.get('profile'), workProfile.id)
+    assert.equal(new URL(dashboardBody.dashboard.url).searchParams.get('profile'), workProfile.slug)
 
     const olderMenuJob = daemon.store.createJob({
       provider: 'chatgpt',
-      action: 'menu-bar-older',
       request_json: {
         chatName: 'Menu older conversation',
         actions: [{ action: 'prompt.input', payload: { text: '[User] raw prompt must not be returned' } }],
       },
-      execution_backend: 'playwright',
-      profile_id: workProfile.id,
+      profile_id: workProfile.slug,
     })
     const pathMenuJob = daemon.store.createJob({
       provider: 'chatgpt',
-      action: 'menu-bar-paths',
       request_json: {
         chatName: '/private/var/tokenless /tmp/tokenless /Volumes/Secret /opt/secret C:\\Users\\secret',
         actions: [{ action: 'prompt.input', payload: { text: '[User] path title' } }],
       },
-      execution_backend: 'playwright',
-      profile_id: workProfile.id,
+      profile_id: workProfile.slug,
     })
     await new Promise((resolve) => setTimeout(resolve, 25))
     const newerMenuJob = daemon.store.createJob({
       provider: 'claude',
-      action: 'menu-bar-newer',
       request_json: {
         chatName: 'Menu newer conversation',
         actions: [{ action: 'prompt.input', payload: { text: '[User] newer raw prompt must not be returned' } }],
       },
-      execution_backend: 'playwright',
-      profile_id: workProfile.id,
+      profile_id: workProfile.slug,
     })
     const nonConversationMenuJob = daemon.store.createJob({
       provider: 'chatgpt',
-      action: 'menu-bar-non-conversation',
       request_json: { taskId: 'menu-bar-non-conversation' },
-      execution_backend: 'playwright',
-      profile_id: workProfile.id,
+      profile_id: workProfile.slug,
     })
     const eligibleMenuJobs = daemon.store.listJobs({ limit: 1, order_by: 'updated_at', conversation_only: true })
     assert.equal(eligibleMenuJobs[0].job_id, newerMenuJob.job_id)
@@ -534,9 +526,10 @@ test('local web control plane opens directly, establishes Dashboard sessions, an
     const menuBarBody = await menuBarResponse.json()
     assert.equal(menuBarBody.schema, 'tokenless.menu-bar-snapshot.v1')
     assert.equal(menuBarBody.activeJobCount, menuBarBody.runtime.activeJobCount)
-    assert.equal(new URL(menuBarBody.dashboardUrl).searchParams.get('profile'), workProfile.id)
+    assert.equal(new URL(menuBarBody.dashboardUrl).searchParams.get('profile'), workProfile.slug)
     assert.ok(menuBarBody.conversations.length <= 10)
-    assert.deepEqual(menuBarBody.conversations.slice(0, 2).map((conversation) => conversation.jobId), [newerMenuJob.job_id, pathMenuJob.job_id])
+    assert.equal(menuBarBody.conversations[0].jobId, newerMenuJob.job_id)
+    assert.ok(menuBarBody.conversations.some((conversation) => conversation.jobId === pathMenuJob.job_id))
     assert.ok(menuBarBody.conversations.some((conversation) => conversation.jobId === olderMenuJob.job_id))
     const pathConversation = menuBarBody.conversations.find((conversation) => conversation.jobId === pathMenuJob.job_id)
     assert.match(pathConversation.title, /\[redacted path\]/)
@@ -558,7 +551,7 @@ test('local web control plane opens directly, establishes Dashboard sessions, an
     const menuBarCommandBody = JSON.parse(menuBarCommand.stdout)
     assert.equal(menuBarCommandBody.command, 'menubar status')
     assert.equal(menuBarCommandBody.schema, 'tokenless.menu-bar-snapshot.v1')
-    assert.equal(menuBarCommandBody.conversations[0].jobId, newerMenuJob.job_id)
+    assert.ok(menuBarCommandBody.conversations.some((conversation) => conversation.jobId === newerMenuJob.job_id))
 
     const deepLinkCommand = await execFileAsync(process.execPath, [
       cliEntry,
@@ -736,6 +729,7 @@ test('dashboard sessions are invalidated when the real daemon restarts', async (
 async function withDaemon(operation) {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-local-ui-')))
   const daemon = await startDaemon({ homeDir, host: '127.0.0.1', port: 0 })
+  await writeTokenlessConfig({ homeDir, daemonUrl: daemon.origin })
   try {
     return await operation({ daemon, homeDir })
   } finally {

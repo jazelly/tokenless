@@ -33,7 +33,7 @@ test('built Harness bootstraps exact System Prompt bytes through real local HTTP
     const fixture = await createHarnessFixture(homeDir)
     try {
       const { ManagedProfileRegistry } = await import(profileRegistry)
-      const profile = await new ManagedProfileRegistry(homeDir).addProfile({ slug: 'harness-chatgpt', lifecycle: 'ready' })
+      const profile = await new ManagedProfileRegistry(homeDir).addProfile({ slug: 'harness-chatgpt' })
       const token = (await fs.readFile(path.join(homeDir, 'daemon.token'), 'utf8')).trim()
       const {
         cancelHarnessLocalHttpTurn,
@@ -46,7 +46,7 @@ test('built Harness bootstraps exact System Prompt bytes through real local HTTP
         baseUrl: daemon.origin,
         token,
         provider: 'chatgpt',
-        profileId: profile.id,
+        profileId: profile.slug,
         runId: 'local-http-bootstrap',
         stagingRoot: fixture.stagingRoot,
         skillRoot: fixture.skillRoot,
@@ -129,7 +129,7 @@ test('built Harness rejects a static-ineligible provider before it stages a boot
     const fixture = await createHarnessFixture(homeDir)
     try {
       const { ManagedProfileRegistry } = await import(profileRegistry)
-      const profile = await new ManagedProfileRegistry(homeDir).addProfile({ slug: 'harness-perplexity', lifecycle: 'ready' })
+      const profile = await new ManagedProfileRegistry(homeDir).addProfile({ slug: 'harness-perplexity' })
       const token = (await fs.readFile(path.join(homeDir, 'daemon.token'), 'utf8')).trim()
       const { startHarnessLocalHttpBootstrap } = await import(harnessModule)
 
@@ -140,7 +140,7 @@ test('built Harness rejects a static-ineligible provider before it stages a boot
           baseUrl: daemon.origin,
           token,
           provider: 'perplexity',
-          profileId: profile.id,
+          profileId: profile.slug,
           runId: 'ineligible-bootstrap',
           stagingRoot: fixture.stagingRoot,
           skillRoot: fixture.skillRoot,

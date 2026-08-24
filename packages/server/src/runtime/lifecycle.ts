@@ -3,7 +3,6 @@ import process from 'node:process'
 import { JobStore, defaultHomeDir } from '../jobs/store.js'
 import { BrowserRuntimeController } from './browser-controller.js'
 import { serveHttp, type AgentRunHttpHandlerFactory, type DaemonServer } from '../http/server.js'
-import { DaemonRuntimeState } from './state.js'
 import { readTokenlessConfig } from '../persistence/config.js'
 import { ManagedProfileRegistry } from '../browser/profiles/registry.js'
 import { G4fRuntimeManager, type G4fServiceProcess } from '../providers/direct/g4f/index.js'
@@ -22,7 +21,6 @@ export async function startDaemon({
   agentRunHandlerFactory,
 }: StartDaemonOptions = {}) {
   const store = await JobStore.open(homeDir)
-  const runtimeState = await DaemonRuntimeState.open(store.homeDir)
   let daemon: DaemonServer | undefined
   let g4fService: G4fServiceProcess | undefined
   let runnerFatalError: unknown
@@ -57,25 +55,13 @@ export async function startDaemon({
         await runtimeController.shutdown()
         await g4fService?.close()
       },
-      afterStoreClose: async () => {
-        if (daemon) {
-          runtimeState.clearEndpoint({ origin: daemon.origin, pid: process.pid })
-        }
-        runtimeState.close()
-      },
     })
-    const endpoint = runtimeState.writeEndpoint({
-      origin: daemon.origin,
-      pid: process.pid,
-    })
-    if (!endpoint) throw new Error('Tokenless daemon endpoint could not be published.')
     await runtimeController.start()
     daemon.activate()
   } catch (error) {
     await runtimeController.shutdown().catch(() => undefined)
     await g4fService?.close().catch(() => undefined)
     await daemon?.close().catch(() => undefined)
-    runtimeState.close()
     if (!daemon) store.close()
     throw error
   }

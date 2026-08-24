@@ -14,21 +14,17 @@ import {
 } from './contracts.js'
 
 const DATABASE_FILE = 'tokenless.sqlite3'
-const RECORD_KIND = 'codex-chat'
 
 type StoredTurn = {
   turnId: string
   promptSha256: string | null
   startedAt: string
-  lastSeenAt: string
   completedAt: string | null
 }
 
 type StoredInvocation = {
   bindingId: string
   hookSessionId: string | null
-  agentKind: 'codex'
-  agentChatId: string
   agentTurnId: string
   agentToolCallId: string
   toolName: string
@@ -37,7 +33,6 @@ type StoredInvocation = {
   provider: string | null
   profile: string | null
   jobId: string | null
-  providerTaskId: string
   createdAt: string
   updatedAt: string
 }
@@ -45,7 +40,6 @@ type StoredInvocation = {
 type StoredProviderBinding = {
   provider: string
   profile: string | null
-  providerTaskId: string
   lastJobId: string | null
   providerProjectId: string | null
   providerConversationRef: string | null
@@ -61,9 +55,8 @@ type StoredContext = {
 }
 
 type StoredContextRow = {
-  agentChatId: string
+  chatId: string
   context: StoredContext
-  updatedAt: string
 }
 
 export class AgentContextStore {
@@ -86,7 +79,6 @@ export class AgentContextStore {
     this.homeDir = homeDir
     this.databasePath = path.join(homeDir, DATABASE_FILE)
     this.#db = new DatabaseSync(this.databasePath)
-    this.#db.exec('PRAGMA foreign_keys = ON;')
     this.#db.exec('PRAGMA busy_timeout = 3000;')
   }
 
@@ -121,17 +113,14 @@ export class AgentContextStore {
       const existing = state.context.turns.find((turn) => turn.turnId === turnId)
       if (existing) {
         existing.promptSha256 = prompt === undefined ? existing.promptSha256 : sha256(prompt)
-        existing.lastSeenAt = now
       } else {
         state.context.turns.push({
           turnId,
           promptSha256: prompt === undefined ? null : sha256(prompt),
           startedAt: now,
-          lastSeenAt: now,
           completedAt: null,
         })
       }
-      state.updatedAt = now
       this.writeContext(state)
     })
   }
@@ -143,7 +132,6 @@ export class AgentContextStore {
       const turn = state.context.turns.find((candidate) => candidate.turnId === turnId)
       if (turn) {
         turn.completedAt ??= now
-        turn.lastSeenAt = now
       }
       for (const invocation of state.context.invocations) {
         if (invocation.agentTurnId === turnId && invocation.status === 'pending') {
@@ -151,7 +139,6 @@ export class AgentContextStore {
           invocation.updatedAt = now
         }
       }
-      state.updatedAt = now
       this.writeContext(state)
     })
   }
@@ -172,14 +159,11 @@ export class AgentContextStore {
       this.upsertCodexSession({ chatId, cwd, model, sessionTreeId, appServerThread })
       const state = this.requireContext(chatId)
       const turn = state.context.turns.find((candidate) => candidate.turnId === turnId)
-      if (turn) turn.lastSeenAt = now
-      else state.context.turns.push({ turnId, promptSha256: null, startedAt: now, lastSeenAt: now, completedAt: null })
+      if (!turn) state.context.turns.push({ turnId, promptSha256: null, startedAt: now, completedAt: null })
       const previous = state.context.invocations.find((invocation) => invocation.agentToolCallId === toolCallId)
       const invocation: StoredInvocation = {
         bindingId: previous?.bindingId ?? `binding_${randomUUID()}`,
         hookSessionId: previous?.hookSessionId ?? chatId,
-        agentKind: 'codex',
-        agentChatId: chatId,
         agentTurnId: turnId,
         agentToolCallId: toolCallId,
         toolName,
@@ -188,13 +172,11 @@ export class AgentContextStore {
         provider: previous?.provider ?? null,
         profile: previous?.profile ?? null,
         jobId: previous?.jobId ?? null,
-        providerTaskId: state.context.conversation.providerTaskId,
         createdAt: previous?.createdAt ?? now,
         updatedAt: now,
       }
       if (previous) state.context.invocations[state.context.invocations.indexOf(previous)] = invocation
       else state.context.invocations.push(invocation)
-      state.updatedAt = now
       this.writeContext(state)
     })
     const state = this.requireContext(chatId)
@@ -225,7 +207,7 @@ export class AgentContextStore {
       if (registered && registered.context.conversation.project.projectId !== project.projectId) {
         throw new Error('Codex thread is already bound to a different canonical project.')
       }
-      const identity = this.upsertCodexSession({ chatId, cwd, model, sessionTreeId, appServerThread })
+      this.upsertCodexSession({ chatId, cwd, model, sessionTreeId, appServerThread })
       const matches = bindingId
         ? this.readContexts().flatMap((state) => state.context.invocations
           .filter((invocation) => invocation.bindingId === bindingId)
@@ -245,12 +227,10 @@ export class AgentContextStore {
         if (!target.context.turns.some((turn) => turn.turnId === sourceTurn.turnId)) target.context.turns.push({ ...sourceTurn })
         existing.state.context.invocations = existing.state.context.invocations.filter((invocation) => invocation.bindingId !== existing.invocation.bindingId)
         const now = new Date().toISOString()
-        const moved = { ...existing.invocation, agentChatId: chatId, providerTaskId: identity.providerTaskId, updatedAt: now }
+        const moved = { ...existing.invocation, updatedAt: now }
         target.context.invocations = target.context.invocations.filter((invocation) => invocation.bindingId !== moved.bindingId)
         target.context.invocations.push(moved)
-        target.updatedAt = now
-        if (existing.state.agentChatId !== target.agentChatId) {
-          existing.state.updatedAt = now
+        if (existing.state.chatId !== target.chatId) {
           this.writeContext(existing.state)
         }
         this.writeContext(target)
@@ -266,13 +246,11 @@ export class AgentContextStore {
       resolvedToolCallId = toolCallId ?? `tool_direct_${randomUUID()}`
       const now = new Date().toISOString()
       if (!target.context.turns.some((turn) => turn.turnId === resolvedTurnId)) {
-        target.context.turns.push({ turnId: resolvedTurnId, promptSha256: null, startedAt: now, lastSeenAt: now, completedAt: null })
+        target.context.turns.push({ turnId: resolvedTurnId, promptSha256: null, startedAt: now, completedAt: null })
       }
       target.context.invocations.push({
         bindingId: resolvedBindingId,
         hookSessionId: null,
-        agentKind: 'codex',
-        agentChatId: chatId,
         agentTurnId: resolvedTurnId,
         agentToolCallId: resolvedToolCallId,
         toolName: toolName ?? 'tokenless.direct',
@@ -281,11 +259,9 @@ export class AgentContextStore {
         provider: null,
         profile: null,
         jobId: null,
-        providerTaskId: identity.providerTaskId,
         createdAt: now,
         updatedAt: now,
       })
-      target.updatedAt = now
       this.writeContext(target)
     })
     return invocationContext(this.conversation(chatId), resolvedBindingId, resolvedHookSessionId, resolvedTurnId, resolvedToolCallId)
@@ -297,13 +273,13 @@ export class AgentContextStore {
     outcome: AgentInvocationOutcome
   }) {
     const rows = this.readContexts().flatMap((state) => state.context.invocations
-      .filter((invocation) => invocation.agentKind === 'codex' && invocation.agentToolCallId === toolCallId)
-      .filter((invocation) => invocation.hookSessionId === chatId || (invocation.hookSessionId === null && invocation.agentChatId === chatId))
+      .filter((invocation) => invocation.agentToolCallId === toolCallId)
+      .filter((invocation) => invocation.hookSessionId === chatId || (invocation.hookSessionId === null && state.chatId === chatId))
       .map((invocation) => ({ state, invocation })))
     if (rows.length !== 1) throw new Error(rows.length === 0 ? 'Codex Hook invocation was not registered.' : 'Codex Hook invocation provenance is ambiguous.')
     const row = rows[0]
     if (!row) throw new Error('Codex Hook invocation was not registered.')
-    this.completeInvocationRecord(row.invocation, outcome)
+    this.completeInvocationRecord(row.state, row.invocation, outcome)
   }
 
   completeBoundInvocation(bindingId: string, outcome: AgentInvocationOutcome) {
@@ -313,15 +289,15 @@ export class AgentContextStore {
     if (rows.length !== 1) throw new Error('Codex invocation binding was not registered.')
     const row = rows[0]
     if (!row) throw new Error('Codex invocation binding was not registered.')
-    this.completeInvocationRecord(row.invocation, outcome)
+    this.completeInvocationRecord(row.state, row.invocation, outcome)
   }
 
-  private completeInvocationRecord(invocation: StoredInvocation, outcome: AgentInvocationOutcome) {
-    if (outcome.taskId && outcome.taskId !== invocation.providerTaskId) throw new Error('Tokenless provider result belongs to a different bound task.')
+  private completeInvocationRecord(state: StoredContextRow, invocation: StoredInvocation, outcome: AgentInvocationOutcome) {
+    if (outcome.taskId && outcome.taskId !== state.context.conversation.providerTaskId) throw new Error('Tokenless provider result belongs to a different bound task.')
     const now = new Date().toISOString()
     this.transaction(() => {
-      const state = this.requireContext(invocation.agentChatId)
-      const current = state.context.invocations.find((candidate) => candidate.bindingId === invocation.bindingId)
+      const currentState = this.requireContext(state.chatId)
+      const current = currentState.context.invocations.find((candidate) => candidate.bindingId === invocation.bindingId)
       if (!current) throw new Error('Codex invocation binding was not registered.')
       current.status = outcome.ok === true ? 'succeeded' : outcome.ok === false ? 'failed' : 'completed'
       current.provider = outcome.provider
@@ -329,11 +305,10 @@ export class AgentContextStore {
       current.jobId = outcome.jobId
       current.updatedAt = now
       if (outcome.provider) {
-        const existing = state.context.providerBindings.find((binding) => binding.provider === outcome.provider && binding.profile === outcome.profile)
+        const existing = currentState.context.providerBindings.find((binding) => binding.provider === outcome.provider && binding.profile === outcome.profile)
         const next: StoredProviderBinding = {
           provider: outcome.provider,
           profile: outcome.profile,
-          providerTaskId: current.providerTaskId,
           lastJobId: outcome.jobId,
           providerProjectId: outcome.providerProjectId,
           providerConversationRef: outcome.providerConversationRef,
@@ -345,11 +320,10 @@ export class AgentContextStore {
           existing.lastJobId ??= outcome.jobId
           existing.providerProjectId ??= outcome.providerProjectId
           existing.providerConversationRef ??= outcome.providerConversationRef
-        } else state.context.providerBindings.push(next)
-        state.context.conversation = { ...state.context.conversation, activeProvider: outcome.provider, activeProfile: outcome.profile }
+        } else currentState.context.providerBindings.push(next)
+        currentState.context.conversation = { ...currentState.context.conversation, activeProvider: outcome.provider, activeProfile: outcome.profile }
       }
-      state.updatedAt = now
-      this.writeContext(state)
+      this.writeContext(currentState)
     })
   }
 
@@ -366,10 +340,10 @@ export class AgentContextStore {
       bindingId: invocation.bindingId, hookSessionId: invocation.hookSessionId, turnId: invocation.agentTurnId,
       toolCallId: invocation.agentToolCallId, toolName: invocation.toolName, status: invocation.status,
       provider: invocation.provider, profile: invocation.profile, jobId: invocation.jobId,
-      providerTaskId: invocation.providerTaskId, createdAt: invocation.createdAt, updatedAt: invocation.updatedAt,
+      providerTaskId: context.conversation.providerTaskId, createdAt: invocation.createdAt, updatedAt: invocation.updatedAt,
     }))
     const providerBindings = [...context.providerBindings].sort((a, b) => a.lastSeenAt.localeCompare(b.lastSeenAt) || a.provider.localeCompare(b.provider)).map((binding) => ({
-      provider: binding.provider, profile: binding.profile, providerTaskId: binding.providerTaskId,
+      provider: binding.provider, profile: binding.profile, providerTaskId: context.conversation.providerTaskId,
       providerProjectId: binding.providerProjectId, providerConversationRef: binding.providerConversationRef,
       lastJobId: binding.lastJobId, firstSeenAt: binding.firstSeenAt, lastSeenAt: binding.lastSeenAt,
     }))
@@ -413,10 +387,8 @@ export class AgentContextStore {
       parentChatId: appServerThread?.parentThreadId ?? identity.parentChatId,
       forkedFromChatId: appServerThread?.forkedFromId ?? identity.forkedFromChatId,
     }
-    const now = new Date().toISOString()
-    const state: StoredContextRow = existing ?? { agentChatId: chatId, context: { conversation, turns: [], invocations: [], providerBindings: [] }, updatedAt: now }
+    const state: StoredContextRow = existing ?? { chatId, context: { conversation, turns: [], invocations: [], providerBindings: [] } }
     state.context.conversation = conversation
-    state.updatedAt = now
     this.writeContext(state)
     return { conversationId: conversation.conversationId, providerTaskId: conversation.providerTaskId, project: conversation.project }
   }
@@ -429,36 +401,33 @@ export class AgentContextStore {
 
   private readContext(chatId: string): StoredContextRow | undefined {
     const row = this.#db.prepare(
-      `SELECT data_json, updated_at FROM harness_context_records WHERE kind = ? AND record_key = ?`,
-    ).get(RECORD_KIND, chatId) as Record<string, unknown> | undefined
+      `SELECT data_json FROM harness_context_records WHERE chat_id = ?`,
+    ).get(chatId) as Record<string, unknown> | undefined
     if (!row) return undefined
-    return { agentChatId: chatId, context: parseStoredContext(row.data_json), updatedAt: String(row.updated_at) }
+    return { chatId, context: parseStoredContext(row.data_json) }
   }
 
   private readContexts() {
     return (this.#db.prepare(
-      `SELECT record_key, data_json, updated_at FROM harness_context_records WHERE kind = ?`,
-    ).all(RECORD_KIND) as Record<string, unknown>[]).map((row) => ({
-      agentChatId: String(row.record_key), context: parseStoredContext(row.data_json), updatedAt: String(row.updated_at),
+      `SELECT chat_id, data_json FROM harness_context_records`,
+    ).all() as Record<string, unknown>[]).map((row) => ({
+      chatId: String(row.chat_id), context: parseStoredContext(row.data_json),
     }))
   }
 
   private writeContext(state: StoredContextRow) {
     this.#db.prepare(
-      `INSERT INTO harness_context_records (kind, record_key, data_json, updated_at)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(kind, record_key) DO UPDATE SET data_json = excluded.data_json, updated_at = excluded.updated_at`,
-    ).run(RECORD_KIND, state.agentChatId, JSON.stringify(state.context), state.updatedAt)
+      `INSERT INTO harness_context_records (chat_id, data_json)
+       VALUES (?, ?)
+       ON CONFLICT(chat_id) DO UPDATE SET data_json = excluded.data_json`,
+    ).run(state.chatId, JSON.stringify(state.context))
   }
 
   private initialize() {
     this.#db.exec(`
       CREATE TABLE IF NOT EXISTS harness_context_records (
-        kind TEXT NOT NULL,
-        record_key TEXT NOT NULL,
-        data_json TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (kind, record_key)
+        chat_id TEXT PRIMARY KEY NOT NULL,
+        data_json TEXT NOT NULL
       );
     `)
     if (process.platform !== 'win32') fsSync.chmodSync(this.databasePath, 0o600)

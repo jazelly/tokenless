@@ -21,7 +21,7 @@ test('built daemon pairs and revokes one extension-scoped Harness credential wit
   })
   daemon.activate()
   try {
-    const profile = await new ManagedProfileRegistry(homeDir).addProfile({ slug: 'extension-route', lifecycle: 'ready' })
+    const profile = await new ManagedProfileRegistry(homeDir).addProfile({ slug: 'extension-route' })
     const extensionId = 'a'.repeat(32)
     const extensionOrigin = `chrome-extension://${extensionId}`
     const extensionHeaders = { 'content-type': 'application/json', origin: extensionOrigin }
@@ -82,7 +82,7 @@ test('built daemon pairs and revokes one extension-scoped Harness credential wit
       {
         method: 'POST',
         headers: mutationHeaders,
-        body: JSON.stringify({ provider: 'chatgpt', profileId: profile.id }),
+        body: JSON.stringify({ provider: 'chatgpt', profileId: profile.slug }),
       },
     )
     assert.equal(approved.status, 'active')
@@ -98,7 +98,7 @@ test('built daemon pairs and revokes one extension-scoped Harness credential wit
     )
     assert.equal(polled.state, 'approved')
     assert.equal(polled.provider, 'chatgpt')
-    assert.equal(polled.profileId, profile.id)
+    assert.equal(polled.profileId, profile.slug)
     assert.match(polled.credential, /^extension-credential:[a-f0-9]{32}$/)
 
     const pairingFile = fs.readFileSync(path.join(homeDir, 'harness-extension-pairings.json'), 'utf8')

@@ -14,14 +14,13 @@ const cliDir = path.join(root, 'packages/cli')
 const cliEntry = path.join(cliDir, 'dist/src/tokenless.mjs')
 const cliIndex = path.join(cliDir, 'dist/src/index.js')
 const tsDaemonEntry = path.join(cliDir, 'dist/src/bootstrap/daemon-entry.mjs')
-const managedPlaywrightJobAction = 'visible_provider_actions'
 const createdChildren = new Set()
 
 test.after(async () => {
   await Promise.all([...createdChildren].map((child) => terminateChild(child)))
 })
 
-test('TS daemon embeds the managed Playwright scheduler without idle browser launch', {
+test('TS daemon rejects malformed managed jobs without launching a browser', {
   timeout: 60_000,
 }, async () => {
   requireBuiltArtifacts()
@@ -34,17 +33,18 @@ test('TS daemon embeds the managed Playwright scheduler without idle browser lau
 
     const token = readControlToken(homeDir)
     const jobId = randomUUID()
-    await daemonRequest(daemon.url, token, 'POST', '/v1/private/jobs', {
-      provider: 'chatgpt',
-      action: managedPlaywrightJobAction,
-      execution_backend: 'playwright',
-      profile_id: profile.id,
-      job_id: jobId,
-      request_json: { malformed: true },
+    const rejected = await fetch(`${daemon.url}/v1/private/jobs`, {
+      method: 'POST',
+      headers: jsonHeaders(token),
+      body: JSON.stringify({
+        provider: 'chatgpt',
+        profile_id: profile.slug,
+        job_id: jobId,
+        request_json: { malformed: true },
+      }),
     })
-
-    const failed = await waitForDaemonJobStatus(daemon.url, token, jobId, 'failed', 10_000)
-    assert.equal(failed.error_json.code, 'invalid_playwright_job_request')
+    assert.equal(rejected.status, 400)
+    assert.equal((await rejected.json()).error.code, 'invalid_input')
     assertProfileDirectoryEmpty(profile.directory)
   } finally {
     await shutdownDaemon(daemon).catch(() => undefined)
@@ -66,8 +66,6 @@ test('TS daemon rejects unsupported Playwright providers', {
       headers: jsonHeaders(token),
       body: JSON.stringify({
         provider: 'not-a-provider',
-        action: managedPlaywrightJobAction,
-        execution_backend: 'playwright',
         profile_id: randomUUID(),
         job_id: randomUUID(),
         request_json: { malformed: true },
@@ -76,7 +74,7 @@ test('TS daemon rejects unsupported Playwright providers', {
     assert.equal(rejected.status, 400)
     const rejectedBody = await rejected.json()
     assert.equal(rejectedBody.error.code, 'invalid_input')
-    assert.match(rejectedBody.error.message, /unsupported playwright provider: not-a-provider/)
+    assert.match(rejectedBody.error.message, /unsupported provider: not-a-provider/)
   } finally {
     await shutdownDaemon(daemon).catch(() => undefined)
     await terminateChildrenForHome(homeDir)
@@ -103,8 +101,6 @@ test('TS daemon rejects under-declared capability routes before job creation', {
       headers: jsonHeaders(token),
       body: JSON.stringify({
         provider: 'chatgpt',
-        action: managedPlaywrightJobAction,
-        execution_backend: 'playwright',
         profile_id: randomUUID(),
         job_id: randomUUID(),
         request_json: {
@@ -358,8 +354,6 @@ test('TS daemon rejects raw image jobs that bypass the shared image/download con
         headers: jsonHeaders(token),
         body: JSON.stringify({
           provider: entry.provider,
-          action: managedPlaywrightJobAction,
-          execution_backend: 'playwright',
           profile_id: randomUUID(),
           job_id: `${entry.provider}-image-contract-${index}-${randomUUID()}`,
           request_json: entry.request_json,
@@ -387,11 +381,10 @@ test('SQLite completes current jobs and marks active jobs interrupted on reopen'
   try {
     const created = store.createJob({
       provider: 'chatgpt',
-      action: managedPlaywrightJobAction,
       request_json: { taskId: 'fresh-lifecycle' },
       profile_id: 'fresh-profile',
     })
-    const running = store.takeNextJob({}, 'playwright', 'fresh-profile')
+    const running = store.takeNextJob({}, 'fresh-profile')
     assert.ok(running)
     assert.equal(running.job_id, created.job_id)
     assert.equal(running.status, 'running')
@@ -401,11 +394,10 @@ test('SQLite completes current jobs and marks active jobs interrupted on reopen'
 
     const active = store.createJob({
       provider: 'chatgpt',
-      action: managedPlaywrightJobAction,
       request_json: { taskId: 'interrupted-lifecycle' },
       profile_id: 'fresh-profile',
     })
-    const activeJobState = store.takeNextJob({}, 'playwright', 'fresh-profile')
+    const activeJobState = store.takeNextJob({}, 'fresh-profile')
     assert.ok(activeJobState)
     assert.equal(activeJobState.job_id, active.job_id)
     assert.equal(activeJobState.status, 'running')
@@ -426,7 +418,11 @@ test('SQLite completes current jobs and marks active jobs interrupted on reopen'
         "SELECT name FROM sqlite_schema WHERE type = 'table'",
       ).all().map((row) => String(row.name)))
       assert.deepEqual(
-        ['output_savings_work', 'output_savings_state', 'output_savings_cleared_events', 'web_ai_v0_request_cancellations']
+        [
+          'output_savings_events', 'output_savings_work', 'output_savings_state', 'output_savings_cleared_events',
+          'api_response_ledger', 'web_ai_v0_bindings', 'web_ai_v0_staged_attachments',
+          'web_ai_v0_turns', 'web_ai_v0_request_cancellations', 'job_task_keys',
+        ]
           .filter((table) => tables.has(table)),
         [],
       )
@@ -435,102 +431,13 @@ test('SQLite completes current jobs and marks active jobs interrupted on reopen'
         [
           'claim_token', 'claim_expires_at', 'checkpoint_json', 'resume_json', 'eligible_at',
           'agent_kind', 'agent_session_id', 'summary_idempotency_key', 'replay_reported_at',
-          'outcome_revision', 'reported_outcome_revision',
+          'outcome_revision', 'reported_outcome_revision', 'execution_backend', 'action',
+          'summary_task_id', 'summary_project_name', 'summary_chat_name',
         ].filter((column) => jobColumns.has(column)),
-        [],
-      )
-      const turnColumns = new Set(database.prepare('PRAGMA table_info(web_ai_v0_turns)').all().map((row) => String(row.name)))
-      assert.equal(turnColumns.has('request_sha256'), false)
-      assert.deepEqual(
-        ['cancel_dispatch_certainty', 'cancel_attachment_delivery'].filter((column) => turnColumns.has(column)),
         [],
       )
     } finally {
       database.close()
-    }
-  } finally {
-    store?.close()
-    fs.rmSync(homeDir, { recursive: true, force: true })
-  }
-})
-
-test('SQLite removes obsolete job claim columns from an existing database', async () => {
-  requireBuiltArtifacts()
-  const homeDir = tempHome('tokenless-remove-job-claims-')
-  const databasePath = path.join(homeDir, 'tokenless.sqlite3')
-  const legacyDatabase = new DatabaseSync(databasePath)
-  try {
-    legacyDatabase.exec(`
-      CREATE TABLE jobs (
-        job_id TEXT PRIMARY KEY NOT NULL,
-        claim_token TEXT NOT NULL,
-        execution_backend TEXT NOT NULL DEFAULT 'playwright',
-        profile_id TEXT,
-        provider TEXT NOT NULL,
-        action TEXT NOT NULL,
-        status TEXT NOT NULL,
-        request_json TEXT NOT NULL,
-        result_json TEXT,
-        error_json TEXT,
-        blocker_json TEXT,
-        provider_attempts_json TEXT NOT NULL DEFAULT '[]',
-        provider_submitted_at TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        claim_expires_at TEXT,
-        summary_task_id TEXT,
-        summary_project_name TEXT,
-        summary_chat_name TEXT
-      );
-      CREATE INDEX jobs_claim_expires_at_idx ON jobs(claim_expires_at);
-      INSERT INTO jobs (
-        job_id, claim_token, execution_backend, profile_id, provider, action, status,
-        request_json, result_json, error_json, blocker_json, provider_attempts_json,
-        provider_submitted_at, created_at, updated_at,
-        summary_task_id, summary_project_name, summary_chat_name, claim_expires_at
-      ) VALUES (
-        'existing-job', 'obsolete-claim', 'playwright', 'existing-profile',
-        'chatgpt', 'visible_provider_actions', 'succeeded',
-        '{}', '{"ok":true}', NULL, NULL, '[]', NULL,
-        '2026-08-22T00:00:00.000Z', '2026-08-22T00:00:00.000Z',
-        NULL, NULL, NULL, NULL
-      );
-    `)
-  } finally {
-    legacyDatabase.close()
-  }
-
-  const moduleUrl = pathToFileURL(path.join(cliDir, 'dist/server/src/jobs/store.js')).href + '?test=' + randomUUID()
-  const { JobStore } = await import(moduleUrl)
-  let store
-  try {
-    store = await JobStore.open(homeDir)
-    assert.equal(store.getJob('existing-job').status, 'succeeded')
-    const created = store.createJob({
-      provider: 'arena',
-      action: managedPlaywrightJobAction,
-      request_json: { taskId: 'after-claim-removal' },
-      profile_id: 'existing-profile',
-    })
-    assert.equal(created.status, 'queued')
-    store.close()
-    store = undefined
-
-    const migratedDatabase = new DatabaseSync(databasePath, { readOnly: true })
-    try {
-      const columns = new Set(
-        migratedDatabase.prepare('PRAGMA table_info(jobs)').all().map((row) => String(row.name)),
-      )
-      assert.equal(columns.has('claim_token'), false)
-      assert.equal(columns.has('claim_expires_at'), false)
-      assert.equal(
-        migratedDatabase.prepare(
-          "SELECT 1 FROM sqlite_schema WHERE type = 'index' AND name = 'jobs_claim_expires_at_idx'",
-        ).get(),
-        undefined,
-      )
-    } finally {
-      migratedDatabase.close()
     }
   } finally {
     store?.close()
@@ -548,8 +455,6 @@ test('SQLite preserves exact provider Project and conversation mappings across s
   try {
     const job = store.createJob({
       provider: 'claude',
-      action: managedPlaywrightJobAction,
-      execution_backend: 'playwright',
       profile_id: 'profile-mapping',
       request_json: {
         protocol: 'tokenless.playwright.job.v3',
@@ -587,8 +492,6 @@ test('SQLite preserves exact provider Project and conversation mappings across s
     })
     const e2eJob = store.createJob({
       provider: 'claude',
-      action: managedPlaywrightJobAction,
-      execution_backend: 'playwright',
       profile_id: 'profile-mapping',
       job_id: `tlp_e2e-run-${randomUUID()}`,
       request_json: {
@@ -602,10 +505,8 @@ test('SQLite preserves exact provider Project and conversation mappings across s
     })
     const isolatedJobState = store.takeNextJob(
       {
-        action: managedPlaywrightJobAction,
         job_id_prefix: 'tlp_e2e-run-',
       },
-      'playwright',
       'profile-mapping',
     )
     assert.equal(isolatedJobState.job_id, e2eJob.job_id)
@@ -980,11 +881,10 @@ test('SQLite preserves provider fallback attempts under one current job id', asy
     })
     const created = store.createJob({
       provider: request.provider,
-      action: managedPlaywrightJobAction,
       request_json: request,
       profile_id: 'fallback-profile',
     })
-    const selectedJob = store.takeNextJob({}, 'playwright', 'fallback-profile')
+    const selectedJob = store.takeNextJob({}, 'fallback-profile')
     assert.ok(selectedJob)
     const fallbackRequest = playwright.validateManagedPlaywrightJobRequest({
       ...request,
@@ -1026,12 +926,12 @@ test('SQLite preserves provider fallback attempts under one current job id', asy
   }
 })
 
-test('TS daemon browser runtime control is authenticated, quiesces queued work, and wakes on later job creation', {
+test('TS daemon browser runtime control authenticates, quiesces queued work, and preserves job roundtrips', {
   timeout: 60_000,
 }, async () => {
   requireBuiltArtifacts()
   const homeDir = tempHome('tokenless-ts-browser-runtime-control-')
-  const profileId = randomUUID()
+  const profileId = 'default'
   const daemon = await startTsDaemon(homeDir)
   try {
     const token = readControlToken(homeDir)
@@ -1057,14 +957,17 @@ test('TS daemon browser runtime control is authenticated, quiesces queued work, 
     assert.equal(running.activeProfileCount, 0)
     assert.equal(running.activeJobCount, 0)
 
+    const playwright = await importPlaywright()
     const pausedJobId = randomUUID()
+    const pausedRequest = playwright.createManagedPlaywrightJobRequest({
+      provider: 'chatgpt',
+      actions: [{ action: playwright.VISIBLE_ACTIONS.AUTH_STATUS, payload: {} }],
+    })
     await daemonRequest(daemon.url, token, 'POST', '/v1/private/jobs', {
       provider: 'chatgpt',
-      action: managedPlaywrightJobAction,
-      execution_backend: 'playwright',
       profile_id: profileId,
       job_id: pausedJobId,
-      request_json: { malformed: true },
+      request_json: pausedRequest,
     })
     const quiesced = await daemonRequest(daemon.url, token, 'POST', '/v1/private/control/browser-runtime/quiesce')
     assert.equal(quiesced.status, 'quiesced')
@@ -1074,7 +977,6 @@ test('TS daemon browser runtime control is authenticated, quiesces queued work, 
     await delay(1_500)
     const stillQueued = await daemonRequest(daemon.url, token, 'GET', `/v1/private/jobs/${encodeURIComponent(pausedJobId)}`)
     assert.equal(stillQueued.status, 'queued')
-    const playwright = await importPlaywright()
     const roundtripPageRef = `page:http-roundtrip:${randomUUID()}`
     const roundtripRequest = playwright.createManagedPlaywrightJobRequest({
       provider: 'chatgpt',
@@ -1084,8 +986,6 @@ test('TS daemon browser runtime control is authenticated, quiesces queued work, 
     const roundtripJobId = randomUUID()
     const roundtripCreated = await daemonRequest(daemon.url, token, 'POST', '/v1/private/jobs', {
       provider: 'chatgpt',
-      action: managedPlaywrightJobAction,
-      execution_backend: 'playwright',
       profile_id: profileId,
       job_id: roundtripJobId,
       request_json: roundtripRequest,
@@ -1102,25 +1002,9 @@ test('TS daemon browser runtime control is authenticated, quiesces queued work, 
       reason: { code: 'test_roundtrip_complete' },
     })
 
-    const profile = await createReadyManagedProfile(homeDir, { profileId })
-    assertProfileDirectoryEmpty(profile.directory)
-
-    const wakeJobId = randomUUID()
-    await daemonRequest(daemon.url, token, 'POST', '/v1/private/jobs', {
-      provider: 'chatgpt',
-      action: managedPlaywrightJobAction,
-      execution_backend: 'playwright',
-      profile_id: profileId,
-      job_id: wakeJobId,
-      request_json: { malformed: true },
+    await daemonRequest(daemon.url, token, 'POST', `/v1/private/jobs/${encodeURIComponent(pausedJobId)}/cancel`, {
+      reason: { code: 'test_quiesce_complete' },
     })
-    const failedPausedJob = await waitForDaemonJobStatus(daemon.url, token, pausedJobId, 'failed', 10_000)
-    assert.equal(failedPausedJob.error_json.code, 'invalid_playwright_job_request')
-    const failedWakeJob = await waitForDaemonJobStatus(daemon.url, token, wakeJobId, 'failed', 10_000)
-    assert.equal(failedWakeJob.error_json.code, 'invalid_playwright_job_request')
-    const awake = await daemonRequest(daemon.url, token, 'GET', '/v1/private/control/browser-runtime/status')
-    assert.equal(awake.status, 'running')
-    assertProfileDirectoryEmpty(profile.directory)
   } finally {
     await shutdownDaemon(daemon).catch(() => undefined)
     await terminateChildrenForHome(homeDir)
@@ -1136,11 +1020,10 @@ test('SQLite attributes measured visible output to its triggering job', async ()
   try {
     const created = store.createJob({
       provider: 'chatgpt',
-      action: managedPlaywrightJobAction,
       request_json: { taskId: 'savings-task' },
       profile_id: 'savings-profile',
     })
-    const selectedJob = store.takeNextJob({}, 'playwright', 'savings-profile')
+    const selectedJob = store.takeNextJob({}, 'savings-profile')
     assert.ok(selectedJob)
     const result = {
       protocol: 'tokenless.playwright.job.v3',
@@ -1190,10 +1073,14 @@ test('SQLite attributes measured visible output to its triggering job', async ()
       source_text_sha256: 'b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9',
       measured_at: '2099-08-04T00:00:00.000Z',
     }])
+    assert.equal(
+      Object.hasOwn(store.getJob(created.job_id).result_json.responses[0].result, 'outputSavings'),
+      false,
+    )
     store.close()
     store = await JobStore.open(homeDir)
-    assert.equal(store.outputSavingsSummary().estimated_output_tokens, 2)
-    assert.deepEqual(store.clearOutputSavings(), { cleared: 1 })
+    assert.equal(store.outputSavingsSummary().estimated_output_tokens, 0)
+    assert.deepEqual(store.clearOutputSavings(), { cleared: 0 })
     assert.deepEqual(store.outputSavingsSummary(), {
       estimated_output_tokens: 0,
       visible_characters: 0,
@@ -1338,29 +1225,9 @@ function runCli(args) {
 }
 
 async function createReadyManagedProfile(homeDir, options = {}) {
-  const browserDir = path.join(homeDir, 'browser')
-  const profilesRoot = path.join(browserDir, 'profiles')
-  const profileId = options.profileId ?? randomUUID()
-  const profileDir = path.join(profilesRoot, profileId)
-  fs.mkdirSync(profileDir, { recursive: true, mode: 0o700 })
-  const now = new Date().toISOString()
+  const profileSlug = options.slug ?? options.profileId ?? 'default'
   const registry = new (await importPlaywright()).ManagedProfileRegistry(homeDir)
-  await registry.write({
-    version: 1,
-    defaultProfile: 'default',
-    profiles: {
-      default: {
-        slug: 'default',
-        id: profileId,
-        directory: profileDir,
-        lifecycle: 'ready',
-        createdAt: now,
-        updatedAt: now,
-        lastObservedAuth: {},
-      },
-    },
-  })
-  return { id: profileId, directory: profileDir }
+  return await registry.addProfile({ slug: profileSlug, setDefault: true })
 }
 
 function assertProfileDirectoryEmpty(profileDir) {

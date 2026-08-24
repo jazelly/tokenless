@@ -31,17 +31,12 @@ import {
 export type { JobStatus } from '../errors.js'
 
 const MAX_OUTPUT_SAVINGS_SOURCE_BYTES = 4 * 1024 * 1024
-export const API_RESPONSE_RETENTION_MS = 24 * 60 * 60 * 1000
-export const API_RESPONSE_MAX_ENTRIES = 1_000
-
-export type ExecutionBackend = 'playwright'
+const API_RESPONSE_MAX_ENTRIES = 1_000
 
 export type Job = {
   job_id: string
-  execution_backend: ExecutionBackend
-  profile_id: string | null
+  profile_id: string
   provider: string
-  action: string
   status: JobStatus
   request_json: unknown
   result_json: unknown | null
@@ -57,10 +52,8 @@ export type JobView = Job
 
 export type CreateJobInput = {
   provider: string
-  action: string
   request_json: unknown
-  execution_backend?: ExecutionBackend | undefined
-  profile_id?: string | null | undefined
+  profile_id: string
   job_id?: string | undefined
 }
 
@@ -70,8 +63,6 @@ export type ApiResponseLedgerEntry = {
   model: string
   execution_mode: 'browser' | 'direct'
   transcript: unknown[]
-  created_at: string
-  expires_at_ms: number
 }
 
 export type OutputSavingsEvent = {
@@ -97,7 +88,6 @@ export type OutputSavingsSummary = {
 
 export type ListJobsInput = {
   status?: JobStatus | undefined
-  execution_backend?: ExecutionBackend | undefined
   profile_id?: string | undefined
   provider?: string | undefined
   task_id?: string | undefined
@@ -108,7 +98,6 @@ export type ListJobsInput = {
 
 export type TakeNextInput = {
   provider?: string | undefined
-  action?: string | undefined
   job_id_prefix?: string | undefined
 }
 
@@ -185,6 +174,12 @@ export type WebAiTurn = {
 
 export type WebAiRequestCancellation = { kind: 'turn'; turn: WebAiTurn }
 
+type WebAiStagedAttachmentRecord = WebAiStagedAttachment & {
+  consumed_turn_ref: string | null
+}
+
+type WebAiTurnRecord = WebAiTurn
+
 export class WebAiRequestRefConflictError extends Error {
   readonly code = 'web_ai_request_ref_conflict'
 
@@ -217,17 +212,7 @@ const JOB_STATUSES = new Set<JobStatus>([
   'succeeded',
   'failed',
   'canceled',
-  'timed_out',
 ])
-const EXECUTION_BACKENDS = new Set<ExecutionBackend>(['playwright'])
-
-type RequestSummaryMetadata = {
-  task_id: string | null
-  project_name: string | null
-  chat_name: string | null
-  task_keys: string[]
-}
-
 export class JobStore {
   readonly homeDir: string
   readonly databasePath: string
@@ -235,6 +220,11 @@ export class JobStore {
 
   #db: DatabaseSync
   #closed = false
+  #apiResponses = new Map<string, ApiResponseLedgerEntry>()
+  #outputSavingsEvents = new Map<string, OutputSavingsEvent>()
+  #webAiBindings = new Map<string, WebAiBinding>()
+  #webAiStagedAttachments = new Map<string, WebAiStagedAttachmentRecord>()
+  #webAiTurns = new Map<string, WebAiTurnRecord>()
 
   static async open(homeDir = defaultHomeDir()) {
     await ensureTokenlessHome(homeDir)
@@ -261,6 +251,11 @@ export class JobStore {
   close() {
     if (this.#closed) return
     this.#closed = true
+    this.#apiResponses.clear()
+    this.#outputSavingsEvents.clear()
+    this.#webAiBindings.clear()
+    this.#webAiStagedAttachments.clear()
+    this.#webAiTurns.clear()
     this.#db.close()
   }
 
@@ -283,7 +278,7 @@ export class JobStore {
     return this.transaction(() => this.insertJob(input))
   }
 
-  putApiResponse(input: Omit<ApiResponseLedgerEntry, 'created_at' | 'expires_at_ms'>) {
+  putApiResponse(input: ApiResponseLedgerEntry) {
     const responseId = apiResponseId(input.response_id)
     const provider = mappingText(input.provider, 'provider', 128)
     const model = mappingText(input.model, 'model', 256)
@@ -295,103 +290,59 @@ export class JobStore {
     if (Buffer.byteLength(transcriptJson, 'utf8') > MAX_OUTPUT_SAVINGS_SOURCE_BYTES) {
       throw invalidInput('response transcript exceeds the 4 MiB limit')
     }
-    const createdAt = nowRfc3339()
-    const nowMs = nowUnixMillis()
-    const expiresAtMs = nowMs + API_RESPONSE_RETENTION_MS
-    return this.transaction(() => {
-      this.run('DELETE FROM api_response_ledger WHERE expires_at_ms <= ?', nowMs)
-      this.run(
-        `INSERT INTO api_response_ledger (
-          response_id, provider, model, execution_mode, transcript_json, created_at, expires_at_ms
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        responseId,
-        provider,
-        model,
-        input.execution_mode,
-        transcriptJson,
-        createdAt,
-        expiresAtMs,
-      )
-      this.run(
-        `DELETE FROM api_response_ledger
-         WHERE response_id IN (
-           SELECT response_id FROM api_response_ledger
-           ORDER BY rowid DESC
-           LIMIT -1 OFFSET ?
-         )`,
-        API_RESPONSE_MAX_ENTRIES,
-      )
-      return this.getApiResponse(responseId)!
+    if (this.#apiResponses.has(responseId)) throw invalidInput('response_id already exists')
+    this.#apiResponses.set(responseId, {
+      response_id: responseId,
+      provider,
+      model,
+      execution_mode: input.execution_mode,
+      transcript: parseJson(transcriptJson) as unknown[],
     })
+    while (this.#apiResponses.size > API_RESPONSE_MAX_ENTRIES) {
+      const oldest = this.#apiResponses.keys().next().value
+      if (typeof oldest !== 'string') break
+      this.#apiResponses.delete(oldest)
+    }
+    return this.getApiResponse(responseId)!
   }
 
   getApiResponse(responseId: string): ApiResponseLedgerEntry | null {
-    const row = this.get(
-      `SELECT response_id, provider, model, execution_mode, transcript_json, created_at, expires_at_ms
-       FROM api_response_ledger WHERE response_id = ?`,
-      apiResponseId(responseId),
-    )
-    if (!row) return null
-    const executionMode = String(row.execution_mode)
-    if (executionMode !== 'browser' && executionMode !== 'direct') throw invalidInput('stored response execution mode is invalid')
-    const transcript = parseJson(row.transcript_json)
-    if (!Array.isArray(transcript)) throw invalidInput('stored response transcript is invalid')
+    const canonicalResponseId = apiResponseId(responseId)
+    const entry = this.#apiResponses.get(canonicalResponseId)
+    if (!entry) return null
     return {
-      response_id: String(row.response_id),
-      provider: String(row.provider),
-      model: String(row.model),
-      execution_mode: executionMode,
-      transcript,
-      created_at: String(row.created_at),
-      expires_at_ms: Number(row.expires_at_ms),
+      ...entry,
+      transcript: parseJson(stringifyJson(entry.transcript)) as unknown[],
     }
-  }
-
-  deleteApiResponse(responseId: string) {
-    this.run('DELETE FROM api_response_ledger WHERE response_id = ?', apiResponseId(responseId))
   }
 
   private insertJob(input: CreateJobInput) {
     const provider = normalizeNonempty(String(input.provider ?? ''), 'provider')
-    const action = normalizeNonempty(String(input.action ?? ''), 'action')
-    const executionBackend = input.execution_backend ?? 'playwright'
-    assertExecutionBackend(executionBackend)
-    const profileId = validateJobBackendProfile(executionBackend, input.profile_id ?? null)
+    const profileId = normalizeProfileId(input.profile_id, 'profile_id')
     const jobId = input.job_id === undefined
       ? randomUUID()
       : normalizeNonempty(input.job_id, 'job_id')
     const now = nowRfc3339()
-    const summary = requestSummaryMetadata(input.request_json)
     const requestJson = stringifyJson(input.request_json)
     const providerAttemptsJson = stringifyJson([providerAttempt(1, provider, 'queued', now)])
 
     this.run(
         `INSERT INTO jobs (
-          job_id, execution_backend, profile_id,
-          provider, action, status, request_json,
+          job_id, profile_id, provider, status, request_json,
           result_json, error_json, blocker_json, created_at, updated_at,
-          provider_attempts_json,
-          summary_task_id, summary_project_name, summary_chat_name
+          provider_attempts_json
         ) VALUES (
-          ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?
+          ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?
         )`,
         jobId,
-        executionBackend,
         profileId,
         provider,
-        action,
         'queued',
         requestJson,
         now,
         now,
         providerAttemptsJson,
-        summary.task_id,
-        summary.project_name,
-        summary.chat_name,
       )
-    for (const taskKey of summary.task_keys) {
-      this.run('INSERT INTO job_task_keys (job_id, task_id) VALUES (?, ?)', jobId, taskKey)
-    }
 
     return this.getJobRecord(jobId)
   }
@@ -401,139 +352,58 @@ export class JobStore {
     const profileId = mappingText(input.profile_id, 'profile_id', PROFILE_ID_CHARS)
     const providerRef = webAiRef(input.provider_ref, 'provider_ref')
     const bindingRef = webAiRef(input.binding_ref, 'binding_ref')
-    this.transaction(() => {
-      const existing = this.get(
-        'SELECT binding_ref, provider_ref FROM web_ai_v0_bindings WHERE provider = ? AND profile_id = ?',
-        provider,
-        profileId,
-      )
-      if (!existing) {
-        this.run(
-          'INSERT INTO web_ai_v0_bindings (binding_ref, provider_ref, provider, profile_id, created_at) VALUES (?, ?, ?, ?, ?)',
-          bindingRef,
-          providerRef,
-          provider,
-          profileId,
-          nowRfc3339(),
-        )
+    const existing = [...this.#webAiBindings.values()].find((candidate) => candidate.provider === provider && candidate.profile_id === profileId)
+    if (!existing) {
+      const byRef = this.#webAiBindings.get(bindingRef)
+      if (byRef && (byRef.provider_ref !== providerRef || byRef.provider !== provider || byRef.profile_id !== profileId)) {
+        throw invalidInput('web ai binding reference is already in use')
       }
-    })
+      this.#webAiBindings.set(bindingRef, { binding_ref: bindingRef, provider_ref: providerRef, provider, profile_id: profileId })
+    }
     return this.requireWebAiBindingByProvider(provider, profileId)
   }
 
   getWebAiBinding(bindingRef: string) {
-    const row = this.get(
-      'SELECT binding_ref, provider_ref, provider, profile_id FROM web_ai_v0_bindings WHERE binding_ref = ?',
-      webAiRef(bindingRef, 'binding_ref'),
-    )
-    return row ? rowToWebAiBinding(row) : null
+    const binding = this.#webAiBindings.get(webAiRef(bindingRef, 'binding_ref'))
+    return binding ? { ...binding } : null
   }
 
   private requireWebAiBindingByProvider(provider: string, profileId: string) {
-    const row = this.get(
-      'SELECT binding_ref, provider_ref, provider, profile_id FROM web_ai_v0_bindings WHERE provider = ? AND profile_id = ?',
-      provider,
-      profileId,
-    )
-    if (!row) throw invalidInput('web ai provider binding was not found')
-    return rowToWebAiBinding(row)
+    const binding = [...this.#webAiBindings.values()].find((candidate) => candidate.provider === provider && candidate.profile_id === profileId)
+    if (!binding) throw invalidInput('web ai provider binding was not found')
+    return { ...binding }
   }
 
   createWebAiStagedAttachment(input: WebAiStagedAttachment) {
     const binding = this.getWebAiBinding(input.binding_ref)
     if (!binding) throw invalidInput('web ai provider binding was not found')
     const staged = normalizeWebAiStagedAttachment(input)
-    this.run(
-      `INSERT INTO web_ai_v0_staged_attachments (
-         attachment_ref, binding_ref, bundle_id, attachment_id, media_type, byte_length, sha256, created_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      staged.attachment_ref,
-      staged.binding_ref,
-      staged.bundle_id,
-      staged.attachment_id,
-      staged.media_type,
-      staged.byte_length,
-      staged.sha256,
-      nowRfc3339(),
-    )
+    if (this.#webAiStagedAttachments.has(staged.attachment_ref) || [...this.#webAiStagedAttachments.values()].some((candidate) => candidate.bundle_id === staged.bundle_id && candidate.attachment_id === staged.attachment_id)) {
+      throw invalidInput('web ai staged attachment already exists')
+    }
+    this.#webAiStagedAttachments.set(staged.attachment_ref, { ...staged, consumed_turn_ref: null })
     return staged
   }
 
   getWebAiStagedAttachment(attachmentRef: string) {
-    const row = this.get(
-      `SELECT attachment_ref, binding_ref, bundle_id, attachment_id, media_type, byte_length, sha256
-       FROM web_ai_v0_staged_attachments WHERE attachment_ref = ?`,
-      webAiRef(attachmentRef, 'attachment_ref'),
-    )
-    return row ? rowToWebAiStagedAttachment(row) : null
+    const staged = this.#webAiStagedAttachments.get(webAiRef(attachmentRef, 'attachment_ref'))
+    if (!staged) return null
+    return normalizeWebAiStagedAttachment(staged)
   }
 
   /** Internal control-plane observability; never exposed by the HTTP protocol. */
   webAiStageStatus(attachmentRef: string) {
-    const row = this.get(
-      'SELECT consumed_turn_ref FROM web_ai_v0_staged_attachments WHERE attachment_ref = ?',
-      webAiRef(attachmentRef, 'attachment_ref'),
-    )
-    return row ? { consumed: row.consumed_turn_ref !== null } : null
+    const staged = this.#webAiStagedAttachments.get(webAiRef(attachmentRef, 'attachment_ref'))
+    return staged ? { consumed: staged.consumed_turn_ref !== null } : null
   }
 
   /** Internal aggregate counts used by daemon maintenance and control-plane diagnostics. */
   webAiCounts() {
-    const count = (table: 'web_ai_v0_bindings' | 'web_ai_v0_staged_attachments' | 'web_ai_v0_turns') => {
-      const row = this.get(`SELECT count(*) AS count FROM ${table}`)
-      return Number(row?.count ?? 0)
-    }
     return {
-      bindings: count('web_ai_v0_bindings'),
-      stagedAttachments: count('web_ai_v0_staged_attachments'),
-      turns: count('web_ai_v0_turns'),
+      bindings: this.#webAiBindings.size,
+      stagedAttachments: this.#webAiStagedAttachments.size,
+      turns: this.#webAiTurns.size,
     }
-  }
-
-  getWebAiStagedAttachmentByBundle(bundleId: string) {
-    const row = this.get(
-      `SELECT attachment_ref, binding_ref, bundle_id, attachment_id, media_type, byte_length, sha256
-       FROM web_ai_v0_staged_attachments WHERE bundle_id = ?`,
-      mappingText(bundleId, 'bundle_id', 64),
-    )
-    return row ? rowToWebAiStagedAttachment(row) : null
-  }
-
-  webAiBundleCleanupDisposition(bundleId: string) {
-    const row = this.get(
-      `SELECT staged.consumed_turn_ref, turns.cancelled, jobs.provider_submitted_at
-       FROM web_ai_v0_staged_attachments AS staged
-       LEFT JOIN web_ai_v0_turns AS turns ON turns.attachment_ref = staged.attachment_ref
-       LEFT JOIN jobs ON jobs.job_id = turns.job_id
-       WHERE staged.bundle_id = ?`,
-      mappingText(bundleId, 'bundle_id', 64),
-    )
-    if (!row) return 'orphan' as const
-    if (row.consumed_turn_ref === null) return 'retained' as const
-    return Number(row.cancelled) === 1 && row.provider_submitted_at === null
-      ? 'delete' as const : 'retained' as const
-  }
-
-  removeWebAiStagedAttachmentByBundle(bundleId: string) {
-    return this.run('DELETE FROM web_ai_v0_staged_attachments WHERE bundle_id = ? AND consumed_turn_ref IS NULL', mappingText(bundleId, 'bundle_id', 64)).changes === 1
-  }
-
-  cleanupAbandonedWebAiStages(olderThanMs: number) {
-    if (!Number.isSafeInteger(olderThanMs) || olderThanMs < 0) throw invalidInput('web ai stage cleanup time is invalid')
-    const cutoff = new Date(olderThanMs).toISOString()
-    return this.transaction(() => {
-      const rows = this.all(
-        `SELECT attachment_ref, binding_ref, bundle_id, attachment_id, media_type, byte_length, sha256
-         FROM web_ai_v0_staged_attachments
-         WHERE consumed_turn_ref IS NULL AND created_at < ?`,
-        cutoff,
-      ).map(rowToWebAiStagedAttachment)
-      if (rows.length > 0) this.run(
-        'DELETE FROM web_ai_v0_staged_attachments WHERE consumed_turn_ref IS NULL AND created_at < ?',
-        cutoff,
-      )
-      return rows
-    })
   }
 
   createWebAiTurn(input: {
@@ -554,64 +424,51 @@ export class JobStore {
     if (!attachment || attachments.some((candidate) => !candidate || candidate.binding_ref !== binding.binding_ref || candidate.bundle_id !== attachment.bundle_id)) {
       throw invalidInput('web ai staged attachment was not found')
     }
+    if (this.#webAiTurns.has(turnRef)) throw invalidInput('web ai turn reference is already in use')
     return this.transaction(() => {
       const existing = this.getWebAiTurnByRequestRef(requestRef)
       if (existing) throw new WebAiRequestRefConflictError()
       for (const candidate of attachments) {
-        const unused = this.run(
-          'UPDATE web_ai_v0_staged_attachments SET consumed_turn_ref = ? WHERE attachment_ref = ? AND consumed_turn_ref IS NULL',
-          turnRef,
-          candidate!.attachment_ref,
-        )
-        if (unused.changes !== 1) throw invalidInput('web ai staged attachment has already been consumed')
+        const record = this.#webAiStagedAttachments.get(candidate!.attachment_ref)
+        if (!record || record.consumed_turn_ref !== null) throw invalidInput('web ai staged attachment has already been consumed')
       }
       const job = this.insertJob(input.job)
-      this.run(
-        `INSERT INTO web_ai_v0_turns (
-          turn_ref, binding_ref, provider_ref, conversation_ref, attachment_ref, job_id, cancelled,
-          request_ref, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)`,
-        turnRef,
-        binding.binding_ref,
-        binding.provider_ref,
-        conversationRef,
-        attachment.attachment_ref,
-        job.job_id,
-        requestRef,
-        nowRfc3339(),
-      )
-      return this.getWebAiTurn(turnRef)!
+      for (const candidate of attachments) {
+        this.#webAiStagedAttachments.get(candidate!.attachment_ref)!.consumed_turn_ref = turnRef
+      }
+      const turn: WebAiTurnRecord = {
+        turn_ref: turnRef,
+        binding_ref: binding.binding_ref,
+        provider_ref: binding.provider_ref,
+        conversation_ref: conversationRef,
+        attachment_ref: attachment.attachment_ref,
+        request_ref: requestRef,
+        job_id: job.job_id,
+        cancelled: false,
+      }
+      this.#webAiTurns.set(turnRef, turn)
+      return { ...turn }
     })
   }
 
   getWebAiTurn(turnRef: string) {
-    const row = this.get(
-      `SELECT turn_ref, binding_ref, provider_ref, conversation_ref, attachment_ref, job_id, cancelled,
-              request_ref
-       FROM web_ai_v0_turns WHERE turn_ref = ?`,
-      webAiRef(turnRef, 'turn_ref'),
-    )
-    return row ? rowToWebAiTurn(row) : null
+    const turn = this.#webAiTurns.get(webAiRef(turnRef, 'turn_ref'))
+    if (!turn) return null
+    return { ...turn }
   }
 
   getWebAiTurnByRequestRef(requestRef: string) {
-    const row = this.get(
-      `SELECT turn_ref, binding_ref, provider_ref, conversation_ref, attachment_ref, job_id, cancelled,
-              request_ref
-       FROM web_ai_v0_turns WHERE request_ref = ?`,
-      webAiRequestRef(requestRef),
-    )
-    return row ? rowToWebAiTurn(row) : null
+    const canonicalRequestRef = webAiRequestRef(requestRef)
+    const turn = [...this.#webAiTurns.values()].find((candidate) => candidate.request_ref === canonicalRequestRef)
+    if (!turn) return null
+    return { ...turn }
   }
 
   getLatestWebAiTurnForConversation(conversationRef: string) {
-    const row = this.get(
-      `SELECT turn_ref, binding_ref, provider_ref, conversation_ref, attachment_ref, job_id, cancelled,
-              request_ref
-       FROM web_ai_v0_turns WHERE conversation_ref = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`,
-      webAiRef(conversationRef, 'conversation_ref'),
-    )
-    return row ? rowToWebAiTurn(row) : null
+    const canonicalConversationRef = webAiRef(conversationRef, 'conversation_ref')
+    const turn = [...this.#webAiTurns.values()].filter((candidate) => candidate.conversation_ref === canonicalConversationRef).at(-1)
+    if (!turn) return null
+    return { ...turn }
   }
 
   cancelWebAiTurn(turnRef: string) {
@@ -646,41 +503,37 @@ export class JobStore {
       now,
       turn.job_id,
     )
-    this.run('UPDATE web_ai_v0_turns SET cancelled = 1 WHERE turn_ref = ?', turn.turn_ref)
-    return this.getWebAiTurn(turn.turn_ref)!
+    const record = this.#webAiTurns.get(turn.turn_ref)
+    if (!record) throw invalidInput('web ai turn was not found')
+    record.cancelled = true
+    return { ...record }
   }
 
 
   listJobs(query: ListJobsInput = {}) {
     if (query.status !== undefined) assertJobStatus(query.status)
-    if (query.execution_backend !== undefined) assertExecutionBackend(query.execution_backend)
     const profileId = query.profile_id === undefined ? undefined : normalizeProfileId(query.profile_id, 'profile_id')
     const provider = query.provider === undefined ? undefined : normalizeNonempty(query.provider, 'provider')
     const taskId = query.task_id === undefined ? undefined : normalizeSummaryFilter(query.task_id, 'task_id')
     const limit = clampLimit(query.limit, 100, 1000)
 
     let sql = `SELECT
-      jobs.job_id, jobs.execution_backend, jobs.profile_id,
-      jobs.provider, jobs.action, jobs.status, jobs.request_json, jobs.result_json,
+      jobs.job_id, jobs.profile_id,
+      jobs.provider, jobs.status, jobs.request_json, jobs.result_json,
       jobs.error_json, jobs.blocker_json, jobs.provider_attempts_json,
       jobs.provider_submitted_at,
       jobs.created_at, jobs.updated_at
       FROM jobs`
     const params: SQLInputValue[] = []
-    if (taskId !== undefined) {
-      sql += ` INNER JOIN job_task_keys AS matched_task
-        ON matched_task.job_id = jobs.job_id
-        AND matched_task.task_id = ?`
-      params.push(taskId)
-    }
     sql += ' WHERE 1 = 1'
+    if (taskId !== undefined) {
+      sql += ` AND (json_extract(jobs.request_json, '$.taskId') = ?
+        OR json_extract(jobs.request_json, '$.metadata.taskId') = ?)`
+      params.push(taskId, taskId)
+    }
     if (query.status !== undefined) {
       sql += ' AND jobs.status = ?'
       params.push(query.status)
-    }
-    if (query.execution_backend !== undefined) {
-      sql += ' AND jobs.execution_backend = ?'
-      params.push(query.execution_backend)
     }
     if (profileId !== undefined) {
       sql += ' AND jobs.profile_id = ?'
@@ -692,7 +545,8 @@ export class JobStore {
     }
     if (query.conversation_only === true) {
       sql += ` AND (
-        COALESCE(jobs.summary_chat_name, '') <> ''
+        COALESCE(json_extract(jobs.request_json, '$.chatName'), '') <> ''
+        OR COALESCE(json_extract(jobs.request_json, '$.metadata.chatName'), '') <> ''
         OR EXISTS (
           SELECT 1
           FROM json_each(jobs.request_json, '$.actions') AS action
@@ -920,13 +774,10 @@ export class JobStore {
 
   takeNextJob(
     query: TakeNextInput = {},
-    executionBackend: ExecutionBackend = 'playwright',
-    profileIdInput: string | null = null
+    profileIdInput: string
   ) {
-    const profileId = profileIdInput === null ? null : normalizeProfileId(profileIdInput, 'profile_id')
-    validateTakeBackendProfile(executionBackend, profileId)
+    const profileId = normalizeProfileId(profileIdInput, 'profile_id')
     const provider = query.provider === undefined ? null : normalizeNonempty(query.provider, 'provider')
-    const action = query.action === undefined ? null : normalizeNonempty(query.action, 'action')
     const jobIdPrefix = query.job_id_prefix === undefined
       ? null
       : mappingText(query.job_id_prefix, 'job_id_prefix', 192)
@@ -934,27 +785,21 @@ export class JobStore {
     return this.transaction(() => {
       const row = this.get(
         `SELECT
-         job_id, execution_backend, profile_id,
-         provider, action, status, request_json, result_json, error_json,
+         job_id, profile_id,
+         provider, status, request_json, result_json, error_json,
          blocker_json, provider_attempts_json,
          provider_submitted_at,
          created_at, updated_at
          FROM jobs
          WHERE status = 'queued'
-           AND execution_backend = ?
-           AND ((? IS NULL AND profile_id IS NULL) OR profile_id = ?)
+           AND profile_id = ?
            AND (? IS NULL OR provider = ?)
-           AND (? IS NULL OR action = ?)
            AND (? IS NULL OR substr(job_id, 1, length(?)) = ?)
          ORDER BY created_at ASC, job_id ASC
          LIMIT 1`,
-        executionBackend,
-        profileId,
         profileId,
         provider,
         provider,
-        action,
-        action,
         jobIdPrefix,
         jobIdPrefix,
         jobIdPrefix,
@@ -999,7 +844,6 @@ export class JobStore {
     if (job.status !== 'running' && job.status !== 'waiting_for_user') {
       throw invalidJobState(job.job_id, 'running or waiting_for_user', job.status)
     }
-    if (job.profile_id === null) throw invalidInput('provider capacity requires a profile-scoped job')
     if (job.provider_submitted_at !== null) {
       return providerCapacityPolicy.project({
         provider: job.provider,
@@ -1090,7 +934,6 @@ export class JobStore {
       if (!['running', 'waiting_for_user'].includes(job.status)) {
         throw invalidJobState(job.job_id, 'running or waiting_for_user', job.status)
       }
-      if (job.execution_backend !== 'playwright') throw invalidInput('only playwright jobs can fallback providers')
       if (job.provider_submitted_at !== null) throw invalidInput('jobs cannot fallback after provider submission')
       if (job.provider === provider) throw invalidInput('fallback provider must differ from the current provider')
       const attempts = providerAttempts(job.provider_attempts_json)
@@ -1128,7 +971,9 @@ export class JobStore {
   ) {
     const now = nowRfc3339()
     const status: JobStatus = 'result_json' in completion ? 'succeeded' : 'failed'
-    const resultJson = 'result_json' in completion ? stringifyJson(completion.result_json) : null
+    const resultJson = 'result_json' in completion
+      ? stringifyJson(stripOutputSavingsMeasurements(completion.result_json).value)
+      : null
     const errorJson = 'error_json' in completion ? stringifyJson(completion.error_json) : null
     const job = this.getJobRecord(jobId)
     const attempts = providerAttempts(job.provider_attempts_json)
@@ -1168,88 +1013,48 @@ export class JobStore {
   }
 
   outputSavingsSummary(): OutputSavingsSummary {
-    const row = this.get(
-      `SELECT
-         COALESCE(SUM(estimated_output_tokens), 0) AS estimated_output_tokens,
-         COALESCE(SUM(visible_characters), 0) AS visible_characters,
-         COUNT(*) AS response_count,
-         COUNT(DISTINCT job_id) AS job_count,
-         MIN(measured_at) AS first_measured_at,
-         MAX(measured_at) AS last_measured_at
-       FROM output_savings_events`
-    )
+    let estimatedOutputTokens = 0
+    let visibleCharacters = 0
+    const jobs = new Set<string>()
+    let firstMeasuredAt: string | null = null
+    let lastMeasuredAt: string | null = null
+    for (const event of this.#outputSavingsEvents.values()) {
+      estimatedOutputTokens += event.estimated_output_tokens
+      visibleCharacters += event.visible_characters
+      jobs.add(event.job_id)
+      if (firstMeasuredAt === null || event.measured_at < firstMeasuredAt) firstMeasuredAt = event.measured_at
+      if (lastMeasuredAt === null || event.measured_at > lastMeasuredAt) lastMeasuredAt = event.measured_at
+    }
     return {
-      estimated_output_tokens: Number(row?.estimated_output_tokens ?? 0),
-      visible_characters: Number(row?.visible_characters ?? 0),
-      response_count: Number(row?.response_count ?? 0),
-      job_count: Number(row?.job_count ?? 0),
-      first_measured_at: nullableString(row?.first_measured_at),
-      last_measured_at: nullableString(row?.last_measured_at),
+      estimated_output_tokens: estimatedOutputTokens,
+      visible_characters: visibleCharacters,
+      response_count: this.#outputSavingsEvents.size,
+      job_count: jobs.size,
+      first_measured_at: firstMeasuredAt,
+      last_measured_at: lastMeasuredAt,
     }
   }
 
   outputSavingsForJob(jobId: string): OutputSavingsEvent[] {
-    return this.all(
-      `SELECT
-         job_id, response_request_id, estimated_output_tokens, visible_characters,
-         estimator, estimator_revision, basis, source_text_sha256, measured_at
-       FROM output_savings_events
-       WHERE job_id = ?
-       ORDER BY measured_at ASC, response_request_id ASC`,
-      jobId,
-    ).map(rowToOutputSavingsEvent)
+    return [...this.#outputSavingsEvents.values()]
+      .filter((event) => event.job_id === jobId)
+      .sort((left, right) => left.measured_at.localeCompare(right.measured_at) || left.response_request_id.localeCompare(right.response_request_id))
+      .map((event) => ({ ...event }))
   }
 
   clearOutputSavings() {
-    return this.transaction(() => {
-      const completedJobs = this.all(
-        `SELECT job_id, result_json
-         FROM jobs
-         WHERE status = 'succeeded' AND result_json IS NOT NULL`,
-      )
-      for (const job of completedJobs) {
-        let resultJson: unknown
-        try {
-          resultJson = parseJson(job.result_json)
-        } catch {
-          continue
-        }
-        const stripped = stripOutputSavingsMeasurements(resultJson)
-        if (stripped.changed) {
-          this.run(
-            'UPDATE jobs SET result_json = ? WHERE job_id = ?',
-            stringifyJson(stripped.value),
-            String(job.job_id),
-          )
-        }
-      }
-      const result = this.run('DELETE FROM output_savings_events')
-      return { cleared: Number(result.changes) }
-    })
+    const cleared = this.#outputSavingsEvents.size
+    this.#outputSavingsEvents.clear()
+    return { cleared }
   }
 
   private recordOutputSavingsForJob(jobId: string, resultJson: unknown) {
     const events = outputSavingsEventsFromResult(jobId, resultJson)
     if (events.length === 0) return
-    this.transaction(() => {
-      for (const event of events) {
-        this.run(
-          `INSERT INTO output_savings_events (
-             job_id, response_request_id, estimated_output_tokens, visible_characters,
-             estimator, estimator_revision, basis, source_text_sha256, measured_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          event.job_id,
-          event.response_request_id,
-          event.estimated_output_tokens,
-          event.visible_characters,
-          event.estimator,
-          event.estimator_revision,
-          event.basis,
-          event.source_text_sha256,
-          event.measured_at,
-        )
-      }
-    })
+    for (const event of events) {
+      const key = `${event.job_id}\u0000${event.response_request_id}\u0000${event.estimator_revision}`
+      this.#outputSavingsEvents.set(key, event)
+    }
   }
 
   async cancelJob(jobId: string, reason: unknown | undefined) {
@@ -1305,27 +1110,9 @@ export class JobStore {
   private initialize() {
     this.exec('PRAGMA foreign_keys = ON;')
     this.createBaseTables()
-    this.removeLegacyJobClaimColumns()
     this.createIndexes()
     this.failInterruptedJobs()
     restrictFilePermissionsSync(this.databasePath)
-  }
-
-  private removeLegacyJobClaimColumns() {
-    const columns = new Set(
-      this.all('PRAGMA table_info(jobs)').map((row) => String(row.name)),
-    )
-    if (!columns.has('claim_token') && !columns.has('claim_expires_at')) return
-
-    this.transaction(() => {
-      this.exec('DROP INDEX IF EXISTS jobs_claim_expires_at_idx')
-      if (columns.has('claim_token')) {
-        this.exec('ALTER TABLE jobs DROP COLUMN claim_token')
-      }
-      if (columns.has('claim_expires_at')) {
-        this.exec('ALTER TABLE jobs DROP COLUMN claim_expires_at')
-      }
-    })
   }
 
   private failInterruptedJobs() {
@@ -1338,8 +1125,8 @@ export class JobStore {
     this.transaction(() => {
       for (const row of this.all(
         `SELECT
-           job_id, execution_backend, profile_id,
-           provider, action, status, request_json, result_json, error_json,
+           job_id, profile_id,
+           provider, status, request_json, result_json, error_json,
            blocker_json, provider_attempts_json, provider_submitted_at,
            created_at, updated_at
          FROM jobs
@@ -1364,14 +1151,8 @@ export class JobStore {
     this.exec(`
       CREATE TABLE IF NOT EXISTS jobs (
         job_id TEXT PRIMARY KEY NOT NULL,
-        execution_backend TEXT NOT NULL DEFAULT 'playwright' CHECK (
-          execution_backend = 'playwright'
-        ),
-        profile_id TEXT CHECK (
-          profile_id IS NULL OR length(profile_id) BETWEEN 1 AND 128
-        ),
+        profile_id TEXT NOT NULL CHECK (length(profile_id) BETWEEN 1 AND 128),
         provider TEXT NOT NULL,
-        action TEXT NOT NULL,
         status TEXT NOT NULL CHECK (
           status IN (
             'queued',
@@ -1379,8 +1160,7 @@ export class JobStore {
             'waiting_for_user',
             'succeeded',
             'failed',
-            'canceled',
-            'timed_out'
+            'canceled'
           )
         ),
         request_json TEXT NOT NULL,
@@ -1390,35 +1170,7 @@ export class JobStore {
         provider_attempts_json TEXT NOT NULL DEFAULT '[]',
         provider_submitted_at TEXT,
         created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        summary_task_id TEXT CHECK (
-          summary_task_id IS NULL OR length(summary_task_id) <= 256
-        ),
-        summary_project_name TEXT CHECK (
-          summary_project_name IS NULL OR length(summary_project_name) <= 256
-        ),
-        summary_chat_name TEXT CHECK (
-          summary_chat_name IS NULL OR length(summary_chat_name) <= 256
-        )
-      );
-      CREATE TABLE IF NOT EXISTS output_savings_events (
-        job_id TEXT NOT NULL REFERENCES jobs(job_id) ON DELETE CASCADE,
-        response_request_id TEXT NOT NULL CHECK (length(response_request_id) BETWEEN 1 AND 128),
-        estimated_output_tokens INTEGER NOT NULL CHECK (estimated_output_tokens >= 0),
-        visible_characters INTEGER NOT NULL CHECK (visible_characters >= 0),
-        estimator TEXT NOT NULL CHECK (length(estimator) BETWEEN 1 AND 64),
-        estimator_revision TEXT NOT NULL CHECK (length(estimator_revision) BETWEEN 1 AND 128),
-        basis TEXT NOT NULL CHECK (basis = 'visible_assistant_text'),
-        source_text_sha256 TEXT NOT NULL CHECK (
-          length(source_text_sha256) = 64 AND source_text_sha256 NOT GLOB '*[^0-9a-f]*'
-        ),
-        measured_at TEXT NOT NULL,
-        PRIMARY KEY (job_id, response_request_id, estimator_revision)
-      );
-      CREATE TABLE IF NOT EXISTS job_task_keys (
-        job_id TEXT NOT NULL REFERENCES jobs(job_id) ON DELETE CASCADE,
-        task_id TEXT NOT NULL CHECK (length(task_id) BETWEEN 1 AND 256),
-        PRIMARY KEY (job_id, task_id)
+        updated_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS provider_projects (
         provider TEXT NOT NULL CHECK (length(provider) BETWEEN 1 AND 128),
@@ -1454,48 +1206,6 @@ export class JobStore {
         observed_at TEXT NOT NULL,
         PRIMARY KEY (provider, profile_id, task_id)
       );
-      CREATE TABLE IF NOT EXISTS web_ai_v0_bindings (
-        binding_ref TEXT PRIMARY KEY NOT NULL CHECK (length(binding_ref) BETWEEN 1 AND 128),
-        provider_ref TEXT NOT NULL CHECK (length(provider_ref) BETWEEN 1 AND 128),
-        provider TEXT NOT NULL CHECK (length(provider) BETWEEN 1 AND 128),
-        profile_id TEXT NOT NULL CHECK (length(profile_id) BETWEEN 1 AND 128),
-        created_at TEXT NOT NULL,
-        UNIQUE (provider, profile_id)
-      );
-      CREATE TABLE IF NOT EXISTS web_ai_v0_staged_attachments (
-        attachment_ref TEXT PRIMARY KEY NOT NULL CHECK (length(attachment_ref) BETWEEN 1 AND 128),
-        binding_ref TEXT NOT NULL REFERENCES web_ai_v0_bindings(binding_ref) ON DELETE CASCADE,
-        bundle_id TEXT NOT NULL CHECK (length(bundle_id) BETWEEN 1 AND 64),
-        attachment_id TEXT NOT NULL CHECK (length(attachment_id) BETWEEN 1 AND 64),
-        media_type TEXT NOT NULL CHECK (media_type = 'text/markdown'),
-        byte_length INTEGER NOT NULL CHECK (byte_length BETWEEN 1 AND 1048576),
-        sha256 TEXT NOT NULL CHECK (length(sha256) = 64 AND sha256 NOT GLOB '*[^0-9a-f]*'),
-        consumed_turn_ref TEXT,
-        created_at TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS web_ai_v0_turns (
-        turn_ref TEXT PRIMARY KEY NOT NULL CHECK (length(turn_ref) BETWEEN 1 AND 128),
-        binding_ref TEXT NOT NULL REFERENCES web_ai_v0_bindings(binding_ref) ON DELETE RESTRICT,
-        provider_ref TEXT NOT NULL CHECK (length(provider_ref) BETWEEN 1 AND 128),
-        conversation_ref TEXT NOT NULL CHECK (length(conversation_ref) BETWEEN 1 AND 128),
-        attachment_ref TEXT NOT NULL UNIQUE REFERENCES web_ai_v0_staged_attachments(attachment_ref) ON DELETE RESTRICT,
-        job_id TEXT NOT NULL UNIQUE REFERENCES jobs(job_id) ON DELETE RESTRICT,
-        cancelled INTEGER NOT NULL DEFAULT 0 CHECK (cancelled IN (0, 1)),
-        request_ref TEXT CHECK (request_ref IS NULL OR (length(request_ref) = 40 AND substr(request_ref, 1, 8) = 'request:' AND substr(request_ref, 9) NOT GLOB '*[^0-9a-f]*')),
-        created_at TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS api_response_ledger (
-        response_id TEXT PRIMARY KEY NOT NULL CHECK (
-          length(response_id) = 37 AND substr(response_id, 1, 5) = 'resp_' AND
-          substr(response_id, 6) NOT GLOB '*[^0-9a-f]*'
-        ),
-        provider TEXT NOT NULL CHECK (length(provider) BETWEEN 1 AND 128),
-        model TEXT NOT NULL CHECK (length(model) BETWEEN 1 AND 256),
-        execution_mode TEXT NOT NULL CHECK (execution_mode IN ('browser', 'direct')),
-        transcript_json TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        expires_at_ms INTEGER NOT NULL
-      );
     `)
   }
 
@@ -1503,44 +1213,20 @@ export class JobStore {
     this.exec(`
       CREATE INDEX IF NOT EXISTS jobs_status_created_at_idx
         ON jobs(status, created_at);
-      CREATE INDEX IF NOT EXISTS jobs_provider_action_idx
-        ON jobs(provider, action);
-      CREATE INDEX IF NOT EXISTS jobs_backend_profile_status_fifo_idx
-        ON jobs(execution_backend, profile_id, status, created_at, job_id);
+      CREATE INDEX IF NOT EXISTS jobs_profile_status_fifo_idx
+        ON jobs(profile_id, status, created_at, job_id);
       CREATE INDEX IF NOT EXISTS jobs_provider_profile_submitted_idx
         ON jobs(provider, profile_id, provider_submitted_at);
-      CREATE TRIGGER IF NOT EXISTS jobs_provider_submitted_at_immutable
-        BEFORE UPDATE OF provider_submitted_at ON jobs
-        WHEN OLD.provider_submitted_at IS NOT NULL
-          AND NEW.provider_submitted_at IS NOT OLD.provider_submitted_at
-        BEGIN
-          SELECT RAISE(ABORT, 'provider_submitted_at is immutable');
-        END;
-      CREATE INDEX IF NOT EXISTS job_task_keys_task_id_idx
-        ON job_task_keys(task_id, job_id);
       CREATE INDEX IF NOT EXISTS provider_projects_exact_name_idx
         ON provider_projects(provider, profile_id, name, resource_id);
-      CREATE INDEX IF NOT EXISTS provider_conversations_task_idx
-        ON provider_conversations(provider, profile_id, task_id, project_resource_id);
-      CREATE INDEX IF NOT EXISTS provider_task_conversations_job_idx
-        ON provider_task_conversations(proved_job_id);
-      CREATE INDEX IF NOT EXISTS output_savings_measured_at_idx
-        ON output_savings_events(measured_at, job_id);
-      CREATE INDEX IF NOT EXISTS web_ai_v0_staged_attachments_abandoned_idx
-        ON web_ai_v0_staged_attachments(consumed_turn_ref, created_at);
-      CREATE UNIQUE INDEX IF NOT EXISTS web_ai_v0_staged_attachments_bundle_attachment_idx
-        ON web_ai_v0_staged_attachments(bundle_id, attachment_id);
-      CREATE UNIQUE INDEX IF NOT EXISTS web_ai_v0_turns_request_ref_idx
-        ON web_ai_v0_turns(request_ref)
-        WHERE request_ref IS NOT NULL;
     `)
   }
 
   private getJobRecord(jobId: string) {
     const row = this.get(
       `SELECT
-        job_id, execution_backend, profile_id,
-        provider, action, status, request_json, result_json, error_json,
+        job_id, profile_id,
+        provider, status, request_json, result_json, error_json,
         blocker_json, provider_attempts_json,
         provider_submitted_at,
         created_at, updated_at
@@ -1605,10 +1291,8 @@ export class JobStore {
 export function publicView(job: Job): JobView {
   return {
     job_id: job.job_id,
-    execution_backend: job.execution_backend,
     profile_id: job.profile_id,
     provider: job.provider,
-    action: job.action,
     status: job.status,
     request_json: job.request_json,
     result_json: job.result_json,
@@ -1666,16 +1350,12 @@ async function ensureControlToken(tokenPath: string) {
 }
 
 function rowToJob(row: Record<string, unknown>): Job {
-  const executionBackend = String(row.execution_backend)
-  assertExecutionBackend(executionBackend)
   const status = String(row.status)
   assertJobStatus(status)
   return {
     job_id: String(row.job_id),
-    execution_backend: executionBackend,
-    profile_id: nullableString(row.profile_id),
+    profile_id: normalizeProfileId(String(row.profile_id), 'profile_id'),
     provider: String(row.provider),
-    action: String(row.action),
     status,
     request_json: parseJson(row.request_json),
     result_json: parseOptionalJson(row.result_json),
@@ -1709,15 +1389,6 @@ function webAiRequestRef(value: unknown) {
   return value
 }
 
-function rowToWebAiBinding(row: Record<string, unknown>): WebAiBinding {
-  return {
-    binding_ref: webAiRef(row.binding_ref, 'binding_ref'),
-    provider_ref: webAiRef(row.provider_ref, 'provider_ref'),
-    provider: mappingText(row.provider, 'provider', 128),
-    profile_id: mappingText(row.profile_id, 'profile_id', PROFILE_ID_CHARS),
-  }
-}
-
 function normalizeWebAiStagedAttachment(value: WebAiStagedAttachment): WebAiStagedAttachment {
   if (value.media_type !== 'text/markdown') throw invalidInput('web ai attachment media type is invalid')
   if (!Number.isSafeInteger(value.byte_length) || value.byte_length < 1 || value.byte_length > 1024 * 1024) {
@@ -1735,31 +1406,6 @@ function normalizeWebAiStagedAttachment(value: WebAiStagedAttachment): WebAiStag
     media_type: value.media_type,
     byte_length: value.byte_length,
     sha256: value.sha256,
-  }
-}
-
-function rowToWebAiStagedAttachment(row: Record<string, unknown>): WebAiStagedAttachment {
-  return normalizeWebAiStagedAttachment({
-    attachment_ref: String(row.attachment_ref),
-    binding_ref: String(row.binding_ref),
-    bundle_id: String(row.bundle_id),
-    attachment_id: String(row.attachment_id),
-    media_type: String(row.media_type) as 'text/markdown',
-    byte_length: Number(row.byte_length),
-    sha256: String(row.sha256),
-  })
-}
-
-function rowToWebAiTurn(row: Record<string, unknown>): WebAiTurn {
-  return {
-    turn_ref: webAiRef(row.turn_ref, 'turn_ref'),
-    binding_ref: webAiRef(row.binding_ref, 'binding_ref'),
-    provider_ref: webAiRef(row.provider_ref, 'provider_ref'),
-    conversation_ref: webAiRef(row.conversation_ref, 'conversation_ref'),
-    attachment_ref: webAiRef(row.attachment_ref, 'attachment_ref'),
-    request_ref: row.request_ref === null ? null : webAiRequestRef(row.request_ref),
-    job_id: normalizeNonempty(String(row.job_id), 'job_id'),
-    cancelled: Number(row.cancelled) === 1,
   }
 }
 
@@ -1835,20 +1481,6 @@ function rowToProviderTaskConversation(row: Record<string, unknown>): ProviderTa
     canonical_url: String(row.canonical_url),
     proved_job_id: String(row.proved_job_id),
     observed_at: String(row.observed_at),
-  }
-}
-
-function rowToOutputSavingsEvent(row: Record<string, unknown>): OutputSavingsEvent {
-  return {
-    job_id: String(row.job_id),
-    response_request_id: String(row.response_request_id),
-    estimated_output_tokens: Number(row.estimated_output_tokens),
-    visible_characters: Number(row.visible_characters),
-    estimator: String(row.estimator),
-    estimator_revision: String(row.estimator_revision),
-    basis: 'visible_assistant_text',
-    source_text_sha256: String(row.source_text_sha256),
-    measured_at: String(row.measured_at),
   }
 }
 
@@ -2018,45 +1650,8 @@ function visibleAttachmentBundleIdsForRequest(request: unknown) {
   return bundleIds
 }
 
-function requestSummaryMetadata(request: unknown): RequestSummaryMetadata {
-  const requestObject = jsonRecord(request)
-  const metadataObject = jsonRecord(requestObject?.metadata)
-  const requestValue = (key: string) => boundedNonemptySummaryValue(requestObject?.[key])
-  const metadataValue = (key: string) => boundedNonemptySummaryValue(metadataObject?.[key])
-  const requestTaskId = requestValue('taskId')
-  const metadataTaskId = metadataValue('taskId')
-  const taskKeys: string[] = []
-  for (const key of [requestTaskId, metadataTaskId]) {
-    if (key && !taskKeys.includes(key)) taskKeys.push(key)
-  }
-  return {
-    task_id: metadataTaskId ?? requestTaskId ?? null,
-    project_name: metadataValue('projectName') ?? requestValue('projectName') ?? null,
-    chat_name: metadataValue('chatName') ?? requestValue('chatName') ?? null,
-    task_keys: taskKeys,
-  }
-}
-
-function validateJobBackendProfile(executionBackend: ExecutionBackend, profileId: string | null) {
-  assertExecutionBackend(executionBackend)
-  const normalized = profileId === null ? null : normalizeProfileId(profileId, 'profile_id')
-  if (normalized === null) throw invalidInput('playwright jobs require profile_id')
-  return normalized
-}
-
-function validateTakeBackendProfile(executionBackend: ExecutionBackend, profileId: string | null) {
-  assertExecutionBackend(executionBackend)
-  if (profileId === null) throw invalidInput('playwright jobs require profile_id')
-}
-
 function assertJobStatus(value: string): asserts value is JobStatus {
   if (!JOB_STATUSES.has(value as JobStatus)) throw invalidStatus(value)
-}
-
-function assertExecutionBackend(value: string): asserts value is ExecutionBackend {
-  if (!EXECUTION_BACKENDS.has(value as ExecutionBackend)) {
-    throw invalidInput(`invalid execution_backend: ${value}`)
-  }
 }
 
 function normalizeNonempty(value: string, field: string) {
@@ -2086,13 +1681,6 @@ function normalizeProfileId(value: string, field: string) {
   return normalized
 }
 
-function boundedNonemptySummaryValue(value: unknown) {
-  if (typeof value !== 'string') return null
-  const trimmed = value.trim()
-  if (!trimmed) return null
-  return Array.from(trimmed).slice(0, SUMMARY_SCALAR_CHARS).join('')
-}
-
 function clampLimit(value: unknown, fallback: number, max: number) {
   const numeric = Number(value)
   const finite = Number.isFinite(numeric) ? Math.floor(numeric) : fallback
@@ -2105,10 +1693,6 @@ function generateSecretToken() {
 
 function nowRfc3339() {
   return new Date().toISOString()
-}
-
-function nowUnixMillis() {
-  return Date.now()
 }
 
 function nullableString(value: unknown) {

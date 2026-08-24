@@ -32,10 +32,8 @@
       "valid": true,
       "data": {
         "job_id": "job-1",
-        "execution_backend": "playwright",
         "profile_id": "work",
         "provider": "chatgpt",
-        "action": "visible_provider_actions",
         "status": "queued",
         "request_json": {
           "taskId": "task-1"
@@ -55,10 +53,8 @@
       "valid": true,
       "data": {
         "job_id": "job-native-project-1",
-        "execution_backend": "playwright",
         "profile_id": "work",
         "provider": "claude",
-        "action": "visible_provider_actions",
         "status": "succeeded",
         "request_json": {
           "taskId": "task-project-1"

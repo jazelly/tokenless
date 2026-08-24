@@ -64,7 +64,7 @@ tokenless limits inspect --profile <slug> --provider <provider> --json
 
 ## 验证边界
 
-Rate-limit 验收是算法性的。Focused integration test 使用构建后的 CLI、daemon、真实 HTTP boundary、真实 profile registry，以及带受控 timestamp 的真实 SQLite history。它验证 subscription matching、精确和非数字知识、model-pool 隔离、sliding window、remaining capacity、burst cadence、defer time 与 CLI diagnostic。
+Rate-limit 验收是算法性的。Focused integration test 使用构建后的 CLI、daemon、真实 HTTP boundary、来自 `config.json` 的 profiles，以及带受控 timestamp 的真实 SQLite history。它验证 subscription matching、精确和非数字知识、model-pool 隔离、sliding window、remaining capacity、burst cadence、defer time 与 CLI diagnostic。
 
 它不会通过刷 provider 网站来发现或耗尽 quota。真实 provider blocker 是普通 runtime 证据，不是 release test load generator。
 

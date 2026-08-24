@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { spawnSync } from 'node:child_process'
 import test from 'node:test'
 
@@ -318,6 +319,19 @@ test('Codex hooks bind exact chat, turn, tool call, project, and provider contin
     assert.equal(fs.existsSync(path.join(fixture.tokenlessHome, 'harness.sqlite3')), false)
     const databaseBytes = fs.readFileSync(path.join(fixture.tokenlessHome, 'tokenless.sqlite3'))
     assert.equal(databaseBytes.includes(Buffer.from(secretPrompt)), false)
+    const db = new DatabaseSync(path.join(fixture.tokenlessHome, 'tokenless.sqlite3'))
+    try {
+      const row = db.prepare('SELECT data_json FROM harness_context_records WHERE chat_id = ?').get('thr_integration_chat')
+      assert.ok(row)
+      const stored = JSON.parse(row.data_json)
+      assert.equal(Object.hasOwn(stored.turns[0], 'lastSeenAt'), false)
+      assert.equal(Object.hasOwn(stored.invocations[0], 'agentKind'), false)
+      assert.equal(Object.hasOwn(stored.invocations[0], 'agentChatId'), false)
+      assert.equal(Object.hasOwn(stored.invocations[0], 'providerTaskId'), false)
+      assert.equal(Object.hasOwn(stored.providerBindings[0], 'providerTaskId'), false)
+    } finally {
+      db.close()
+    }
 
     const conflict = runCli([
       'run',
@@ -350,6 +364,39 @@ test('Codex hooks bind exact chat, turn, tool call, project, and provider contin
     })
     assert.equal(identityConflict.status, 1)
     assert.equal(JSON.parse(identityConflict.stdout).error.code, 'agent_context_identity_conflict')
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('Harness context persistence uses only the chat owner and JSON payload', () => {
+  const fixture = createFixture()
+  try {
+    assert.deepEqual(runHook(fixture, {
+      session_id: 'thr_schema_probe',
+      transcript_path: null,
+      cwd: root,
+      model: 'gpt-test',
+      permission_mode: 'default',
+      hook_event_name: 'SessionStart',
+      source: 'startup',
+    }), {})
+
+    const db = new DatabaseSync(path.join(fixture.tokenlessHome, 'tokenless.sqlite3'))
+    try {
+      const columns = db.prepare('PRAGMA table_info(harness_context_records)').all().map((row) => ({
+        name: row.name,
+        type: row.type,
+        notnull: row.notnull,
+        pk: row.pk,
+      }))
+      assert.deepEqual(columns, [
+        { name: 'chat_id', type: 'TEXT', notnull: 1, pk: 1 },
+        { name: 'data_json', type: 'TEXT', notnull: 1, pk: 0 },
+      ])
+    } finally {
+      db.close()
+    }
   } finally {
     fixture.cleanup()
   }

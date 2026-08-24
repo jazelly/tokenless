@@ -12,6 +12,15 @@ import { ManagedProfileRegistry } from '../packages/server/dist/src/browser/prof
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliEntry = path.join(root, 'packages/cli/dist/src/tokenless.mjs')
+const pendingObservations = new Map()
+const seededDaemonUrls = new Map()
+
+test.afterEach(() => {
+  for (const [homeDir, daemonUrl] of seededDaemonUrls) {
+    runCli(['daemon', 'stop', '--home', homeDir, '--daemon-url', daemonUrl, '--json'])
+  }
+  seededDaemonUrls.clear()
+})
 
 test('capabilities list exposes canonical outcomes and only evidence-backed routes', () => {
   const result = runCli(['capabilities', 'list', '--json'])
@@ -116,7 +125,7 @@ test('implicit run routing chooses the first usable cached provider in setup ord
       gemini: observedProvider('gemini', 'unauthenticated', 'guest'),
       grok: observedProvider('grok', 'authenticated', 'signed_in_paid'),
     })
-    writeConfig(homeDir, ['chatgpt', 'claude', 'grok', 'gemini'], daemonUrl)
+    await writeConfig(homeDir, ['chatgpt', 'claude', 'grok', 'gemini'], daemonUrl)
 
     const result = runCli([
       'run',
@@ -173,7 +182,7 @@ test('explicit attachment run uses a provider with file acceptance closure', asy
       gemini: observedProvider('gemini', 'unauthenticated', 'guest'),
       grok: observedProvider('grok', 'authenticated', 'signed_in_paid'),
     })
-    writeConfig(homeDir, ['gemini', 'grok'], daemonUrl)
+    await writeConfig(homeDir, ['gemini', 'grok'], daemonUrl)
 
     const result = runCli([
       'run',
@@ -229,7 +238,7 @@ test('explicit provider fails before daemon submission when required capability 
     await seedManagedProfile(homeDir, {
       perplexity: observedProvider('perplexity', 'unauthenticated', 'guest'),
     })
-    writeConfig(homeDir, ['perplexity'], daemonUrl)
+    await writeConfig(homeDir, ['perplexity'], daemonUrl)
 
     const result = runCli([
       'run',
@@ -265,7 +274,7 @@ test('conversation continuation requires workspace intent and an existing exact 
     await seedManagedProfile(homeDir, {
       arena: observedProvider('arena', 'authenticated', 'signed_in_unknown'),
     })
-    writeConfig(homeDir, ['arena'], daemonUrl)
+    await writeConfig(homeDir, ['arena'], daemonUrl)
 
     const missingWorkspace = runCliUnbound([
       'run',
@@ -280,7 +289,7 @@ test('conversation continuation requires workspace intent and an existing exact 
     ])
     assert.equal(missingWorkspace.status, 1, missingWorkspace.stderr || missingWorkspace.stdout)
     assert.equal(JSON.parse(missingWorkspace.stdout).error.code, 'conversation_continue_workspace_required')
-    assert.equal(fs.existsSync(path.join(homeDir, 'daemon.token')), false)
+    assert.equal(jobCount(homeDir), 0)
 
     const missingMapping = runCliUnbound([
       'run',
@@ -313,12 +322,12 @@ test('conversation continuation requires workspace intent and an existing exact 
 
 test('Arena model comparison rejects unsupported surfaces and continuation before job submission', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-arena-comparison-route-')))
-  const daemonUrl = 'http://127.0.0.1:9'
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
   try {
     await seedManagedProfile(homeDir, {
       arena: observedProvider('arena', 'authenticated', 'signed_in_unknown'),
     })
-    writeConfig(homeDir, ['arena'], daemonUrl)
+    await writeConfig(homeDir, ['arena'], daemonUrl)
 
     const cases = [
       {
@@ -358,7 +367,7 @@ test('Arena model comparison rejects unsupported surfaces and continuation befor
       assert.equal(JSON.parse(result.stdout).error.code, entry.code)
     }
 
-    assert.equal(fs.existsSync(path.join(homeDir, 'daemon.token')), false)
+    assert.equal(jobCount(homeDir), 0)
     assert.equal(fs.existsSync(path.join(homeDir, 'tokenless.sqlite3')), true)
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
@@ -367,12 +376,12 @@ test('Arena model comparison rejects unsupported surfaces and continuation befor
 
 test('Arena search capabilities select Direct Search and reject incompatible surfaces before job submission', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-arena-search-route-')))
-  const daemonUrl = 'http://127.0.0.1:9'
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
   try {
     await seedManagedProfile(homeDir, {
       arena: observedProvider('arena', 'authenticated', 'signed_in_unknown'),
     })
-    writeConfig(homeDir, ['arena'], daemonUrl)
+    await writeConfig(homeDir, ['arena'], daemonUrl)
 
     const cases = [
       {
@@ -408,7 +417,7 @@ test('Arena search capabilities select Direct Search and reject incompatible sur
       assert.equal(JSON.parse(result.stdout).error.code, entry.code)
     }
 
-    assert.equal(fs.existsSync(path.join(homeDir, 'daemon.token')), false)
+    assert.equal(jobCount(homeDir), 0)
     assert.equal(fs.existsSync(path.join(homeDir, 'tokenless.sqlite3')), true)
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
@@ -417,12 +426,12 @@ test('Arena search capabilities select Direct Search and reject incompatible sur
 
 test('Arena image capabilities reject incompatible controls and missing source images before job submission', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-arena-image-route-')))
-  const daemonUrl = 'http://127.0.0.1:9'
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
   try {
     await seedManagedProfile(homeDir, {
       arena: observedProvider('arena', 'authenticated', 'signed_in_unknown'),
     })
-    writeConfig(homeDir, ['arena'], daemonUrl)
+    await writeConfig(homeDir, ['arena'], daemonUrl)
 
     const cases = [
       {
@@ -484,7 +493,7 @@ test('Arena image capabilities reject incompatible controls and missing source i
       assert.equal(JSON.parse(result.stdout).error.code, entry.code)
     }
 
-    assert.equal(fs.existsSync(path.join(homeDir, 'daemon.token')), false)
+    assert.equal(jobCount(homeDir), 0)
     assert.equal(fs.existsSync(path.join(homeDir, 'tokenless.sqlite3')), true)
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
@@ -493,12 +502,12 @@ test('Arena image capabilities reject incompatible controls and missing source i
 
 test('Arena website generation selects Direct Code and rejects incompatible controls before job submission', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-arena-code-route-')))
-  const daemonUrl = 'http://127.0.0.1:9'
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
   try {
     await seedManagedProfile(homeDir, {
       arena: observedProvider('arena', 'authenticated', 'signed_in_unknown'),
     })
-    writeConfig(homeDir, ['arena'], daemonUrl)
+    await writeConfig(homeDir, ['arena'], daemonUrl)
 
     const cases = [
       {
@@ -555,7 +564,7 @@ test('Arena website generation selects Direct Code and rejects incompatible cont
       assert.equal(JSON.parse(result.stdout).error.code, entry.code)
     }
 
-    assert.equal(fs.existsSync(path.join(homeDir, 'daemon.token')), false)
+    assert.equal(jobCount(homeDir), 0)
     assert.equal(fs.existsSync(path.join(homeDir, 'tokenless.sqlite3')), true)
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
@@ -564,14 +573,14 @@ test('Arena website generation selects Direct Code and rejects incompatible cont
 
 test('Arena agent execution rejects unsupported controls and capability combinations before job submission', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-arena-agent-route-')))
-  const daemonUrl = 'http://127.0.0.1:9'
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
   const attachment = path.join(homeDir, 'unproven-agent-input.txt')
   fs.writeFileSync(attachment, 'This must not reach Arena.\n')
   try {
     await seedManagedProfile(homeDir, {
       arena: observedProvider('arena', 'authenticated', 'signed_in_unknown'),
     })
-    writeConfig(homeDir, ['arena'], daemonUrl)
+    await writeConfig(homeDir, ['arena'], daemonUrl)
 
     const cases = [
       {
@@ -630,7 +639,7 @@ test('Arena agent execution rejects unsupported controls and capability combinat
       assert.equal(JSON.parse(result.stdout).error.code, entry.code)
     }
 
-    assert.equal(fs.existsSync(path.join(homeDir, 'daemon.token')), false)
+    assert.equal(jobCount(homeDir), 0)
     assert.equal(fs.existsSync(path.join(homeDir, 'tokenless.sqlite3')), true)
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
@@ -639,14 +648,14 @@ test('Arena agent execution rejects unsupported controls and capability combinat
 
 test('Arena video generation rejects unsupported controls and capability combinations before job submission', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-arena-video-route-')))
-  const daemonUrl = 'http://127.0.0.1:9'
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
   const attachment = path.join(homeDir, 'unproven-video-input.png')
   fs.writeFileSync(attachment, 'This must not reach Arena.\n')
   try {
     await seedManagedProfile(homeDir, {
       arena: observedProvider('arena', 'authenticated', 'signed_in_unknown'),
     })
-    writeConfig(homeDir, ['arena'], daemonUrl)
+    await writeConfig(homeDir, ['arena'], daemonUrl)
 
     const cases = [
       {
@@ -720,7 +729,7 @@ test('Arena video generation rejects unsupported controls and capability combina
       assert.equal(JSON.parse(result.stdout).error.code, entry.code)
     }
 
-    assert.equal(fs.existsSync(path.join(homeDir, 'daemon.token')), false)
+    assert.equal(jobCount(homeDir), 0)
     assert.equal(fs.existsSync(path.join(homeDir, 'tokenless.sqlite3')), true)
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
@@ -733,7 +742,7 @@ test('deep research stays unavailable until its complete lifecycle is closed', a
     await seedManagedProfile(homeDir, {
       qwen: observedProvider('qwen', 'unauthenticated', 'guest'),
     })
-    writeConfig(homeDir, ['qwen'], 'http://127.0.0.1:9')
+    await writeConfig(homeDir, ['qwen'], 'http://127.0.0.1:9')
 
     const result = runCli([
       'run',
@@ -766,18 +775,21 @@ test('deep research stays unavailable until its complete lifecycle is closed', a
 
 test('attachment media infers its semantic input capability', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-capability-image-input-')))
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
   const image = path.join(homeDir, 'evidence.png')
   fs.writeFileSync(image, Buffer.from('89504e470d0a1a0a', 'hex'))
   try {
     await seedManagedProfile(homeDir, {
       deepseek: observedProvider('deepseek', 'authenticated', 'signed_in_free'),
     })
-    writeConfig(homeDir, ['deepseek'], 'http://127.0.0.1:9')
+    await writeConfig(homeDir, ['deepseek'], daemonUrl)
 
     const result = runCli([
       'run',
       '--home',
       homeDir,
+      '--daemon-url',
+      daemonUrl,
       '--attach-file',
       image,
       '--prompt',
@@ -792,7 +804,7 @@ test('attachment media infers its semantic input capability', async () => {
       ['conversation.chat', 'file.upload', 'image.input'],
     )
     assert.deepEqual(payload.error.context.providers[0].missingCapabilities, ['image.input'])
-    assert.equal(fs.existsSync(path.join(homeDir, 'daemon.token')), false)
+    assert.equal(jobCount(homeDir), 0)
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
@@ -807,7 +819,7 @@ test('explicit run provider is not replaced by cached provider usability', async
       chatgpt: observedProvider('chatgpt', 'unknown', 'unknown'),
       gemini: observedProvider('gemini', 'unauthenticated', 'guest'),
     })
-    writeConfig(homeDir, ['chatgpt', 'gemini'], daemonUrl)
+    await writeConfig(homeDir, ['chatgpt', 'gemini'], daemonUrl)
 
     const result = runCli([
       'run',
@@ -841,7 +853,7 @@ test('implicit run routing fails before daemon submission when no cached provide
       chatgpt: observedProvider('chatgpt', 'unknown', 'unknown'),
       claude: observedProvider('claude', 'unauthenticated', 'sign_in_required'),
     })
-    writeConfig(homeDir, ['chatgpt', 'claude'], daemonUrl)
+    await writeConfig(homeDir, ['chatgpt', 'claude'], daemonUrl)
 
     const result = runCli([
       'run',
@@ -866,13 +878,13 @@ test('implicit run routing fails before daemon submission when no cached provide
       ]
     )
     assert.match(payload.error.context.nextAction, /tokenless setup/)
-    assert.equal(fs.existsSync(path.join(homeDir, 'daemon.token')), false)
+    assert.equal(jobCount(homeDir), 0)
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
 
-test('doctor reports observation health separately from cached provider usability', async () => {
+test('doctor does not report stale provider observations when the daemon is absent', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-provider-doctor-')))
   try {
     await seedManagedProfile(homeDir, {
@@ -881,40 +893,74 @@ test('doctor reports observation health separately from cached provider usabilit
       gemini: observedProvider('gemini', 'unauthenticated', 'guest'),
       grok: observedProvider('grok', 'authenticated', 'signed_in_paid'),
     })
-    writeConfig(homeDir, ['chatgpt', 'claude', 'gemini', 'grok'], `http://127.0.0.1:9`)
+    await writeConfig(homeDir, ['chatgpt', 'claude', 'gemini', 'grok'], `http://127.0.0.1:9`)
 
     const result = runCli(['doctor', '--home', homeDir, '--json'])
     assert.notEqual(result.stdout, '', result.stderr)
     const payload = JSON.parse(result.stdout)
-    assert.equal(payload.checks.providerReadiness.ok, true)
-    assert.deepEqual(payload.checks.providerReadiness.usableProviders, ['gemini', 'grok'])
+    assert.equal(payload.checks.providerReadiness.ok, false)
+    assert.deepEqual(payload.checks.providerReadiness.usableProviders, [])
     assert.equal(payload.checks.providerReadiness.providers.chatgpt.usable, false)
     assert.equal(payload.checks.providerReadiness.providers.chatgpt.access, 'unknown')
     assert.equal(payload.checks.providerReadiness.providers.claude.usable, false)
-    assert.equal(payload.checks.providerReadiness.providers.claude.access, 'sign_in_required')
-    assert.equal(payload.checks.providerReadiness.providers.gemini.usable, true)
+    assert.equal(payload.checks.providerReadiness.providers.claude.access, 'unknown')
+    assert.equal(payload.checks.providerReadiness.providers.gemini.usable, false)
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
 
-function writeConfig(homeDir, providerWhitelist, daemonUrl) {
+async function writeConfig(homeDir, providerWhitelist, daemonUrl) {
   fs.mkdirSync(homeDir, { recursive: true, mode: 0o700 })
   fs.writeFileSync(path.join(homeDir, 'config.json'), `${JSON.stringify({
     protocol: 'tokenless.config.v1',
     updatedAt: new Date().toISOString(),
-    providerWhitelist,
-    browser: null,
-    browserVisibility: 'auto',
+    defaultProfile: 'default',
+    profiles: {
+      default: {
+        roleLabel: '',
+        enabledProviders: providerWhitelist,
+        browserVisibility: 'headed',
+        proxy: null,
+      },
+    },
+    browser: 'chrome',
+    browserVisibility: 'headed',
     daemonUrl,
   }, null, 2)}\n`, { mode: 0o600 })
+
+  const observations = pendingObservations.get(homeDir) ?? []
+  pendingObservations.delete(homeDir)
+  if (observations.length === 0 || new URL(daemonUrl).port === '9') return
+  const runtime = await import('../packages/cli/dist/src/index.js')
+  await runtime.ensureDaemonReady({ homeDir, daemonUrl })
+  seededDaemonUrls.set(homeDir, daemonUrl)
+  const token = fs.readFileSync(path.join(homeDir, 'daemon.token'), 'utf8').trim()
+  for (const observation of observations) {
+    const response = await fetch(`${daemonUrl}/v1/private/control/profiles/default/observation`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(observation),
+    })
+    assert.equal(response.status, 200, await response.text())
+  }
 }
 
 async function seedManagedProfile(homeDir, lastObservedAuth) {
   const registry = new ManagedProfileRegistry(homeDir)
-  await registry.addProfile({ slug: 'default', lifecycle: 'ready', setDefault: true })
-  for (const status of Object.values(lastObservedAuth)) {
-    await registry.updateProviderStatus('default', status)
+  await registry.addProfile({ slug: 'default', setDefault: true })
+  pendingObservations.set(homeDir, Object.values(lastObservedAuth))
+}
+
+function jobCount(homeDir) {
+  const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'), { readOnly: true })
+  try {
+    return Number(database.prepare('SELECT count(*) AS count FROM jobs').get().count)
+  } finally {
+    database.close()
   }
 }
 

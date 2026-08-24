@@ -147,7 +147,7 @@ import {
 
   function selectedBrowserBinding(): RouterBrowserBinding {
     const profile = snapshot.profiles.find((candidate) => (
-      candidate.slug === selectedProfile || candidate.id === selectedProfile
+      candidate.slug === selectedProfile
     ))
     const binding = profile?.browserBinding
     return {
@@ -200,7 +200,7 @@ import {
   }
 
   function selectedProfileState() {
-    return snapshot.profiles.find((profile) => profile.slug === selectedProfile || profile.id === selectedProfile)
+    return snapshot.profiles.find((profile) => profile.slug === selectedProfile)
   }
 
   function providerState(provider: DashboardProvider) {
@@ -310,7 +310,7 @@ import {
     try {
       const started = await actions.startHarnessRun({
         provider: frontDoorResult.route.providerId,
-        profileId: profile.id,
+        profileId: profile.slug,
         taskPrompt: task.trim(),
       })
       harnessRun = await actions.readHarnessRun(started.runId)

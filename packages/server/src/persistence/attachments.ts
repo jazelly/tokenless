@@ -8,8 +8,6 @@ import { VISIBLE_ATTACHMENT_SCHEMA_ID as VISIBLE_ATTACHMENT_SCHEMA_ID_VALUE } fr
 export const VISIBLE_ATTACHMENT_SCHEMA_ID = VISIBLE_ATTACHMENT_SCHEMA_ID_VALUE
 export const VISIBLE_ATTACHMENT_DIRECTORY = 'attachments' as const
 export const DEFAULT_MAX_VISIBLE_ATTACHMENT_BYTES = 512 * 1024 * 1024
-export const DEFAULT_VISIBLE_ATTACHMENT_ORPHAN_TTL_MS = 24 * 60 * 60 * 1000
-export const WEB_AI_V0_STAGE_MARKER = '.tokenless-web-ai-v0-stage' as const
 
 const COPY_BUFFER_BYTES = 256 * 1024
 const MAX_ATTACHMENT_NAME_BYTES = 512
@@ -61,7 +59,6 @@ export type StageVisibleAttachmentStreamOptions = {
   name: string
   type: string
   maxBytes?: number | undefined
-  webAiStage?: boolean | undefined
 }
 
 export function createVisibleAttachmentId() {
@@ -220,7 +217,6 @@ export async function stageVisibleAttachmentStream({
   name,
   type,
   maxBytes = DEFAULT_MAX_VISIBLE_ATTACHMENT_BYTES,
-  webAiStage = true,
 }: StageVisibleAttachmentStreamOptions): Promise<VisibleAttachmentDescriptor> {
   validateSafeId(bundleId, 'bundleId')
   validateSafeId(attachmentId, 'attachmentId')
@@ -229,12 +225,9 @@ export async function stageVisibleAttachmentStream({
   const mediaType = validateMediaType(type)
   const { root, bundle } = await ensureAttachmentBundle(homeDir, bundleId)
   const destination = path.join(bundle, `${attachmentId}.bin`)
-  const marker = path.join(bundle, WEB_AI_V0_STAGE_MARKER)
   let destinationHandle: fs.FileHandle | undefined
   let staged = false
-  let markerCreated = false
   try {
-    if (webAiStage) markerCreated = await ensureWebAiStageMarker(marker)
     destinationHandle = await fs.open(
       destination,
       fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | noFollowFlag(),
@@ -269,30 +262,9 @@ export async function stageVisibleAttachmentStream({
     await destinationHandle?.close().catch(() => undefined)
     if (!staged) {
       await fs.rm(destination, { force: true }).catch(() => undefined)
-      if (markerCreated) await fs.rm(marker, { force: true }).catch(() => undefined)
       await fs.rmdir(bundle).catch(() => undefined)
       await fs.rmdir(root).catch(() => undefined)
     }
-  }
-}
-
-async function ensureWebAiStageMarker(marker: string) {
-  try {
-    const markerHandle = await fs.open(marker, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | noFollowFlag(), 0o600)
-    try {
-      await markerHandle.writeFile('tokenless-web-ai-interaction-v0\n')
-      await markerHandle.sync()
-    } finally {
-      await markerHandle.close()
-    }
-    return true
-  } catch (error) {
-    if (!isFileSystemError(error, 'EEXIST')) throw error
-    const stat = await fs.lstat(marker)
-    if (!stat.isFile() || stat.isSymbolicLink() || await fs.readFile(marker, 'utf8') !== 'tokenless-web-ai-interaction-v0\n') {
-      throw new Error('Visible attachment bundle has an invalid Web AI stage marker.')
-    }
-    return false
   }
 }
 
@@ -360,7 +332,7 @@ export async function removeStagedVisibleAttachmentBundle({
   const entries = await fs.readdir(canonicalBundle, { withFileTypes: true })
   for (const entry of entries) {
     const entryPath = path.join(canonicalBundle, entry.name)
-    if (entry.name !== WEB_AI_V0_STAGE_MARKER && !/^[A-Za-z0-9_-]{1,64}\.bin$/.test(entry.name)) {
+    if (!/^[A-Za-z0-9_-]{1,64}\.bin$/.test(entry.name)) {
       throw new Error(`Refusing to remove unexpected visible attachment bundle entry: ${entry.name}.`)
     }
     const entryStat = await fs.lstat(entryPath)
@@ -371,49 +343,6 @@ export async function removeStagedVisibleAttachmentBundle({
   }
   await fs.rmdir(canonicalBundle)
   return true
-}
-
-export async function listMarkedWebAiStageBundles(homeDir: string) {
-  const root = await existingCanonicalAttachmentRoot(homeDir)
-  if (!root) return []
-  const marked: string[] = []
-  for (const entry of await fs.readdir(root, { withFileTypes: true })) {
-    if (!SAFE_ID_PATTERN.test(entry.name) || !entry.isDirectory() || entry.isSymbolicLink()) continue
-    const marker = path.join(root, entry.name, WEB_AI_V0_STAGE_MARKER)
-    try {
-      const stat = await fs.lstat(marker)
-      if (stat.isFile() && !stat.isSymbolicLink()) marked.push(entry.name)
-    } catch (error) {
-      if (!isFileSystemError(error, 'ENOENT')) throw error
-    }
-  }
-  return marked
-}
-
-export async function cleanupOrphanedVisibleAttachmentBundles({
-  homeDir,
-  ttlMs = DEFAULT_VISIBLE_ATTACHMENT_ORPHAN_TTL_MS,
-  nowMs = Date.now(),
-}: {
-  homeDir: string
-  ttlMs?: number | undefined
-  nowMs?: number | undefined
-}) {
-  const lifetime = validateNonnegativeSafeInteger(ttlMs, 'ttlMs')
-  const now = validateNonnegativeSafeInteger(nowMs, 'nowMs')
-  const root = await existingCanonicalAttachmentRoot(homeDir)
-  if (!root) return []
-  const removed: string[] = []
-  for (const entry of await fs.readdir(root, { withFileTypes: true })) {
-    if (!SAFE_ID_PATTERN.test(entry.name) || !entry.isDirectory() || entry.isSymbolicLink()) continue
-    const bundle = path.join(root, entry.name)
-    const stat = await fs.stat(bundle)
-    if (now - stat.mtimeMs < lifetime) continue
-    if (await removeStagedVisibleAttachmentBundle({ homeDir, bundleId: entry.name })) {
-      removed.push(entry.name)
-    }
-  }
-  return removed
 }
 
 async function ensureAttachmentBundle(homeDir: string, bundleId: string) {

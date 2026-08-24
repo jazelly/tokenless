@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import { readTokenlessConfig, type ApiProxyConversationMode, type ProviderBackend } from '../persistence/config.js'
-import { createManagedPlaywrightJobRequest, MANAGED_PLAYWRIGHT_JOB_ACTION } from '../browser/job-contract.js'
+import { createManagedPlaywrightJobRequest } from '../browser/job-contract.js'
 import { VISIBLE_ACTIONS, createVisibleActionRequest } from '../browser/actions.js'
 import { ManagedProfileRegistry } from '../browser/profiles/registry.js'
 import {
@@ -250,13 +250,6 @@ export class ApiProxyAdapter {
     else assertProviderSupported(request.provider)
     if (request.toolProtocol) requestPrompt(request)
     const profile = await this.profiles.resolveProfile()
-    if (profile.lifecycle !== 'ready') {
-      throw new ApiProxyError(
-        503,
-        'profile_not_ready',
-        'The managed profile is not ready; run tokenless setup before proxying API traffic.',
-      )
-    }
     const enabledProviders = config.profiles[profile.slug]?.enabledProviders ?? []
     if (!request.auto && !enabledProviders.includes(request.provider)) {
       throw new ApiProxyError(
@@ -302,12 +295,12 @@ export class ApiProxyAdapter {
     }
 
     const plan = responseContext
-      ? responseConversationPlan(selectedRequest, responseContext, profile.id, this.store, executionMode)
+      ? responseConversationPlan(selectedRequest, responseContext, profile.slug, this.store, executionMode)
       : newConversationPlan(selectedRequest)
 
     const completion = await this.completeManagedPrompt({
       request: selectedRequest,
-      profileId: profile.id,
+      profileId: profile.slug,
       taskId: plan.taskId,
       promptText: plan.promptText,
       targetUrl: plan.targetUrl,
@@ -324,12 +317,12 @@ export class ApiProxyAdapter {
       const correctionRequest = { ...selectedRequest, provider: completion.base.provider }
       const mapping = this.store.resolveProviderTaskConversation({
         provider: correctionRequest.provider,
-        profile_id: profile.id,
+        profile_id: profile.slug,
         task_id: plan.taskId,
       })
       return await this.completeManagedPrompt({
         request: correctionRequest,
-        profileId: profile.id,
+        profileId: profile.slug,
         taskId: plan.taskId,
         promptText: prompt,
         targetUrl: mapping?.canonical_url ?? plan.targetUrl,
@@ -378,13 +371,6 @@ export class ApiProxyAdapter {
     assertProviderSupported(request.provider)
     if (request.toolProtocol) return null
     const profile = await this.profiles.resolveProfile()
-    if (profile.lifecycle !== 'ready') {
-      throw new ApiProxyError(
-        503,
-        'profile_not_ready',
-        'The managed profile is not ready; run tokenless setup before proxying API traffic.',
-      )
-    }
     const enabledProviders = config.profiles[profile.slug]?.enabledProviders ?? []
     if (!enabledProviders.includes(request.provider)) {
       throw new ApiProxyError(
@@ -478,9 +464,7 @@ export class ApiProxyAdapter {
     })
     const job = this.store.createJob({
       provider: request.provider,
-      action: MANAGED_PLAYWRIGHT_JOB_ACTION,
       request_json: requestJson,
-      execution_backend: 'playwright',
       profile_id: profileId,
     })
     await this.wake()
@@ -1058,10 +1042,6 @@ function previousResponse(value: unknown, store: JobStore) {
   }
   const entry = store.getApiResponse(value)
   if (!entry) throw new ApiProxyError(404, 'response_not_found', `Previous response '${value}' was not found.`, 'previous_response_id')
-  if (entry.expires_at_ms <= Date.now()) {
-    store.deleteApiResponse(value)
-    throw new ApiProxyError(410, 'response_expired', `Previous response '${value}' has expired.`, 'previous_response_id')
-  }
   return entry
 }
 
@@ -1280,7 +1260,7 @@ function plainRecord(value: unknown): Record<string, unknown> {
 }
 
 function isTerminalJobStatus(status: Job['status']) {
-  return status === 'succeeded' || status === 'failed' || status === 'canceled' || status === 'timed_out'
+  return status === 'succeeded' || status === 'failed' || status === 'canceled'
 }
 
 function apiProxyJobFailure(job: Job) {

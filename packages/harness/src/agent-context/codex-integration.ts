@@ -344,7 +344,7 @@ function extractTokenlessOutcome(value: unknown) {
   return {
     ok: typeof payload?.ok === 'boolean' ? payload.ok : null,
     provider: optionalString(payload?.provider),
-    profile: optionalString(profile.slug ?? profile.id),
+    profile: optionalString(profile.slug),
     jobId: optionalString(payload?.jobId ?? payload?.job_id),
     taskId: optionalString(payload?.taskId ?? payload?.task_id),
     providerProjectId: optionalString(project.resource_id ?? project.resourceId),

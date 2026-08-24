@@ -2,11 +2,11 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import type { IncomingMessage } from 'node:http'
 
 import { deriveTaskId, readTokenlessConfig } from '../../../persistence/config.js'
-import { createManagedPlaywrightJobRequest, MANAGED_PLAYWRIGHT_JOB_ACTION } from '../../../browser/job-contract.js'
+import { createManagedPlaywrightJobRequest } from '../../../browser/job-contract.js'
 import { VISIBLE_ACTIONS, createVisibleActionRequest } from '../../../browser/actions.js'
 import { ManagedProfileRegistry } from '../../../browser/profiles/registry.js'
 import { getProviderInstanceById, resolveTaskCapabilityRoute, type TaskCapabilityId } from '../../../providers/registry.js'
-import { DEFAULT_MAX_VISIBLE_ATTACHMENT_BYTES, listMarkedWebAiStageBundles, removeStagedVisibleAttachmentBundle, stageVisibleAttachmentStream } from '../../../persistence/attachments.js'
+import { DEFAULT_MAX_VISIBLE_ATTACHMENT_BYTES, removeStagedVisibleAttachmentBundle, stageVisibleAttachmentStream } from '../../../persistence/attachments.js'
 import {
   dropEphemeralProviderBundle,
   hasEphemeralProviderBundle,
@@ -87,7 +87,6 @@ export class PrivateProviderTurnV0Adapter {
     if (normalizeContentType(contentType) !== 'text/markdown') {
       throw invalidInput('web ai attachment content-type must be text/markdown')
     }
-    await this.initializeCleanup()
     if (typeof name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(name)) {
       throw invalidInput('web ai attachment name is invalid')
     }
@@ -129,7 +128,7 @@ export class PrivateProviderTurnV0Adapter {
       })
       return attachmentPublicView(attachment)
     } catch (error) {
-      // The attachment helper already creates an isolated, no-follow bundle. A failed DB insert must not leave it reusable.
+      // The attachment helper already creates an isolated, no-follow bundle. Failed registration must not leave it reusable.
       if (ephemeral) {
         dropEphemeralProviderBundle(descriptor.bundleId)
       } else if (!bundledAttachment) {
@@ -215,9 +214,7 @@ export class PrivateProviderTurnV0Adapter {
       request_ref: request.requestRef,
       job: {
         provider: binding.provider,
-        action: MANAGED_PLAYWRIGHT_JOB_ACTION,
         request_json: storedRequestJson,
-        execution_backend: 'playwright',
         profile_id: binding.profile_id,
         job_id: attachment.bundle_id,
       },
@@ -278,7 +275,7 @@ export class PrivateProviderTurnV0Adapter {
       conversation_ref: request.conversation.conversationRef,
       attachment_refs: attachments.map((attachment) => attachment!.attachment_ref),
       request_ref: request.requestRef,
-      job: { provider: binding.provider, action: MANAGED_PLAYWRIGHT_JOB_ACTION, request_json: storedRequestJson, execution_backend: 'playwright', profile_id: binding.profile_id, job_id: primary.bundle_id },
+      job: { provider: binding.provider, request_json: storedRequestJson, profile_id: binding.profile_id, job_id: primary.bundle_id },
     })
     return this.project(turn, this.store.getJob(turn.job_id))
   }
@@ -319,17 +316,6 @@ export class PrivateProviderTurnV0Adapter {
     return { kind: 'turn' as const, turn: this.cancellationProjection(turn) }
   }
 
-  async initializeCleanup() {
-    const marked = await listMarkedWebAiStageBundles(this.store.homeDir)
-    const expired = new Set(this.store.cleanupAbandonedWebAiStages(Date.now() - 24 * 60 * 60 * 1000).map((attachment) => attachment.bundle_id))
-    for (const bundleId of marked) {
-      const disposition = this.store.webAiBundleCleanupDisposition(bundleId)
-      if (disposition === 'orphan' || disposition === 'delete' || expired.has(bundleId)) {
-        await removeStagedVisibleAttachmentBundle({ homeDir: this.store.homeDir, bundleId }).catch(() => undefined)
-      }
-    }
-  }
-
   private async requireConfiguredBinding(bindingRef: string) {
     const binding = this.store.getWebAiBinding(bindingRef)
     if (!binding) throw invalidInput('web ai provider binding was not found')
@@ -343,7 +329,7 @@ export class PrivateProviderTurnV0Adapter {
       throw invalidInput('web ai provider is not configured')
     }
     const [profiles, config] = await Promise.all([this.profiles.listProfiles(), readTokenlessConfig(this.store.homeDir)])
-    const profile = profiles.find((candidate) => candidate.id === profileId && candidate.lifecycle === 'ready')
+    const profile = profiles.find((candidate) => candidate.slug === profileId)
     const configured = profile ? config.profiles[profile.slug] : undefined
     if (!profile || !configured) {
       throw invalidInput('web ai provider/profile is not configured')
@@ -388,7 +374,6 @@ export class PrivateProviderTurnV0Adapter {
       const result = successfulResult(job.result_json)
       if (result) return turnState({ ...base, lifecycle: 'succeeded', attachmentDelivery: { ...attachment, status: 'delivered' }, result })
     }
-    if (job.status === 'timed_out') return turnState({ ...base, lifecycle: 'failed', attachmentDelivery: { ...attachment, status: delivered ? 'delivered' : 'pending' }, error: { code: 'timeout', message: 'The provider turn timed out.' } })
     const errorCode = jobErrorCode(job.error_json)
     if (!delivered && errorCode.includes('upload')) return turnState({ ...base, lifecycle: 'failed', attachmentDelivery: { ...attachment, status: 'rejected' }, error: { code: 'upload_failed', message: 'The provider rejected the staged attachment.' } })
     return turnState({ ...base, lifecycle: 'failed', attachmentDelivery: { ...attachment, status: delivered ? 'delivered' : 'pending' }, error: { code: errorCode.includes('submit') ? 'submission_failed' : errorCode.includes('provider') ? 'provider_unavailable' : 'response_failed', message: 'The provider turn did not produce a verifiable response.' } })
@@ -471,7 +456,7 @@ function boundedProvider(value: unknown) {
 }
 
 function boundedProfileId(value: unknown) {
-  if (typeof value !== 'string' || !/^[a-f0-9-]{36}$/.test(value)) throw invalidInput('web ai profileId is invalid')
+  if (typeof value !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(value)) throw invalidInput('web ai profileId is invalid')
   return value
 }
 

@@ -22,7 +22,7 @@ test('one in-process Harness run approves and executes an exact real MCP call', 
   const registry = createStdioMcpToolRegistry()
   let harness
   try {
-    const profile = await new ManagedProfileRegistry(homeDir).addProfile({ slug: 'approval', lifecycle: 'ready' })
+    const profile = await new ManagedProfileRegistry(homeDir).addProfile({ slug: 'approval' })
     const token = (await fs.readFile(path.join(homeDir, 'daemon.token'), 'utf8')).trim()
     const mcpServers = [{
       name: 'everything',
@@ -39,7 +39,7 @@ test('one in-process Harness run approves and executes an exact real MCP call', 
 
     const started = await harness.start({
       provider: 'chatgpt',
-      profileId: profile.id,
+      profileId: profile.slug,
       taskPrompt: 'Echo the approved message.',
       stagingRoot: path.join(root, 'staging'),
       mcpServers,
@@ -50,12 +50,12 @@ test('one in-process Harness run approves and executes an exact real MCP call', 
 
     const mapping = store.getWebAiTurn(running.providerTurnRef)
     const job = store.getJob(mapping.job_id)
-    const selected = store.takeNextJob({ job_id_prefix: job.job_id }, 'playwright', profile.id)
+    const selected = store.takeNextJob({ job_id_prefix: job.job_id }, profile.slug)
     assert.ok(selected)
     store.recordProviderSubmission(selected.job_id)
     store.upsertProviderTaskConversation({
       provider: 'chatgpt',
-      profile_id: profile.id,
+      profile_id: profile.slug,
       task_id: job.request_json.taskId,
       canonical_url: 'https://chatgpt.com/c/harness-approval',
       job_id: job.job_id,

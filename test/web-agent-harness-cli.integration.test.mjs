@@ -21,7 +21,7 @@ test('built singular agent CLI keeps one local control-plane turn across run, re
   const daemon = await serveHttp({ store, host: '127.0.0.1', port: 0, agentRunHandlerFactory: createAgentRunHttpHandler })
   daemon.activate()
   try {
-    const profile = await new ManagedProfileRegistry(homeDir).addProfile({ slug: 'agent-cli', lifecycle: 'ready' })
+    const profile = await new ManagedProfileRegistry(homeDir).addProfile({ slug: 'agent-cli' })
     const mcpConfig = path.join(root, 'mcp.json')
     fs.writeFileSync(mcpConfig, JSON.stringify({ mcpServers: [{
       name: 'everything',

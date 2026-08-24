@@ -7,7 +7,6 @@ export type JobStatus =
   | 'succeeded'
   | 'failed'
   | 'canceled'
-  | 'timed_out'
 
 type DaemonErrorKind =
   | 'io'

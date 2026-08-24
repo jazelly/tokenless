@@ -16,9 +16,7 @@ import type { E2EBrowserInspectionConfig } from './e2e-inspection.js'
 import type { ManagedBrowserLaunchTarget } from './browser/context-manager.js'
 import type { ManagedBrowserResolver } from './browser/context-manager.js'
 import {
-  MANAGED_PLAYWRIGHT_JOB_ACTION,
   MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID,
-  PLAYWRIGHT_EXECUTION_BACKEND,
   validateManagedPlaywrightJobRequest,
 } from './job-contract.js'
 import { getVisibleActionLifecycle } from '../providers/action-catalog.js'
@@ -221,21 +219,21 @@ export class ManagedPlaywrightRunnerService {
 
   async openProfile(profileId: string, browserVisibility: BrowserVisibility): Promise<ManagedProfileOpenResult> {
     const profile = (await this.profileRegistry.listProfiles())
-      .find((candidate) => candidate.id === profileId && (candidate.lifecycle === undefined || candidate.lifecycle === 'ready'))
+      .find((candidate) => candidate.slug === profileId)
     if (!profile) {
       throw tokenlessError('profile_not_found', 'Managed profile is not registered or is not ready.')
     }
     const managedContext = await this.contextManager.ensureContext(profile, browserVisibility)
     let pages = managedContext.browserContext.pages()
     if (pages.length === 0) {
-      await managedContext.acquirePage({ key: `tokenless:profile-open:${profile.id}` })
+      await managedContext.acquirePage({ key: `tokenless:profile-open:${profile.slug}` })
       pages = managedContext.browserContext.pages()
     }
     if (pages[0] && managedContext.effectiveBrowserVisibility === 'headed') {
       await bringToFrontForUserHandoff(pages[0])
     }
     return {
-      profileId: profile.id,
+      profileId: profile.slug,
       browserVisibility: managedContext.browserVisibility,
       effectiveBrowserVisibility: managedContext.effectiveBrowserVisibility,
       pageCount: pages.length,
@@ -248,7 +246,7 @@ export class ManagedPlaywrightRunnerService {
     browserVisibility: BrowserVisibility,
   ): Promise<ManagedProviderTabsOpenResult> {
     const profile = (await this.profileRegistry.listProfiles())
-      .find((candidate) => candidate.id === profileId && (candidate.lifecycle === undefined || candidate.lifecycle === 'ready'))
+      .find((candidate) => candidate.slug === profileId)
     if (!profile) {
       throw tokenlessError('profile_not_found', 'Managed profile is not registered or is not ready.')
     }
@@ -299,7 +297,7 @@ export class ManagedPlaywrightRunnerService {
     tabs.sort((left, right) => (providerOrder.get(left.provider) ?? 0) - (providerOrder.get(right.provider) ?? 0))
     failures.sort((left, right) => (providerOrder.get(left.provider) ?? 0) - (providerOrder.get(right.provider) ?? 0))
     return {
-      profileId: profile.id,
+      profileId: profile.slug,
       browserVisibility: managedContext.browserVisibility,
       effectiveBrowserVisibility: managedContext.effectiveBrowserVisibility,
       pageCount: managedContext.browserContext.pages().length,
@@ -336,9 +334,7 @@ export class ManagedPlaywrightRunnerService {
     const profiles = await this.availableProfiles(new Set())
     for (const profile of profiles) {
       const selected = await this.daemonClient.takeNextJob({
-        executionBackend: PLAYWRIGHT_EXECUTION_BACKEND,
-        profileId: profile.id,
-        action: MANAGED_PLAYWRIGHT_JOB_ACTION,
+        profileId: profile.slug,
         jobIdPrefix: this.e2eInspection ? e2eInspectionJobPrefix(this.e2eInspection) : undefined,
         signal,
       })
@@ -353,20 +349,18 @@ export class ManagedPlaywrightRunnerService {
     for (const profile of profiles) {
       if (this.stopped || signal?.aborted) break
       const selected = await this.daemonClient.takeNextJob({
-        executionBackend: PLAYWRIGHT_EXECUTION_BACKEND,
-        profileId: profile.id,
-        action: MANAGED_PLAYWRIGHT_JOB_ACTION,
+        profileId: profile.slug,
         jobIdPrefix: this.e2eInspection ? e2eInspectionJobPrefix(this.e2eInspection) : undefined,
         signal,
       })
       if (!selected.job) continue
-      this.inFlightJobsByProfile.set(profile.id, (this.inFlightJobsByProfile.get(profile.id) ?? 0) + 1)
+      this.inFlightJobsByProfile.set(profile.slug, (this.inFlightJobsByProfile.get(profile.slug) ?? 0) + 1)
       const jobPromise = this.executeJob(profile, selected.job, signal)
         .then(() => undefined)
         .finally(() => {
-          const remaining = (this.inFlightJobsByProfile.get(profile.id) ?? 1) - 1
-          if (remaining === 0) this.inFlightJobsByProfile.delete(profile.id)
-          else this.inFlightJobsByProfile.set(profile.id, remaining)
+          const remaining = (this.inFlightJobsByProfile.get(profile.slug) ?? 1) - 1
+          if (remaining === 0) this.inFlightJobsByProfile.delete(profile.slug)
+          else this.inFlightJobsByProfile.set(profile.slug, remaining)
           this.inFlightJobs.delete(jobPromise)
         })
       this.inFlightJobs.add(jobPromise)
@@ -398,7 +392,7 @@ export class ManagedPlaywrightRunnerService {
     let providerAttachmentRoot: string | undefined
     const cancelTimer = setInterval(() => {
       void this.daemonClient.getJob({ jobId: job.job_id }).then((latest) => {
-        if (latest.status === 'canceled' || latest.status === 'timed_out') {
+        if (latest.status === 'canceled') {
           canceled = true
           controller.abort()
         }
@@ -532,15 +526,14 @@ export class ManagedPlaywrightRunnerService {
   }
 
   private async availableProfiles(inFlightProfileIds: ReadonlySet<string>): Promise<ManagedBrowserProfile[]> {
-    const profiles = (await this.profileRegistry.listProfiles())
-      .filter((profile) => profile.lifecycle === undefined || profile.lifecycle === 'ready')
+    const profiles = await this.profileRegistry.listProfiles()
     const activeProfileIds = new Set(this.contextManager.activeProfileIds())
     const occupiedProfileIds = new Set([...activeProfileIds, ...inFlightProfileIds])
     let remainingNewProfileSlots = MAX_ACTIVE_BROWSER_PROFILES - occupiedProfileIds.size
     const available: ManagedBrowserProfile[] = []
     for (const profile of profiles) {
-      if (inFlightProfileIds.has(profile.id)) continue
-      if (activeProfileIds.has(profile.id)) {
+      if (inFlightProfileIds.has(profile.slug)) continue
+      if (activeProfileIds.has(profile.slug)) {
         available.push(profile)
         continue
       }
@@ -552,14 +545,8 @@ export class ManagedPlaywrightRunnerService {
   }
 
   private validateJob(profile: ManagedBrowserProfile, job: DaemonJob): ManagedPlaywrightJobRequest {
-    if (job.execution_backend !== PLAYWRIGHT_EXECUTION_BACKEND) {
-      throw tokenlessError('invalid_playwright_job_backend', 'Managed Playwright runner taken a non-Playwright job.')
-    }
-    if (job.profile_id !== profile.id) {
+    if (job.profile_id !== profile.slug) {
       throw tokenlessError('invalid_playwright_job_profile', 'Managed Playwright runner taken a job for a different profile.')
-    }
-    if (job.action !== MANAGED_PLAYWRIGHT_JOB_ACTION) {
-      throw tokenlessError('invalid_playwright_job_action', 'Managed Playwright runner taken an unsupported job action.')
     }
     const request = validateManagedPlaywrightJobRequest(job.request_json)
     if (request.provider !== job.provider) {
@@ -658,7 +645,7 @@ export class ManagedPlaywrightRunnerService {
           jobId: job.job_id,
           pageRefHash: createHash('sha256').update(JSON.stringify([request.provider, pageRef])).digest('base64url').slice(0, 20),
           reusedPageBinding: providerPageLease?.reused ?? false,
-          profileId: profile.id,
+          profileId: profile.slug,
           profileDirectory: profile.directory,
           provider: request.provider,
           url: page.url(),
@@ -751,7 +738,7 @@ export class ManagedPlaywrightRunnerService {
           }
         }
         const providerContext = {
-          profileId: profile.id,
+          profileId: profile.slug,
           operationId: job.job_id,
           jobId: job.job_id,
           taskId: request.taskId,
@@ -807,7 +794,7 @@ export class ManagedPlaywrightRunnerService {
           await this.daemonClient.upsertProviderProject({
             jobId: job.job_id,
             provider: request.provider,
-            profileId: profile.id,
+            profileId: profile.slug,
             resourceId: response.result.resource.id,
             name: response.result.name,
             canonicalUrl: response.result.resource.canonicalUrl,
@@ -829,7 +816,7 @@ export class ManagedPlaywrightRunnerService {
             await this.daemonClient.upsertProviderTaskConversation({
               jobId: job.job_id,
               provider: request.provider,
-              profileId: profile.id,
+            profileId: profile.slug,
               taskId: request.taskId,
               canonicalUrl: conversationUrl,
               signal,
@@ -839,7 +826,7 @@ export class ManagedPlaywrightRunnerService {
             await this.daemonClient.upsertProviderConversation({
               jobId: job.job_id,
               provider: request.provider,
-              profileId: profile.id,
+            profileId: profile.slug,
               projectResourceId: workspace.resource.id,
               taskId: request.taskId,
               canonicalUrl: conversationUrl,
@@ -1190,7 +1177,7 @@ export class ManagedPlaywrightRunnerService {
           await client.createAuthContext({
             contextId,
             provider: upstreamProvider,
-            profile: profile.id,
+            profile: profile.slug,
             lifetime: 'ephemeral',
             source: { type: 'manual', cookies, headers, ...(apiKey ? { apiKey } : {}) },
           }, signal)

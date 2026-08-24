@@ -79,7 +79,7 @@ test('built capability routes stay provenance-bound to required live provider ma
   }
 })
 
-test('persistent config preserves native Chrome or Brave and removes managed browser settings', async () => {
+test('persistent config accepts only the current native browser and router shape', async () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-browser-runtime-'))
   const runtime = await import('../packages/cli/dist/src/index.js')
   try {
@@ -117,6 +117,21 @@ test('persistent config preserves native Chrome or Brave and removes managed bro
     )
     const configFile = path.join(homeDir, 'config.json')
     const savedConfig = JSON.parse(fs.readFileSync(configFile, 'utf8'))
+    const currentConfigBytes = fs.readFileSync(configFile)
+    await runtime.readTokenlessConfig(homeDir)
+    assert.deepEqual(fs.readFileSync(configFile), currentConfigBytes)
+    const savedDaemonUrl = savedConfig.daemonUrl
+    savedConfig.daemonUrl = 'http://127.0.0.1:0'
+    fs.writeFileSync(configFile, `${JSON.stringify(savedConfig, null, 2)}\n`)
+    await assert.rejects(
+      runtime.readTokenlessConfig(homeDir),
+      (error) => {
+        assert.equal(error.code, 'tokenless_config_invalid')
+        return true
+      },
+    )
+    savedConfig.daemonUrl = savedDaemonUrl
+    fs.writeFileSync(configFile, `${JSON.stringify(savedConfig, null, 2)}\n`)
     assert.equal(Object.hasOwn(savedConfig, 'browserConnectionMode'), false)
     savedConfig.router = {
       enabled: true,
@@ -127,11 +142,26 @@ test('persistent config preserves native Chrome or Brave and removes managed bro
       ],
     }
     fs.writeFileSync(configFile, `${JSON.stringify(savedConfig, null, 2)}\n`)
-    const migratedRouter = { ...router, providers: [router.providers[0]] }
-    assert.deepEqual((await runtime.readTokenlessConfig(homeDir)).router, migratedRouter)
-    const migratedConfig = JSON.parse(fs.readFileSync(configFile, 'utf8'))
-    assert.equal(Object.hasOwn(migratedConfig, 'semanticRouter'), false)
-    assert.deepEqual(migratedConfig.router, migratedRouter)
+    await assert.rejects(
+      runtime.readTokenlessConfig(homeDir),
+      /Invalid Tokenless config/,
+    )
+    savedConfig.router = router
+    savedConfig.semanticRouter = { models: [{ id: 'chatgpt', label: 'ChatGPT', suitableTasks: 'Writing and editing' }] }
+    fs.writeFileSync(configFile, `${JSON.stringify(savedConfig, null, 2)}\n`)
+    await assert.rejects(
+      runtime.readTokenlessConfig(homeDir),
+      /Legacy Tokenless config field 'semanticRouter'/,
+    )
+    delete savedConfig.semanticRouter
+    savedConfig.providerWhitelist = ['chatgpt']
+    fs.writeFileSync(configFile, `${JSON.stringify(savedConfig, null, 2)}\n`)
+    await assert.rejects(
+      runtime.readTokenlessConfig(homeDir),
+      /Legacy Tokenless config field 'providerWhitelist'/,
+    )
+    delete savedConfig.providerWhitelist
+    fs.writeFileSync(configFile, `${JSON.stringify(savedConfig, null, 2)}\n`)
     await runtime.writeTokenlessConfig({ homeDir, browser: 'brave' })
     assert.equal((await runtime.readTokenlessConfig(homeDir)).browser, 'brave')
     const nativeExecutablePath = path.join(homeDir, 'user-provided', 'brave')
@@ -142,16 +172,22 @@ test('persistent config preserves native Chrome or Brave and removes managed bro
     })
     assert.equal((await runtime.readTokenlessConfig(homeDir)).browserExecutablePath, nativeExecutablePath)
     const legacyExecutablePath = path.join(homeDir, 'browser', 'runtimes', 'managed-chromium', 'browser')
-    await runtime.writeTokenlessConfig({
-      homeDir,
-      browser: 'managed-chromium',
-      browserExecutablePath: legacyExecutablePath,
-      browserVisibility: 'headless',
-    })
-    const migrated = await runtime.readTokenlessConfig(homeDir)
-    assert.equal(migrated.browser, 'chrome')
-    assert.equal(migrated.browserExecutablePath, null)
-    assert.equal(migrated.browserVisibility, 'headed')
+    await assert.rejects(
+      runtime.writeTokenlessConfig({ homeDir, browser: 'managed-chromium', browserExecutablePath: legacyExecutablePath }),
+      /expected chrome or brave/,
+    )
+    await assert.rejects(
+      runtime.writeTokenlessConfig({ homeDir, browser: 'cloak' }),
+      /expected chrome or brave/,
+    )
+    await assert.rejects(
+      runtime.writeTokenlessConfig({ homeDir, browserVisibility: 'headless' }),
+      /expected headed/,
+    )
+    const storedLegacy = JSON.parse(fs.readFileSync(configFile, 'utf8'))
+    storedLegacy.browser = 'managed-chromium'
+    fs.writeFileSync(configFile, `${JSON.stringify(storedLegacy, null, 2)}\n`)
+    await assert.rejects(runtime.readTokenlessConfig(homeDir), /Invalid Tokenless config/)
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
@@ -207,40 +243,54 @@ test('managed Chrome for Testing catalog follows the platform Cloak major', asyn
   assert.equal(linuxCloak.executableRelativePath, 'chrome')
 })
 
-test('persistent config includes every registered profile in config.profiles', async () => {
-  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-profile-config-migration-')))
+test('persistent config is the single source for profile identity and settings', async () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-profile-config-')))
   const configPath = path.join(homeDir, 'config.json')
   const runtime = await import('../packages/cli/dist/src/index.js')
   const { ManagedProfileRegistry } = await import('../packages/server/dist/src/browser/profiles/registry.js')
   try {
     const registry = new ManagedProfileRegistry(homeDir)
-    await registry.addProfile({ slug: 'default', lifecycle: 'ready', setDefault: true })
-    await registry.addProfile({ slug: 'work', lifecycle: 'ready' })
-    fs.writeFileSync(configPath, `${JSON.stringify({
-      protocol: 'tokenless.config.v1',
-      providerWhitelist: ['gemini', 'claude'],
-      profilePreferences: {
-        default: {
-          profileId: 'default',
-          roleLabel: 'Personal',
-          enabledProviders: ['chatgpt'],
-          browserVisibility: 'headed',
-          proxy: null,
-        },
-      },
-      browser: 'cloak',
-      browserVisibility: 'auto',
-    }, null, 2)}\n`, { mode: 0o600 })
-    const migrated = await runtime.readTokenlessConfig(homeDir)
-    assert.deepEqual(migrated.profiles.default.enabledProviders, ['chatgpt'])
-    assert.equal(migrated.profiles.default.roleLabel, 'Personal')
-    assert.deepEqual(migrated.profiles.work.enabledProviders, ['gemini', 'claude'])
+    await registry.addProfile({ slug: 'default', setDefault: true })
+    await registry.addProfile({ slug: 'work' })
+    const current = await runtime.readTokenlessConfig(homeDir)
+    assert.equal(current.defaultProfile, 'default')
+    assert.deepEqual(Object.keys(current.profiles), ['default', 'work'])
+    assert.equal(current.profiles.default.runtimeBinding, undefined)
+    assert.equal((await registry.resolveProfile('work')).slug, 'work')
     const persisted = JSON.parse(fs.readFileSync(configPath, 'utf8'))
     assert.deepEqual(Object.keys(persisted.profiles), ['default', 'work'])
-    assert.equal(Object.hasOwn(persisted.profiles.default, 'profileId'), false)
-    assert.equal(Object.hasOwn(persisted, 'profilePreferences'), false)
-    assert.equal(Object.hasOwn(persisted, 'providerWhitelist'), false)
-    assert.equal(Object.hasOwn(persisted, 'preferredProviders'), false)
+    assert.equal(persisted.defaultProfile, 'default')
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('concurrent config mutations keep both changes without a file lock', async () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-config-concurrency-')))
+  const runtime = await import('../packages/cli/dist/src/index.js')
+  const { ManagedProfileRegistry } = await import('../packages/server/dist/src/browser/profiles/registry.js')
+  try {
+    await Promise.all([
+      runtime.writeTokenlessConfig({ homeDir, language: 'zh-CN' }),
+      runtime.writeTokenlessConfig({ homeDir, outputSavings: { enabled: false } }),
+    ])
+    const updated = await runtime.readTokenlessConfig(homeDir)
+    assert.equal(updated.language, 'zh-CN')
+    assert.deepEqual(updated.outputSavings, { enabled: false })
+
+    const registry = new ManagedProfileRegistry(homeDir)
+    await Promise.all([
+      registry.addProfile({ slug: 'alpha', setDefault: true }),
+      registry.addProfile({ slug: 'beta' }),
+    ])
+    assert.deepEqual(Object.keys((await runtime.readTokenlessConfig(homeDir)).profiles).sort(), ['alpha', 'beta'])
+
+    const duplicate = await Promise.allSettled([
+      registry.addProfile({ slug: 'gamma' }),
+      registry.addProfile({ slug: 'gamma' }),
+    ])
+    assert.equal(duplicate.filter((result) => result.status === 'fulfilled').length, 1)
+    assert.equal(duplicate.filter((result) => result.status === 'rejected').length, 1)
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
@@ -918,7 +968,7 @@ test('CLI rejects removed local fallback routes before network access', () => {
   assert.equal(JSON.parse(removedProjectRouteFlag.stdout).error.code, 'unknown_argument')
 })
 
-test('built CLI reads managed profile registries without enforcing POSIX mode bits', async () => {
+test('built CLI reads profiles without a separate registry database', async () => {
   const temporaryRoot = fs.realpathSync(os.tmpdir())
   const homeDir = fs.mkdtempSync(path.join(temporaryRoot, 'tokenless-profile-registry-mode-'))
   let daemonUrl
@@ -926,8 +976,7 @@ test('built CLI reads managed profile registries without enforcing POSIX mode bi
     daemonUrl = await configureIsolatedDaemon(homeDir)
     const { ManagedProfileRegistry } = await import('../packages/server/dist/src/browser/profiles/registry.js')
     const registry = new ManagedProfileRegistry(homeDir)
-    await registry.addProfile({ slug: 'mode-visible', lifecycle: 'ready' })
-    fs.chmodSync(registry.paths.databasePath, 0o644)
+    await registry.addProfile({ slug: 'mode-visible' })
 
     const listed = spawnSync(process.execPath, [
       cliEntry,

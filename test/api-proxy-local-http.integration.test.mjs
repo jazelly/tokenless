@@ -3,7 +3,6 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
-import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -64,7 +63,7 @@ test('image auto routing creates one browser job from image-capable providers on
   await withDaemon(async (daemon) => {
     const { ManagedProfileRegistry } = await import(profileRegistryModule)
     const registry = new ManagedProfileRegistry(daemon.homeDir)
-    await registry.addProfile({ slug: 'images', setDefault: true, lifecycle: 'ready' })
+    await registry.addProfile({ slug: 'images', setDefault: true })
     for (const provider of ['gemini', 'grok', 'chatgpt']) {
       await registry.updateProviderStatus('images', {
         provider,
@@ -120,7 +119,7 @@ test('browser image edit decodes and stages one reference image before the Arena
   await withDaemon(async (daemon) => {
     const { ManagedProfileRegistry } = await import(profileRegistryModule)
     const registry = new ManagedProfileRegistry(daemon.homeDir)
-    await registry.addProfile({ slug: 'arena-images', setDefault: true, lifecycle: 'ready' })
+    await registry.addProfile({ slug: 'arena-images', setDefault: true })
     await registry.updateProviderStatus('arena-images', {
       provider: 'arena',
       auth: 'authenticated',
@@ -252,7 +251,7 @@ test('explicit auto rejects plain, direct, and unevidenced provider-only request
 
     const { ManagedProfileRegistry } = await import(profileRegistryModule)
     const registry = new ManagedProfileRegistry(daemon.homeDir)
-    await registry.addProfile({ slug: 'web-ai', setDefault: true, lifecycle: 'ready' })
+    await registry.addProfile({ slug: 'web-ai', setDefault: true })
     await registry.updateProviderStatus('web-ai', {
       provider: 'gemini',
       auth: 'authenticated',
@@ -290,7 +289,7 @@ test('explicit auto applies portable call-id affinity and persists one real fall
   await withDaemon(async (daemon) => {
     const { ManagedProfileRegistry } = await import(profileRegistryModule)
     const registry = new ManagedProfileRegistry(daemon.homeDir)
-    await registry.addProfile({ slug: 'web-ai', setDefault: true, lifecycle: 'ready' })
+    await registry.addProfile({ slug: 'web-ai', setDefault: true })
     for (const provider of ['deepseek', 'chatgpt']) {
       await registry.updateProviderStatus('web-ai', {
         provider,
@@ -465,7 +464,7 @@ test('Responses aliases accept flat tools, developer input, and complete call ou
   })
 })
 
-test('Responses rejects missing, expired, mismatched, and opaque replay state before provider submission', async () => {
+test('Responses rejects missing, mismatched, and opaque replay state before provider submission', async () => {
   await withDaemon(async (daemon) => {
     await enableApiProxy(daemon.homeDir)
     const missing = await call(daemon, 'POST', '/v1/responses', {
@@ -475,31 +474,6 @@ test('Responses rejects missing, expired, mismatched, and opaque replay state be
     })
     assert.equal(missing.status, 404)
     assert.equal(missing.body.error.code, 'response_not_found')
-
-    const expiredId = `resp_${'b'.repeat(32)}`
-    daemon.store.putApiResponse({
-      response_id: expiredId,
-      provider: 'chatgpt',
-      model: 'tokenless/chatgpt',
-      execution_mode: 'browser',
-      transcript: [{ role: 'user', content: 'prior public input' }],
-    })
-    const database = new DatabaseSync(daemon.store.databasePath)
-    database.prepare('UPDATE api_response_ledger SET expires_at_ms = 0 WHERE response_id = ?').run(expiredId)
-    database.close()
-    const expired = await call(daemon, 'POST', '/v1/responses', {
-      model: 'tokenless/chatgpt',
-      previous_response_id: expiredId,
-      input: 'continue',
-    })
-    assert.equal(expired.status, 410)
-    assert.equal(expired.body.error.code, 'response_expired')
-    const expiredDatabase = new DatabaseSync(daemon.store.databasePath)
-    const expiredRow = expiredDatabase.prepare(
-      'SELECT response_id FROM api_response_ledger WHERE response_id = ?',
-    ).get(expiredId)
-    expiredDatabase.close()
-    assert.equal(expiredRow, undefined)
 
     const responseId = `resp_${'c'.repeat(32)}`
     daemon.store.putApiResponse({
@@ -1124,7 +1098,7 @@ test('api proxy keeps Chat Completions fresh and Responses continuation on the m
   await withDaemon(async (daemon) => {
     const { ManagedProfileRegistry } = await import(profileRegistryModule)
     const registry = new ManagedProfileRegistry(daemon.homeDir)
-    await registry.addProfile({ slug: 'web-ai', setDefault: true, lifecycle: 'ready' })
+    await registry.addProfile({ slug: 'web-ai', setDefault: true })
     await registry.updateProviderStatus('web-ai', {
       provider: 'chatgpt',
       auth: 'authenticated',
@@ -1206,14 +1180,12 @@ test('api proxy keeps Chat Completions fresh and Responses continuation on the m
     const rootResponseId = `resp_${'d'.repeat(32)}`
     const seedJob = daemon.store.createJob({
       provider: 'chatgpt',
-      action: 'api-proxy-test-seed',
       request_json: {},
-      execution_backend: 'playwright',
-      profile_id: (await registry.resolveProfile()).id,
+      profile_id: (await registry.resolveProfile()).slug,
     })
     daemon.store.upsertProviderTaskConversation({
       provider: 'chatgpt',
-      profile_id: (await registry.resolveProfile()).id,
+      profile_id: (await registry.resolveProfile()).slug,
       task_id: `api-proxy:response:${rootResponseId}`,
       canonical_url: 'https://chatgpt.com/c/api-proxy-root-conversation',
       job_id: seedJob.job_id,
@@ -1222,7 +1194,7 @@ test('api proxy keeps Chat Completions fresh and Responses continuation on the m
     const largeResponseId = `resp_${'f'.repeat(32)}`
     daemon.store.upsertProviderTaskConversation({
       provider: 'chatgpt',
-      profile_id: (await registry.resolveProfile()).id,
+      profile_id: (await registry.resolveProfile()).slug,
       task_id: `api-proxy:response:${largeResponseId}`,
       canonical_url: 'https://chatgpt.com/c/api-proxy-large-conversation',
       job_id: seedJob.job_id,

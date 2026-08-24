@@ -132,7 +132,7 @@
 
   async function generateTitle(job: DashboardJobSummary) {
     if (job.chatTitle || generatedTitles[job.jobId] || !job.titlePrompt || titleRequests.has(job.jobId)) return
-    const profile = snapshot.profiles.find((entry) => entry.id === job.profileId)
+    const profile = snapshot.profiles.find((entry) => entry.slug === job.profileId)
     if (!profile) return
     titleRequests.add(job.jobId)
     try {
@@ -165,7 +165,7 @@
       <details class="chat-history-filters" open={activeFilterCount > 0}>
         <summary data-testid="job-filters-toggle"><SlidersHorizontal size={14} />{t('filters')}{#if activeFilterCount}<span>{activeFilterCount}</span>{/if}</summary>
         <div>
-          <select name="jobStatus" bind:value={status} aria-label={t('allStatuses')} data-testid="job-status"><option value="">{t('allStatuses')}</option>{#each ['queued', 'running', 'waiting_for_user', 'succeeded', 'failed', 'canceled', 'timed_out'] as value}<option value={value}>{stateLabel(language, value)}</option>{/each}</select>
+          <select name="jobStatus" bind:value={status} aria-label={t('allStatuses')} data-testid="job-status"><option value="">{t('allStatuses')}</option>{#each ['queued', 'running', 'waiting_for_user', 'succeeded', 'failed', 'canceled'] as value}<option value={value}>{stateLabel(language, value)}</option>{/each}</select>
           <select name="jobProvider" bind:value={provider} aria-label={t('allProviders')}><option value="">{t('allProviders')}</option>{#each snapshot.providers as entry}<option value={entry.id}>{entry.label}</option>{/each}</select>
           <select name="jobProfile" bind:value={profile} aria-label={t('allProfiles')}><option value="">{t('allProfiles')}</option>{#each snapshot.profiles as entry}<option value={entry.slug}>{entry.slug}</option>{/each}</select>
         </div>

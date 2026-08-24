@@ -40,9 +40,6 @@ export async function resolveTestConfig() {
 export async function resolveConfiguredBrowserTarget() {
   const configured = await resolveTestConfig()
   const { homeDir, config, registry, profile } = configured
-  if (profile.lifecycle !== 'ready') {
-    throw new Error(`Configured browser profile '${profile.slug}' is ${profile.lifecycle}; it must be ready before automation.`)
-  }
   const profilesRoot = await fs.realpath(registry.paths.profilesRoot)
   const profileDirectory = await fs.realpath(profile.directory)
   const relativeDirectory = path.relative(profilesRoot, profileDirectory)

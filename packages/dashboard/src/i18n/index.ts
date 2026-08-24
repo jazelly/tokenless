@@ -183,7 +183,6 @@ const stateZh: Record<string, string> = {
   succeeded: '已完成',
   failed: '失败',
   canceled: '已取消',
-  timed_out: '已超时',
   eligible: '可路由',
   ineligible: '不可路由',
   action_required: '需要处理',

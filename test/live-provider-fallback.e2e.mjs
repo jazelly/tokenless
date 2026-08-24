@@ -114,7 +114,7 @@ test('real visible provider blocker falls back under one current job', { timeout
   const created = await playwright.submitManagedPlaywrightJob({
     daemonUrl: daemon.url,
     homeDir,
-    profileId: profile.id,
+    profileId: profile.slug,
     request,
     jobId,
   })

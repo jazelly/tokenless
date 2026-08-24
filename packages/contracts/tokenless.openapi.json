@@ -1091,7 +1091,7 @@
       "post": {
         "operationId": "createApiProxyResponse",
         "summary": "Run an OpenAI-compatible Responses request through a visible provider page",
-        "description": "Maps Responses text messages, function_call items, function_call_output items, flat function tools, tool_choice, parallel_tool_calls, and text.format onto the same validated canonical semantics as Chat Completions. The caller executes tools. Browser/native and structured-request streaming emits current typed Responses events with complete terminal content and no fabricated usage; direct G4F plain-text streaming instead forwards raw upstream SSE body chunks unchanged, does not emit Tokenless-generated Responses events, and does not support Tokenless previous_response_id continuation. previous_response_id uses a local ledger retained for 24 hours and at most 1000 entries; missing or capacity-evicted ids return response_not_found, expired ids return response_expired, and exact-provider model/execution changes return response_route_mismatch. For portable tokenless/auto transcripts, the ledger's settled provider is affinity rather than a hard pin; opaque replay remains rejected. Auto is browser-only, structured-control-only, and may switch providers only before submission or on a later caller turn.",
+        "description": "Maps Responses text messages, function_call items, function_call_output items, flat function tools, tool_choice, parallel_tool_calls, and text.format onto the same validated canonical semantics as Chat Completions. The caller executes tools. Browser/native and structured-request streaming emits current typed Responses events with complete terminal content and no fabricated usage; direct G4F plain-text streaming instead forwards raw upstream SSE body chunks unchanged, does not emit Tokenless-generated Responses events, and does not support Tokenless previous_response_id continuation. previous_response_id uses an in-memory local ledger with at most 1000 entries; missing, daemon-restarted, or capacity-evicted ids return response_not_found, and exact-provider model/execution changes return response_route_mismatch. For portable tokenless/auto transcripts, the ledger's settled provider is affinity rather than a hard pin; opaque replay remains rejected. Auto is browser-only, structured-control-only, and may switch providers only before submission or on a later caller turn.",
         "requestBody": {
           "required": true,
           "content": {
@@ -2400,9 +2400,6 @@
             "$ref": "#/components/parameters/status"
           },
           {
-            "$ref": "#/components/parameters/execution_backend"
-          },
-          {
             "$ref": "#/components/parameters/profile_id"
           },
           {
@@ -3259,14 +3256,6 @@
           "$ref": "#/components/schemas/JobStatus"
         }
       },
-      "execution_backend": {
-        "name": "execution_backend",
-        "in": "query",
-        "required": false,
-        "schema": {
-          "$ref": "#/components/schemas/ExecutionBackend"
-        }
-      },
       "profile_id": {
         "name": "profile_id",
         "in": "query",
@@ -3294,15 +3283,6 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 256
-        }
-      },
-      "action": {
-        "name": "action",
-        "in": "query",
-        "required": false,
-        "schema": {
-          "type": "string",
-          "minLength": 1
         }
       },
       "limit": {
@@ -5816,7 +5796,7 @@
         "type": "object",
         "required": [
           "provider",
-          "action",
+          "profile_id",
           "request_json"
         ],
         "additionalProperties": false,
@@ -5825,15 +5805,8 @@
             "type": "string",
             "minLength": 1
           },
-          "action": {
-            "type": "string",
-            "minLength": 1
-          },
           "request_json": {
             "$ref": "#/components/schemas/ManagedOrLegacyRequestJson"
-          },
-          "execution_backend": {
-            "$ref": "#/components/schemas/ExecutionBackend"
           },
           "profile_id": {
             "type": "string",
@@ -5966,11 +5939,6 @@
           "error"
         ],
         "additionalProperties": false
-      },
-      "ExecutionBackend": {
-        "enum": [
-          "playwright"
-        ]
       },
       "FeatureBenchChannelIssueRequest": {
         "type": "object",
@@ -6374,8 +6342,7 @@
           "waiting_for_user",
           "succeeded",
           "failed",
-          "canceled",
-          "timed_out"
+          "canceled"
         ]
       },
       "JobSummary": {
@@ -6504,10 +6471,8 @@
         "type": "object",
         "required": [
           "job_id",
-          "execution_backend",
           "profile_id",
           "provider",
-          "action",
           "status",
           "request_json",
           "result_json",
@@ -6524,20 +6489,10 @@
             "type": "string",
             "minLength": 1
           },
-          "execution_backend": {
-            "$ref": "#/components/schemas/ExecutionBackend"
-          },
           "profile_id": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": "string"
           },
           "provider": {
-            "type": "string",
-            "minLength": 1
-          },
-          "action": {
             "type": "string",
             "minLength": 1
           },
@@ -7374,23 +7329,8 @@
           "slug": {
             "$ref": "#/components/schemas/ProfileId"
           },
-          "id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "lifecycle": {
-            "type": "string"
-          },
           "isDefault": {
             "type": "boolean"
-          },
-          "createdAt": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "updatedAt": {
-            "type": "string",
-            "format": "date-time"
           },
           "browserMode": {
             "type": "string",
@@ -7466,11 +7406,7 @@
         },
         "required": [
           "slug",
-          "id",
-          "lifecycle",
           "isDefault",
-          "createdAt",
-          "updatedAt",
           "browserMode",
           "browserBinding",
           "roleLabel",
@@ -7485,6 +7421,26 @@
       "ProfileConfig": {
         "type": "object",
         "properties": {
+          "runtimeBinding": {
+            "type": "object",
+            "properties": {
+              "runtimeId": { "type": "string" },
+              "family": { "type": "string" },
+              "browserId": { "type": "string" },
+              "executablePath": { "type": "string" },
+              "createdWithVersion": { "type": "string" },
+              "profileFormat": { "type": "integer" }
+            },
+            "required": [
+              "runtimeId",
+              "family",
+              "browserId",
+              "executablePath",
+              "createdWithVersion",
+              "profileFormat"
+            ],
+            "additionalProperties": false
+          },
           "roleLabel": {
             "type": "string",
             "maxLength": 80
@@ -8350,8 +8306,7 @@
         "type": "object",
         "properties": {
           "profileId": {
-            "type": "string",
-            "format": "uuid"
+            "$ref": "#/components/schemas/ProfileId"
           },
           "browserVisibility": {
             "$ref": "#/components/schemas/DashboardBrowserVisibility"

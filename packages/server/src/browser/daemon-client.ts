@@ -10,10 +10,8 @@ type JobOptions = {
 
 export type ManagedDaemonClient = {
   takeNextJob(options: {
-    executionBackend: 'playwright'
-    profileId?: string | undefined
+    profileId: string
     provider?: string | undefined
-    action?: string | undefined
     jobIdPrefix?: string | undefined
     signal?: AbortSignal | undefined
   }): Promise<{ job: DaemonJob | null }>

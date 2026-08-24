@@ -531,7 +531,6 @@ The status is the signal to branch on. Read `code` for the specific cause and tr
 | 502 | `upstream_error` | The provider page produced no visible reply: sign-in blocker, CAPTCHA, or a failed job | Yes, after the user clears the blocker |
 | 502 | `provider_output_protocol_error` | Tool or structured-final validation failed; only a correlated outer `kind: final` string-escaping failure receives one bounded correction | No further retry |
 | 503 | `api_proxy_disabled` | The proxy is off | No — enable it |
-| 503 | `profile_not_ready` | The managed profile needs `tokenless setup` | No — finish setup |
 | 503 | `model_not_available` | The provider is not enabled for the resolved profile | No — enable it |
 | 503 | `auto_route_unavailable` | No enabled, currently usable, evidence-backed provider satisfies the complete request | No — change scope or provider readiness |
 | 504 | `completion_timeout` | The provider did not answer within 10 minutes | Check the current job before deciding |

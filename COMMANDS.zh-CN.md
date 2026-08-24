@@ -19,8 +19,8 @@
 | `tokenless config` | 读取或更新 Tokenless 持久化配置。 | 否 |
 | `tokenless upgrade` | 升级全局 CLI、skills、本地 runtime，并运行 doctor。 | 否 |
 | `tokenless profiles add` | 创建用于 tab 与 provider configuration 的逻辑 Tokenless profile。 | 否 |
-| `tokenless profiles list` | 列出 profiles 及其最后保存的 provider 检查结果。 | 否 |
-| `tokenless profiles status` | 实时检查一家 provider，并把结果保存到 profile registry。 | 是 |
+| `tokenless profiles list` | 列出 profiles 及当前进程中的 provider 检查结果。 | 否 |
+| `tokenless profiles status` | 实时检查一家 provider，并把结果保存在当前进程内存中。 | 是 |
 | `tokenless profiles open` | 以 headed browser 打开 managed profile，可选择是否导航到 provider。 | 可选 |
 | `tokenless profiles set-default` | 设置默认 managed profile。 | 否 |
 | `tokenless profiles clear` | 作为人工维护操作删除一个或全部 managed profiles。 | 否 |
@@ -259,7 +259,7 @@ tokenless state --profile work --json
 tokenless doctor --json
 ```
 
-`doctor` 不会打开 provider 页面、刷新认证状态、启动 daemon 或修复状态。每个 `checks.configuration.issues` 都包含 code、本地化 message 和 next action。`checks.managedProfile.ok` 表示 registry/profile 本身是否健康，`checks.profileRuntime.ok` 则独立表示该 profile 是否具有可解析的 browser binding。Provider readiness 来自 profile 中最后保存的检查结果。`checks.providerReadiness.ok` 表示 configured providers 是否已有 recorded observations；`usableProviders` 列出缓存中可用于隐式路由的 providers。因为 daemon 按需运行，正常停止的 daemon 和 embedded browser runtime 会被报告为健康的 stopped 状态，而不是安装损坏。
+`doctor` 不会打开 provider 页面、刷新认证状态、启动 daemon 或修复状态。每个 `checks.configuration.issues` 都包含 code、本地化 message 和 next action。`checks.managedProfile.ok` 表示 profile/config 本身是否健康，`checks.profileRuntime.ok` 则独立表示该 profile 是否具有可解析的 browser binding。Provider readiness 来自当前进程中的 profile observation。`checks.providerReadiness.ok` 表示 configured providers 是否已有当前 observations；`usableProviders` 列出可用于隐式路由的 providers。因为 daemon 按需运行，正常停止的 daemon 和 embedded browser runtime 会被报告为健康的 stopped 状态，而不是安装损坏。
 
 主要选项：`--browser`、`--daemon-url`、`--home` 和 `--json`。
 
@@ -304,7 +304,7 @@ tokenless config \
 
 Provider membership 只属于 `profiles` 中选定的 entry。路由必须读到该 entry，绝不会 fallback 到全局 provider list。
 
-Tokenless API 会把具体的旧 per-profile side table 与已登记的 browser profiles 合并并迁移一次。旧表中缺失的 registered profile 会把旧 root provider list 物化为自己的 `enabledProviders`；canonical config 不再保留任一旧 key。未写入文档的旧 `--preferred-providers` flag 仍作为 CLI alias 接受。
+`config.json` 是唯一的 profile source。Profile slug 就是 profile identity，browser directory 由 `<TOKENLESS_HOME>/browser/profiles/<slug>` 派生；runtime binding、创建时间和更新时间与 profile 的 provider settings 一起保存在 config 中。Provider authentication observation 只保留在当前进程内，不会持久化。
 
 完整 config shape 如下：
 
@@ -312,6 +312,7 @@ Tokenless API 会把具体的旧 per-profile side table 与已登记的 browser 
 {
   "protocol": "tokenless.config.v1",
   "updatedAt": "2026-08-02T02:09:40.254Z",
+  "defaultProfile": "default",
   "profiles": {
     "default": {
       "roleLabel": "Personal",
@@ -331,7 +332,7 @@ Tokenless API 会把具体的旧 per-profile side table 与已登记的 browser 
 
 `browserExecutablePath` 是经过验证的缓存，并不是不可变 override：Tokenless 会执行浏览器的 version command 进行验证；验证失败后会 fallback 到标准路径 discovery，成功时重新写入缓存。如果两种方式都失败，可以使用上面的 CLI flag，或在 dashboard 的 **System → Browser executable path** 中粘贴绝对路径。Dashboard 只会暴露是否已经配置路径，不会把私有路径传回浏览器 JavaScript。
 
-面向用户的命令文案和 provider 默认回复语言都会遵循 `language`；prompt 中明确指定的语言优先。命令名、flags、JSON keys、error codes、status values 和其他 integration terms 保持稳定。`daemonUrl` 是首选启动 endpoint，而不是可变 runtime 状态。首选端口繁忙时 Tokenless 不会改写它；daemon 会把实际绑定 endpoint 记录到 SQLite runtime-state row。
+面向用户的命令文案和 provider 默认回复语言都会遵循 `language`；prompt 中明确指定的语言优先。命令名、flags、JSON keys、error codes、status values 和其他 integration terms 保持稳定。`daemonUrl` 是配置的启动和停止 endpoint，而不是可变 runtime 状态。首选端口繁忙时 Tokenless 不会改写它；客户端通过 `/ready` 验证配置的 endpoint，并通过带认证的 `/shutdown` 停止 daemon。
 
 Tokenless 始终通过 CDP 控制 managed Chromium，内部仍使用 Playwright 的 browser、page 和 locator API。常驻浏览器因此可以在一次 daemon 连接结束后继续运行，并由之后的 daemon 重新接入，不再提供可选的 connection mode。
 
@@ -357,7 +358,7 @@ tokenless daemon stop --json
 
 选项：`--home`、`--daemon-url`、`--timeout-ms` 和 `--json`。
 
-该命令会从 SQLite 发现实际 endpoint，也不会因为某个未验证或不兼容的进程占用了首选端口，就直接杀掉该进程。
+该命令会验证配置的 endpoint，也不会因为某个未验证或不兼容的进程占用了首选端口，就直接杀掉该进程。
 
 ## Tokenless Profiles
 
@@ -373,9 +374,9 @@ tokenless profiles add -P work --set-default --json
 
 ### `tokenless profiles list`
 
-读取 profile registry，并返回全部 managed profiles。
+读取 `config.json` 中的 profiles，并返回全部 managed profiles。
 
-Registry 存储在 `<TOKENLESS_HOME>/tokenless.sqlite3` 中。
+共享的 `<TOKENLESS_HOME>/tokenless.sqlite3` 存储 jobs 与 provider history，不存储 profile records。
 
 ```bash
 tokenless profiles list
@@ -386,7 +387,7 @@ tokenless profiles list --json
 
 ### `tokenless profiles status`
 
-对一家 provider 执行实时认证检查，然后将 `auth`、可见 username、可见 subscription，以及新的 `checkedAt` 写入所选 profile。
+对一家 provider 执行实时认证检查，然后在当前进程中更新 `auth`、可见 username、可见 subscription，以及新的 `checkedAt`。该 observation 不会持久化。
 
 ```bash
 tokenless profiles status -P work -p chatgpt --json
@@ -612,7 +613,7 @@ tokenless cancel --job-id tlp_... --json
 tokenless provider-status -P default -p chatgpt --json
 ```
 
-如果需要实时检查并同时更新 profile registry，请使用 `tokenless profiles status`。
+如果需要实时检查并同时更新当前进程中的 profile observation，请使用 `tokenless profiles status`。
 
 ### `tokenless provider-controls`
 
@@ -767,22 +768,22 @@ tokenless prompt \
 
 ```text
 profiles list
-    只读取已保存的 profile registry
+    只读取 config.json 中已保存的 profiles
 
 profiles status
     访问一家 provider，检查 auth/account controls，
-    并保存 auth、username、subscription 和 checkedAt
+    并在当前进程内保存 auth、username、subscription 和 checkedAt
 
 provider-status
     访问一家 provider 并返回实时 auth 结果，
-    但不是用于刷新 profile registry 的工作流
+    但不是用于刷新 profile observation 的工作流
 ```
 
 可能打开或操作 provider 页面的命令包括：`setup`、`profiles status`、`profiles open`、`run`、所有 provider inspection/configuration/action 命令，以及 `snapshot-dom`。
 
 ## 手动真实浏览器验收
 
-已认证 provider capability harness 会读取 `TOKENLESS_TEST_HOME` 指向的完整 home，并从根目录派生 `config.json`，只使用相邻 production registry 的 default profile。每位开发者在 harness 之外选择自己的 default，因此 profile slug 仍是开发者变量。该 home 必须位于所有 repository/worktree 之外；启动 browser automation 前，harness 会验证 profile directory、私有权限、lifecycle、executable 和精确的 runtime binding。
+已认证 provider capability harness 会读取 `TOKENLESS_TEST_HOME` 指向的完整 home，并从根目录派生 `config.json`，只使用其中的 `defaultProfile`。每位开发者在 harness 之外选择自己的 default，因此 profile slug 仍是开发者变量。该 home 必须位于所有 repository/worktree 之外；启动 browser automation 前，harness 会验证派生出的 profile directory、私有权限、executable 和精确的 runtime binding。
 
 先创建 repository-local `.env`，然后手动登录该 config 的 default profile：
 

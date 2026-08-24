@@ -17,7 +17,6 @@ import {
 } from '../persistence/attachments.js'
 import {
   createManagedPlaywrightJobRequest,
-  MANAGED_PLAYWRIGHT_JOB_ACTION,
 } from '../browser/job-contract.js'
 import { ManagedProfileRegistry } from '../browser/profiles/registry.js'
 import {
@@ -131,9 +130,6 @@ export class ImageGenerationAdapter {
       readTokenlessConfig(this.store.homeDir),
       this.profiles.resolveProfile(request.profile),
     ])
-    if (profile.lifecycle !== 'ready') {
-      throw imageError(503, 'image_profile_not_ready', 'The managed profile is not ready; run tokenless setup first.', true)
-    }
     const profileConfig = config.profiles[profile.slug]
     if (!profileConfig) {
       throw imageError(409, 'image_profile_not_configured', `Managed profile '${profile.slug}' has no configuration.`)
@@ -190,10 +186,8 @@ export class ImageGenerationAdapter {
       })
       job = this.store.createJob({
         provider,
-        action: MANAGED_PLAYWRIGHT_JOB_ACTION,
         request_json: jobRequest,
-        execution_backend: 'playwright',
-        profile_id: profile.id,
+        profile_id: profile.slug,
         job_id: jobId,
       })
     } catch (error) {
@@ -319,9 +313,6 @@ export class ImageGenerationAdapter {
       readTokenlessConfig(this.store.homeDir),
       this.profiles.resolveProfile(request.profile),
     ])
-    if (profile.lifecycle !== 'ready') {
-      throw imageError(503, 'image_profile_not_ready', 'The managed profile is not ready; run tokenless setup first.', true)
-    }
     const profileConfig = config.profiles[profile.slug]
     if (!profileConfig) {
       throw imageError(409, 'image_profile_not_configured', `Managed profile '${profile.slug}' has no configuration.`)
@@ -369,10 +360,8 @@ export class ImageGenerationAdapter {
     })
     const job = this.store.createJob({
       provider: 'chatgpt',
-      action: MANAGED_PLAYWRIGHT_JOB_ACTION,
       request_json: jobRequest,
-      execution_backend: 'playwright',
-      profile_id: profile.id,
+      profile_id: profile.slug,
       job_id: requestId,
     })
     await this.wake()
@@ -397,7 +386,7 @@ export class ImageGenerationAdapter {
     const deadline = Date.now() + timeoutMs
     for (;;) {
       const job = this.store.getJob(jobId)
-      if (job.status === 'succeeded' || job.status === 'failed' || job.status === 'canceled' || job.status === 'timed_out') return job
+      if (job.status === 'succeeded' || job.status === 'failed' || job.status === 'canceled') return job
       if (job.status === 'waiting_for_user') throw sanitizeFailure ? imageDirectJobFailure(job) : imageJobFailure(job)
       if (Date.now() >= deadline) {
         throw imageError(504, 'image_generation_timeout', `Image generation did not complete within ${Math.round(timeoutMs / 1000)} seconds.`, true, { job_id: jobId })
@@ -537,7 +526,6 @@ async function stageReferenceImage(homeDir: string, jobId: string, reference: Re
     name: `reference.${reference.extension}`,
     type: reference.mediaType,
     maxBytes: MAX_IMAGE_REFERENCE_BYTES,
-    webAiStage: false,
     stream: (async function* () {
       yield reference.bytes
     })(),

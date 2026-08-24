@@ -1,10 +1,7 @@
-import { createHash } from 'node:crypto'
 import { execFile } from 'node:child_process'
 import fs from 'node:fs/promises'
-import os from 'node:os'
 import path from 'node:path'
 
-import { tokenlessHome } from '../bootstrap/home.js'
 import { tokenlessPackageVersion } from '#tokenless-server/platform-package.js'
 import { t } from '../localization.js'
 import type { CliMessageKey } from '../i18n/catalog.js'
@@ -39,7 +36,6 @@ type UpgradeDependencies = {
     }
   ) => Promise<UpgradeProcessResult>
   onProgress?: (event: UpgradeProgressEvent) => void
-  lockDir?: string
 }
 
 type PhaseResult = Record<string, any> & {
@@ -75,73 +71,62 @@ const NEW_CLI_INSTALL_TIMEOUT_MS = 180_000
 const NEW_CLI_DOCTOR_TIMEOUT_MS = 120_000
 const MAX_PROCESS_OUTPUT_BYTES = 1024 * 1024
 const MAX_JSON_OUTPUT_BYTES = 4 * 1024 * 1024
-const STALE_LOCK_AGE_MS = 30 * 60_000
 
 export async function runUpgradeCommand(args: UpgradeArgs, dependencies?: Partial<UpgradeDependencies>) {
   assertUpgradeArguments(args)
-  const homeDir = tokenlessHome(args.home)
   const deps: UpgradeDependencies = {
     runProcess: runBoundedProcess,
     ...dependencies,
   }
-  await fs.mkdir(homeDir, { recursive: true })
-  const releaseLock = await acquireUpgradeLock({
-    homeDir,
-    ...(deps.lockDir === undefined ? {} : { lockDir: deps.lockDir }),
-  })
-  try {
-    const result: Record<string, any> = {
-      ok: false,
-      cli: {
-        beforeVersion: tokenlessPackageVersion(),
-        afterVersion: null,
-      },
-      phases: {},
-    }
-
-    emitUpgradeProgress(deps, 'npmInstall', 'started')
-    const npmInstall = await runNpmInstall(deps)
-    result.phases.npmInstall = npmInstall
-    emitUpgradeProgress(deps, 'npmInstall', npmInstall.ok ? 'succeeded' : 'failed', npmInstall)
-    if (!npmInstall.ok) return finishUpgradeResult(result)
-
-    emitUpgradeProgress(deps, 'resolveGlobalCli', 'started')
-    const resolved = await resolveVerifiedGlobalTokenless(deps)
-    result.phases.resolveGlobalCli = resolved.phase
-    emitUpgradeProgress(deps, 'resolveGlobalCli', resolved.phase.ok ? 'succeeded' : 'failed', resolved.phase)
-    if (!resolved.phase.ok || !resolved.entrypoint || !resolved.version) return finishUpgradeResult(result)
-    result.cli.afterVersion = resolved.version
-
-    emitUpgradeProgress(deps, 'skills', 'started')
-    emitUpgradeProgress(deps, 'runtimeInstall', 'started')
-    const runtimeInstall = await runNewCliJsonPhase({
-      deps,
-      entrypoint: resolved.entrypoint,
-      command: 'install',
-      args,
-      timeoutMs: NEW_CLI_INSTALL_TIMEOUT_MS,
-    })
-    const skills = skillPhaseFromMaintenance(runtimeInstall)
-    result.phases.skills = skills
-    result.phases.runtimeInstall = runtimeInstall
-    emitUpgradeProgress(deps, 'skills', skills.ok ? 'succeeded' : 'failed', skills)
-    emitUpgradeProgress(deps, 'runtimeInstall', runtimeInstall.ok ? 'succeeded' : 'failed', runtimeInstall)
-
-    emitUpgradeProgress(deps, 'doctor', 'started')
-    const doctor = await runNewCliJsonPhase({
-      deps,
-      entrypoint: resolved.entrypoint,
-      command: 'doctor',
-      args,
-      timeoutMs: NEW_CLI_DOCTOR_TIMEOUT_MS,
-    })
-    result.phases.doctor = doctor
-    emitUpgradeProgress(deps, 'doctor', doctor.ok ? 'succeeded' : 'failed', doctor)
-
-    return finishUpgradeResult(result)
-  } finally {
-    await releaseLock()
+  const result: Record<string, any> = {
+    ok: false,
+    cli: {
+      beforeVersion: tokenlessPackageVersion(),
+      afterVersion: null,
+    },
+    phases: {},
   }
+
+  emitUpgradeProgress(deps, 'npmInstall', 'started')
+  const npmInstall = await runNpmInstall(deps)
+  result.phases.npmInstall = npmInstall
+  emitUpgradeProgress(deps, 'npmInstall', npmInstall.ok ? 'succeeded' : 'failed', npmInstall)
+  if (!npmInstall.ok) return finishUpgradeResult(result)
+
+  emitUpgradeProgress(deps, 'resolveGlobalCli', 'started')
+  const resolved = await resolveVerifiedGlobalTokenless(deps)
+  result.phases.resolveGlobalCli = resolved.phase
+  emitUpgradeProgress(deps, 'resolveGlobalCli', resolved.phase.ok ? 'succeeded' : 'failed', resolved.phase)
+  if (!resolved.phase.ok || !resolved.entrypoint || !resolved.version) return finishUpgradeResult(result)
+  result.cli.afterVersion = resolved.version
+
+  emitUpgradeProgress(deps, 'skills', 'started')
+  emitUpgradeProgress(deps, 'runtimeInstall', 'started')
+  const runtimeInstall = await runNewCliJsonPhase({
+    deps,
+    entrypoint: resolved.entrypoint,
+    command: 'install',
+    args,
+    timeoutMs: NEW_CLI_INSTALL_TIMEOUT_MS,
+  })
+  const skills = skillPhaseFromMaintenance(runtimeInstall)
+  result.phases.skills = skills
+  result.phases.runtimeInstall = runtimeInstall
+  emitUpgradeProgress(deps, 'skills', skills.ok ? 'succeeded' : 'failed', skills)
+  emitUpgradeProgress(deps, 'runtimeInstall', runtimeInstall.ok ? 'succeeded' : 'failed', runtimeInstall)
+
+  emitUpgradeProgress(deps, 'doctor', 'started')
+  const doctor = await runNewCliJsonPhase({
+    deps,
+    entrypoint: resolved.entrypoint,
+    command: 'doctor',
+    args,
+    timeoutMs: NEW_CLI_DOCTOR_TIMEOUT_MS,
+  })
+  result.phases.doctor = doctor
+  emitUpgradeProgress(deps, 'doctor', doctor.ok ? 'succeeded' : 'failed', doctor)
+
+  return finishUpgradeResult(result)
 }
 
 export function formatUpgradeProgress(event: UpgradeProgressEvent) {
@@ -261,83 +246,6 @@ function assertUpgradeArguments(args: UpgradeArgs) {
       `tokenless upgrade accepts only --json, --home, --daemon-url, --browser, --browsers, and --daemon-start-timeout-ms. Unsupported option${unsupported.length === 1 ? '' : 's'}: ${unsupported.join(', ')}.`,
     )
   }
-}
-
-async function acquireUpgradeLock({ homeDir, lockDir }: { homeDir: string; lockDir?: string }) {
-  const resolvedLockDir = lockDir ?? process.env.TOKENLESS_UPGRADE_LOCK_DIR ?? path.join(os.homedir(), '.tokenless', 'locks')
-  try {
-    await fs.mkdir(resolvedLockDir, { recursive: true, mode: 0o700 })
-    await fs.chmod(resolvedLockDir, 0o700)
-  } catch (error) {
-    throw upgradeUsageError(
-      'tokenless_upgrade_lock_dir_unusable',
-      sanitizedProcessOutput(`Unable to prepare tokenless upgrade lock directory ${resolvedLockDir}: ${(error as Error).message}`),
-    )
-  }
-  const lockPath = path.join(resolvedLockDir, `upgrade-${lockOwnerKey()}.lock`)
-  let handle: fs.FileHandle
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      handle = await fs.open(lockPath, 'wx', 0o600)
-      await handle.writeFile(JSON.stringify({
-        pid: process.pid,
-        startedAt: new Date().toISOString(),
-        homeDir,
-      }, null, 2))
-      await handle.close()
-      return async () => {
-        await fs.rm(lockPath, { force: true })
-      }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-      if (attempt === 0 && await removeStaleUpgradeLock(lockPath)) continue
-      throw upgradeUsageError(
-        'tokenless_upgrade_in_progress',
-        `Another tokenless upgrade is already using ${lockPath}. Wait for it to finish, then rerun tokenless upgrade --json.`,
-      )
-    }
-  }
-  throw upgradeUsageError('tokenless_upgrade_lock_failed', `Unable to acquire tokenless upgrade lock at ${lockPath}.`)
-}
-
-async function removeStaleUpgradeLock(lockPath: string) {
-  try {
-    const [stat, raw] = await Promise.all([
-      fs.stat(lockPath),
-      fs.readFile(lockPath, 'utf8').catch(() => ''),
-    ])
-    let parsed: Record<string, any> = {}
-    try {
-      parsed = JSON.parse(raw || '{}') as Record<string, any>
-    } catch {
-      parsed = {}
-    }
-    const pid = typeof parsed.pid === 'number' ? parsed.pid : null
-    const startedAt = typeof parsed.startedAt === 'string' ? Date.parse(parsed.startedAt) : Number.NaN
-    const staleByAge = Number.isFinite(startedAt)
-      ? Date.now() - startedAt > STALE_LOCK_AGE_MS
-      : Date.now() - stat.mtimeMs > STALE_LOCK_AGE_MS
-    const stale = staleByAge || (pid !== null && !isProcessAlive(pid))
-    if (!stale) return false
-    await fs.rm(lockPath, { force: true })
-    return true
-  } catch {
-    return false
-  }
-}
-
-function isProcessAlive(pid: number) {
-  if (!Number.isInteger(pid) || pid <= 0) return false
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM'
-  }
-}
-
-function lockOwnerKey() {
-  return createHash('sha256').update(os.homedir()).digest('hex').slice(0, 16)
 }
 
 async function runNpmInstall(deps: UpgradeDependencies): Promise<PhaseResult> {
