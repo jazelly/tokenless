@@ -1,0 +1,18 @@
+{
+  "schema": "tokenless.terminalbench-revision.v1",
+  "benchmark": "Terminal-Bench",
+  "harborVersion": "0.22.0",
+  "dataset": "terminal-bench/terminal-bench-2",
+  "datasetRef": "sha256:c6fc2e2382c1dbae99b2d5ecd2f4f4a60c3c01e0d84642d69b4afd92e99d078b",
+  "taskCount": 89,
+  "attemptsPerTask": 5,
+  "retryLimit": 0,
+  "deepseekHarnessRevision": "47f943859bef60e4160492346772ded9b24f765a",
+  "runtimeImage": "node:22.22.0-bullseye@sha256:30abf318b514315981eadbfe3af859b094e0ef6ff99cfefcc0d23f24ca43c84f",
+  "runtimePlatform": "linux/amd64",
+  "agent": "benchmarks.terminalbench.dsh_tokenless_agent:DeepSeekHarnessTokenless",
+  "modelPattern": "tokenless/<provider>",
+  "wiringTask": "terminal-bench/openssl-selfsigned-cert",
+  "protocol": "tokenless.terminalbench-channel.v1",
+  "auditProtocol": "tokenless.terminalbench-deep-audit.v1"
+}

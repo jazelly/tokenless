@@ -1319,13 +1319,17 @@ async function validatedCompletion(
     )
   } catch (error) {
     const validationError = error instanceof Error ? error.message : 'invalid output'
-    if (!(error instanceof OpenAiToolResponseProtocolError) || !error.correctionEligible) {
+    if (!(error instanceof OpenAiToolResponseProtocolError) || !error.correctionEligible || !error.correctionKind) {
       throw providerOutputProtocolError(validationError)
     }
+    const correctionKind = error.correctionKind
     const prompt = compileOpenAiToolCorrectionPrompt(
       request.toolProtocol.nonce,
       validationError,
       completion.text,
+      request.toolProtocol.tools,
+      request.toolProtocol.choice,
+      request.toolProtocol.parallelToolCalls,
       request.toolProtocol.responseFormat,
     )
     if (Buffer.byteLength(prompt, 'utf8') > MAX_PROMPT_BYTES) {
@@ -1344,9 +1348,7 @@ async function validatedCompletion(
     } catch (correctedError) {
       throw providerOutputProtocolError(correctedError instanceof Error ? correctedError.message : 'invalid corrected output')
     }
-    if (result.kind !== 'final') {
-      throw providerOutputProtocolError('bounded final correction returned tool calls')
-    }
+    if (result.kind !== correctionKind) throw providerOutputProtocolError('bounded correction changed the response kind')
   }
   if (result.kind === 'final') return { ...completion.base, text: result.content }
   return {

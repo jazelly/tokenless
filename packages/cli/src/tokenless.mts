@@ -127,6 +127,11 @@ import {
 } from '#tokenless-server/browser/runtime/index.js'
 import { featureBenchCommand } from './commands/featurebench/cli.js'
 import { readBootstrapDaemonUrl, readBootstrapLanguage } from './bootstrap/home.js'
+import {
+  createAgentToolRegistry,
+  createLocalHttpProviderTurnClient,
+  openWebAgentHarness,
+} from '#tokenless-harness/index.js'
 
 const CLI_ARG_FLAGS: unique symbol = Symbol('tokenless.cliArgFlags')
 
@@ -2792,6 +2797,10 @@ async function daemonCommand(subcommand: string | undefined, args: CliArgs) {
 
 async function agentCommand(subcommand: string | undefined, args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
+  if (subcommand === 'delegate' && benchmarkHarnessChannelConfigured()) {
+    await runBenchmarkHarnessDelegation({ homeDir, args })
+    return
+  }
   const control = await ensureControlDaemon(args, homeDir)
   const ready = control.daemon
   const client = {
@@ -2847,6 +2856,142 @@ async function agentCommand(subcommand: string | undefined, args: CliArgs) {
     return
   }
   throw usageError('agent_command_invalid', 'Usage: tokenless agent <run|delegate|read|resume|cancel>.')
+}
+
+/**
+ * Harbor's DSH lane supplies a task-scoped local HTTP channel instead of a
+ * Tokenless daemon home. The Harness therefore runs in this process, while
+ * provider turns still cross the channel and are handled by the host daemon.
+ */
+async function runBenchmarkHarnessDelegation({ homeDir, args }: { homeDir: string; args: CliArgs }) {
+  const provider = requiredAdminValue(args.provider, '--provider')
+  const profileId = requiredAdminValue(args.profile, '--profile')
+  const workspaceRoot = requiredWorkspaceRoot(args.workspaceRoot)
+  const taskPrompt = await agentTaskPrompt(args)
+  const channel = benchmarkHarnessChannel()
+  const toolRegistry = benchmarkAuditToolRegistry(createAgentToolRegistry(), channel)
+  const harness = openWebAgentHarness({
+    providerClient: createLocalHttpProviderTurnClient({ baseUrl: channel.baseUrl, token: channel.token }),
+    toolRegistry,
+  })
+  const started = await harness.start({
+    provider,
+    profileId,
+    taskPrompt,
+    workspaceRoot,
+    stagingRoot: path.join(homeDir, 'harness-staging'),
+    ...(args.maxTurns === undefined ? {} : { maxTurns: strictPositiveInteger(args.maxTurns, '--max-turns') }),
+  })
+  await reportBenchmarkAudit(channel, { type: 'harness.started', runId: started.runId })
+  const protocol = 'tokenless.harness.delegation.v1'
+  const emit = (event: Record<string, unknown>) => process.stdout.write(`${JSON.stringify({ protocol, ...event })}\n`)
+  if (args.adapterStream === true) emit({ type: 'started', runId: started.runId })
+  let view = started
+  const timeoutMs = args.timeoutMs === undefined ? 600_000 : strictPositiveInteger(args.timeoutMs, '--timeout-ms')
+  const deadline = Date.now() + timeoutMs
+  try {
+    while (!['succeeded', 'failed', 'cancelled'].includes(view.status)) {
+      if (Date.now() >= deadline) {
+        view = await harness.cancel(view.runId)
+        break
+      }
+      if (view.status === 'waiting_for_approval' || view.status === 'waiting_for_input' || view.status === 'waiting_for_authentication') {
+        throw new Error(`Tokenless Harness benchmark delegation stopped for unsupported intervention: ${view.status}`)
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      const next = await harness.read(view.runId)
+      if (!next) throw new Error('Tokenless Harness benchmark delegation disappeared before settlement.')
+      view = next
+    }
+    await reportBenchmarkAudit(channel, { type: 'harness.settled', runId: view.runId, status: view.status })
+    if (args.adapterStream === true) emit({ type: 'settled', run: view })
+    else printPayload({ ok: view.status === 'succeeded', ...view, compactOutput: view.final?.output ?? view.error?.message }, args)
+  } finally {
+    harness.close()
+  }
+  if (view.status !== 'succeeded') process.exitCode = 1
+}
+
+function benchmarkAuditToolRegistry(
+  registry: ReturnType<typeof createAgentToolRegistry>,
+  channel: { baseUrl: string; token: string },
+): ReturnType<typeof createAgentToolRegistry> {
+  return {
+    ...registry,
+    async execute(entry, argumentsValue, servers, context) {
+      const runId = context?.runId
+      if (typeof runId !== 'string') throw new Error('Tokenless Harness benchmark tool execution has no run ID.')
+      try {
+        const outcome = await registry.execute(entry, argumentsValue, servers, context)
+        const failure = benchmarkToolFailure(outcome)
+        if (failure) process.stderr.write(`tokenless-harness-tool: ${failure}\n`)
+        await reportBenchmarkAudit(channel, {
+          type: 'child.tool_result',
+          runId,
+          status: outcome.status,
+        })
+        return outcome
+      } catch (error) {
+        const failure = benchmarkThrownToolFailure(error)
+        if (failure) process.stderr.write(`tokenless-harness-tool: ${failure}\n`)
+        await reportBenchmarkAudit(channel, {
+          type: 'child.tool_result',
+          runId,
+          status: 'failed',
+        })
+        throw error
+      }
+    },
+  }
+}
+
+function benchmarkToolFailure(outcome: { status: string; content?: unknown }) {
+  if (outcome.status !== 'failed' || !outcome.content || typeof outcome.content !== 'object' || Array.isArray(outcome.content)) return ''
+  const content = outcome.content as { code?: unknown; message?: unknown }
+  const code = typeof content.code === 'string' ? content.code.replace(/[\r\n\u0000-\u001f]/gu, ' ').slice(0, 120) : ''
+  const message = typeof content.message === 'string' ? content.message.replace(/[\r\n\u0000-\u001f]/gu, ' ').slice(0, 300) : ''
+  return [code, message].filter(Boolean).join(': ')
+}
+
+function benchmarkThrownToolFailure(error: unknown) {
+  if (!(error instanceof Error)) return ''
+  const candidate = error as Error & { code?: unknown }
+  const code = typeof candidate.code === 'string' ? candidate.code.replace(/[\r\n\u0000-\u001f]/gu, ' ').slice(0, 120) : ''
+  const message = candidate.message.replace(/[\r\n\u0000-\u001f]/gu, ' ').slice(0, 300)
+  return [code, message].filter(Boolean).join(': ')
+}
+
+async function reportBenchmarkAudit(
+  channel: { baseUrl: string; token: string },
+  event: Record<string, unknown>,
+) {
+  const response = await fetch(`${channel.baseUrl}/v1/private/benchmark-audit`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${channel.token}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(event),
+  })
+  if (response.status !== 204) throw new Error('Tokenless Harness benchmark audit channel rejected an event.')
+}
+
+function benchmarkHarnessChannelConfigured() {
+  return process.env.TOKENLESS_BENCHMARK_LOCAL_HTTP_BASE_URL !== undefined || process.env.TOKENLESS_BENCHMARK_CHANNEL_TOKEN !== undefined
+}
+
+function benchmarkHarnessChannel() {
+  const baseUrl = process.env.TOKENLESS_BENCHMARK_LOCAL_HTTP_BASE_URL
+  const token = process.env.TOKENLESS_BENCHMARK_CHANNEL_TOKEN
+  if (typeof baseUrl !== 'string' || typeof token !== 'string') {
+    throw new Error('Tokenless Harness benchmark channel requires both TOKENLESS_BENCHMARK_LOCAL_HTTP_BASE_URL and TOKENLESS_BENCHMARK_CHANNEL_TOKEN.')
+  }
+  const parsed = new URL(baseUrl)
+  if (parsed.protocol !== 'http:' || parsed.hostname !== '127.0.0.1' || parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) {
+    throw new Error('Tokenless Harness benchmark channel must use a loopback HTTP origin.')
+  }
+  if (!/^[A-Za-z0-9_-]{32,256}$/.test(token)) throw new Error('Tokenless Harness benchmark channel token is invalid.')
+  return { baseUrl: parsed.origin, token }
 }
 
 async function agentTaskPrompt(args: CliArgs) {

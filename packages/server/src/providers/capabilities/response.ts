@@ -106,9 +106,17 @@ export async function readDomResponse(
       if (!(element instanceof HTMLElement)) return ''
       const clone = element.cloneNode(true) as HTMLElement
       for (const pre of clone.querySelectorAll('pre')) {
+        const banner = pre.previousElementSibling?.matches('.md-code-block-banner-wrap')
+          ? pre.previousElementSibling
+          : null
+        const bannerLanguage = (
+          banner?.querySelector('.md-code-block-banner > :first-child > :first-child')?.textContent ?? ''
+        ).trim()
+        banner?.remove()
         const code = pre.querySelector('code')
         const source = (code?.textContent ?? pre.textContent ?? '').replace(/\r\n?/g, '\n').trim()
-        const language = /(?:^|\s)language-([\w-]+)/u.exec(code?.className ?? '')?.[1] ?? ''
+        const language = /(?:^|\s)language-([\w-]+)/u.exec(code?.className ?? '')?.[1] ??
+          (/^[\w-]+$/u.test(bannerLanguage) ? bannerLanguage : '')
         const replacement = document.createElement('div')
         replacement.textContent = `\n\`\`\`${language}\n${source}\n\`\`\`\n`
         pre.replaceWith(replacement)

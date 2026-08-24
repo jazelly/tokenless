@@ -34,6 +34,7 @@
     "test:e2e:output-savings": "npm run build && node --test --test-concurrency=1 test/output-savings-runtime.e2e.mjs",
     "test:e2e:codex-app-server": "npm run build && node --test --test-concurrency=1 test/codex-app-server.e2e.mjs",
     "benchmark:featurebench": "node scripts/featurebench.mjs",
+    "benchmark:terminalbench": "node scripts/terminalbench.mjs",
     "test:e2e:featurebench": "npm run build && node test/run-gated-e2e.mjs featurebench"
   },
   "workspaces": [

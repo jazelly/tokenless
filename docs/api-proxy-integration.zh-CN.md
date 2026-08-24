@@ -495,7 +495,7 @@ Response 中的 `tokenless.conversation_mode` 报告实际 route：fresh 或 map
 
 所有失败都会按对应方言的错误信封返回。
 
-对于 tool 或 structured-final 请求，一种狭窄 failure 可在同一 provider 与 execution strategy 上获得 bounded correction：bare raw JSON，或一个允许的完整 fence 经 unwrapped 后的 content，必须已按精确顺序以本请求的 protocol、nonce 与 `kind: final` string fields 开头，而 strict parsing 只失败于 outer final-content escaping。Correction 后的 inner structured content 仍必须成功解析并满足 accepted schema。Prose、multiple fences、correlation、duplicate-key、tool-choice、tool-call、arguments/schema、inner JSON 与 valid-response shape failure 会立即返回 `provider_output_protocol_error`。Transport failure、timeout、ambiguous submission、已暴露 call 与调用方 tool execution 都不会重试。
+对于 tool 或 structured-final 请求，一种狭窄 failure 可在同一 provider 与 execution strategy 上获得 bounded correction：bare raw JSON，或一个允许的完整 fence 经 unwrapped 后的 content，必须已按精确顺序以本请求的 protocol、nonce 与 `kind: final` 或 `kind: tool_calls` field 开头，但 strict JSON parsing 失败；duplicate-key failure 不符合条件。Correction 后的 response 必须保持相同 kind，并通过原始 catalog、choice、call-count、argument/schema 与 response-format 校验；不会再进行第二次 correction。Prose、multiple fences、correlation、已解析 envelope shape、tool-choice、call-count、argument/schema 与 valid structured-content failure 会立即返回 `provider_output_protocol_error`。Transport failure、timeout、ambiguous submission、已暴露 call 与调用方 tool execution 都不会重试。
 
 OpenAI，其中 `param` 会在可定位时指出出错字段：
 
@@ -527,7 +527,7 @@ Anthropic：
 | 499 | `client_closed_request` | 客户端先断开了连接 | 否 —— 已无接收方 |
 | 500 | — | 本地 daemon 故障，message 刻意保持通用 | 可重试一次 |
 | 502 | `upstream_error` | provider 页面没有产生可见回复：登录 blocker、CAPTCHA 或 job 失败 | 用户清除 blocker 后可重试 |
-| 502 | `provider_output_protocol_error` | Tool 或 structured-final 校验失败；只有 correlated outer `kind: final` string-escaping failure 会获得一次 bounded correction | 不再重试 |
+| 502 | `provider_output_protocol_error` | Tool 或 structured-final 校验失败；只有 nonce-correlated `final` 或 `tool_calls` strict JSON serialization failure 会获得一次 same-kind bounded correction | 不再重试 |
 | 503 | `api_proxy_disabled` | proxy 未开启 | 否 —— 请先开启 |
 | 503 | `model_not_available` | 该 provider 未在解析出的 profile 上启用 | 否 —— 请先启用 |
 | 503 | `auto_route_unavailable` | 没有 enabled、当前可用且有 evidence 的 provider 能满足完整 request | 否 —— 调整 scope 或 provider readiness |

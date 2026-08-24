@@ -330,9 +330,52 @@ function normalizeProviderResponse(value: string) {
         : 'Provider response must contain exactly one Harness response envelope.',
     )
   }
-  assertBoundedProviderChrome(marked.before)
-  assertBoundedProviderChrome(marked.after)
-  return marked.marked
+  if (!isVisibleEnvelopeFence(marked.before, marked.after)) {
+    assertBoundedProviderChrome(marked.before)
+    assertBoundedProviderChrome(marked.after)
+  }
+  const content = escapeInvalidVisibleJsonBackslashes(unwrapVisibleJsonFence(marked.content))
+  return `${OPEN_MARKER}${content}${CLOSE_MARKER}`
+}
+
+function isVisibleEnvelopeFence(before: string, after: string) {
+  return /^```(?:text)?[ \t]*\r?\n$/u.test(before) && /^\r?\n```$/u.test(after)
+}
+
+function unwrapVisibleJsonFence(value: string) {
+  const trimmed = value.trim()
+  const match = /^```json[ \t]*\r?\n([\s\S]*?)\r?\n```$/u.exec(trimmed)
+  return match ? match[1]!.trim() : value
+}
+
+function escapeInvalidVisibleJsonBackslashes(value: string) {
+  let normalized = ''
+  let inString = false
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index]!
+    if (character === '"') {
+      inString = !inString
+      normalized += character
+      continue
+    }
+    if (!inString || character !== '\\') {
+      normalized += character
+      continue
+    }
+    const next = value[index + 1]
+    if (next !== undefined && '"\\/bfnrt'.includes(next)) {
+      normalized += `${character}${next}`
+      index += 1
+      continue
+    }
+    if (next === 'u' && /^[0-9A-Fa-f]{4}$/u.test(value.slice(index + 2, index + 6))) {
+      normalized += value.slice(index, index + 6)
+      index += 5
+      continue
+    }
+    normalized += '\\\\'
+  }
+  return normalized
 }
 
 function assertBoundedProviderChrome(value: string) {

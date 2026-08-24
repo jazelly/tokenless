@@ -16,9 +16,11 @@
   },
   "imports": {
     "#tokenless-shared/*": "./dist/shared/src/*",
-    "#tokenless-server/*": "./dist/server/src/*"
+    "#tokenless-server/*": "./dist/server/src/*",
+    "#tokenless-harness/*": "./dist/harness/src/*"
   },
   "files": [
+    "dist/integrations",
     "dist/src",
     "dist/server",
     "dist/schemas",

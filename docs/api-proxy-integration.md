@@ -495,7 +495,7 @@ The response `tokenless.conversation_mode` value reports the actual route: `new-
 
 Every failure returns the dialect's own error envelope.
 
-For a tool or structured-final request, one narrow failure may receive a bounded correction on the same provider and execution strategy: bare raw JSON, or the unwrapped content of one permitted complete fence, must already start with this request's exact protocol, nonce, and `kind: final` string fields, while strict parsing fails only on outer final-content escaping. The corrected inner structured content must still parse and satisfy the accepted schema. Prose, multiple fences, correlation, duplicate-key, tool-choice, tool-call, argument/schema, inner JSON, and valid-response shape failures return `provider_output_protocol_error` immediately. Transport failures, timeouts, ambiguous submissions, exposed calls, and caller tool execution are never retried.
+For a tool or structured-final request, one narrow failure may receive a bounded correction on the same provider and execution strategy: bare raw JSON, or the unwrapped content of one permitted complete fence, must already start with this request's exact protocol, nonce, and a `kind: final` or `kind: tool_calls` field, but fail strict JSON parsing. Duplicate-key failures are excluded. The corrected response must retain the same kind and pass the original catalog, choice, call-count, argument/schema, and response-format validation; there is no second correction. Prose, multiple fences, correlation, parsed-envelope shape, tool-choice, call-count, argument/schema, and valid structured-content failures return `provider_output_protocol_error` immediately. Transport failures, timeouts, ambiguous submissions, exposed calls, and caller tool execution are never retried.
 
 OpenAI, where `param` names the offending field when there is one:
 
@@ -527,7 +527,7 @@ The status is the signal to branch on. Read `code` for the specific cause and tr
 | 499 | `client_closed_request` | The client disconnected first | No — nobody is listening |
 | 500 | — | Local daemon fault, message deliberately generic | Yes, once |
 | 502 | `upstream_error` | The provider page produced no visible reply: sign-in blocker, CAPTCHA, or a failed job | Yes, after the user clears the blocker |
-| 502 | `provider_output_protocol_error` | Tool or structured-final validation failed; only a correlated outer `kind: final` string-escaping failure receives one bounded correction | No further retry |
+| 502 | `provider_output_protocol_error` | Tool or structured-final validation failed; only a nonce-correlated strict JSON serialization failure for `final` or `tool_calls` receives one same-kind bounded correction | No further retry |
 | 503 | `api_proxy_disabled` | The proxy is off | No — enable it |
 | 503 | `model_not_available` | The provider is not enabled for the resolved profile | No — enable it |
 | 503 | `auto_route_unavailable` | No enabled, currently usable, evidence-backed provider satisfies the complete request | No — change scope or provider readiness |

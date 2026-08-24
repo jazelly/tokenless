@@ -23,7 +23,6 @@ export function createLocalHttpProviderTurnClient(options: { baseUrl: string; to
     async start(request) {
       if (request.continuation) throw new HarnessSkillError('harness_provider_request_invalid', 'Provider start cannot contain a continuation.')
       return dispatch(async () => {
-        const binding = await createLocalHttpClient(options).bind(request.provider, request.profileId)
         const turn = await startHarnessLocalHttpBootstrap({
           baseUrl: options.baseUrl,
           token: options.token,
@@ -40,10 +39,7 @@ export function createLocalHttpProviderTurnClient(options: { baseUrl: string; to
           nonce: request.nonce,
           ...(request.payloadLifetime === undefined ? {} : { payloadLifetime: request.payloadLifetime }),
         })
-        return project(request, turn, undefined, {
-          providerRef: binding.capabilities.providerRef,
-          providerBindingRef: binding.providerBindingRef,
-        })
+        return project(request, turn)
       })
     },
 
@@ -119,7 +115,7 @@ async function dispatch<T>(operation: () => Promise<T>): Promise<T> {
       )
     }
     if (error instanceof HarnessSkillError) {
-      throw new ProviderTurnDispatchError('harness_provider_dispatch_invalid', 'Local provider dispatch was rejected before acceptance.')
+      throw new ProviderTurnDispatchError(error.code, error.message)
     }
     throw new ProviderTurnDispatchError('harness_provider_dispatch_failed', 'Local provider dispatch failed.')
   }

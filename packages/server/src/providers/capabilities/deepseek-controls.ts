@@ -81,15 +81,15 @@ export class DeepSeekAttachmentCapability implements ProviderActionCapability<ty
         { retryable: false },
       )
     }
-    const visibleCardsBeforeUpload = await visibleDeepSeekAttachmentExtensions(page)
+    const visibleCardsBeforeUpload = await visibleDeepSeekAttachments(page)
     try {
       return await this.delegate.execute(page, request, context)
     } catch (error) {
       if (
         !isAttachmentEvidenceFailure(error) ||
-        !hasNewDeepSeekAttachmentExtensions(
+        !hasNewDeepSeekAttachments(
           visibleCardsBeforeUpload,
-          await visibleDeepSeekAttachmentExtensions(page),
+          await visibleDeepSeekAttachments(page),
           request.payload.attachments.map((attachment) => attachment.name),
         )
       ) {
@@ -120,37 +120,41 @@ function isAttachmentEvidenceFailure(error: unknown) {
     error.code === 'file_upload_not_visibly_accepted'
 }
 
-function hasNewDeepSeekAttachmentExtensions(
-  before: readonly string[],
-  after: readonly string[],
+function hasNewDeepSeekAttachments(
+  before: { extensions: readonly string[]; names: readonly string[] },
+  after: { extensions: readonly string[]; names: readonly string[] },
   attachmentNames: readonly string[],
 ) {
-  if (after.length < before.length + attachmentNames.length) return false
+  if (containsNewValues(before.names, after.names, attachmentNames.map((name) => basename(name)))) return true
+  const extensions = attachmentNames.map((attachmentName) => extname(attachmentName).toLowerCase().replace(/^\./, ''))
+  return extensions.every(Boolean) && containsNewValues(before.extensions, after.extensions, extensions)
+}
+
+function containsNewValues(before: readonly string[], after: readonly string[], expected: readonly string[]) {
+  if (after.length < before.length + expected.length) return false
   const newExtensions = new Map<string, number>()
   for (const extension of after) newExtensions.set(extension, (newExtensions.get(extension) ?? 0) + 1)
   for (const extension of before) {
     const count = newExtensions.get(extension) ?? 0
     if (count > 0) newExtensions.set(extension, count - 1)
   }
-  for (const attachmentName of attachmentNames) {
-    const extension = extname(attachmentName).toLowerCase().replace(/^\./, '')
-    if (!extension) return false
-    const count = newExtensions.get(extension) ?? 0
+  for (const value of expected) {
+    const count = newExtensions.get(value) ?? 0
     if (count === 0) return false
-    newExtensions.set(extension, count - 1)
+    newExtensions.set(value, count - 1)
   }
   return true
 }
 
-async function visibleDeepSeekAttachmentExtensions(page: Page) {
+async function visibleDeepSeekAttachments(page: Page) {
   const evaluate = (page as Page & {
-    evaluate?: (callback: () => string[]) => Promise<unknown>
+    evaluate?: (callback: () => { extensions: string[]; names: string[] }) => Promise<unknown>
   }).evaluate
-  if (typeof evaluate !== 'function') return []
+  if (typeof evaluate !== 'function') return { extensions: [], names: [] }
   const result = await evaluate.call(page, () => {
     const composer = document.querySelector('textarea[placeholder="Message DeepSeek"]')
     const composerRegion = composer?.parentElement?.parentElement?.parentElement
-    if (!composerRegion) return []
+    if (!composerRegion) return { extensions: [], names: [] }
     const visible = (element: Element) => {
       let node: Element | null = element
       while (node) {
@@ -162,18 +166,23 @@ async function visibleDeepSeekAttachmentExtensions(page: Page) {
       return box.width > 0 && box.height > 0
     }
     const cards = new Map<Element, string>()
+    const names: string[] = []
     for (const badge of composerRegion.querySelectorAll('div')) {
       if (!visible(badge) || badge.childElementCount !== 0) continue
-      const match = /^(?<extension>[A-Za-z0-9]+)\s+\d+(?:\.\d+)?(?:B|KB|MB|GB)$/u.exec((badge.textContent ?? '').trim())
+      const text = (badge.textContent ?? '').trim()
+      if (/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.[A-Za-z0-9]{1,16}$/u.test(text)) names.push(text)
+      const match = /^(?<extension>[A-Za-z0-9]+)\s+\d+(?:\.\d+)?(?:B|KB|MB|GB)$/u.exec(text)
       const card = badge.parentElement
       if (!match?.groups?.extension || !card || !visible(card)) continue
       cards.set(card, match.groups.extension.toLowerCase())
     }
-    return [...cards.values()]
+    return { extensions: [...cards.values()], names }
   }).catch(() => [])
-  return Array.isArray(result) && result.every((extension) => typeof extension === 'string')
-    ? result
-    : []
+  return result && typeof result === 'object' && !Array.isArray(result) &&
+    'extensions' in result && Array.isArray(result.extensions) && result.extensions.every((extension) => typeof extension === 'string') &&
+    'names' in result && Array.isArray(result.names) && result.names.every((name) => typeof name === 'string')
+    ? { extensions: result.extensions, names: result.names }
+    : { extensions: [], names: [] }
 }
 
 export class DeepSeekModeCapability implements ProviderActionCapability<ModeAction> {

@@ -24,7 +24,7 @@ const WORKSPACE_TOOLS: readonly HarnessToolCatalogEntry[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        path: { type: 'string', minLength: 1, maxLength: 4096 },
+        path: { type: 'string', description: 'Relative path to an existing file inside the delegated workspace; never use an absolute path.', minLength: 1, maxLength: 4096 },
         startLine: { type: 'integer', minimum: 1 },
         lineCount: { type: 'integer', minimum: 1, maximum: 400 },
       },
@@ -44,7 +44,7 @@ const WORKSPACE_TOOLS: readonly HarnessToolCatalogEntry[] = [
       type: 'object',
       properties: {
         query: { type: 'string', minLength: 1, maxLength: 1024 },
-        path: { type: 'string', minLength: 1, maxLength: 4096 },
+        path: { type: 'string', description: 'Relative path to an existing file or directory inside the delegated workspace; use . when unsure and never use an absolute path.', minLength: 1, maxLength: 4096 },
       },
       required: ['query'],
       additionalProperties: false,

@@ -5,6 +5,10 @@ dist/
 packages/*/dist/
 *.tsbuildinfo
 /tokenless-beta
+/benchmarks/terminalbench/cache/
+/benchmarks/terminalbench/runs/
+/benchmarks/__pycache__/
+/benchmarks/terminalbench/__pycache__/
 .DS_Store
 
 .env

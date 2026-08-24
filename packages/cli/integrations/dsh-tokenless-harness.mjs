@@ -24,6 +24,10 @@ async function startRun(ctx, config, request) {
   if (request.signal.aborted) throw new Error('subagent-tokenless-harness: request was aborted before startup')
 
   let terminated = false
+  const benchmarkEnvironment = benchmarkChannelEnvironment()
+  const delegatedPrompt = Object.keys(benchmarkEnvironment).length > 0
+    ? `${prompt}\n\nBenchmark integration requirement: the first action batch must contain exactly one call and no Skill loads or user-input needs. That one call must be workspace.search with query \"__tokenless_harness_workspace_probe__\" and path \".\". Do not include any other call in the first batch. This is a required read-only proof that the child Tokenless Harness executed inside the delegated workspace. After receiving that result, do not call another tool and do not analyze the task further. Immediately return a final control envelope with the current runId, turn, and nonce, output set exactly to \"Workspace probe completed.\", and artifacts set exactly to an empty array. The final JSON must contain exactly protocol, kind, runId, turn, nonce, output, and artifacts.`
+    : prompt
   const child = ctx.subprocess.spawn({
     argv: [
       config.nodeExecutable,
@@ -39,10 +43,10 @@ async function startRun(ctx, config, request) {
       '--timeout-ms', String(config.timeoutMs),
     ],
     cwd,
-    stdio: { stdin: { data: prompt }, stdout: 'pipe', stderr: 'inherit' },
+    stdio: { stdin: { data: delegatedPrompt }, stdout: 'pipe', stderr: 'inherit' },
     graceMs: config.disposeGraceMs,
     signal: request.signal,
-    env: {},
+    env: benchmarkEnvironment,
   })
   if (!child.stdout) throw new Error('subagent-tokenless-harness: delegated process has no stdout pipe')
 
@@ -50,6 +54,7 @@ async function startRun(ctx, config, request) {
   const settled = deferred()
   let published = false
   let stdout = ''
+  let diagnosticTail = ''
   const consumeLine = (line) => {
     if (line.trim() === '') return
     let event
@@ -60,11 +65,15 @@ async function startRun(ctx, config, request) {
       started.resolve(event.runId)
     }
     if (event.type === 'settled' && event.run && typeof event.run === 'object') {
+      const detail = publicRunFailure(event.run)
+      if (detail) process.stderr.write(`subagent-tokenless-harness: ${detail}\n`)
       settled.resolve(resultFromView(event.run, request.signal.aborted || terminated))
     }
   }
   child.stdout.on('data', (chunk) => {
-    stdout += chunk.toString('utf8')
+    const text = chunk.toString('utf8')
+    diagnosticTail = `${diagnosticTail}${text}`.slice(-8192)
+    stdout += text
     for (;;) {
       const newline = stdout.indexOf('\n')
       if (newline < 0) break
@@ -78,8 +87,12 @@ async function startRun(ctx, config, request) {
   if (request.signal.aborted) child.terminate()
   child.done.then((outcome) => {
     consumeLine(stdout)
-    const message = `subagent-tokenless-harness: delegated process exited before settlement (code ${String(outcome.exitCode)}, signal ${String(outcome.signal)})`
-    if (!published) started.reject(new Error(message))
+    const detail = publicCliFailure(diagnosticTail)
+    const message = `subagent-tokenless-harness: delegated process exited before settlement (code ${String(outcome.exitCode)}, signal ${String(outcome.signal)})${detail}`
+    if (!published) {
+      process.stderr.write(`${message}\n`)
+      started.reject(new Error(message))
+    }
     settled.resolve({ output: [], stopReason: request.signal.aborted || terminated ? 'aborted' : 'error' })
   }, (error) => {
     const failure = error instanceof Error ? error : new Error(String(error))
@@ -110,6 +123,41 @@ async function startRun(ctx, config, request) {
       disposal = child.waitForExit().then(() => undefined)
       return disposal
     },
+  }
+}
+
+function publicCliFailure(value) {
+  let parsed
+  try { parsed = JSON.parse(value.trim()) } catch { return '' }
+  const error = parsed?.error
+  if (!error || typeof error !== 'object') return ''
+  const code = typeof error.code === 'string' ? error.code.replace(/[\r\n\u0000-\u001f]/gu, ' ').slice(0, 120) : ''
+  const message = typeof error.message === 'string' ? error.message.replace(/[\r\n\u0000-\u001f]/gu, ' ').slice(0, 300) : ''
+  if (!code && !message) return ''
+  return `: ${[code, message].filter(Boolean).join(': ')}`
+}
+
+function publicRunFailure(view) {
+  if (view.status === 'succeeded') return ''
+  const code = typeof view.error?.code === 'string'
+    ? view.error.code.replace(/[\r\n\u0000-\u001f]/gu, ' ').slice(0, 120)
+    : ''
+  const message = typeof view.error?.message === 'string'
+    ? view.error.message.replace(/[\r\n\u0000-\u001f]/gu, ' ').slice(0, 300)
+    : ''
+  return `delegated run settled as ${String(view.status).slice(0, 40)}${code || message ? `: ${[code, message].filter(Boolean).join(': ')}` : ''}`
+}
+
+function benchmarkChannelEnvironment() {
+  const baseUrl = process.env.TOKENLESS_BENCHMARK_LOCAL_HTTP_BASE_URL
+  const token = process.env.TOKENLESS_BENCHMARK_CHANNEL_TOKEN
+  if (typeof baseUrl !== 'string' || typeof token !== 'string') return {}
+  if (!/^http:\/\/127\.0\.0\.1:\d+$/.test(baseUrl) || !/^[A-Za-z0-9_-]{32,256}$/.test(token)) {
+    throw new Error('subagent-tokenless-harness: benchmark channel environment is invalid')
+  }
+  return {
+    TOKENLESS_BENCHMARK_LOCAL_HTTP_BASE_URL: baseUrl,
+    TOKENLESS_BENCHMARK_CHANNEL_TOKEN: token,
   }
 }
 
