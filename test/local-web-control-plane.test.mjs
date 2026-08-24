@@ -148,8 +148,33 @@ test('local web control plane opens directly, establishes Dashboard sessions, an
     assert.equal(new Set(snapshotBody.providers.map((provider) => provider.id)).size, 43)
     assert.equal(snapshotBody.providers.some((provider) => provider.id === 'ai-badgr'), false)
     assert.equal(snapshotBody.providers.some((provider) => provider.id === 'airforce'), false)
+    const directEntryUrl = new URL('/v1/chat/completions', daemon.origin).href
+    for (const provider of snapshotBody.providers) {
+      if (provider.executionModes.includes('browser')) {
+        assert.equal(new URL(provider.entryUrls.browser).protocol, 'https:', `${provider.id} browser entry URL`)
+      } else {
+        assert.equal(provider.entryUrls.browser, null, `${provider.id} browser entry URL`)
+      }
+      assert.equal(
+        provider.entryUrls.direct,
+        provider.executionModes.includes('direct') ? directEntryUrl : null,
+        `${provider.id} direct entry URL`,
+      )
+    }
     assert.deepEqual(snapshotBody.providers.find((provider) => provider.id === 'chatgpt')?.executionModes, ['browser', 'direct'])
+    assert.deepEqual(snapshotBody.providers.find((provider) => provider.id === 'chatgpt')?.entryUrls, {
+      browser: 'https://chatgpt.com/',
+      direct: directEntryUrl,
+    })
     assert.deepEqual(snapshotBody.providers.find((provider) => provider.id === 'doubao')?.executionModes, ['browser'])
+    assert.deepEqual(snapshotBody.providers.find((provider) => provider.id === 'doubao')?.entryUrls, {
+      browser: 'https://www.doubao.com/chat/',
+      direct: null,
+    })
+    assert.deepEqual(snapshotBody.providers.find((provider) => provider.id === 'black-forest-labs')?.entryUrls, {
+      browser: null,
+      direct: directEntryUrl,
+    })
     assert.equal(snapshotBody.providers.find((provider) => provider.id === 'chatgpt')?.subscriptionSupport, 'supported')
     assert.equal(snapshotBody.providers.find((provider) => provider.id === 'arena')?.subscriptionSupport, 'unsupported')
     const registry = new ManagedProfileRegistry(homeDir)

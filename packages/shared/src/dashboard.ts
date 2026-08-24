@@ -202,7 +202,7 @@ export type DashboardProvider = {
   stage: 'experimental' | 'supported' | 'disabled'
   executionModes: readonly DashboardProviderExecutionMode[]
   subscriptionSupport: 'supported' | 'unsupported'
-  homeUrl: string
+  entryUrls: Readonly<Record<DashboardProviderExecutionMode, string | null>>
   profiles: DashboardProviderProfileState[]
 }
 

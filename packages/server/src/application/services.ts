@@ -107,6 +107,8 @@ export class TokenlessApplicationServices {
       activeJobCount: 0,
       pid: process.pid,
     }
+    const daemonOrigin = this.origin()
+    const directEntryUrl = new URL('/v1/chat/completions', daemonOrigin).href
     const providers = listProviderDescriptors()
       .sort((left, right) => left.setupOrder - right.setupOrder)
       .map((provider) => ({
@@ -115,7 +117,10 @@ export class TokenlessApplicationServices {
         stage: provider.stage,
         executionModes: provider.executionModes,
         subscriptionSupport: provider.subscriptionSupport,
-        homeUrl: provider.navigation.entryUrl,
+        entryUrls: {
+          browser: provider.executionModes.includes('browser') ? provider.navigation.entryUrl : null,
+          direct: provider.executionModes.includes('direct') ? directEntryUrl : null,
+        },
       }))
     const capabilityRoutes = listProviderTaskCapabilityRoutes()
     const outputSavings = await this.outputSavingsState(config)
@@ -128,7 +133,7 @@ export class TokenlessApplicationServices {
       generatedAt: new Date().toISOString(),
       daemon: {
         version: tokenlessPackageVersion(),
-        origin: this.origin(),
+        origin: daemonOrigin,
         uptimeMs: Math.max(0, Date.now() - this.startedAt),
         pid: process.pid,
       },

@@ -212,10 +212,17 @@ a.data-row:hover, button.data-row:hover { background: #faf9f7; }
 .provider-name-line { display: flex; min-width: 0; align-items: center; gap: 8px; }
 .provider-name-line > strong, .provider-name-line > h2 { flex: 0 1 auto; }
 .provider-mode-badges { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 4px; }
-.provider-mode-tooltip { display: inline-flex; }
+.provider-mode-tooltip { display: inline-flex; color: inherit; text-decoration: none; }
 .provider-mode-badge { display: inline-flex; min-height: 22px; align-items: center; gap: 4px; padding: 0 7px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 11px; font-weight: 600; line-height: 1; white-space: nowrap; }
 .provider-mode-badge.configured { border-color: #cfcdc7; background: #f2f1ee; color: #55524b; }
 .provider-mode-badge.unsupported { border-style: dashed; opacity: .42; }
+.provider-mode-tooltip[href] > .provider-mode-badge { transition: transform 125ms cubic-bezier(.23, 1, .32, 1); }
+.provider-mode-tooltip[href]:active > .provider-mode-badge { transform: scale(.97); }
+.provider-mode-tooltip[href] > .hover-tooltip-content { pointer-events: auto; }
+.provider-mode-tooltip[href] > .hover-tooltip-content::after { position: absolute; top: 100%; right: 0; left: 0; height: 7px; content: ''; }
+.provider-mode-entry-tooltip { display: flex; width: min(300px, calc(100vw - 24px)); max-width: min(300px, calc(100vw - 24px)); flex-direction: column; gap: 5px; }
+.provider-mode-entry-url { display: flex; align-items: flex-start; gap: 6px; color: #deddd8; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; overflow-wrap: anywhere; }
+.provider-mode-entry-url svg { flex: 0 0 auto; margin-top: 1px; }
 .provider-account { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: 12px; margin-top: 18px; border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); font-size: 13px; }
 .provider-account span { color: var(--muted); }
 .provider-account strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }

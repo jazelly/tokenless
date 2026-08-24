@@ -7479,9 +7479,29 @@
           "stage": {
             "type": "string"
           },
-          "homeUrl": {
-            "type": "string",
-            "format": "uri"
+          "entryUrls": {
+            "type": "object",
+            "properties": {
+              "browser": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "uri"
+              },
+              "direct": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "uri"
+              }
+            },
+            "required": [
+              "browser",
+              "direct"
+            ],
+            "additionalProperties": false
           },
           "executionModes": {
             "type": "array",
@@ -7513,7 +7533,7 @@
           "id",
           "label",
           "stage",
-          "homeUrl",
+          "entryUrls",
           "executionModes",
           "subscriptionSupport",
           "profiles"
