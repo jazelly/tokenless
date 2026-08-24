@@ -289,7 +289,7 @@ Continue in either official form:
 
 The ledger does not persist tool definitions. Both forms validate history against the `tools` catalog in the current request.
 
-The local ledger retains canonical public transcript items for 24 hours and at most 1,000 responses. The next write purges all expired rows; looking up an exact expired id deletes only that row and returns `response_expired` for the triggering request. It stores no credentials, browser session, hidden reasoning, or fabricated opaque item. Capacity-evicted, unknown, or subsequently requested deleted ids return `response_not_found`; changing provider, exact model, or execution mode returns `response_route_mismatch` before submission. This prompt-emulated route produces no provider opaque/reasoning items, so unknown reasoning or opaque replay fails with `unverifiable_replay_item`.
+The local ledger keeps canonical public transcript items in process memory, up to 1,000 responses. A daemon restart or capacity eviction forgets an id, so missing ids return `response_not_found`. It stores no credentials, browser session, hidden reasoning, or fabricated opaque item. Changing provider, exact model, or execution mode returns `response_route_mismatch` before submission. This prompt-emulated route produces no provider opaque/reasoning items, so unknown reasoning or opaque replay fails with `unverifiable_replay_item`.
 
 For `tokenless/auto`, a portable ledger continuation may select another eligible provider on the next caller turn. Exact provider models remain hard provider/model/execution affine.
 
@@ -378,7 +378,6 @@ Standard vendor shapes plus one `tokenless` object.
     "execution_mode": "browser",
     "provider_backend": "browser",
     "structured_control_strategy": null,
-    "provider_attempts": [{"attempt":1,"provider":"chatgpt","status":"succeeded","started_at":"...","completed_at":"...","blocker_code":null,"blocker_classification":null}],
     "citations": [{"url": "https://example.com", "title": "Example"}]
   }
 }
@@ -436,7 +435,6 @@ If you need a savings figure, use `tokenless savings status --json`, which measu
 | `conversation_mode` | Actual route: `new-conversation` for fresh/mapping-miss requests, or `continue-conversation` for a mapped Responses continuation |
 | `execution_mode` / `provider_backend` | Actual execution route |
 | `structured_control_strategy` | `prompt_tool_envelope`, `prompt_json_envelope`, or `null` for plain text |
-| `provider_attempts` | Redacted attempt order/status and blocker classification from the one job |
 | `citations` | Visible source links, when the provider rendered any |
 
 Log `job_id`. It is the only handle that ties a client-side failure to the local job record.

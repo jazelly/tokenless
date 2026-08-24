@@ -1158,16 +1158,6 @@
               }
             }
           },
-          "410": {
-            "description": "The previous response exists but its 24-hour retention has expired",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiProxyOpenAiError"
-                }
-              }
-            }
-          },
           "413": {
             "description": "Request body exceeds the 2 MiB HTTP boundary",
             "content": {
@@ -3150,16 +3140,6 @@
               }
             }
           },
-          "410": {
-            "description": "Expired previous response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiProxyOpenAiError"
-                }
-              }
-            }
-          },
           "502": {
             "description": "Provider or protocol failure",
             "content": {
@@ -3898,7 +3878,6 @@
           "execution_mode",
           "provider_backend",
           "structured_control_strategy",
-          "provider_attempts",
           "citations"
         ],
         "properties": {
@@ -3940,62 +3919,6 @@
               "prompt_json_envelope",
               null
             ]
-          },
-          "provider_attempts": {
-            "type": "array",
-            "maxItems": 6,
-            "items": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": [
-                "attempt",
-                "provider",
-                "status",
-                "started_at",
-                "completed_at",
-                "blocker_code",
-                "blocker_classification"
-              ],
-              "properties": {
-                "attempt": {
-                  "type": "integer",
-                  "minimum": 1
-                },
-                "provider": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "status": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "started_at": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "completed_at": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "blocker_code": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "blocker_classification": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                }
-              }
-            },
-            "description": "Redacted attempts from the one provider job. Credentials, prompt bodies, model output, and hidden reasoning are never included."
           },
           "citations": {
             "type": "array",
@@ -6294,7 +6217,6 @@
               },
               "result": {},
               "error": {},
-              "providerAttempts": {},
               "outputSavingsEvents": {
                 "type": "array",
                 "items": {
@@ -6306,7 +6228,6 @@
               "transcript",
               "result",
               "error",
-              "providerAttempts",
               "outputSavingsEvents"
             ]
           }
@@ -6478,7 +6399,6 @@
           "result_json",
           "error_json",
           "blocker_json",
-          "provider_attempts_json",
           "provider_submitted_at",
           "created_at",
           "updated_at"
@@ -6505,47 +6425,6 @@
           "result_json": {},
           "error_json": {},
           "blocker_json": {},
-          "provider_attempts_json": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "required": [
-                "attempt",
-                "provider",
-                "status",
-                "startedAt",
-                "completedAt",
-                "blocker"
-              ],
-              "additionalProperties": false,
-              "properties": {
-                "attempt": {
-                  "type": "integer",
-                  "minimum": 1
-                },
-                "provider": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "status": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "startedAt": {
-                  "type": "string",
-                  "format": "date-time"
-                },
-                "completedAt": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "format": "date-time"
-                },
-                "blocker": {}
-              }
-            }
-          },
           "provider_submitted_at": {
             "type": [
               "string",
@@ -7883,9 +7762,7 @@
           "profile_id",
           "project_resource_id",
           "task_id",
-          "canonical_url",
-          "proved_job_id",
-          "observed_at"
+          "canonical_url"
         ],
         "additionalProperties": false,
         "properties": {
@@ -7913,15 +7790,6 @@
             "type": "string",
             "format": "uri",
             "pattern": "^https://"
-          },
-          "proved_job_id": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 256
-          },
-          "observed_at": {
-            "type": "string",
-            "format": "date-time"
           }
         }
       },
@@ -7932,11 +7800,7 @@
           "profile_id",
           "resource_id",
           "name",
-          "canonical_url",
-          "first_observed_at",
-          "last_observed_at",
-          "last_visible_proof",
-          "creation_job_id"
+          "canonical_url"
         ],
         "additionalProperties": false,
         "properties": {
@@ -7964,26 +7828,6 @@
             "type": "string",
             "format": "uri",
             "pattern": "^https://"
-          },
-          "first_observed_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "last_observed_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "last_visible_proof": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 512
-          },
-          "creation_job_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "maxLength": 256
           }
         }
       },
@@ -8133,9 +7977,7 @@
           "provider",
           "profile_id",
           "task_id",
-          "canonical_url",
-          "proved_job_id",
-          "observed_at"
+          "canonical_url"
         ],
         "additionalProperties": false,
         "properties": {
@@ -8158,15 +8000,6 @@
             "type": "string",
             "format": "uri",
             "pattern": "^https://"
-          },
-          "proved_job_id": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 256
-          },
-          "observed_at": {
-            "type": "string",
-            "format": "date-time"
           }
         }
       },

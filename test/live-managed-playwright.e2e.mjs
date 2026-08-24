@@ -303,7 +303,7 @@ async function qwenModeWorkspace({ provider, journey }) {
   })
   assert.equal(clarification.observerResult, true, 'Qwen observer must see Deep Research Advanced selected')
   assert.ok((responseResult(clarification.payload, 'response.read')?.text ?? '').length > 0)
-  const conversationUrl = assertConversationWorkspaceResult(provider, journey.taskId, clarification)
+  const conversationUrl = assertConversationWorkspaceResult(clarification)
   await clarification.close()
 
   const report = await journey.run([
@@ -319,7 +319,6 @@ async function qwenModeWorkspace({ provider, journey }) {
   ], 720_000)
   assert.match(responseResult(report.payload, 'response.read')?.text ?? '', new RegExp(escapeRegExp(marker)))
   assert.equal(canonicalPageUrl(report.page.url()), conversationUrl)
-  assertTaskConversationMapping(provider, journey.taskId, conversationUrl, report.payload)
   await report.close()
 
   const restored = await journey.action('qwen.mode.select', ['--qwen-mode', 'Chat'])
@@ -714,7 +713,7 @@ async function conversationContinuation({ provider, journey }) {
   const firstText = responseResult(first.payload, 'response.read')?.text ?? ''
   assert.match(firstText, new RegExp(escapeRegExp(firstMarker)))
   assert.doesNotMatch(firstText, new RegExp(escapeRegExp(contextSecret)))
-  const conversationUrl = assertConversationWorkspaceResult(provider, journey.taskId, first)
+  const conversationUrl = assertConversationWorkspaceResult(first)
   await first.close()
 
   const second = await journey.run([
@@ -727,7 +726,6 @@ async function conversationContinuation({ provider, journey }) {
   assert.match(secondText, new RegExp(escapeRegExp(contextSecret)))
   assert.doesNotMatch(secondText, new RegExp(escapeRegExp(firstMarker)))
   assert.equal(canonicalPageUrl(second.page.url()), conversationUrl)
-  assertTaskConversationMapping(provider, journey.taskId, conversationUrl, second.payload)
   await second.close()
 }
 
@@ -776,7 +774,7 @@ async function arenaSearch({ provider, journey }) {
   assert.ok(Array.isArray(response.citations) && response.citations.length > 0)
   assert.ok(response.citations.every((citation) => citation.href.startsWith('https://')))
   assert.ok(await visibleCitationCount(run.page, response.citations) > 0)
-  assertConversationWorkspaceResult(provider, journey.taskId, run)
+  assertConversationWorkspaceResult(run)
   await run.close()
 }
 
@@ -918,19 +916,6 @@ async function grokImage({ provider, journey }) {
     await assertGrokVisibleImagePosts(run.page, artifacts)
     assert.equal(await run.page.locator('button[aria-label="Media generation in progress"]').filter({ visible: true }).count(), 0)
     assert.equal(new URL(run.page.url()).pathname, `/imagine/post/${artifacts.at(-1).conversationId}`)
-    const database = new DatabaseSync(path.join(journey.session.homeDir, 'tokenless.sqlite3'), { readOnly: true })
-    try {
-      const taskMapping = database.prepare(
-        'SELECT COUNT(*) AS count FROM provider_task_conversations WHERE provider = ? AND task_id = ?',
-      ).get('grok', journey.taskId)
-      assert.equal(taskMapping.count, 0, 'Grok Imagine post URLs must not become task chat mappings')
-      const projectMapping = database.prepare(
-        'SELECT COUNT(*) AS count FROM provider_conversations WHERE provider = ? AND task_id = ?',
-      ).get('grok', journey.taskId)
-      assert.equal(projectMapping.count, 0, 'Grok Imagine post URLs must not become Project chat mappings')
-    } finally {
-      database.close()
-    }
   } finally {
     await run.close()
   }
@@ -1213,7 +1198,7 @@ async function conversationWorkflow({ provider, journey }) {
     assert.equal(await pageContains(first.page, responseMarker, 2), true)
     assert.ok(Array.isArray(citations) && citations.length > 0, `${provider} must return normalized real citations`)
     assert.ok(await visibleCitationCount(first.page, citations) > 0, `${provider} observer must see a returned citation link`)
-    const firstUrl = assertConversationWorkspaceResult(provider, journey.taskId, first)
+    const firstUrl = assertConversationWorkspaceResult(first)
     await first.close()
 
     const second = await journey.run([
@@ -1229,7 +1214,6 @@ async function conversationWorkflow({ provider, journey }) {
     const secondText = responseResult(second.payload, 'response.read')?.text ?? ''
     assert.match(secondText, new RegExp(escapeRegExp(contextSecret)))
     assert.equal(canonicalPageUrl(second.page.url()), firstUrl, `${provider} both CLI processes must share one exact conversation`)
-    assertTaskConversationMapping(provider, journey.taskId, firstUrl, second.payload)
     await second.close()
   } finally {
     await fs.rm(attachment, { force: true })
@@ -1315,7 +1299,7 @@ async function workspaceResponseCitations({ provider, journey }) {
   assert.equal(await pageContains(run.page, responseMarker, 2), true)
   assert.ok(Array.isArray(response?.citations) && response.citations.length > 0, `${provider} must return normalized real citations`)
   assert.ok(await visibleCitationCount(run.page, response.citations) > 0, `${provider} observer must see a returned citation link`)
-  assertConversationWorkspaceResult(provider, journey.taskId, run)
+  assertConversationWorkspaceResult(run)
   await run.close()
 }
 
@@ -1330,7 +1314,7 @@ async function workspaceResponseBaseline({ provider, journey }) {
   const response = responseResult(run.payload, 'response.read')
   assert.match(response?.text ?? '', /Canberra/i)
   assert.equal(await pageContains(run.page, 'Canberra', 2), true)
-  assertConversationWorkspaceResult(provider, journey.taskId, run)
+  assertConversationWorkspaceResult(run)
   await run.close()
 }
 
@@ -1417,20 +1401,6 @@ async function nativeProject({ provider, journey }) {
     assert.match(text, new RegExp(escapeRegExp(instructionMarker)))
     assert.equal(canonicalPageUrl(second.page.url()), conversationUrl)
 
-    const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'), { readOnly: true })
-    try {
-      const project = database.prepare(
-        'SELECT resource_id, canonical_url FROM provider_projects WHERE provider = ? AND profile_id = ? AND name = ?',
-      ).get(provider, createdResult.scope.profileId, projectName)
-      assert.equal(project?.canonical_url, projectUrl)
-      const conversation = database.prepare(
-        `SELECT canonical_url FROM provider_conversations
-         WHERE provider = ? AND profile_id = ? AND project_resource_id = ? AND task_id = ?`,
-      ).get(provider, createdResult.scope.profileId, project.resource_id, journey.taskId)
-      assert.equal(conversation?.canonical_url, conversationUrl)
-    } finally {
-      database.close()
-    }
     await second.close()
   } catch (error) {
     primaryError = error
@@ -1887,43 +1857,13 @@ function imageGenerationResult(payload, provider) {
   return { artifacts: payload.data.map((entry) => entry.asset) }
 }
 
-function assertConversationWorkspaceResult(provider, taskId, run) {
+function assertConversationWorkspaceResult(run) {
   const result = responseResult(run.payload, 'workspace.ensure')
   assert.equal(result?.mode, 'conversation')
   assert.equal(result?.resource?.kind, 'conversation')
   assert.equal(result?.resource?.native, false)
   assert.equal(result?.resource?.disposition, 'fallback')
-  const conversationUrl = canonicalPageUrl(run.page.url())
-  const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'), { readOnly: true })
-  try {
-    const mapping = database.prepare(
-      `SELECT canonical_url
-       FROM provider_task_conversations
-       WHERE provider = ? AND profile_id = ? AND task_id = ?`,
-    ).get(provider, result.scope.profileId, taskId)
-    assert.equal(typeof mapping?.canonical_url, 'string', `${provider} must persist the conversation Workspace mapping`)
-    assert.equal(canonicalPageUrl(mapping?.canonical_url), conversationUrl)
-  } finally {
-    database.close()
-  }
-  return conversationUrl
-}
-
-function assertTaskConversationMapping(provider, taskId, expectedUrl, payload) {
-  const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'), { readOnly: true })
-  try {
-    const job = database.prepare('SELECT profile_id FROM jobs WHERE job_id = ?').get(payload?.jobId)
-    assert.equal(typeof job?.profile_id, 'string')
-    const mapping = database.prepare(
-      `SELECT canonical_url
-       FROM provider_task_conversations
-       WHERE provider = ? AND profile_id = ? AND task_id = ?`,
-    ).get(provider, job.profile_id, taskId)
-    assert.equal(typeof mapping?.canonical_url, 'string', `${provider} must persist the continuation mapping`)
-    assert.equal(canonicalPageUrl(mapping.canonical_url), expectedUrl)
-  } finally {
-    database.close()
-  }
+  return canonicalPageUrl(run.page.url())
 }
 
 async function composerContains(page, marker) {

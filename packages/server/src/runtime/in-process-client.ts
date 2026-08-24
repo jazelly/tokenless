@@ -66,24 +66,13 @@ export function createInProcessDaemonClient(store: JobStore): ManagedDaemonClien
       resource_id: options.resourceId,
       name: options.name,
       canonical_url: options.canonicalUrl,
-      visible_proof: options.visibleProof,
-      job_id: options.jobId,
-      created: options.created,
-    })),
-    upsertProviderConversation: (options) => inProcessDaemonRequest(options.signal, () => store.upsertProviderConversation({
-      provider: options.provider,
-      profile_id: options.profileId,
-      project_resource_id: options.projectResourceId,
-      task_id: options.taskId,
-      canonical_url: options.canonicalUrl,
-      job_id: options.jobId,
     })),
     upsertProviderTaskConversation: (options) => inProcessDaemonRequest(options.signal, () => store.upsertProviderTaskConversation({
       provider: options.provider,
       profile_id: options.profileId,
+      ...(options.projectResourceId === undefined ? {} : { project_resource_id: options.projectResourceId }),
       task_id: options.taskId,
       canonical_url: options.canonicalUrl,
-      job_id: options.jobId,
     })),
   }
 }

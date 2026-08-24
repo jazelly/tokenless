@@ -347,7 +347,7 @@ test('explicit auto applies portable call-id affinity and persists one real fall
     assert.equal(job.request_json.fallback.alternatives[0].provider, 'deepseek')
     assert.equal(job.request_json.fallback.alternatives[0].capabilityRoute.provider, 'deepseek')
     assert.match(job.request_json.actions[0].payload.text, new RegExp(callId))
-    assert.deepEqual(job.provider_attempts_json.map((entry) => entry.provider), ['chatgpt'])
+    assert.equal(Object.hasOwn(job, 'provider_attempts_json'), false)
 
     await daemon.store.cancelJob(job.job_id, 'focused pre-submit routing test completed')
     const response = await pending
@@ -1178,26 +1178,18 @@ test('api proxy keeps Chat Completions fresh and Responses continuation on the m
     assert.equal((await mappingMiss).status, 502)
 
     const rootResponseId = `resp_${'d'.repeat(32)}`
-    const seedJob = daemon.store.createJob({
-      provider: 'chatgpt',
-      request_json: {},
-      profile_id: (await registry.resolveProfile()).slug,
-    })
     daemon.store.upsertProviderTaskConversation({
       provider: 'chatgpt',
       profile_id: (await registry.resolveProfile()).slug,
       task_id: `api-proxy:response:${rootResponseId}`,
       canonical_url: 'https://chatgpt.com/c/api-proxy-root-conversation',
-      job_id: seedJob.job_id,
     })
-    daemon.store.cancelJob(seedJob.job_id, 'focused API conversation semantics seed completed')
     const largeResponseId = `resp_${'f'.repeat(32)}`
     daemon.store.upsertProviderTaskConversation({
       provider: 'chatgpt',
       profile_id: (await registry.resolveProfile()).slug,
       task_id: `api-proxy:response:${largeResponseId}`,
       canonical_url: 'https://chatgpt.com/c/api-proxy-large-conversation',
-      job_id: seedJob.job_id,
     })
     const largeHistoryMarker = 'RESPONSES_LARGE_OLD_CONTEXT'
     daemon.store.putApiResponse({

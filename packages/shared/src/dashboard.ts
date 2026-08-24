@@ -292,7 +292,6 @@ export type DashboardJobDetail = DashboardJobSummary & {
   transcript: Array<{ role: 'user' | 'assistant'; content: string }>
   result: unknown
   error: unknown
-  providerAttempts: unknown
   outputSavingsEvents: DashboardOutputSavingsEvent[]
 }
 

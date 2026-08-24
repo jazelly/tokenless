@@ -376,7 +376,7 @@ tokenless profiles add -P work --set-default --json
 
 读取 `config.json` 中的 profiles，并返回全部 managed profiles。
 
-共享的 `<TOKENLESS_HOME>/tokenless.sqlite3` 存储 jobs 与 provider history，不存储 profile records。
+Tokenless API 数据库 `<TOKENLESS_HOME>/tokenless.sqlite3` 只存储 jobs；provider submission history 从 jobs 推导，profile records 仍保存在 `config.json`。
 
 ```bash
 tokenless profiles list
@@ -527,7 +527,7 @@ Provider 选择：
 - Unknown 与 sign-in-required observations 不可用于隐式路由。如果没有可用 cached provider，CLI 会在创建 daemon job 前返回带 provider observation context 的 `provider_unavailable`。
 - 已知 capability 如果没有完整 route，会在 browser mutation 前返回 `task_capability_route_unavailable`。`--capability` 当前只支持正常的 `submit_and_read` action。
 - 成功提交会返回并持久化 `capabilityRoute`，其中包含规范化 requirements、所选 strategies、support level、evidence identifiers 和 runtime eligibility；`tokenless state` 会返回同一 route。
-- 隐式 `submit_and_read` run 可以在当前 execution 中保留 automatic fallback plan。每次 attempt 都会在 mutation 前只读复核已知本地 provider capacity、可见 session 和 capability-specific UI，不发送 probe prompt。已分类的 safe pre-submit capacity、登录、CAPTCHA、rate/plan、维护、区域、导航、稳定 surface 和 capability availability failure，只有在下一条 ranked route 满足完全相同的完整 requirements 且尚未完成 external mutation 时，才会立即尝试该 route。精确或已映射 continuation、显式 provider、provider-specific controls、ambiguous external state 和 post-submission failure 都绝不会自动切换。JSON state 包含排序后的 `fallback.routes`、结构化停止原因和 `providerAttempts`。
+- 隐式 `submit_and_read` run 可以在当前 execution 中保留 automatic fallback plan。每次 attempt 都会在 mutation 前只读复核已知本地 provider capacity、可见 session 和 capability-specific UI，不发送 probe prompt。已分类的 safe pre-submit capacity、登录、CAPTCHA、rate/plan、维护、区域、导航、稳定 surface 和 capability availability failure，只有在下一条 ranked route 满足完全相同的完整 requirements 且尚未完成 external mutation 时，才会立即尝试该 route。精确或已映射 continuation、显式 provider、provider-specific controls、ambiguous external state 和 post-submission failure 都绝不会自动切换。JSON state 包含排序后的 `fallback.routes` 和结构化停止原因。
 - Job validator 会再次根据 actions、attachment MIME types 和 native workspace intent 推导 capabilities，因此 internal 或 agent caller 无法少报 fallback requirement。Routed job 携带 `tokenless.context-envelope.v1`，其中的 instructions、references、output/constraint contract、可选 upstream state 和 delivery hashes 会在每次 fallback attempt 原样复用；JSON state 只公开脱敏后的 envelope 摘要。
 
 Prompt 输入：
@@ -575,9 +575,9 @@ Workspace modes：
 - 使用 `auto` 或 `native` 的 routed `run` request 都要求 canonical `workspace.native` capability。目前没有 provider route 被公开，因此在 native Project release gate 完成前，这类 request 会在 browser mutation 之前失败。
 - Claude 与 Grok 的 lower-level adapter 已为显式真实 provider acceptance suite 实现实验性的可见原生 Project 创建/复用；仅有 implementation 不构成 router support 声明。
 - `workspace.native` 可路由后，`native` 将强制要求精确创建或复用原生 Project，绝不会降级到 conversation scope；出现重复的精确可见名称时 fail closed。
-- `conversation` 强制使用 conversation-scoped strategy；只有真实 provider capability matrix 已证明的 provider/profile 才支持跨进程恢复。
+- `conversation` 强制使用 conversation-scoped strategy，并且只在当前 daemon process 内复用 mapping。
 - 原生结果会报告 `created` 或 `reused`、canonical provider resource identity、provider/profile scope 和 instruction outcome；conversation 结果会报告 `fallback`。
-- Project 和 task conversation target 会作为精确 SQLite mapping 持久化，不再通过扫描历史 job result 恢复。
+- Project 和 task conversation target 是当前进程内的精确 mapping；daemon 重启后会忘记它们。
 
 ### `tokenless state`
 

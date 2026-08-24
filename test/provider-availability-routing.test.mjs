@@ -164,7 +164,7 @@ test('implicit run routing chooses the first usable cached provider in setup ord
         evidence: ['workspace-response-citations'],
       }],
     })
-    assert.equal(latest.providerAttempts[0].provider, 'grok')
+    assert.equal(latest.provider, 'grok')
   } finally {
     if (daemonStarted) runCli(['daemon', 'stop', '--home', homeDir, '--daemon-url', daemonUrl, '--json'])
     fs.rmSync(homeDir, { recursive: true, force: true })

@@ -103,7 +103,6 @@ export type ApiProxyCompletion = {
   executionMode: 'browser' | 'direct'
   providerBackend: 'browser' | ProviderBackend
   structuredControlStrategy: string | null
-  providerAttempts: readonly Record<string, unknown>[]
   toolCalls?: { id: string; name: string; arguments: string }[]
 }
 
@@ -481,7 +480,6 @@ export class ApiProxyAdapter {
         executionMode,
         providerBackend,
         structuredControlStrategy,
-        providerAttempts: publicProviderAttempts(settled.provider_attempts_json),
       },
     }
   }
@@ -1583,39 +1581,8 @@ function tokenlessMetadata(completion: ApiProxyCompletion) {
     execution_mode: completion.executionMode,
     provider_backend: completion.providerBackend,
     structured_control_strategy: completion.structuredControlStrategy,
-    provider_attempts: completion.providerAttempts,
     citations: completion.citations,
   }
-}
-
-function publicProviderAttempts(value: unknown): readonly Record<string, unknown>[] {
-  if (!Array.isArray(value)) return []
-  return value.flatMap((entry) => {
-    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return []
-    const attempt = entry as Record<string, unknown>
-    if (
-      !Number.isSafeInteger(attempt.attempt) ||
-      typeof attempt.provider !== 'string' ||
-      typeof attempt.status !== 'string'
-    ) return []
-    const blocker = attempt.blocker && typeof attempt.blocker === 'object' && !Array.isArray(attempt.blocker)
-      ? attempt.blocker as Record<string, unknown>
-      : null
-    const failure = blocker?.failure && typeof blocker.failure === 'object' && !Array.isArray(blocker.failure)
-      ? blocker.failure as Record<string, unknown>
-      : null
-    return [{
-      attempt: attempt.attempt,
-      provider: attempt.provider,
-      status: attempt.status,
-      started_at: typeof attempt.startedAt === 'string' ? attempt.startedAt : null,
-      completed_at: typeof attempt.completedAt === 'string' ? attempt.completedAt : null,
-      blocker_code: typeof blocker?.code === 'string'
-        ? blocker.code
-        : (typeof failure?.code === 'string' ? failure.code : null),
-      blocker_classification: typeof failure?.classification === 'string' ? failure.classification : null,
-    }]
-  })
 }
 
 function safeDirectError(error: unknown) {
@@ -1646,7 +1613,6 @@ function directRawCompletion(
       executionMode: 'direct',
       providerBackend: 'g4f',
       structuredControlStrategy: structuredControlStrategy(request, null),
-      providerAttempts: [],
     },
   }
 }

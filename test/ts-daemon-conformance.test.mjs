@@ -388,7 +388,6 @@ test('SQLite completes current jobs and marks active jobs interrupted on reopen'
     assert.ok(running)
     assert.equal(running.job_id, created.job_id)
     assert.equal(running.status, 'running')
-    assert.equal(running.provider_attempts_json.at(-1).status, 'running')
     const completed = store.completeJob(running.job_id, { result_json: { ok: true } })
     assert.equal(completed.status, 'succeeded')
 
@@ -402,15 +401,13 @@ test('SQLite completes current jobs and marks active jobs interrupted on reopen'
     assert.equal(activeJobState.job_id, active.job_id)
     assert.equal(activeJobState.status, 'running')
     const waiting = store.markWaitingForUser(active.job_id, { code: 'user_input_required' })
-    assert.equal(waiting.provider_attempts_json.at(-1).status, 'waiting_for_user')
     const resumed = store.markRunning(active.job_id)
-    assert.equal(resumed.provider_attempts_json.at(-1).status, 'running')
+    assert.equal(resumed.status, 'running')
     store.close()
     store = await JobStore.open(homeDir)
     const interrupted = store.getJob(active.job_id)
     assert.equal(interrupted.status, 'failed')
     assert.equal(interrupted.error_json.code, 'job_interrupted')
-    assert.equal(interrupted.provider_attempts_json.at(-1).status, 'failed')
 
     const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'), { readOnly: true })
     try {
@@ -418,22 +415,30 @@ test('SQLite completes current jobs and marks active jobs interrupted on reopen'
         "SELECT name FROM sqlite_schema WHERE type = 'table'",
       ).all().map((row) => String(row.name)))
       assert.deepEqual(
-        [
-          'output_savings_events', 'output_savings_work', 'output_savings_state', 'output_savings_cleared_events',
-          'api_response_ledger', 'web_ai_v0_bindings', 'web_ai_v0_staged_attachments',
-          'web_ai_v0_turns', 'web_ai_v0_request_cancellations', 'job_task_keys',
-        ]
-          .filter((table) => tables.has(table)),
-        [],
+        [...tables].sort(),
+        ['jobs'],
       )
-      const jobColumns = new Set(database.prepare('PRAGMA table_info(jobs)').all().map((row) => String(row.name)))
+      const jobColumns = database.prepare('PRAGMA table_info(jobs)').all().map((row) => String(row.name))
       assert.deepEqual(
+        jobColumns,
         [
-          'claim_token', 'claim_expires_at', 'checkpoint_json', 'resume_json', 'eligible_at',
-          'agent_kind', 'agent_session_id', 'summary_idempotency_key', 'replay_reported_at',
-          'outcome_revision', 'reported_outcome_revision', 'execution_backend', 'action',
-          'summary_task_id', 'summary_project_name', 'summary_chat_name',
-        ].filter((column) => jobColumns.has(column)),
+          'job_id',
+          'profile_id',
+          'provider',
+          'status',
+          'request_json',
+          'result_json',
+          'error_json',
+          'blocker_json',
+          'provider_submitted_at',
+          'created_at',
+          'updated_at',
+        ],
+      )
+      assert.deepEqual(
+        database.prepare(
+          "SELECT name FROM sqlite_schema WHERE type = 'index' AND name NOT LIKE 'sqlite_autoindex_%'",
+        ).all(),
         [],
       )
     } finally {
@@ -445,7 +450,7 @@ test('SQLite completes current jobs and marks active jobs interrupted on reopen'
   }
 })
 
-test('SQLite preserves exact provider Project and conversation mappings across store restart', {
+test('provider Project and conversation mappings are process-local', {
   timeout: 60_000,
 }, async () => {
   requireBuiltArtifacts()
@@ -471,24 +476,13 @@ test('SQLite preserves exact provider Project and conversation mappings across s
       resource_id: 'project-resource',
       name: 'TOKENLESS_E2E_PROJECT_MAPPING',
       canonical_url: 'https://claude.ai/project/project-resource',
-      visible_proof: 'native-project-url-name-and-composer-visible',
-      job_id: job.job_id,
-      created: true,
     })
-    store.upsertProviderConversation({
+    store.upsertProviderTaskConversation({
       provider: 'claude',
       profile_id: 'profile-mapping',
       project_resource_id: 'project-resource',
       task_id: 'task-mapping',
       canonical_url: 'https://claude.ai/project/project-resource/chat/conversation-resource',
-      job_id: job.job_id,
-    })
-    store.upsertProviderTaskConversation({
-      provider: 'claude',
-      profile_id: 'profile-mapping',
-      task_id: 'task-mapping',
-      canonical_url: 'https://claude.ai/project/project-resource/chat/conversation-resource',
-      job_id: job.job_id,
     })
     const e2eJob = store.createJob({
       provider: 'claude',
@@ -511,9 +505,6 @@ test('SQLite preserves exact provider Project and conversation mappings across s
     )
     assert.equal(isolatedJobState.job_id, e2eJob.job_id)
     assert.equal(store.getJob(job.job_id).status, 'queued')
-    store.close()
-    store = await JobStore.open(homeDir)
-
     const project = store.resolveProviderMapping({
       provider: 'claude',
       profile_id: 'profile-mapping',
@@ -531,6 +522,19 @@ test('SQLite preserves exact provider Project and conversation mappings across s
       conversation.canonical_url,
       'https://claude.ai/project/project-resource/chat/conversation-resource',
     )
+    store.close()
+    store = await JobStore.open(homeDir)
+    assert.equal(store.resolveProviderMapping({
+      provider: 'claude',
+      profile_id: 'profile-mapping',
+      project_name: 'TOKENLESS_E2E_PROJECT_MAPPING',
+      task_id: 'task-mapping',
+    }), null)
+    assert.equal(store.resolveProviderTaskConversation({
+      provider: 'claude',
+      profile_id: 'profile-mapping',
+      task_id: 'task-mapping',
+    }), null)
   } finally {
     store.close()
     fs.rmSync(homeDir, { recursive: true, force: true })
@@ -829,7 +833,7 @@ test('built Playwright validators enforce the current internal schema IDs', {
   )
 })
 
-test('SQLite preserves provider fallback attempts under one current job id', async () => {
+test('SQLite preserves provider fallback under one current job id', async () => {
   requireBuiltArtifacts()
   const homeDir = tempHome('tokenless-provider-fallback-store-')
   const { JobStore } = await import(`${pathToFileURL(path.join(cliDir, 'dist/server/src/jobs/store.js')).href}?test=${randomUUID()}`)
@@ -904,9 +908,7 @@ test('SQLite preserves provider fallback attempts under one current job id', asy
     assert.equal(queued.job_id, created.job_id)
     assert.equal(queued.provider, 'claude')
     assert.equal(queued.status, 'running')
-    assert.equal(queued.provider_attempts_json.length, 2)
-    assert.equal(queued.provider_attempts_json[0].status, 'blocked')
-    assert.equal(queued.provider_attempts_json[0].blocker.blocker.code, 'visible_cloudflare_turnstile')
+    assert.equal(Object.hasOwn(queued, 'provider_attempts_json'), false)
     assert.deepEqual(queued.request_json.context, request.context)
     assert.equal(queued.request_json.pageRef, request.pageRef)
     store.completeJob(queued.job_id, { result_json: { provider: 'claude' } })
@@ -915,10 +917,7 @@ test('SQLite preserves provider fallback attempts under one current job id', asy
     const completed = store.getJob(created.job_id)
     assert.equal(completed.status, 'succeeded')
     assert.deepEqual(completed.request_json.context, request.context)
-    assert.deepEqual(completed.provider_attempts_json.map((attempt) => [attempt.provider, attempt.status]), [
-      ['chatgpt', 'blocked'],
-      ['claude', 'succeeded'],
-    ])
+    assert.equal(Object.hasOwn(completed, 'provider_attempts_json'), false)
     assert.equal(completed.request_json.pageRef, request.pageRef)
   } finally {
     store.close()

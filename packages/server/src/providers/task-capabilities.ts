@@ -193,7 +193,7 @@ const TASK_CAPABILITY_CATALOG = Object.freeze([
     lifecycle: 'interactive',
     sideEffects: ['submit_prompt', 'persist_provider_state'],
     implies: [TASK_CAPABILITIES.CONVERSATION_CHAT],
-    requiredEvidence: ['exact_conversation_identity', 'visible_two_turns', 'durable_mapping'],
+    requiredEvidence: ['exact_conversation_identity', 'visible_two_turns', 'process_local_mapping'],
     outputKinds: ['text'],
   }),
   defineCapability({
@@ -348,7 +348,7 @@ const TASK_CAPABILITY_CATALOG = Object.freeze([
     }, ['name']),
     lifecycle: 'interactive',
     sideEffects: ['create_provider_resource', 'persist_provider_state'],
-    requiredEvidence: ['exact_workspace_identity', 'created_or_reused', 'durable_mapping'],
+    requiredEvidence: ['exact_workspace_identity', 'created_or_reused', 'process_local_mapping'],
     outputKinds: [],
   }),
   defineCapability({
@@ -373,7 +373,7 @@ const TASK_CAPABILITY_CATALOG = Object.freeze([
     lifecycle: 'interactive',
     sideEffects: ['upload_content', 'persist_provider_state'],
     implies: [TASK_CAPABILITIES.WORKSPACE_NATIVE],
-    requiredEvidence: ['visible_workspace_knowledge', 'durable_mapping'],
+    requiredEvidence: ['visible_workspace_knowledge', 'process_local_mapping'],
     outputKinds: [],
   }),
   defineCapability({

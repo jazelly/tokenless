@@ -174,7 +174,7 @@
         "two_cli_processes",
         "same_conversation",
         "visible_two_turns",
-        "durable_mapping"
+        "process_local_mapping"
       ]
     },
     "model-comparison": {
@@ -210,7 +210,7 @@
         "visible_submission",
         "visible_response",
         "visible_citation",
-        "durable_mapping"
+        "process_local_mapping"
       ]
     },
     "arena-image": {
@@ -450,7 +450,7 @@
         "two_cli_processes",
         "same_conversation",
         "visible_two_turns",
-        "durable_mapping"
+        "process_local_mapping"
       ]
     },
     "workspace-response-citations": {
@@ -468,7 +468,7 @@
         "visible_submission",
         "visible_response",
         "visible_citation",
-        "durable_mapping"
+        "process_local_mapping"
       ]
     },
     "workspace-response-baseline": {
@@ -485,7 +485,7 @@
         "conversation_fallback",
         "visible_submission",
         "visible_response",
-        "durable_mapping"
+        "process_local_mapping"
       ]
     },
     "qwen-mode-workspace": {
@@ -508,7 +508,7 @@
         "two_cli_processes",
         "same_conversation",
         "visible_two_turns",
-        "durable_mapping",
+        "process_local_mapping",
         "restore_original"
       ]
     },
@@ -544,8 +544,7 @@
         "project_instructions",
         "visible_attachment",
         "visible_two_turns",
-        "durable_project_mapping",
-        "durable_conversation_mapping"
+        "process_local_mapping"
       ]
     },
     "kimi-library-controls": {

@@ -197,4 +197,4 @@ Document、presentation、spreadsheet 与 website capability 必须声明 output
 - Stale cached access 是 `unchecked`，不会被信任为 live eligibility。每次 attempt 在 mutation 前执行只读 visible session 与 capability-UI preflight；不允许 probe prompt。
 - Job contract 独立从 action、attachment MIME type 与 native workspace intent 推导 requirement。即使 internal caller 提供了 route，遗漏 action-required capability 的 route 仍然无效。
 - Automatic fallback 消耗 ranked list，但不降低 capability。当没有 provider 满足 `research.deep` 或其他 mandatory capability 时，routing 以 `task_capability_route_unavailable` 停止，不会 fallback 到 plain chat。
-- Result 记录 canonical requirement、selected provider、provider strategy、runtime observation、evidence、ranked remaining route、structured attempt failure 与 same-execution provider attempt history。
+- Result 记录 canonical requirement、selected provider、provider strategy、runtime observation、evidence 与 ranked remaining route。

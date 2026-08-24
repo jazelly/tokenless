@@ -1285,7 +1285,6 @@ function publicJobDetail(
     ],
     result: redactPublicValue(job.result_json),
     error: publicError(job.error_json),
-    providerAttempts: redactPublicValue(job.provider_attempts_json),
     outputSavingsEvents: outputSavings.map((event) => ({
       responseRequestId: event.response_request_id,
       estimatedOutputTokens: event.estimated_output_tokens,
@@ -1362,14 +1361,7 @@ function publicResponse(value: unknown) {
 }
 
 function publicProviders(job: JobView | Job) {
-  const providers: string[] = []
-  const attempts = Array.isArray(job.provider_attempts_json) ? job.provider_attempts_json : []
-  for (const entry of attempts) {
-    const provider = record(entry)?.provider
-    if (typeof provider === 'string' && provider && !providers.includes(provider)) providers.push(provider)
-  }
-  if (!providers.includes(job.provider)) providers.push(job.provider)
-  return providers
+  return [job.provider]
 }
 
 function publicConversationUrl(store: JobStore, job: JobView | Job) {

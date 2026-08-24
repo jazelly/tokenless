@@ -33,7 +33,6 @@ export type DaemonJob = {
   result_json: unknown | null
   error_json: unknown | null
   blocker_json: unknown | null
-  provider_attempts_json: unknown
   provider_submitted_at: string | null
   created_at: string
   updated_at: string
@@ -607,8 +606,6 @@ export async function resolveProviderConversation({
       profile_id: string
       task_id: string
       canonical_url: string
-      proved_job_id: string
-      observed_at: string
     } | null
   }>({
     daemonUrl: daemon.daemonUrl,

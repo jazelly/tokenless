@@ -256,7 +256,7 @@
 
                 <details class="chat-technical-details">
                   <summary>{t('technicalDetails')}</summary>
-                  <div><section><h3>{t('result')}</h3><pre>{JSON.stringify(detail.result, null, 2)}</pre></section><section><h3>{t('attempts')}</h3><pre>{JSON.stringify(detail.providerAttempts, null, 2)}</pre></section></div>
+                  <div><section><h3>{t('result')}</h3><pre>{JSON.stringify(detail.result, null, 2)}</pre></section></div>
                 </details>
               </div>
             </details>

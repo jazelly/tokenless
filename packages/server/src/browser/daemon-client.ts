@@ -33,26 +33,20 @@ export type ManagedDaemonClient = {
     result?: unknown
     error?: unknown
   }): Promise<DaemonJob>
-  upsertProviderProject(options: JobOptions & {
+  upsertProviderProject(options: {
     provider: string
     profileId: string
     resourceId: string
     name: string
     canonicalUrl: string
-    visibleProof: string
-    created: boolean
+    signal?: AbortSignal | undefined
   }): Promise<unknown>
-  upsertProviderConversation(options: JobOptions & {
+  upsertProviderTaskConversation(options: {
     provider: string
     profileId: string
-    projectResourceId: string
+    projectResourceId?: string | undefined
     taskId: string
     canonicalUrl: string
-  }): Promise<unknown>
-  upsertProviderTaskConversation(options: JobOptions & {
-    provider: string
-    profileId: string
-    taskId: string
-    canonicalUrl: string
+    signal?: AbortSignal | undefined
   }): Promise<unknown>
 }

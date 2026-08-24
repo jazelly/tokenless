@@ -42,7 +42,6 @@ export type Job = {
   result_json: unknown | null
   error_json: unknown | null
   blocker_json: unknown | null
-  provider_attempts_json: unknown
   provider_submitted_at: string | null
   created_at: string
   updated_at: string
@@ -119,10 +118,6 @@ export type ProviderProjectMapping = {
   resource_id: string
   name: string
   canonical_url: string
-  first_observed_at: string
-  last_observed_at: string
-  last_visible_proof: string
-  creation_job_id: string | null
 }
 
 export type ProviderConversationMapping = {
@@ -131,8 +126,6 @@ export type ProviderConversationMapping = {
   project_resource_id: string
   task_id: string
   canonical_url: string
-  proved_job_id: string
-  observed_at: string
 }
 
 export type ProviderTaskConversationMapping = {
@@ -140,8 +133,10 @@ export type ProviderTaskConversationMapping = {
   profile_id: string
   task_id: string
   canonical_url: string
-  proved_job_id: string
-  observed_at: string
+}
+
+type ProviderTaskConversationRecord = ProviderTaskConversationMapping & {
+  project_resource_id?: string | undefined
 }
 
 export type WebAiBinding = {
@@ -222,6 +217,8 @@ export class JobStore {
   #closed = false
   #apiResponses = new Map<string, ApiResponseLedgerEntry>()
   #outputSavingsEvents = new Map<string, OutputSavingsEvent>()
+  #providerProjects = new Map<string, ProviderProjectMapping>()
+  #providerTaskConversations = new Map<string, ProviderTaskConversationRecord>()
   #webAiBindings = new Map<string, WebAiBinding>()
   #webAiStagedAttachments = new Map<string, WebAiStagedAttachmentRecord>()
   #webAiTurns = new Map<string, WebAiTurnRecord>()
@@ -241,7 +238,6 @@ export class JobStore {
     this.controlTokenPath = path.join(homeDir, CONTROL_TOKEN_FILE_NAME)
     try {
       this.#db = new DatabaseSync(this.databasePath)
-      this.#db.exec('PRAGMA foreign_keys = ON;')
       this.#db.exec('PRAGMA busy_timeout = 250;')
     } catch (error) {
       throw sqliteError(error)
@@ -253,6 +249,8 @@ export class JobStore {
     this.#closed = true
     this.#apiResponses.clear()
     this.#outputSavingsEvents.clear()
+    this.#providerProjects.clear()
+    this.#providerTaskConversations.clear()
     this.#webAiBindings.clear()
     this.#webAiStagedAttachments.clear()
     this.#webAiTurns.clear()
@@ -324,15 +322,13 @@ export class JobStore {
       : normalizeNonempty(input.job_id, 'job_id')
     const now = nowRfc3339()
     const requestJson = stringifyJson(input.request_json)
-    const providerAttemptsJson = stringifyJson([providerAttempt(1, provider, 'queued', now)])
 
     this.run(
         `INSERT INTO jobs (
           job_id, profile_id, provider, status, request_json,
-          result_json, error_json, blocker_json, created_at, updated_at,
-          provider_attempts_json
+          result_json, error_json, blocker_json, created_at, updated_at
         ) VALUES (
-          ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?
+          ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?
         )`,
         jobId,
         profileId,
@@ -341,7 +337,6 @@ export class JobStore {
         requestJson,
         now,
         now,
-        providerAttemptsJson,
       )
 
     return this.getJobRecord(jobId)
@@ -493,13 +488,11 @@ export class JobStore {
     if (turn.cancelled || job.status === 'canceled') return turn
     if (!['queued', 'running', 'waiting_for_user'].includes(job.status)) throw invalidInput('web ai turn cannot be cancelled in its current state')
     const now = nowRfc3339()
-    const attempts = updateCurrentProviderAttempt(job, 'canceled', null, now)
     this.run(
       `UPDATE jobs SET status = 'canceled', result_json = NULL, error_json = ?, blocker_json = NULL,
-        provider_attempts_json = ?, updated_at = ?
+        updated_at = ?
        WHERE job_id = ? AND status IN ('queued', 'running', 'waiting_for_user')`,
       stringifyJson({ code: 'job_canceled', reason: 'web ai client requested cancellation' }),
-      stringifyJson(attempts),
       now,
       turn.job_id,
     )
@@ -520,7 +513,7 @@ export class JobStore {
     let sql = `SELECT
       jobs.job_id, jobs.profile_id,
       jobs.provider, jobs.status, jobs.request_json, jobs.result_json,
-      jobs.error_json, jobs.blocker_json, jobs.provider_attempts_json,
+      jobs.error_json, jobs.blocker_json,
       jobs.provider_submitted_at,
       jobs.created_at, jobs.updated_at
       FROM jobs`
@@ -572,109 +565,40 @@ export class JobStore {
     resource_id: string
     name: string
     canonical_url: string
-    visible_proof: string
-    job_id: string
-    created: boolean
   }): ProviderProjectMapping {
     const provider = mappingText(input.provider, 'provider', 128)
     const profileId = mappingText(input.profile_id, 'profile_id', PROFILE_ID_CHARS)
     const resourceId = mappingText(input.resource_id, 'resource_id', 256)
     const name = mappingText(input.name, 'name', 256)
     const canonicalUrl = canonicalMappingUrl(input.canonical_url)
-    const visibleProof = mappingText(input.visible_proof, 'visible_proof', 512)
-    const jobId = mappingText(input.job_id, 'job_id', 256)
-    this.getJob(jobId)
-    const now = nowRfc3339()
-    this.run(
-      `INSERT INTO provider_projects (
-        provider, profile_id, resource_id, name, canonical_url,
-        first_observed_at, last_observed_at, last_visible_proof, creation_job_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(provider, profile_id, resource_id) DO UPDATE SET
-        name = excluded.name,
-        canonical_url = excluded.canonical_url,
-        last_observed_at = excluded.last_observed_at,
-        last_visible_proof = excluded.last_visible_proof,
-        creation_job_id = COALESCE(provider_projects.creation_job_id, excluded.creation_job_id)`,
-      provider,
-      profileId,
-      resourceId,
-      name,
-      canonicalUrl,
-      now,
-      now,
-      visibleProof,
-      input.created ? jobId : null,
-    )
-    return this.getProviderProject(provider, profileId, resourceId)
-  }
-
-  upsertProviderConversation(input: {
-    provider: string
-    profile_id: string
-    project_resource_id: string
-    task_id: string
-    canonical_url: string
-    job_id: string
-  }): ProviderConversationMapping {
-    const provider = mappingText(input.provider, 'provider', 128)
-    const profileId = mappingText(input.profile_id, 'profile_id', PROFILE_ID_CHARS)
-    const projectResourceId = mappingText(input.project_resource_id, 'project_resource_id', 256)
-    const taskId = mappingText(input.task_id, 'task_id', 256)
-    const canonicalUrl = canonicalMappingUrl(input.canonical_url)
-    const jobId = mappingText(input.job_id, 'job_id', 256)
-    this.getProviderProject(provider, profileId, projectResourceId)
-    this.getJob(jobId)
-    const now = nowRfc3339()
-    this.run(
-      `INSERT INTO provider_conversations (
-        provider, profile_id, project_resource_id, task_id,
-        canonical_url, proved_job_id, observed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(provider, profile_id, project_resource_id, task_id) DO UPDATE SET
-        canonical_url = excluded.canonical_url,
-        proved_job_id = excluded.proved_job_id,
-        observed_at = excluded.observed_at`,
-      provider,
-      profileId,
-      projectResourceId,
-      taskId,
-      canonicalUrl,
-      jobId,
-      now,
-    )
-    return this.getProviderConversation(provider, profileId, projectResourceId, taskId)
+    const mapping = { provider, profile_id: profileId, resource_id: resourceId, name, canonical_url: canonicalUrl }
+    this.#providerProjects.set(providerMappingKey(provider, profileId, resourceId), mapping)
+    return { ...mapping }
   }
 
   upsertProviderTaskConversation(input: {
     provider: string
     profile_id: string
+    project_resource_id?: string | undefined
     task_id: string
     canonical_url: string
-    job_id: string
   }): ProviderTaskConversationMapping {
     const provider = mappingText(input.provider, 'provider', 128)
     const profileId = mappingText(input.profile_id, 'profile_id', PROFILE_ID_CHARS)
     const taskId = mappingText(input.task_id, 'task_id', 256)
     const canonicalUrl = canonicalMappingUrl(input.canonical_url)
-    const jobId = mappingText(input.job_id, 'job_id', 256)
-    this.getJob(jobId)
-    const now = nowRfc3339()
-    this.run(
-      `INSERT INTO provider_task_conversations (
-        provider, profile_id, task_id, canonical_url, proved_job_id, observed_at
-      ) VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT(provider, profile_id, task_id) DO UPDATE SET
-        canonical_url = excluded.canonical_url,
-        proved_job_id = excluded.proved_job_id,
-        observed_at = excluded.observed_at`,
+    const projectResourceId = input.project_resource_id === undefined
+      ? undefined
+      : mappingText(input.project_resource_id, 'project_resource_id', 256)
+    if (projectResourceId !== undefined) this.getProviderProject(provider, profileId, projectResourceId)
+    const mapping: ProviderTaskConversationRecord = {
       provider,
-      profileId,
-      taskId,
-      canonicalUrl,
-      jobId,
-      now,
-    )
+      profile_id: profileId,
+      task_id: taskId,
+      canonical_url: canonicalUrl,
+      ...(projectResourceId === undefined ? {} : { project_resource_id: projectResourceId }),
+    }
+    this.#providerTaskConversations.set(providerTaskMappingKey(provider, profileId, taskId), mapping)
     return this.resolveProviderTaskConversation({ provider, profile_id: profileId, task_id: taskId }) as ProviderTaskConversationMapping
   }
 
@@ -686,15 +610,14 @@ export class JobStore {
     const provider = mappingText(input.provider, 'provider', 128)
     const profileId = mappingText(input.profile_id, 'profile_id', PROFILE_ID_CHARS)
     const taskId = mappingText(input.task_id, 'task_id', 256)
-    const row = this.get(
-      `SELECT provider, profile_id, task_id, canonical_url, proved_job_id, observed_at
-       FROM provider_task_conversations
-       WHERE provider = ? AND profile_id = ? AND task_id = ?`,
-      provider,
-      profileId,
-      taskId,
-    )
-    return row ? rowToProviderTaskConversation(row) : null
+    const mapping = this.#providerTaskConversations.get(providerTaskMappingKey(provider, profileId, taskId))
+    if (!mapping) return null
+    return {
+      provider: mapping.provider,
+      profile_id: mapping.profile_id,
+      task_id: mapping.task_id,
+      canonical_url: mapping.canonical_url,
+    }
   }
 
   resolveProviderMapping(input: {
@@ -709,17 +632,9 @@ export class JobStore {
     const provider = mappingText(input.provider, 'provider', 128)
     const profileId = mappingText(input.profile_id, 'profile_id', PROFILE_ID_CHARS)
     const projectName = mappingText(input.project_name, 'project_name', 256)
-    const projects = this.all(
-      `SELECT
-        provider, profile_id, resource_id, name, canonical_url,
-        first_observed_at, last_observed_at, last_visible_proof, creation_job_id
-       FROM provider_projects
-       WHERE provider = ? AND profile_id = ? AND name = ?
-       ORDER BY resource_id`,
-      provider,
-      profileId,
-      projectName,
-    ).map(rowToProviderProject)
+    const projects = [...this.#providerProjects.values()]
+      .filter((project) => project.provider === provider && project.profile_id === profileId && project.name === projectName)
+      .sort((left, right) => left.resource_id.localeCompare(right.resource_id))
     if (projects.length === 0) return null
     if (projects.length > 1) {
       throw invalidInput('provider project mapping is ambiguous for the exact visible name')
@@ -737,39 +652,21 @@ export class JobStore {
   }
 
   private getProviderProject(provider: string, profileId: string, resourceId: string) {
-    const row = this.get(
-      `SELECT
-        provider, profile_id, resource_id, name, canonical_url,
-        first_observed_at, last_observed_at, last_visible_proof, creation_job_id
-       FROM provider_projects
-       WHERE provider = ? AND profile_id = ? AND resource_id = ?`,
-      provider,
-      profileId,
-      resourceId,
-    )
-    if (!row) throw invalidInput('provider project mapping was not found')
-    return rowToProviderProject(row)
-  }
-
-  private getProviderConversation(provider: string, profileId: string, projectResourceId: string, taskId: string) {
-    const mapping = this.findProviderConversation(provider, profileId, projectResourceId, taskId)
-    if (!mapping) throw invalidInput('provider conversation mapping was not found')
-    return mapping
+    const mapping = this.#providerProjects.get(providerMappingKey(provider, profileId, resourceId))
+    if (!mapping) throw invalidInput('provider project mapping was not found')
+    return { ...mapping }
   }
 
   private findProviderConversation(provider: string, profileId: string, projectResourceId: string, taskId: string) {
-    const row = this.get(
-      `SELECT
-        provider, profile_id, project_resource_id, task_id,
-        canonical_url, proved_job_id, observed_at
-       FROM provider_conversations
-       WHERE provider = ? AND profile_id = ? AND project_resource_id = ? AND task_id = ?`,
-      provider,
-      profileId,
-      projectResourceId,
-      taskId,
-    )
-    return row ? rowToProviderConversation(row) : null
+    const mapping = this.#providerTaskConversations.get(providerTaskMappingKey(provider, profileId, taskId))
+    if (!mapping || mapping.project_resource_id !== projectResourceId) return null
+    return {
+      provider: mapping.provider,
+      profile_id: mapping.profile_id,
+      project_resource_id: projectResourceId,
+      task_id: mapping.task_id,
+      canonical_url: mapping.canonical_url,
+    }
   }
 
   takeNextJob(
@@ -787,7 +684,7 @@ export class JobStore {
         `SELECT
          job_id, profile_id,
          provider, status, request_json, result_json, error_json,
-         blocker_json, provider_attempts_json,
+         blocker_json,
          provider_submitted_at,
          created_at, updated_at
          FROM jobs
@@ -806,12 +703,10 @@ export class JobStore {
       )
       if (!row) return null
       const job = rowToJob(row)
-      const attempts = updateCurrentProviderAttempt(job, 'running')
       const result = this.run(
         `UPDATE jobs
-         SET status = 'running', provider_attempts_json = ?, updated_at = ?
+         SET status = 'running', updated_at = ?
          WHERE job_id = ? AND status = 'queued'`,
-        stringifyJson(attempts),
         now,
         job.job_id,
       )
@@ -888,17 +783,14 @@ export class JobStore {
 
   markWaitingForUser(jobId: string, blockerJson: unknown) {
     const now = nowRfc3339()
-    const attempts = updateCurrentProviderAttempt(this.getJobRecord(jobId), 'waiting_for_user', blockerJson)
     const result = this.run(
       `UPDATE jobs
-       SET status = ?, blocker_json = ?, updated_at = ?,
-           provider_attempts_json = ?
+       SET status = ?, blocker_json = ?, updated_at = ?
        WHERE job_id = ?
          AND status = 'running'`,
       'waiting_for_user',
       stringifyJson(blockerJson),
       now,
-      stringifyJson(attempts),
       jobId,
     )
     if (result.changes === 1) return this.getJobRecord(jobId)
@@ -907,12 +799,10 @@ export class JobStore {
 
   markRunning(jobId: string) {
     const now = nowRfc3339()
-    const attempts = updateCurrentProviderAttempt(this.getJobRecord(jobId), 'running')
     const result = this.run(
       `UPDATE jobs
-       SET status = 'running', blocker_json = NULL, provider_attempts_json = ?, updated_at = ?
+       SET status = 'running', blocker_json = NULL, updated_at = ?
        WHERE job_id = ? AND status = 'waiting_for_user'`,
-      stringifyJson(attempts),
       now,
       jobId,
     )
@@ -936,25 +826,14 @@ export class JobStore {
       }
       if (job.provider_submitted_at !== null) throw invalidInput('jobs cannot fallback after provider submission')
       if (job.provider === provider) throw invalidInput('fallback provider must differ from the current provider')
-      const attempts = providerAttempts(job.provider_attempts_json)
-      const current = attempts.at(-1) ?? providerAttempt(1, job.provider, 'queued', job.created_at)
-      const completed = {
-        ...current,
-        status: 'blocked',
-        completedAt: now,
-        blocker: input.blocker_json,
-      }
-      const next = providerAttempt(current.attempt + 1, provider, 'queued', now)
       const result = this.run(
         `UPDATE jobs
          SET provider = ?, request_json = ?, status = 'running',
-             result_json = NULL, error_json = NULL, blocker_json = NULL,
-             provider_attempts_json = ?, updated_at = ?
+             result_json = NULL, error_json = NULL, blocker_json = NULL, updated_at = ?
          WHERE job_id = ?
            AND status IN ('running', 'waiting_for_user')`,
         provider,
         requestJson,
-        stringifyJson([...attempts.slice(0, -1), completed, next]),
         now,
         input.job_id,
       )
@@ -976,23 +855,15 @@ export class JobStore {
       : null
     const errorJson = 'error_json' in completion ? stringifyJson(completion.error_json) : null
     const job = this.getJobRecord(jobId)
-    const attempts = providerAttempts(job.provider_attempts_json)
-    const current = attempts.at(-1) ?? providerAttempt(1, job.provider, 'queued', job.created_at)
-    const completedAttempts = [
-      ...attempts.slice(0, -1),
-      { ...current, status, completedAt: now },
-    ]
     const completed = this.transaction(() => {
       const result = this.run(
         `UPDATE jobs
-         SET status = ?, result_json = ?, error_json = ?, blocker_json = NULL,
-             provider_attempts_json = ?, updated_at = ?
+         SET status = ?, result_json = ?, error_json = ?, blocker_json = NULL, updated_at = ?
          WHERE job_id = ?
            AND status IN ('running', 'waiting_for_user')`,
         status,
         resultJson,
         errorJson,
-        stringifyJson(completedAttempts),
         now,
         jobId,
       )
@@ -1062,15 +933,12 @@ export class JobStore {
     const errorJson = stringifyJson(reason === undefined || reason === null
       ? { code: 'job_canceled' }
       : { code: 'job_canceled', reason })
-    const attempts = updateCurrentProviderAttempt(this.getJobRecord(jobId), 'canceled', null, now)
     const result = this.run(
       `UPDATE jobs
-       SET status = ?, result_json = NULL, error_json = ?, blocker_json = NULL,
-           provider_attempts_json = ?, updated_at = ?
+       SET status = ?, result_json = NULL, error_json = ?, blocker_json = NULL, updated_at = ?
        WHERE job_id = ? AND status IN ('queued', 'running', 'waiting_for_user')`,
       'canceled',
       errorJson,
-      stringifyJson(attempts),
       now,
       jobId
     )
@@ -1108,9 +976,7 @@ export class JobStore {
   }
 
   private initialize() {
-    this.exec('PRAGMA foreign_keys = ON;')
     this.createBaseTables()
-    this.createIndexes()
     this.failInterruptedJobs()
     restrictFilePermissionsSync(this.databasePath)
   }
@@ -1127,7 +993,7 @@ export class JobStore {
         `SELECT
            job_id, profile_id,
            provider, status, request_json, result_json, error_json,
-           blocker_json, provider_attempts_json, provider_submitted_at,
+           blocker_json, provider_submitted_at,
            created_at, updated_at
          FROM jobs
          WHERE status IN ('queued', 'running', 'waiting_for_user')`,
@@ -1135,11 +1001,9 @@ export class JobStore {
         const job = rowToJob(row)
         this.run(
           `UPDATE jobs
-           SET status = 'failed', result_json = NULL, error_json = ?, blocker_json = NULL,
-               provider_attempts_json = ?, updated_at = ?
+           SET status = 'failed', result_json = NULL, error_json = ?, blocker_json = NULL, updated_at = ?
            WHERE job_id = ?`,
           stringifyJson(error),
-          stringifyJson(updateCurrentProviderAttempt(job, 'failed', null, now)),
           now,
           job.job_id,
         )
@@ -1167,58 +1031,10 @@ export class JobStore {
         result_json TEXT,
         error_json TEXT,
         blocker_json TEXT,
-        provider_attempts_json TEXT NOT NULL DEFAULT '[]',
         provider_submitted_at TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
-      CREATE TABLE IF NOT EXISTS provider_projects (
-        provider TEXT NOT NULL CHECK (length(provider) BETWEEN 1 AND 128),
-        profile_id TEXT NOT NULL CHECK (length(profile_id) BETWEEN 1 AND 128),
-        resource_id TEXT NOT NULL CHECK (length(resource_id) BETWEEN 1 AND 256),
-        name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 256),
-        canonical_url TEXT NOT NULL CHECK (length(canonical_url) BETWEEN 1 AND 2048),
-        first_observed_at TEXT NOT NULL,
-        last_observed_at TEXT NOT NULL,
-        last_visible_proof TEXT NOT NULL CHECK (length(last_visible_proof) BETWEEN 1 AND 512),
-        creation_job_id TEXT REFERENCES jobs(job_id),
-        PRIMARY KEY (provider, profile_id, resource_id)
-      );
-      CREATE TABLE IF NOT EXISTS provider_conversations (
-        provider TEXT NOT NULL,
-        profile_id TEXT NOT NULL,
-        project_resource_id TEXT NOT NULL,
-        task_id TEXT NOT NULL CHECK (length(task_id) BETWEEN 1 AND 256),
-        canonical_url TEXT NOT NULL CHECK (length(canonical_url) BETWEEN 1 AND 2048),
-        proved_job_id TEXT NOT NULL REFERENCES jobs(job_id),
-        observed_at TEXT NOT NULL,
-        PRIMARY KEY (provider, profile_id, project_resource_id, task_id),
-        FOREIGN KEY (provider, profile_id, project_resource_id)
-          REFERENCES provider_projects(provider, profile_id, resource_id)
-          ON DELETE CASCADE
-      );
-      CREATE TABLE IF NOT EXISTS provider_task_conversations (
-        provider TEXT NOT NULL CHECK (length(provider) BETWEEN 1 AND 128),
-        profile_id TEXT NOT NULL CHECK (length(profile_id) BETWEEN 1 AND 128),
-        task_id TEXT NOT NULL CHECK (length(task_id) BETWEEN 1 AND 256),
-        canonical_url TEXT NOT NULL CHECK (length(canonical_url) BETWEEN 1 AND 2048),
-        proved_job_id TEXT NOT NULL REFERENCES jobs(job_id),
-        observed_at TEXT NOT NULL,
-        PRIMARY KEY (provider, profile_id, task_id)
-      );
-    `)
-  }
-
-  private createIndexes() {
-    this.exec(`
-      CREATE INDEX IF NOT EXISTS jobs_status_created_at_idx
-        ON jobs(status, created_at);
-      CREATE INDEX IF NOT EXISTS jobs_profile_status_fifo_idx
-        ON jobs(profile_id, status, created_at, job_id);
-      CREATE INDEX IF NOT EXISTS jobs_provider_profile_submitted_idx
-        ON jobs(provider, profile_id, provider_submitted_at);
-      CREATE INDEX IF NOT EXISTS provider_projects_exact_name_idx
-        ON provider_projects(provider, profile_id, name, resource_id);
     `)
   }
 
@@ -1227,7 +1043,7 @@ export class JobStore {
       `SELECT
         job_id, profile_id,
         provider, status, request_json, result_json, error_json,
-        blocker_json, provider_attempts_json,
+        blocker_json,
         provider_submitted_at,
         created_at, updated_at
        FROM jobs
@@ -1298,7 +1114,6 @@ export function publicView(job: Job): JobView {
     result_json: job.result_json,
     error_json: job.error_json,
     blocker_json: job.blocker_json,
-    provider_attempts_json: job.provider_attempts_json,
     provider_submitted_at: job.provider_submitted_at,
     created_at: job.created_at,
     updated_at: job.updated_at,
@@ -1361,7 +1176,6 @@ function rowToJob(row: Record<string, unknown>): Job {
     result_json: parseOptionalJson(row.result_json),
     error_json: parseOptionalJson(row.error_json),
     blocker_json: parseOptionalJson(row.blocker_json),
-    provider_attempts_json: parseJson(row.provider_attempts_json),
     provider_submitted_at: nullableString(row.provider_submitted_at),
     created_at: String(row.created_at),
     updated_at: String(row.updated_at),
@@ -1409,79 +1223,12 @@ function normalizeWebAiStagedAttachment(value: WebAiStagedAttachment): WebAiStag
   }
 }
 
-type ProviderAttempt = {
-  attempt: number
-  provider: string
-  status: string
-  startedAt: string
-  completedAt: string | null
-  blocker: unknown | null
+function providerMappingKey(provider: string, profileId: string, resourceId: string) {
+  return `${provider}\u0000${profileId}\u0000${resourceId}`
 }
 
-function providerAttempt(attempt: number, provider: string, status: string, startedAt: string): ProviderAttempt {
-  return { attempt, provider, status, startedAt, completedAt: null, blocker: null }
-}
-
-function providerAttempts(value: unknown): ProviderAttempt[] {
-  if (!Array.isArray(value)) return []
-  return value.filter((entry): entry is ProviderAttempt => Boolean(
-    entry && typeof entry === 'object' &&
-    Number.isSafeInteger((entry as ProviderAttempt).attempt) &&
-    typeof (entry as ProviderAttempt).provider === 'string' &&
-    typeof (entry as ProviderAttempt).status === 'string' &&
-    typeof (entry as ProviderAttempt).startedAt === 'string'
-  ))
-}
-
-function updateCurrentProviderAttempt(
-  job: Job,
-  status: string,
-  blocker: unknown | null = null,
-  completedAt: string | null = null,
-) {
-  const attempts = providerAttempts(job.provider_attempts_json)
-  const current = attempts.at(-1) ?? providerAttempt(1, job.provider, 'queued', job.created_at)
-  return [
-    ...attempts.slice(0, -1),
-    { ...current, status, blocker, completedAt },
-  ]
-}
-
-function rowToProviderProject(row: Record<string, unknown>): ProviderProjectMapping {
-  return {
-    provider: String(row.provider),
-    profile_id: String(row.profile_id),
-    resource_id: String(row.resource_id),
-    name: String(row.name),
-    canonical_url: String(row.canonical_url),
-    first_observed_at: String(row.first_observed_at),
-    last_observed_at: String(row.last_observed_at),
-    last_visible_proof: String(row.last_visible_proof),
-    creation_job_id: nullableString(row.creation_job_id),
-  }
-}
-
-function rowToProviderConversation(row: Record<string, unknown>): ProviderConversationMapping {
-  return {
-    provider: String(row.provider),
-    profile_id: String(row.profile_id),
-    project_resource_id: String(row.project_resource_id),
-    task_id: String(row.task_id),
-    canonical_url: String(row.canonical_url),
-    proved_job_id: String(row.proved_job_id),
-    observed_at: String(row.observed_at),
-  }
-}
-
-function rowToProviderTaskConversation(row: Record<string, unknown>): ProviderTaskConversationMapping {
-  return {
-    provider: String(row.provider),
-    profile_id: String(row.profile_id),
-    task_id: String(row.task_id),
-    canonical_url: String(row.canonical_url),
-    proved_job_id: String(row.proved_job_id),
-    observed_at: String(row.observed_at),
-  }
+function providerTaskMappingKey(provider: string, profileId: string, taskId: string) {
+  return `${provider}\u0000${profileId}\u0000${taskId}`
 }
 
 function outputSavingsEventsFromResult(jobId: string, resultJson: unknown): OutputSavingsEvent[] {

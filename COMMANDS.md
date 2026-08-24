@@ -376,7 +376,7 @@ tokenless profiles add -P work --set-default --json
 
 Reads profiles from `config.json` and returns every managed profile.
 
-The shared `<TOKENLESS_HOME>/tokenless.sqlite3` stores jobs and provider history; it does not store profile records.
+The Tokenless API database `<TOKENLESS_HOME>/tokenless.sqlite3` stores jobs only; provider submission history is derived from those jobs, and profile records remain in `config.json`.
 
 ```bash
 tokenless profiles list
@@ -527,7 +527,7 @@ Provider selection:
 - Unknown and sign-in-required observations are not usable for implicit routing. If no cached provider is usable, the CLI returns `provider_unavailable` with provider observation context before creating a daemon job.
 - A known capability with no complete route returns `task_capability_route_unavailable` before browser mutation. `--capability` currently requires the normal `submit_and_read` action.
 - Successful submissions return and durably store `capabilityRoute`, including normalized requirements, selected strategies, support level, evidence identifiers, and runtime eligibility; `tokenless state` returns the same route.
-- Implicit `submit_and_read` runs may keep an automatic fallback plan in the current execution. Before mutation, every attempt rechecks known local provider capacity, the visible session, and capability-specific UI without a probe prompt. Classified safe pre-submit capacity, auth, CAPTCHA, rate/plan, maintenance, region, navigation, stable-surface, and capability-availability failures immediately try the next ranked provider only when it satisfies the identical complete requirements and no external mutation has completed. Exact or mapped continuation, explicit providers, provider-specific controls, ambiguous external state, and post-submission failures never switch automatically. JSON state includes ranked `fallback.routes`, structured stop reasons, and `providerAttempts`.
+- Implicit `submit_and_read` runs may keep an automatic fallback plan in the current execution. Before mutation, every attempt rechecks known local provider capacity, the visible session, and capability-specific UI without a probe prompt. Classified safe pre-submit capacity, auth, CAPTCHA, rate/plan, maintenance, region, navigation, stable-surface, and capability-availability failures immediately try the next ranked provider only when it satisfies the identical complete requirements and no external mutation has completed. Exact or mapped continuation, explicit providers, provider-specific controls, ambiguous external state, and post-submission failures never switch automatically. JSON state includes ranked `fallback.routes` and structured stop reasons.
 - The job validator independently derives capabilities from actions, attachment MIME types, and native workspace intent, so internal or agent callers cannot under-declare a fallback requirement. Routed jobs carry `tokenless.context-envelope.v1`; its instructions, references, output/constraint contract, optional upstream state, and delivery hashes are reused unchanged on each fallback attempt. JSON state exposes only a redacted envelope summary.
 
 Prompt input:
@@ -575,9 +575,9 @@ Workspace modes:
 - Routed `run` requests using `auto` or `native` require the canonical `workspace.native` capability. No provider route is currently advertised, so these requests fail before browser mutation until the native Project release gate is complete.
 - The lower-level Claude and Grok adapters implement experimental visible native Project create/reuse behavior for their explicit real-provider acceptance suite; implementation alone is not a router support claim.
 - After `workspace.native` becomes routeable, `native` will require exact native Project creation or reuse and will never degrade to conversation scope. Duplicate exact visible names fail closed.
-- `conversation` requires the conversation-scoped strategy; cross-process restoration is supported only where the real-provider capability matrix proves it.
+- `conversation` requires the conversation-scoped strategy and reuses mappings only within the current daemon process.
 - Native results report `created` or `reused`, canonical provider resource identity, provider/profile scope, and the instruction outcome. Conversation results report `fallback`.
-- Project and task conversation targets are persisted as exact SQLite mappings rather than recovered by scanning historical job results.
+- Project and task conversation targets are exact process-local mappings. Restarting the daemon forgets them.
 
 ### `tokenless state`
 

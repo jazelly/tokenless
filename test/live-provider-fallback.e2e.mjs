@@ -149,21 +149,7 @@ test('real visible provider blocker falls back under one current job', { timeout
   assert.equal(completed.status, 'succeeded')
   assert.equal(completed.job.job_id, jobId)
   assert.equal(completed.job.provider, fallback.id)
-  const attempts = completed.job.provider_attempts_json
-  assert.equal(Array.isArray(attempts), true)
-  assert.equal(attempts.length, 2)
-  assert.deepEqual(attempts.map((attempt) => [attempt.provider, attempt.status]), [
-    [primary.id, 'blocked'],
-    [fallback.id, 'succeeded'],
-  ])
-  assert.equal(structuredBlockerCodes(attempts[0]?.blocker).some((code) => (
-    code === 'provider_sign_in_required' ||
-    code === 'provider_sign_in_visible' ||
-    code === 'provider_sign_in_navigation' ||
-    code === 'provider_sign_in_url' ||
-    code === 'visible_cloudflare_turnstile' ||
-    code === 'visible_cloudflare_interstitial'
-  )), true, JSON.stringify(attempts[0]?.blocker, null, 2))
+  assert.equal(Object.hasOwn(completed.job, 'provider_attempts_json'), false)
   assert.deepEqual(completed.job.request_json.capabilityRoute.requirements, [
     playwright.TASK_CAPABILITIES.CONVERSATION_CHAT,
     playwright.TASK_CAPABILITIES.FILE_UPLOAD,
@@ -194,7 +180,7 @@ test('real visible provider blocker falls back under one current job', { timeout
   const statePayload = JSON.parse(state.stdout)
   assert.equal(statePayload.latest.jobId, jobId)
   assert.equal(statePayload.latest.provider, fallback.id)
-  assert.deepEqual(statePayload.latest.providerAttempts, attempts)
+  assert.equal(Object.hasOwn(statePayload.latest, 'providerAttempts'), false)
   await fs.rm(attachmentPath, { force: true })
   liveAttachmentPath = undefined
 })

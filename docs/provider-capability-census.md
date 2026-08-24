@@ -197,4 +197,4 @@ Document, presentation, spreadsheet, and website capabilities must declare their
 - Stale cached access is `unchecked`, not trusted as live eligibility. Every attempt performs a read-only visible session and capability-UI preflight before mutation; no probe prompt is allowed.
 - The job contract independently derives requirements from actions, attachment MIME types, and native workspace intent. A route that omits an action-required capability is invalid even when an internal caller supplied it.
 - Automatic fallback consumes the ranked list without capability degradation. When no provider satisfies `research.deep` or another mandatory capability, routing stops with `task_capability_route_unavailable` rather than falling back to plain chat.
-- The result records the canonical requirements, selected provider, provider strategies, runtime observations, evidence, ranked remaining routes, structured attempt failures, and same-execution provider attempt history.
+- The result records the canonical requirements, selected provider, provider strategies, runtime observations, evidence, and ranked remaining routes.

@@ -41,7 +41,6 @@
         "result_json": null,
         "error_json": null,
         "blocker_json": null,
-        "provider_attempts_json": [],
         "provider_submitted_at": null,
         "created_at": "2026-07-26T00:00:00Z",
         "updated_at": "2026-07-26T00:00:00Z"
@@ -114,7 +113,6 @@
         },
         "error_json": null,
         "blocker_json": null,
-        "provider_attempts_json": [],
         "provider_submitted_at": "2026-07-26T00:00:30Z",
         "created_at": "2026-07-26T00:00:00Z",
         "updated_at": "2026-07-26T00:01:00Z"
@@ -235,20 +233,14 @@
             "profile_id": "work",
             "resource_id": "project-1",
             "name": "Tokenless E2E project-1",
-            "canonical_url": "https://claude.ai/project/project-1",
-            "first_observed_at": "2026-07-26T00:00:00Z",
-            "last_observed_at": "2026-07-26T00:01:00Z",
-            "last_visible_proof": "native-project-url-name-and-composer-visible",
-            "creation_job_id": "job-native-project-1"
+            "canonical_url": "https://claude.ai/project/project-1"
           },
           "conversation": {
             "provider": "claude",
             "profile_id": "work",
             "project_resource_id": "project-1",
             "task_id": "task-project-1",
-            "canonical_url": "https://claude.ai/project/project-1/chat/conversation-1",
-            "proved_job_id": "job-native-project-1",
-            "observed_at": "2026-07-26T00:01:00Z"
+            "canonical_url": "https://claude.ai/project/project-1/chat/conversation-1"
           }
         }
       }
@@ -262,9 +254,7 @@
           "provider": "chatgpt",
           "profile_id": "work",
           "task_id": "task-1",
-          "canonical_url": "https://chatgpt.com/c/conversation-1",
-          "proved_job_id": "job-1",
-          "observed_at": "2026-07-26T00:01:00Z"
+          "canonical_url": "https://chatgpt.com/c/conversation-1"
         }
       }
     }

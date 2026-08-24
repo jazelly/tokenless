@@ -2043,7 +2043,6 @@ async function executeDaemonJob({
       provider: resolvedProvider,
       executionMode,
       capabilityRoute: resolvedCapabilityRoute,
-      providerAttempts: resolvedJob.provider_attempts_json ?? [],
       profile: publicManagedProfile(submitted.profile, submitted.profile.slug),
       projectName,
       chatName,
@@ -5069,7 +5068,6 @@ function publicDaemonJobState(job: Record<string, any>) {
     capabilityRoute: request.capabilityRoute ?? null,
     fallback: fallbackState(request.fallback),
     context: contextEnvelopeState(request.context),
-    providerAttempts: job.provider_attempts_json ?? [],
     providerSubmittedAt: job.provider_submitted_at ?? null,
     browserVisibility: request.browserVisibility,
     projectName: metadata.projectName,
@@ -5186,7 +5184,6 @@ function waitingForUserPayload({
     taskId,
     provider,
     capabilityRoute,
-    providerAttempts: waitResult?.job?.provider_attempts_json ?? job.provider_attempts_json ?? [],
     profile: publicManagedProfile(profile, profile.slug),
     projectName,
     chatName,
@@ -6688,7 +6685,6 @@ function formatCompactPayload(payload: Record<string, any>) {
     ['roots', 'browser-roots'],
     ['browsers', 'browsers'],
     ['cleared', 'cleared'],
-    ['providerAttempts', 'provider-attempts'],
   ] as const) {
     if (Array.isArray(payload[key])) details.push(`${label}=${payload[key].length}`)
   }

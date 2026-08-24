@@ -174,10 +174,10 @@ async function createReadyManagedProfile(homeDir) {
 
 function replacePromptHistory(database, profileId, timestamps, modelLabel = null) {
   database.exec('DELETE FROM jobs;')
-  const insert = database.prepare(`INSERT INTO jobs (
+    const insert = database.prepare(`INSERT INTO jobs (
       job_id, profile_id, provider, status,
-      request_json, provider_attempts_json, provider_submitted_at, created_at, updated_at
-    ) VALUES (?, ?, 'chatgpt', 'succeeded', ?, '[]', ?, ?, ?)`)
+      request_json, provider_submitted_at, created_at, updated_at
+    ) VALUES (?, ?, 'chatgpt', 'succeeded', ?, ?, ?, ?)`)
     for (const timestamp of timestamps) {
       const submittedAt = new Date(timestamp).toISOString()
       insert.run(

@@ -792,14 +792,11 @@ export class ManagedPlaywrightRunnerService {
         state.actionCursor = actionIndex + 1
         if (action.action === VISIBLE_ACTIONS.WORKSPACE_ENSURE && isNativeWorkspaceResult(response.result)) {
           await this.daemonClient.upsertProviderProject({
-            jobId: job.job_id,
             provider: request.provider,
             profileId: profile.slug,
             resourceId: response.result.resource.id,
             name: response.result.name,
             canonicalUrl: response.result.resource.canonicalUrl,
-            visibleProof: response.result.visibleProof,
-            created: response.result.resource.disposition === 'created',
             signal,
           })
         }
@@ -814,20 +811,9 @@ export class ManagedPlaywrightRunnerService {
           )
           if (conversationUrl) {
             await this.daemonClient.upsertProviderTaskConversation({
-              jobId: job.job_id,
               provider: request.provider,
-            profileId: profile.slug,
-              taskId: request.taskId,
-              canonicalUrl: conversationUrl,
-              signal,
-            })
-          }
-          if (workspace && conversationUrl) {
-            await this.daemonClient.upsertProviderConversation({
-              jobId: job.job_id,
-              provider: request.provider,
-            profileId: profile.slug,
-              projectResourceId: workspace.resource.id,
+              profileId: profile.slug,
+              ...(workspace ? { projectResourceId: workspace.resource.id } : {}),
               taskId: request.taskId,
               canonicalUrl: conversationUrl,
               signal,

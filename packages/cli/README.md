@@ -96,7 +96,7 @@ tokenless run \
 
 The catalog also contains future candidate outcomes so agents can inspect a stable vocabulary. A candidate is not routeable until its provider strategy and complete real-provider lifecycle are implemented and E2E-closed.
 
-Implicit normal runs keep compatible provider alternatives for the current execution. Before prompt submission, a provider-scoped auth, CAPTCHA, capacity, or plan blocker can immediately try the next provider whose real-E2E-closed route satisfies the run's complete requirements. Explicit providers, exact continuation, provider-specific controls, completed non-reconstructable mutations, and ambiguous submissions fail closed instead. Inspect `providerAttempts` and `fallback` through JSON state output.
+Implicit normal runs keep compatible provider alternatives for the current execution. Before prompt submission, a provider-scoped auth, CAPTCHA, capacity, or plan blocker can immediately try the next provider whose real-E2E-closed route satisfies the run's complete requirements. Explicit providers, exact continuation, provider-specific controls, completed non-reconstructable mutations, and ambiguous submissions fail closed instead. Inspect the current `provider` and `fallback` through JSON state output.
 
 ## Providers
 

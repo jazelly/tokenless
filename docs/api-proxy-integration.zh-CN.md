@@ -289,7 +289,7 @@ Browser/native 与 structured request 的 streaming 是 typed 且 terminal。它
 
 Ledger 不持久化 tool definition。两种形式都会根据当前请求中的 `tools` catalog 校验 history。
 
-本地 ledger 保留 canonical public transcript item 24 小时，最多 1,000 个 response。下次写入会清除全部过期 row；查询某个确切的过期 id 时只删除该 row，并为触发请求返回 `response_expired`。它不保存 credential、browser session、hidden reasoning，也不伪造 opaque item。因容量淘汰、未知或已删除而再次请求的 id 返回 `response_not_found`；更换 provider、exact model 或 execution mode 会在提交前返回 `response_route_mismatch`。当前 prompt-emulated route 不产生 provider opaque/reasoning item，因此 unknown reasoning 或 opaque replay 返回 `unverifiable_replay_item`。
+本地 ledger 只在进程内保留 canonical public transcript item，最多 1,000 个 response。daemon 重启或容量淘汰都会遗忘 id，因此缺失 id 返回 `response_not_found`。它不保存 credential、browser session、hidden reasoning，也不伪造 opaque item。更换 provider、exact model 或 execution mode 会在提交前返回 `response_route_mismatch`。当前 prompt-emulated route 不产生 provider opaque/reasoning item，因此 unknown reasoning 或 opaque replay 返回 `unverifiable_replay_item`。
 
 对于 `tokenless/auto`，portable ledger continuation 可在下一个 caller turn 选择另一 eligible provider。Exact provider model 仍保持 hard provider/model/execution affinity。
 
@@ -378,7 +378,6 @@ Responses V1 明确不包括 Conversations、background、WebSocket、hosted too
     "execution_mode": "browser",
     "provider_backend": "browser",
     "structured_control_strategy": null,
-    "provider_attempts": [{"attempt":1,"provider":"chatgpt","status":"succeeded","started_at":"...","completed_at":"...","blocker_code":null,"blocker_classification":null}],
     "citations": [{"url": "https://example.com", "title": "Example"}]
   }
 }
@@ -436,7 +435,6 @@ OpenAI 文本使用 `finish_reason: stop`；通过校验的 function call 使用
 | `conversation_mode` | 实际 route：fresh/mapping-miss 为 `new-conversation`，命中 mapping 的 Responses continuation 为 `continue-conversation` |
 | `execution_mode` / `provider_backend` | 实际 execution route |
 | `structured_control_strategy` | `prompt_tool_envelope`、`prompt_json_envelope`，或 plain text 的 `null` |
-| `provider_attempts` | 单个 job 的脱敏 attempt 顺序/status 与 blocker classification |
 | `citations` | provider 渲染出的可见来源链接（如果有） |
 
 请记录 `job_id`。它是把客户端侧失败关联到本地 job record 的唯一句柄。
