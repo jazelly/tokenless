@@ -7,7 +7,7 @@ type Language = TokenlessLanguage
 const enMessages = {
     overview: 'Overview', profiles: 'Profiles', providers: 'Providers', capabilities: 'Capabilities', routing: 'Routing', jobs: 'Chat history', system: 'System',
     localDashboard: 'Local Dashboard', operationalSummary: 'Operational summary', overviewLede: 'The exact daemon, browser, provider, and job state on this machine.',
-    daemon: 'Daemon', browser: 'Browser runtime', activeProfiles: 'Active profiles', waitingJobs: 'Waiting jobs', healthy: 'Healthy',
+    daemon: 'Daemon', browser: 'Browser runtime', activeProfiles: 'Active profiles', waitingJobs: 'Waiting jobs', finishedJobs: 'Finished jobs', idle: 'Idle', healthy: 'Healthy',
     actionRequired: 'Action required', recentJobs: 'Recent jobs', showingLatest: 'Showing latest', recentConversations: 'conversations', moreChats: 'More chats', providerReadiness: 'Provider readiness', providerReadinessSummaryHelp: 'Providers currently detected as signed in for this profile.', noJobs: 'No jobs yet', noJobsBody: 'Conversations will appear here when Tokenless starts work.',
     profileManagement: 'Tokenless profiles', profilesLede: 'Manage provider tabs, purpose, and provider scope in your connected Chrome.',
     cleanProfileNote: 'Profiles organize Tokenless-owned tabs in your running Chrome. They do not copy or isolate your Chrome identity.',
@@ -60,7 +60,7 @@ const enMessages = {
 const zhMessages: Record<keyof typeof enMessages, string> = {
     overview: '概览', profiles: 'Profile', providers: 'Provider', capabilities: '能力', routing: '路由', jobs: '对话历史', system: '系统',
     localDashboard: '本地 Dashboard', operationalSummary: '运行概览', overviewLede: '查看这台机器上 daemon、浏览器、provider 和任务的真实状态。',
-    daemon: 'Daemon', browser: '浏览器运行时', activeProfiles: '活跃 profile', waitingJobs: '等待任务', healthy: '健康',
+    daemon: 'Daemon', browser: '浏览器运行时', activeProfiles: '活跃 profile', waitingJobs: '等待任务', finishedJobs: '已结束任务', idle: '空闲', healthy: '健康',
     actionRequired: '需要处理', recentJobs: '最近任务', showingLatest: '显示最近', recentConversations: '个对话', moreChats: '更多对话', providerReadiness: 'Provider 就绪状态', providerReadinessSummaryHelp: '当前 profile 中已检测为登录状态的 provider。', noJobs: '还没有任务', noJobsBody: 'Tokenless 开始工作后，对话会显示在这里。',
     profileManagement: 'Tokenless profile', profilesLede: '管理已连接 Chrome 中的 provider tab、用途和 provider 范围。',
     cleanProfileNote: 'Profile 用于组织 Chrome 中由 Tokenless 创建的 tab；它不会复制或隔离你的 Chrome identity。',

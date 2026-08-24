@@ -19,6 +19,11 @@
   } = $props()
 
   let waitingJobs = $derived(snapshot.jobs.filter((job) => job.status === 'waiting_for_user').length)
+  let finishedJobs = $derived(snapshot.jobs.filter((job) => ['succeeded', 'failed', 'canceled'].includes(job.status)).length)
+  let runtimeState = $derived(snapshot.runtime.status === 'running' && snapshot.runtime.activeJobCount === 0
+    ? 'idle'
+    : snapshot.runtime.status)
+  let runtimeLabel = $derived(runtimeState === 'idle' ? t('idle') : stateLabel(language, runtimeState))
   let savingsEnabled = $derived(snapshot.outputSavings.enabled === true)
   let savingsReady = $derived(savingsEnabled && snapshot.outputSavings.collection === 'enabled')
   let savingsState = $derived(!savingsEnabled ? 'disabled' : savingsReady ? 'ready' : 'pending')
@@ -39,9 +44,9 @@
   >
     <a href={`/dashboard/system/?profile=${encodeURIComponent(selectedProfile)}`} aria-label={t('manageOutputSavings')} data-dashboard-section="system">
       <span class="top-header-icon dark"><Calculator size={17} /></span>
-      <span class="top-header-value">
-        <small>{t('tokensSavedShort')}</small>
+      <span class="top-header-value" data-testid="header-tokens-saved">
         <strong>{savingsReady ? formatNumber(snapshot.outputSavings.summary.estimatedOutputTokens, language) : '—'}</strong>
+        <small>{t('tokensSavedShort')}</small>
       </span>
       <span class="top-header-detail">
         {#if !savingsEnabled}
@@ -59,10 +64,11 @@
     <span class:ok={snapshot.runtime.status === 'running'} class="status-dot"></span>
     <span class="top-header-runtime">
       <small>{t('runtime')}</small>
-      <strong>{stateLabel(language, snapshot.runtime.status)}</strong>
+      <strong data-testid="header-runtime-status" data-state={runtimeState}>{runtimeLabel}</strong>
     </span>
     <span class="top-header-job-count"><strong>{formatNumber(snapshot.runtime.activeJobCount, language)}</strong><small>{t('activeUnit')}</small></span>
     <span class="top-header-job-count"><strong>{formatNumber(waitingJobs, language)}</strong><small>{t('waitingJobs')}</small></span>
+    <span class="top-header-job-count" data-testid="header-finished-jobs"><strong>{formatNumber(finishedJobs, language)}</strong><small>{t('finishedJobs')}</small></span>
   </a>
 
   <div class="top-header-actions">
