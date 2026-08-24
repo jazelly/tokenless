@@ -49,7 +49,6 @@
     browser: 'chrome' | 'brave'
     browserExecutablePath: string
     daemonUrl: string
-    outputSavings: boolean
     defaultProfile: string
     apiProxy: DashboardConfigDocument['apiProxy']
     g4f: DashboardConfigDocument['g4f']
@@ -79,7 +78,6 @@
     browser: untrack(() => snapshot.config.browser === 'brave' ? 'brave' : 'chrome'),
     browserExecutablePath: '',
     daemonUrl: untrack(() => snapshot.config.daemonUrl ?? ''),
-    outputSavings: untrack(() => snapshot.config.outputSavings.enabled),
     defaultProfile: initialDefaultProfile,
     apiProxy: { enabled: false, conversationMode: 'new-conversation', executionMode: 'direct' },
     g4f: untrack(() => ({ ...snapshot.config.g4f })),
@@ -103,36 +101,54 @@
   let routerProviderId = $state('')
 
   onMount(() => {
-    void loadConfigDocument()
+    void loadConfigDocument(true)
   })
 
-  async function loadConfigDocument() {
+  async function fetchConfigDocument() {
     documentLoading = true
     documentError = ''
     try {
       const document = await actions.getConfigDocument()
       configDocument = document
-      global.browserExecutablePath = document.browserExecutablePath ?? ''
-      global.daemonUrl = document.daemonUrl ?? ''
-      global.defaultProfile = document.defaultProfile ?? ''
-      global.outputSavings = document.outputSavings.enabled
-      global.apiProxy = { ...document.apiProxy }
-      global.g4f = { ...document.g4f }
-      global.directProvider = {
-        defaultBackend: document.directProvider.defaultBackend,
-        providerBackends: { ...document.directProvider.providerBackends },
-      }
-      global.router = cloneRouter(document.router)
+      return document
     } catch (error) {
       documentError = error instanceof Error ? error.message : t('requestFailed')
+      return null
     } finally {
       documentLoading = false
     }
   }
 
+  function hydrateDrafts(document: DashboardConfigDocument) {
+    global.language = document.language as Language
+    global.browser = document.browser === 'brave' ? 'brave' : 'chrome'
+    global.browserExecutablePath = document.browserExecutablePath ?? ''
+    global.daemonUrl = document.daemonUrl ?? ''
+    global.defaultProfile = document.defaultProfile ?? ''
+    global.apiProxy = { ...document.apiProxy }
+    global.g4f = { ...document.g4f }
+    global.directProvider = {
+      defaultBackend: document.directProvider.defaultBackend,
+      providerBackends: { ...document.directProvider.providerBackends },
+    }
+    global.router = cloneRouter(document.router)
+    profileDrafts = Object.fromEntries(
+      Object.entries(document.profiles).map(([slug, profile]) => [slug, draftProfileFromConfig(slug, profile)]),
+    )
+  }
+
+  async function loadConfigDocument(hydrate = false) {
+    const document = await fetchConfigDocument()
+    if (document && hydrate) hydrateDrafts(document)
+  }
+
   async function toggleJsonView() {
     showJson = !showJson
-    if (showJson) await loadConfigDocument()
+    if (showJson) await fetchConfigDocument()
+  }
+
+  async function refreshConfigDocument() {
+    await fetchConfigDocument()
   }
 
   async function showFormError(message: string) {
@@ -151,7 +167,6 @@
       browserExecutablePath: global.browserExecutablePath.trim() || null,
       browserVisibility: 'headed',
       daemonUrl: global.daemonUrl.trim() || null,
-      outputSavings: { enabled: global.outputSavings },
       apiProxy: { ...global.apiProxy },
       g4f: { ...global.g4f },
       directProvider: {
@@ -162,7 +177,7 @@
     }
     try {
       await actions.updateConfig(input)
-      await loadConfigDocument()
+      await loadConfigDocument(true)
     } catch (error) {
       await showFormError(error instanceof Error ? error.message : t('requestFailed'))
     }
@@ -180,7 +195,7 @@
           ? { server: draft.proxyServer.trim(), bypass: splitBypass(draft.proxyBypass) }
           : null,
       })
-      await loadConfigDocument()
+      await loadConfigDocument(true)
     } catch (error) {
       await showFormError(error instanceof Error ? error.message : t('requestFailed'))
     }
@@ -312,6 +327,19 @@
     }
   }
 
+  function draftProfileFromConfig(slug: string, profile: DashboardConfigDocument['profiles'][string]): ProfileDraft {
+    return {
+      slug,
+      roleLabel: profile.roleLabel,
+      enabledProviders: [...profile.enabledProviders],
+      providerModes: cloneProviderModes(profile.providerModes),
+      proxyEnabled: profile.proxy !== null,
+      proxyServer: profile.proxy?.server ?? '',
+      proxyBypass: profile.proxy?.bypass.join(', ') ?? '',
+      runtimeBinding: profile.runtimeBinding,
+    }
+  }
+
   function cloneProviderModes(value: Record<string, readonly DashboardProviderExecutionMode[]>) {
     return Object.fromEntries(Object.entries(value).map(([provider, modes]) => [provider, [...modes]])) as Record<string, DashboardProviderExecutionMode[]>
   }
@@ -430,7 +458,7 @@
 
   <section class="settings-section system-card json-config-card" data-testid="config-json-card">
     <div class="settings-section-title"><div><h2>{t('jsonView')}</h2><p>{t('jsonViewHelp')}</p></div><Code2 size={17} /></div>
-    <div class="json-view-actions"><button class="button secondary" type="button" onclick={toggleJsonView} data-testid="config-json-toggle">{showJson ? t('structuredView') : t('showJson')}</button><button class="button secondary icon-label" type="button" disabled={documentLoading} onclick={loadConfigDocument} data-testid="config-json-refresh"><RefreshCw size={14} />{t('refresh')}</button></div>
+    <div class="json-view-actions"><button class="button secondary" type="button" onclick={toggleJsonView} data-testid="config-json-toggle">{showJson ? t('structuredView') : t('showJson')}</button><button class="button secondary icon-label" type="button" disabled={documentLoading} onclick={refreshConfigDocument} data-testid="config-json-refresh"><RefreshCw size={14} />{t('refresh')}</button></div>
     {#if showJson}{#if documentError}<div class="inline-feedback error" role="alert">{documentError}</div>{:else if documentLoading && !configDocument}<p class="form-note">{t('loading')}</p>{:else}<pre class="config-json" data-testid="config-json-view">{JSON.stringify(configDocument, null, 2)}</pre>{/if}{/if}
   </section>
 
