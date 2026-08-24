@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { Blocks, LayoutDashboard, ListChecks, PanelsTopLeft, Settings, UsersRound } from '@lucide/svelte'
+  import { Blocks, LayoutDashboard, MessageSquareText, PanelsTopLeft, Settings, UsersRound } from '@lucide/svelte'
   import { DashboardClient } from './dashboard-client.js'
   import { translate } from './i18n/index.js'
   import { DEFAULT_TOKENLESS_LANGUAGE, normalizeTokenlessLanguage } from 'tokenless-internal-shared/i18n'
@@ -60,6 +60,7 @@
   })
   const actions: DashboardActions = {
     updateConfig: (input, announce = true) => perform(() => client.updateConfig(input), announce),
+    getConfigDocument: () => client.getConfigDocument(),
     createProfile: (input, announce = true) => perform(() => client.createProfile(input), announce),
     updateProfile: (slug, input, announce = true) => perform(() => client.updateProfile(slug, input), announce),
     removeProfile: (slug, announce = true) => perform(() => client.removeProfile(slug), announce),
@@ -90,9 +91,10 @@
     { id: 'profiles' as const, label: t('profiles'), icon: UsersRound },
     { id: 'providers' as const, label: t('providers'), icon: PanelsTopLeft },
     { id: 'capabilities' as const, label: t('capabilities'), icon: Blocks },
-    { id: 'jobs' as const, label: t('jobs'), icon: ListChecks },
+    { id: 'jobs' as const, label: t('jobs'), icon: MessageSquareText },
     { id: 'system' as const, label: t('system'), icon: Settings },
   ])
+  const primaryNavigation = $derived(navigation.filter((item) => item.id !== 'system'))
 
   $effect(() => {
     document.documentElement.lang = language
@@ -305,7 +307,7 @@
     <aside class="rail">
       <div class="rail-brand"><img src="/dashboard/mark.png" alt="Tokenless" width="28" height="28" translate="no" /></div>
       <nav aria-label={t('primaryNavigation')}>
-        {#each navigation as item (item.id)}
+        {#each primaryNavigation as item (item.id)}
           {@const Icon = item.icon}
           <a
             class:active={section === item.id}
@@ -320,6 +322,17 @@
           ><Icon size={19} strokeWidth={1.8} /></a>
         {/each}
       </nav>
+      <a
+        class:active={section === 'system'}
+        class="rail-button rail-system-button"
+        href={sectionHref('system')}
+        aria-label={t('system')}
+        aria-current={section === 'system' ? 'page' : undefined}
+        title={t('system')}
+        data-tooltip={t('system')}
+        data-nav="system"
+        data-dashboard-section="system"
+      ><Settings size={19} strokeWidth={1.8} /></a>
       <div class="rail-status" class:offline aria-label={offline ? t('offline') : t('healthy')} title={offline ? t('offline') : t('healthy')}>
         <span></span>
       </div>

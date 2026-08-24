@@ -289,7 +289,7 @@ Continue in either official form:
 
 The ledger does not persist tool definitions. Both forms validate history against the `tools` catalog in the current request.
 
-The local ledger keeps canonical public transcript items in process memory, up to 1,000 responses. A daemon restart or capacity eviction forgets an id, so missing ids return `response_not_found`. It stores no credentials, browser session, hidden reasoning, or fabricated opaque item. Changing provider, exact model, or execution mode returns `response_route_mismatch` before submission. This prompt-emulated route produces no provider opaque/reasoning items, so unknown reasoning or opaque replay fails with `unverifiable_replay_item`.
+The local ledger stores canonical public transcript items in `tokenless.sqlite3` without expiry or count eviction. Unknown ids return `response_not_found`; a daemon restart does not erase a known response. It stores no credentials, browser session, hidden reasoning, or fabricated opaque item. Changing provider, exact model, or execution mode returns `response_route_mismatch` before submission. This prompt-emulated route produces no provider opaque/reasoning items, so unknown reasoning or opaque replay fails with `unverifiable_replay_item`.
 
 For `tokenless/auto`, a portable ledger continuation may select another eligible provider on the next caller turn. Exact provider models remain hard provider/model/execution affine.
 

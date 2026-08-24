@@ -88,6 +88,10 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
 
       assert.equal(await page.locator('.rail nav').getAttribute('aria-label'), 'Primary navigation')
       assert.equal(await page.locator('.rail [data-nav="jobs"]').evaluate((element) => element.tagName), 'A')
+      assert.equal(await page.locator('.rail nav [data-nav="system"]').count(), 0)
+      const jobsRailBox = await page.locator('.rail [data-nav="jobs"]').boundingBox()
+      const systemRailBox = await page.locator('.rail [data-nav="system"]').boundingBox()
+      assert.equal(jobsRailBox !== null && systemRailBox !== null && systemRailBox.y > jobsRailBox.y, true)
       assert.equal(new URL(page.url()).searchParams.get('profile'), 'work')
       assert.deepEqual(await page.locator('img').evaluateAll((images) => images.filter((image) => !image.hasAttribute('width') || !image.hasAttribute('height')).map((image) => image.getAttribute('src'))), [])
 
@@ -254,6 +258,16 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
 
       await activateNavigation(page, 'system')
       await page.getByTestId('output-savings-card').waitFor()
+      await page.getByTestId('config-json-card').waitFor()
+      assert.equal(await page.getByTestId('config-protocol').textContent(), 'tokenless.config.v1')
+      assert.equal(await page.getByTestId('config-api-proxy-enabled').count(), 1)
+      assert.equal(await page.getByTestId('config-g4f-enabled').count(), 1)
+      assert.equal(await page.getByTestId('config-direct-default-backend').count(), 1)
+      assert.equal(await page.getByTestId('config-router-enabled').count(), 1)
+      await page.getByTestId('config-json-toggle').click()
+      await page.getByTestId('config-json-view').waitFor()
+      assert.match(await page.getByTestId('config-json-view').textContent(), /"protocol"|"defaultProfile"|"apiProxy"/)
+      await page.getByTestId('config-json-refresh').click()
       assert.match(await page.getByTestId('output-savings-card').textContent(), /Output savings|enabled|10\.1 MB/i)
       assert.equal(await page.getByTestId('output-savings-install').isVisible(), true)
       assert.equal(await page.getByTestId('output-savings-disable').isVisible(), true)

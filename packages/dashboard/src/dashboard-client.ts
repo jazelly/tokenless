@@ -2,6 +2,7 @@ import { translate, translateError } from './i18n/index.js'
 import type {
   DashboardConfirmedDeletion,
   DashboardConfig,
+  DashboardConfigDocument,
   DashboardConfigUpdate,
   DashboardErrorEnvelope,
   DashboardJobDetail,
@@ -69,6 +70,10 @@ export class DashboardClient {
       method: 'PATCH',
       body: JSON.stringify(input),
     }))
+  }
+
+  async getConfigDocument(): Promise<DashboardConfigDocument> {
+    return await this.requireResult(this.request<DashboardConfigDocument>('/config-document', { method: 'GET' }))
   }
 
   async setup(input: DashboardSetupInput): Promise<DashboardProfile> {

@@ -145,8 +145,8 @@ test('provider rate-limit policy projects subscription-aware cadence from SQLite
     assert.equal(cli.status, 0, cli.stderr || cli.stdout)
     const cliPayload = JSON.parse(cli.stdout)
     assert.equal(cliPayload.ok, true)
-    assert.equal(cliPayload.capacity.subscription.planId, 'unknown')
-    assert.equal(cliPayload.capacity.decision, 'unknown')
+    assert.equal(cliPayload.capacity.subscription.planId, 'plus')
+    assert.equal(cliPayload.capacity.decision, 'defer')
   } finally {
     database?.close()
     await shutdownDaemon(daemon).catch(() => undefined)

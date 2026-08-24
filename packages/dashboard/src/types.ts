@@ -1,5 +1,6 @@
 import type {
   DashboardConfig,
+  DashboardConfigDocument,
   DashboardConfigUpdate,
   DashboardJobDetail,
   DashboardJobStatus,
@@ -25,6 +26,7 @@ export type {
   DashboardBrowserVisibility,
   DashboardCapability,
   DashboardConfig,
+  DashboardConfigDocument,
   DashboardConfigUpdate,
   DashboardConfirmedDeletion,
   DashboardDaemonStatus,
@@ -121,6 +123,7 @@ export type HarnessExtensionPairing = {
 
 export type DashboardActions = {
   updateConfig: (input: DashboardConfigUpdate, announce?: boolean) => Promise<DashboardConfig>
+  getConfigDocument: () => Promise<DashboardConfigDocument>
   createProfile: (input: DashboardProfileCreate, announce?: boolean) => Promise<DashboardProfile>
   updateProfile: (slug: string, input: DashboardProfileUpdate, announce?: boolean) => Promise<DashboardProfile>
   removeProfile: (slug: string, announce?: boolean) => Promise<DashboardProfileRemoval>

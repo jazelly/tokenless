@@ -44,12 +44,13 @@ small { color: var(--muted); font-size: 12px; font-weight: 450; }
 .rail { position: fixed; z-index: 30; inset: 0 auto 0 0; display: flex; width: 64px; flex-direction: column; align-items: center; border-right: 1px solid var(--line); background: var(--surface); }
 .rail-brand { display: grid; width: 100%; height: 70px; place-items: center; border-bottom: 1px solid var(--line-soft); }
 .rail-brand img { width: 28px; height: 28px; object-fit: contain; }
-.rail nav { display: flex; flex: 1; width: 100%; flex-direction: column; align-items: center; gap: 6px; padding-top: 24px; }
+.rail nav { display: flex; width: 100%; flex-direction: column; align-items: center; gap: 6px; padding-top: 24px; }
 .rail-button { position: relative; display: grid; width: 40px; height: 40px; place-items: center; border: 0; border-radius: 8px; background: transparent; color: #77746e; text-decoration: none; }
 .rail-button:hover { background: var(--surface-muted); color: var(--ink); }
 .rail-button.active { background: var(--ink); color: white; }
 .rail-button::after { position: absolute; z-index: 50; left: 48px; padding: 6px 8px; border-radius: 6px; background: var(--ink); color: white; content: attr(data-tooltip); font-size: 12px; opacity: 0; pointer-events: none; transform: translateX(-3px); transition: opacity 120ms, transform 120ms; white-space: nowrap; }
 .rail-button:hover::after, .rail-button:focus-visible::after { opacity: 1; transform: translateX(0); }
+.rail-system-button { margin-top: auto; margin-bottom: 10px; }
 .rail-status { display: grid; width: 64px; height: 64px; place-items: center; border-top: 1px solid var(--line-soft); }
 .rail-status span, .status-dot { width: 7px; height: 7px; border-radius: 999px; background: var(--subtle); }
 .rail-status span { background: var(--green); box-shadow: 0 0 0 4px rgb(47 138 87 / 10%); }
@@ -348,6 +349,8 @@ a.data-row:hover, button.data-row:hover { background: #faf9f7; }
 .system-grid { display: grid; grid-template-columns: minmax(280px, .72fr) minmax(440px, 1.28fr); align-items: start; gap: 16px; }
 .system-card { margin: 0; padding: 20px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
 .system-card .settings-section-title { border-bottom: 1px solid var(--line-soft); }
+.system-card-wide { grid-column: 1 / -1; }
+.settings-section-title p { max-width: 620px; margin-top: 5px; color: var(--muted); font-size: 12px; line-height: 1.45; }
 .system-actions { display: flex; grid-column: 1 / -1; justify-content: flex-end; gap: 8px; }
 .system-form-error { grid-column: 1 / -1; }
 .output-savings-card { margin-top: 16px; }
@@ -364,6 +367,35 @@ a.data-row:hover, button.data-row:hover { background: #faf9f7; }
 .diagnostics-section > header h2 { font-size: 15px; }
 .diagnostics-section > header p { margin-top: 4px; color: var(--muted); font-size: 11px; }
 .diagnostic-row { cursor: default; }
+.config-metadata-list { margin-top: 14px; }
+.config-default-profile { margin-top: 16px; }
+.switch-field { display: flex; min-height: 39px; align-items: center; justify-content: space-between; gap: 14px; }
+.switch-field > span { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.switch-field strong { font-size: 13px; font-weight: 620; }
+.switch-field small { color: var(--muted); font-size: 11px; line-height: 1.4; }
+.switch-field.compact { min-height: 30px; margin: 4px 0 6px; }
+.config-entry-list { display: flex; flex-direction: column; gap: 7px; }
+.config-entry-row, .config-router-row, .config-entry-add { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) 150px 36px; align-items: center; gap: 7px; }
+.config-entry-row strong { overflow: hidden; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.config-entry-row select, .config-entry-row input, .config-router-row input, .config-entry-add input { width: 100%; min-height: 36px; padding: 0 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); font-size: 12px; }
+.config-router-row { grid-template-columns: 170px minmax(0, 1fr) 36px; }
+.config-router-row input:first-child { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.config-entry-add { grid-template-columns: minmax(0, 1fr) auto; }
+.profile-config-block { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line-soft); }
+.profile-config-block > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.profile-config-block > header h3 { font-size: 15px; }
+.profile-config-block > header small { display: block; margin-top: 3px; }
+.profile-config-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 16px; }
+.profile-config-grid .field > input { margin-top: 0; }
+.config-check-grid { display: grid; max-height: 180px; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px 10px; overflow: auto; padding: 10px; border: 1px solid var(--line); border-radius: 7px; }
+.config-check-grid label, .config-mode-list label { display: flex; min-width: 0; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; }
+.config-check-grid label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.config-mode-list { display: flex; max-height: 220px; flex-direction: column; gap: 7px; overflow: auto; padding: 10px; border: 1px solid var(--line); border-radius: 7px; }
+.config-mode-list > div { display: flex; align-items: center; gap: 9px; }
+.config-mode-list strong { min-width: 90px; overflow: hidden; color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.json-config-card { margin-top: 16px; }
+.json-view-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.config-json { max-height: 620px; margin-top: 12px; }
 
 .providers-router { margin-top: 40px; padding-top: 32px; border-top: 1px solid var(--line); }
 .providers-router-header { margin-bottom: 16px; }
@@ -595,6 +627,11 @@ pre { max-width: 100%; max-height: 260px; overflow: auto; margin: 0; padding: 12
   .chat-record-body dl { grid-template-columns: 1fr; }
   .system-grid { grid-template-columns: 1fr; }
   .system-actions { grid-column: auto; }
+  .system-card-wide { grid-column: auto; }
+  .profile-config-grid { grid-template-columns: 1fr; }
+  .config-check-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .config-router-row { grid-template-columns: 1fr; }
+  .config-router-row .icon-button { justify-self: start; }
   .router-compatibility { grid-template-columns: 1fr; }
   .provider-detail-selections { grid-template-columns: 1fr; }
   .modal-backdrop { align-items: end; padding: 0; }

@@ -82,9 +82,9 @@ test('built daemon records output savings directly from a completed result', { t
 
     const measured = runSavings(homeDir, 'status')
     assert.equal(measured.outputSavings.collection, 'enabled')
-    assert.equal(measured.outputSavings.summary.estimated_output_tokens, 0)
-    assert.equal(measured.outputSavings.summary.response_count, 0)
-    assert.equal(measured.outputSavings.summary.job_count, 0)
+    assert.ok(measured.outputSavings.summary.estimated_output_tokens > 0)
+    assert.equal(measured.outputSavings.summary.response_count, 1)
+    assert.equal(measured.outputSavings.summary.job_count, 1)
 
     const enabled = runSavings(homeDir, 'enable')
     assert.equal(enabled.outputSavings.enabled, true)
@@ -98,9 +98,9 @@ test('built daemon records output savings directly from a completed result', { t
       checksumVerified: true,
       selfTestVerified: true,
     })
-    assert.equal(enabled.outputSavings.summary.estimated_output_tokens, 0)
-    assert.equal(enabled.outputSavings.summary.response_count, 0)
-    assert.equal(enabled.outputSavings.summary.job_count, 0)
+    assert.ok(enabled.outputSavings.summary.estimated_output_tokens > 0)
+    assert.equal(enabled.outputSavings.summary.response_count, 1)
+    assert.equal(enabled.outputSavings.summary.job_count, 1)
 
     const disabled = runSavings(homeDir, 'disable')
     assert.equal(disabled.outputSavings.enabled, false)

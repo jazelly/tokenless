@@ -31,7 +31,6 @@ import {
 export type { JobStatus } from '../errors.js'
 
 const MAX_OUTPUT_SAVINGS_SOURCE_BYTES = 4 * 1024 * 1024
-const API_RESPONSE_MAX_ENTRIES = 1_000
 
 export type Job = {
   job_id: string
@@ -135,10 +134,6 @@ export type ProviderTaskConversationMapping = {
   canonical_url: string
 }
 
-type ProviderTaskConversationRecord = ProviderTaskConversationMapping & {
-  project_resource_id?: string | undefined
-}
-
 export type WebAiBinding = {
   binding_ref: string
   provider_ref: string
@@ -215,10 +210,6 @@ export class JobStore {
 
   #db: DatabaseSync
   #closed = false
-  #apiResponses = new Map<string, ApiResponseLedgerEntry>()
-  #outputSavingsEvents = new Map<string, OutputSavingsEvent>()
-  #providerProjects = new Map<string, ProviderProjectMapping>()
-  #providerTaskConversations = new Map<string, ProviderTaskConversationRecord>()
   #webAiBindings = new Map<string, WebAiBinding>()
   #webAiStagedAttachments = new Map<string, WebAiStagedAttachmentRecord>()
   #webAiTurns = new Map<string, WebAiTurnRecord>()
@@ -247,10 +238,6 @@ export class JobStore {
   close() {
     if (this.#closed) return
     this.#closed = true
-    this.#apiResponses.clear()
-    this.#outputSavingsEvents.clear()
-    this.#providerProjects.clear()
-    this.#providerTaskConversations.clear()
     this.#webAiBindings.clear()
     this.#webAiStagedAttachments.clear()
     this.#webAiTurns.clear()
@@ -288,30 +275,30 @@ export class JobStore {
     if (Buffer.byteLength(transcriptJson, 'utf8') > MAX_OUTPUT_SAVINGS_SOURCE_BYTES) {
       throw invalidInput('response transcript exceeds the 4 MiB limit')
     }
-    if (this.#apiResponses.has(responseId)) throw invalidInput('response_id already exists')
-    this.#apiResponses.set(responseId, {
-      response_id: responseId,
+    if (this.get('SELECT response_id FROM api_response_ledger WHERE response_id = ?', responseId)) {
+      throw invalidInput('response_id already exists')
+    }
+    this.run(
+      `INSERT INTO api_response_ledger (
+        response_id, provider, model, execution_mode, transcript_json
+      ) VALUES (?, ?, ?, ?, ?)`,
+      responseId,
       provider,
       model,
-      execution_mode: input.execution_mode,
-      transcript: parseJson(transcriptJson) as unknown[],
-    })
-    while (this.#apiResponses.size > API_RESPONSE_MAX_ENTRIES) {
-      const oldest = this.#apiResponses.keys().next().value
-      if (typeof oldest !== 'string') break
-      this.#apiResponses.delete(oldest)
-    }
+      input.execution_mode,
+      transcriptJson,
+    )
     return this.getApiResponse(responseId)!
   }
 
   getApiResponse(responseId: string): ApiResponseLedgerEntry | null {
     const canonicalResponseId = apiResponseId(responseId)
-    const entry = this.#apiResponses.get(canonicalResponseId)
-    if (!entry) return null
-    return {
-      ...entry,
-      transcript: parseJson(stringifyJson(entry.transcript)) as unknown[],
-    }
+    const row = this.get(
+      `SELECT response_id, provider, model, execution_mode, transcript_json
+       FROM api_response_ledger WHERE response_id = ?`,
+      canonicalResponseId,
+    )
+    return row ? rowToApiResponse(row) : null
   }
 
   private insertJob(input: CreateJobInput) {
@@ -571,9 +558,20 @@ export class JobStore {
     const resourceId = mappingText(input.resource_id, 'resource_id', 256)
     const name = mappingText(input.name, 'name', 256)
     const canonicalUrl = canonicalMappingUrl(input.canonical_url)
-    const mapping = { provider, profile_id: profileId, resource_id: resourceId, name, canonical_url: canonicalUrl }
-    this.#providerProjects.set(providerMappingKey(provider, profileId, resourceId), mapping)
-    return { ...mapping }
+    this.run(
+      `INSERT INTO provider_projects (
+        provider, profile_id, resource_id, name, canonical_url
+      ) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(provider, profile_id, resource_id) DO UPDATE SET
+        name = excluded.name,
+        canonical_url = excluded.canonical_url`,
+      provider,
+      profileId,
+      resourceId,
+      name,
+      canonicalUrl,
+    )
+    return this.getProviderProject(provider, profileId, resourceId)
   }
 
   upsertProviderTaskConversation(input: {
@@ -591,14 +589,19 @@ export class JobStore {
       ? undefined
       : mappingText(input.project_resource_id, 'project_resource_id', 256)
     if (projectResourceId !== undefined) this.getProviderProject(provider, profileId, projectResourceId)
-    const mapping: ProviderTaskConversationRecord = {
+    this.run(
+      `INSERT INTO provider_task_conversations (
+        provider, profile_id, task_id, project_resource_id, canonical_url
+      ) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(provider, profile_id, task_id) DO UPDATE SET
+        project_resource_id = excluded.project_resource_id,
+        canonical_url = excluded.canonical_url`,
       provider,
-      profile_id: profileId,
-      task_id: taskId,
-      canonical_url: canonicalUrl,
-      ...(projectResourceId === undefined ? {} : { project_resource_id: projectResourceId }),
-    }
-    this.#providerTaskConversations.set(providerTaskMappingKey(provider, profileId, taskId), mapping)
+      profileId,
+      taskId,
+      projectResourceId ?? null,
+      canonicalUrl,
+    )
     return this.resolveProviderTaskConversation({ provider, profile_id: profileId, task_id: taskId }) as ProviderTaskConversationMapping
   }
 
@@ -610,14 +613,15 @@ export class JobStore {
     const provider = mappingText(input.provider, 'provider', 128)
     const profileId = mappingText(input.profile_id, 'profile_id', PROFILE_ID_CHARS)
     const taskId = mappingText(input.task_id, 'task_id', 256)
-    const mapping = this.#providerTaskConversations.get(providerTaskMappingKey(provider, profileId, taskId))
-    if (!mapping) return null
-    return {
-      provider: mapping.provider,
-      profile_id: mapping.profile_id,
-      task_id: mapping.task_id,
-      canonical_url: mapping.canonical_url,
-    }
+    const row = this.get(
+      `SELECT provider, profile_id, task_id, project_resource_id, canonical_url
+       FROM provider_task_conversations
+       WHERE provider = ? AND profile_id = ? AND task_id = ?`,
+      provider,
+      profileId,
+      taskId,
+    )
+    return row ? rowToProviderTaskConversation(row) : null
   }
 
   resolveProviderMapping(input: {
@@ -632,9 +636,15 @@ export class JobStore {
     const provider = mappingText(input.provider, 'provider', 128)
     const profileId = mappingText(input.profile_id, 'profile_id', PROFILE_ID_CHARS)
     const projectName = mappingText(input.project_name, 'project_name', 256)
-    const projects = [...this.#providerProjects.values()]
-      .filter((project) => project.provider === provider && project.profile_id === profileId && project.name === projectName)
-      .sort((left, right) => left.resource_id.localeCompare(right.resource_id))
+    const projects = this.all(
+      `SELECT provider, profile_id, resource_id, name, canonical_url
+       FROM provider_projects
+       WHERE provider = ? AND profile_id = ? AND name = ?
+       ORDER BY resource_id`,
+      provider,
+      profileId,
+      projectName,
+    ).map(rowToProviderProject)
     if (projects.length === 0) return null
     if (projects.length > 1) {
       throw invalidInput('provider project mapping is ambiguous for the exact visible name')
@@ -652,21 +662,29 @@ export class JobStore {
   }
 
   private getProviderProject(provider: string, profileId: string, resourceId: string) {
-    const mapping = this.#providerProjects.get(providerMappingKey(provider, profileId, resourceId))
-    if (!mapping) throw invalidInput('provider project mapping was not found')
-    return { ...mapping }
+    const row = this.get(
+      `SELECT provider, profile_id, resource_id, name, canonical_url
+       FROM provider_projects
+       WHERE provider = ? AND profile_id = ? AND resource_id = ?`,
+      provider,
+      profileId,
+      resourceId,
+    )
+    if (!row) throw invalidInput('provider project mapping was not found')
+    return rowToProviderProject(row)
   }
 
   private findProviderConversation(provider: string, profileId: string, projectResourceId: string, taskId: string) {
-    const mapping = this.#providerTaskConversations.get(providerTaskMappingKey(provider, profileId, taskId))
-    if (!mapping || mapping.project_resource_id !== projectResourceId) return null
-    return {
-      provider: mapping.provider,
-      profile_id: mapping.profile_id,
-      project_resource_id: projectResourceId,
-      task_id: mapping.task_id,
-      canonical_url: mapping.canonical_url,
-    }
+    const row = this.get(
+      `SELECT provider, profile_id, task_id, project_resource_id, canonical_url
+       FROM provider_task_conversations
+       WHERE provider = ? AND profile_id = ? AND task_id = ? AND project_resource_id = ?`,
+      provider,
+      profileId,
+      taskId,
+      projectResourceId,
+    )
+    return row ? rowToProviderConversation(row) : null
   }
 
   takeNextJob(
@@ -884,47 +902,68 @@ export class JobStore {
   }
 
   outputSavingsSummary(): OutputSavingsSummary {
-    let estimatedOutputTokens = 0
-    let visibleCharacters = 0
-    const jobs = new Set<string>()
-    let firstMeasuredAt: string | null = null
-    let lastMeasuredAt: string | null = null
-    for (const event of this.#outputSavingsEvents.values()) {
-      estimatedOutputTokens += event.estimated_output_tokens
-      visibleCharacters += event.visible_characters
-      jobs.add(event.job_id)
-      if (firstMeasuredAt === null || event.measured_at < firstMeasuredAt) firstMeasuredAt = event.measured_at
-      if (lastMeasuredAt === null || event.measured_at > lastMeasuredAt) lastMeasuredAt = event.measured_at
-    }
+    const row = this.get(
+      `SELECT
+         COALESCE(SUM(estimated_output_tokens), 0) AS estimated_output_tokens,
+         COALESCE(SUM(visible_characters), 0) AS visible_characters,
+         COUNT(*) AS response_count,
+         COUNT(DISTINCT job_id) AS job_count,
+         MIN(measured_at) AS first_measured_at,
+         MAX(measured_at) AS last_measured_at
+       FROM output_savings_events`,
+    )
     return {
-      estimated_output_tokens: estimatedOutputTokens,
-      visible_characters: visibleCharacters,
-      response_count: this.#outputSavingsEvents.size,
-      job_count: jobs.size,
-      first_measured_at: firstMeasuredAt,
-      last_measured_at: lastMeasuredAt,
+      estimated_output_tokens: Number(row?.estimated_output_tokens ?? 0),
+      visible_characters: Number(row?.visible_characters ?? 0),
+      response_count: Number(row?.response_count ?? 0),
+      job_count: Number(row?.job_count ?? 0),
+      first_measured_at: nullableString(row?.first_measured_at),
+      last_measured_at: nullableString(row?.last_measured_at),
     }
   }
 
   outputSavingsForJob(jobId: string): OutputSavingsEvent[] {
-    return [...this.#outputSavingsEvents.values()]
-      .filter((event) => event.job_id === jobId)
-      .sort((left, right) => left.measured_at.localeCompare(right.measured_at) || left.response_request_id.localeCompare(right.response_request_id))
-      .map((event) => ({ ...event }))
+    return this.all(
+      `SELECT job_id, response_request_id, estimated_output_tokens, visible_characters,
+              estimator, estimator_revision, basis, source_text_sha256, measured_at
+       FROM output_savings_events
+       WHERE job_id = ?
+       ORDER BY measured_at ASC, response_request_id ASC`,
+      jobId,
+    ).map(rowToOutputSavingsEvent)
   }
 
   clearOutputSavings() {
-    const cleared = this.#outputSavingsEvents.size
-    this.#outputSavingsEvents.clear()
-    return { cleared }
+    const result = this.run('DELETE FROM output_savings_events')
+    return { cleared: Number(result.changes) }
   }
 
   private recordOutputSavingsForJob(jobId: string, resultJson: unknown) {
     const events = outputSavingsEventsFromResult(jobId, resultJson)
     if (events.length === 0) return
     for (const event of events) {
-      const key = `${event.job_id}\u0000${event.response_request_id}\u0000${event.estimator_revision}`
-      this.#outputSavingsEvents.set(key, event)
+      this.run(
+        `INSERT INTO output_savings_events (
+          job_id, response_request_id, estimated_output_tokens, visible_characters,
+          estimator, estimator_revision, basis, source_text_sha256, measured_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(job_id, response_request_id, estimator_revision) DO UPDATE SET
+          estimated_output_tokens = excluded.estimated_output_tokens,
+          visible_characters = excluded.visible_characters,
+          estimator = excluded.estimator,
+          basis = excluded.basis,
+          source_text_sha256 = excluded.source_text_sha256,
+          measured_at = excluded.measured_at`,
+        event.job_id,
+        event.response_request_id,
+        event.estimated_output_tokens,
+        event.visible_characters,
+        event.estimator,
+        event.estimator_revision,
+        event.basis,
+        event.source_text_sha256,
+        event.measured_at,
+      )
     }
   }
 
@@ -1034,6 +1073,47 @@ export class JobStore {
         provider_submitted_at TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS provider_projects (
+        provider TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
+        resource_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        canonical_url TEXT NOT NULL,
+        PRIMARY KEY (provider, profile_id, resource_id)
+      );
+      CREATE TABLE IF NOT EXISTS provider_task_conversations (
+        provider TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
+        task_id TEXT NOT NULL,
+        project_resource_id TEXT,
+        canonical_url TEXT NOT NULL,
+        PRIMARY KEY (provider, profile_id, task_id)
+      );
+      CREATE TABLE IF NOT EXISTS api_response_ledger (
+        response_id TEXT PRIMARY KEY NOT NULL,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        execution_mode TEXT NOT NULL,
+        transcript_json TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS output_savings_events (
+        job_id TEXT NOT NULL,
+        response_request_id TEXT NOT NULL,
+        estimated_output_tokens INTEGER NOT NULL,
+        visible_characters INTEGER NOT NULL,
+        estimator TEXT NOT NULL,
+        estimator_revision TEXT NOT NULL,
+        basis TEXT NOT NULL,
+        source_text_sha256 TEXT NOT NULL,
+        measured_at TEXT NOT NULL,
+        PRIMARY KEY (job_id, response_request_id, estimator_revision)
+      );
+      CREATE TABLE IF NOT EXISTS provider_statuses (
+        profile_id TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        status_json TEXT NOT NULL,
+        PRIMARY KEY (profile_id, provider)
       );
     `)
   }
@@ -1182,6 +1262,65 @@ function rowToJob(row: Record<string, unknown>): Job {
   }
 }
 
+function rowToApiResponse(row: Record<string, unknown>): ApiResponseLedgerEntry {
+  const executionMode = String(row.execution_mode)
+  if (executionMode !== 'browser' && executionMode !== 'direct') {
+    throw invalidInput('stored response execution_mode is invalid')
+  }
+  const transcript = parseJson(row.transcript_json)
+  if (!Array.isArray(transcript)) throw jsonError(new Error('stored response transcript is not an array'))
+  return {
+    response_id: String(row.response_id),
+    provider: String(row.provider),
+    model: String(row.model),
+    execution_mode: executionMode,
+    transcript,
+  }
+}
+
+function rowToProviderProject(row: Record<string, unknown>): ProviderProjectMapping {
+  return {
+    provider: String(row.provider),
+    profile_id: String(row.profile_id),
+    resource_id: String(row.resource_id),
+    name: String(row.name),
+    canonical_url: String(row.canonical_url),
+  }
+}
+
+function rowToProviderConversation(row: Record<string, unknown>): ProviderConversationMapping {
+  return {
+    provider: String(row.provider),
+    profile_id: String(row.profile_id),
+    project_resource_id: String(row.project_resource_id),
+    task_id: String(row.task_id),
+    canonical_url: String(row.canonical_url),
+  }
+}
+
+function rowToProviderTaskConversation(row: Record<string, unknown>): ProviderTaskConversationMapping {
+  return {
+    provider: String(row.provider),
+    profile_id: String(row.profile_id),
+    task_id: String(row.task_id),
+    canonical_url: String(row.canonical_url),
+  }
+}
+
+function rowToOutputSavingsEvent(row: Record<string, unknown>): OutputSavingsEvent {
+  return {
+    job_id: String(row.job_id),
+    response_request_id: String(row.response_request_id),
+    estimated_output_tokens: Number(row.estimated_output_tokens),
+    visible_characters: Number(row.visible_characters),
+    estimator: String(row.estimator),
+    estimator_revision: String(row.estimator_revision),
+    basis: 'visible_assistant_text',
+    source_text_sha256: String(row.source_text_sha256),
+    measured_at: String(row.measured_at),
+  }
+}
+
 function webAiRef(value: unknown, field: string) {
   if (typeof value !== 'string' || !/^(?:provider|binding|attachment|turn|conversation):[a-f0-9]{32}$/.test(value)) {
     throw invalidInput(`${field} is invalid`)
@@ -1221,14 +1360,6 @@ function normalizeWebAiStagedAttachment(value: WebAiStagedAttachment): WebAiStag
     byte_length: value.byte_length,
     sha256: value.sha256,
   }
-}
-
-function providerMappingKey(provider: string, profileId: string, resourceId: string) {
-  return `${provider}\u0000${profileId}\u0000${resourceId}`
-}
-
-function providerTaskMappingKey(provider: string, profileId: string, taskId: string) {
-  return `${provider}\u0000${profileId}\u0000${taskId}`
 }
 
 function outputSavingsEventsFromResult(jobId: string, resultJson: unknown): OutputSavingsEvent[] {

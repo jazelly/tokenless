@@ -45,6 +45,7 @@ import { OUTPUT_SAVINGS_ESTIMATOR } from '../output-savings/catalog.js'
 import { OutputSavingsRuntimeManager } from '../output-savings/runtime-manager.js'
 import type {
   DashboardConfig,
+  DashboardConfigDocument,
   DashboardConfigUpdate,
   DashboardConfirmedDeletion,
   DashboardDiagnostic,
@@ -179,6 +180,7 @@ export class TokenlessApplicationServices {
         job,
         profiles,
         this.store.outputSavingsForJob(job.job_id),
+        publicConversationUrl(this.store, job),
       )),
       diagnostics: await this.diagnostics(config, profiles, runtime, outputSavings, nativeBrowser),
     }
@@ -253,6 +255,13 @@ export class TokenlessApplicationServices {
         pid: process.pid,
       },
       outputSavings,
+    }
+  }
+
+  async configDocument(): Promise<DashboardConfigDocument> {
+    return {
+      ...await this.readConfig(),
+      configPath: configPath(this.store.homeDir),
     }
   }
 
@@ -576,7 +585,19 @@ export class TokenlessApplicationServices {
   }
 
   async updateConfig(input: DashboardConfigUpdate): Promise<DashboardConfig> {
-    requireKnownFields(input, ['browser', 'browserExecutablePath', 'browserVisibility', 'language', 'router'])
+    requireKnownFields(input, [
+      'defaultProfile',
+      'browser',
+      'browserExecutablePath',
+      'browserVisibility',
+      'daemonUrl',
+      'language',
+      'outputSavings',
+      'apiProxy',
+      'g4f',
+      'directProvider',
+      'router',
+    ])
     const current = await this.readConfig()
     const browserVisibility = input.browserVisibility === undefined
       ? 'headed'
@@ -623,10 +644,16 @@ export class TokenlessApplicationServices {
     }
     const saved = await writeTokenlessConfig({
       homeDir: this.store.homeDir,
+      defaultProfile: input.defaultProfile,
       browser: requestedBrowser,
       browserExecutablePath: requestedBrowserExecutablePath,
       browserVisibility: 'headed',
+      daemonUrl: input.daemonUrl,
       language,
+      outputSavings: input.outputSavings,
+      apiProxy: input.apiProxy,
+      g4f: input.g4f,
+      directProvider: input.directProvider,
       router: input.router,
     })
     return publicConfig(saved)
@@ -747,7 +774,7 @@ export class TokenlessApplicationServices {
   }
 
   async createProfile(input: DashboardProfileCreate): Promise<DashboardProfile> {
-    requireKnownFields(input, ['slug', 'roleLabel', 'enabledProviders', 'providerModes', 'browserVisibility', 'setDefault'])
+    requireKnownFields(input, ['slug', 'roleLabel', 'enabledProviders', 'providerModes', 'browserVisibility', 'proxy', 'setDefault'])
     const slug = requiredSlug(input.slug)
     const browserVisibility = input.browserVisibility === undefined
       ? 'headed'
@@ -760,7 +787,7 @@ export class TokenlessApplicationServices {
         : providerList(input.enabledProviders),
       providerModes: input.providerModes === undefined ? defaultProviderModes() : providerModes(input.providerModes),
       browserVisibility: 'headed' as const,
-      proxy: null,
+      proxy: input.proxy === undefined ? null : input.proxy,
     }
     const profile = await this.profiles.addProfile({
       slug,
@@ -778,7 +805,7 @@ export class TokenlessApplicationServices {
   }
 
   async updateProfile(slug: string, input: DashboardProfileUpdate): Promise<DashboardProfile> {
-    requireKnownFields(input, ['roleLabel', 'enabledProviders', 'providerModes', 'browserVisibility', 'setDefault'])
+    requireKnownFields(input, ['roleLabel', 'enabledProviders', 'providerModes', 'browserVisibility', 'proxy', 'setDefault'])
     let profile = await this.profiles.resolveProfile(slug)
     const current = profileConfig(await this.readConfig(), profile.slug)
     const browserVisibility = input.browserVisibility === undefined
@@ -792,7 +819,7 @@ export class TokenlessApplicationServices {
         : providerList(input.enabledProviders),
       providerModes: input.providerModes === undefined ? current.providerModes : providerModes(input.providerModes),
       browserVisibility: 'headed' as const,
-      proxy: null,
+      proxy: input.proxy === undefined ? current.proxy : input.proxy,
     }
     if (input.setDefault === true) profile = await this.profiles.setDefault(slug)
     await this.updateProfileConfig(profile, next)

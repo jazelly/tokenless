@@ -560,10 +560,18 @@ function normalizeProfiles(value: unknown): Record<string, ManagedProfileConfig>
       enabledProviders: normalizeProviderList(candidate.enabledProviders),
       providerModes: normalizeProviderModes(candidate.providerModes),
       browserVisibility: 'headed',
-      proxy: null,
+      proxy: normalizeProfileProxy(candidate.proxy, profileId),
     }
   }
   return profiles
+}
+
+function normalizeProfileProxy(value: unknown, profileId: string) {
+  const proxy = normalizeManagedProfileProxy(value)
+  if (proxy === undefined) {
+    throw configError('tokenless_config_invalid', `Invalid proxy for profile '${profileId}'.`)
+  }
+  return proxy
 }
 
 function configuredProfiles(payload: JsonRecord): Record<string, ManagedProfileConfig> {

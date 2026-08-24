@@ -69,6 +69,17 @@ export type DashboardProfileConfig = {
   proxy: DashboardProxy | null
 }
 
+export type DashboardApiProxyConfig = {
+  enabled: boolean
+  conversationMode: 'new-conversation' | 'continue-conversation'
+  executionMode: 'browser' | 'direct'
+}
+
+export type DashboardDirectProviderConfig = {
+  defaultBackend: 'native' | 'g4f'
+  providerBackends: { [provider: string]: 'native' | 'g4f' }
+}
+
 export type DashboardRouterProviderRule = {
   id: string
   suitableTasks: string
@@ -97,11 +108,36 @@ export type DashboardConfig = {
   router: DashboardRouterConfig
 }
 
+/** The authenticated, fresh-on-request representation of config.json. */
+export type DashboardConfigDocument = {
+  protocol: string
+  updatedAt: string | null
+  defaultProfile: string | null
+  profiles: { [slug: string]: DashboardProfileConfig }
+  browser: DashboardBrowserSelection
+  browserExecutablePath: string | null
+  browserVisibility: DashboardBrowserVisibility
+  daemonUrl: string | null
+  language: DashboardLanguage
+  outputSavings: { enabled: boolean }
+  apiProxy: DashboardApiProxyConfig
+  g4f: { enabled: boolean }
+  directProvider: DashboardDirectProviderConfig
+  router: DashboardRouterConfig
+  configPath?: string
+}
+
 export type DashboardConfigUpdate = {
+  defaultProfile?: string | null
   browser?: DashboardBrowserSelection
   browserExecutablePath?: string | null
   browserVisibility?: DashboardBrowserVisibility
+  daemonUrl?: string | null
   language?: DashboardLanguage
+  outputSavings?: { enabled: boolean }
+  apiProxy?: DashboardApiProxyConfig
+  g4f?: { enabled: boolean }
+  directProvider?: DashboardDirectProviderConfig
   router?: DashboardRouterConfig
 }
 
@@ -141,6 +177,7 @@ export type DashboardProfileCreate = {
   enabledProviders?: string[]
   providerModes?: { [provider: string]: DashboardProviderExecutionMode[] }
   browserVisibility?: DashboardBrowserVisibility
+  proxy?: DashboardProxy | null
   setDefault?: boolean
 }
 
@@ -149,6 +186,7 @@ export type DashboardProfileUpdate = {
   enabledProviders?: string[]
   providerModes?: { [provider: string]: DashboardProviderExecutionMode[] }
   browserVisibility?: DashboardBrowserVisibility
+  proxy?: DashboardProxy | null
   setDefault?: boolean
 }
 

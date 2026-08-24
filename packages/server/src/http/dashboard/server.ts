@@ -137,6 +137,10 @@ export class TokenlessDashboardServer {
       this.writeJson(response, 200, snapshot, { etag })
       return true
     }
+    if (method === 'GET' && url.pathname === '/dashboard-api/v1/config-document') {
+      this.writeJson(response, 200, await this.services.configDocument())
+      return true
+    }
     const jobMatch = /^\/dashboard-api\/v1\/jobs\/([^/]+)(?:\/(cancel))?$/.exec(url.pathname)
     if (jobMatch && method === 'GET' && !jobMatch[2]) {
       this.writeJson(response, 200, await this.services.job(decodeURIComponent(jobMatch[1] ?? '')))

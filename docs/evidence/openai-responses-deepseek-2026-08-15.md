@@ -31,7 +31,7 @@ The function stream event types were `response.created`, `response.in_progress`,
 
 The built daemon HTTP integration exercised missing, expired, provider mismatch, exact-model mismatch, execution-mode mismatch, and unverifiable reasoning replay through `POST /v1/responses`. Each failed before profile resolution and before any provider job was created. Expiration used a real SQLite ledger row whose deadline was moved to the past; no provider response was synthesized.
 
-At the time of this historical run, the ledger retained canonical public transcript items for 24 hours and returned `response_expired` on the first expired lookup. That retention behavior was later removed: the current ledger is process-local, holds at most 1,000 entries, and reports restart, eviction, or absence as `response_not_found`.
+At the time of this historical run, the ledger retained canonical public transcript items for 24 hours and returned `response_expired` on the first expired lookup. That retention behavior was later removed: the current ledger persists canonical public transcript items in `tokenless.sqlite3` without expiry or count eviction; unknown ids return `response_not_found`.
 
 ## Diagnostic
 

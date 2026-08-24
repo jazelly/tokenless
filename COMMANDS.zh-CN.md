@@ -19,8 +19,8 @@
 | `tokenless config` | 读取或更新 Tokenless 持久化配置。 | 否 |
 | `tokenless upgrade` | 升级全局 CLI、skills、本地 runtime，并运行 doctor。 | 否 |
 | `tokenless profiles add` | 创建用于 tab 与 provider configuration 的逻辑 Tokenless profile。 | 否 |
-| `tokenless profiles list` | 列出 profiles 及当前进程中的 provider 检查结果。 | 否 |
-| `tokenless profiles status` | 实时检查一家 provider，并把结果保存在当前进程内存中。 | 是 |
+| `tokenless profiles list` | 列出 profiles 及已持久化的 provider 检查结果。 | 否 |
+| `tokenless profiles status` | 实时检查一家 provider，并把结果持久化到共享 Tokenless 数据库。 | 是 |
 | `tokenless profiles open` | 以 headed browser 打开 managed profile，可选择是否导航到 provider。 | 可选 |
 | `tokenless profiles set-default` | 设置默认 managed profile。 | 否 |
 | `tokenless profiles clear` | 作为人工维护操作删除一个或全部 managed profiles。 | 否 |
@@ -259,7 +259,7 @@ tokenless state --profile work --json
 tokenless doctor --json
 ```
 
-`doctor` 不会打开 provider 页面、刷新认证状态、启动 daemon 或修复状态。每个 `checks.configuration.issues` 都包含 code、本地化 message 和 next action。`checks.managedProfile.ok` 表示 profile/config 本身是否健康，`checks.profileRuntime.ok` 则独立表示该 profile 是否具有可解析的 browser binding。Provider readiness 来自当前进程中的 profile observation。`checks.providerReadiness.ok` 表示 configured providers 是否已有当前 observations；`usableProviders` 列出可用于隐式路由的 providers。因为 daemon 按需运行，正常停止的 daemon 和 embedded browser runtime 会被报告为健康的 stopped 状态，而不是安装损坏。
+`doctor` 不会打开 provider 页面、刷新认证状态、启动 daemon 或修复状态。每个 `checks.configuration.issues` 都包含 code、本地化 message 和 next action。`checks.managedProfile.ok` 表示 profile/config 本身是否健康，`checks.profileRuntime.ok` 则独立表示该 profile 是否具有可解析的 browser binding。Provider readiness 来自已持久化的 profile observation。`checks.providerReadiness.ok` 表示 configured providers 是否已有当前 observations；`usableProviders` 列出可用于隐式路由的 providers。因为 daemon 按需运行，正常停止的 daemon 和 embedded browser runtime 会被报告为健康的 stopped 状态，而不是安装损坏。
 
 主要选项：`--browser`、`--daemon-url`、`--home` 和 `--json`。
 
@@ -304,7 +304,7 @@ tokenless config \
 
 Provider membership 只属于 `profiles` 中选定的 entry。路由必须读到该 entry，绝不会 fallback 到全局 provider list。
 
-`config.json` 是唯一的 profile source。Profile slug 就是 profile identity，browser directory 由 `<TOKENLESS_HOME>/browser/profiles/<slug>` 派生；runtime binding、创建时间和更新时间与 profile 的 provider settings 一起保存在 config 中。Provider authentication observation 只保留在当前进程内，不会持久化。
+`config.json` 是唯一的 profile source。Profile slug 就是 profile identity，browser directory 由 `<TOKENLESS_HOME>/browser/profiles/<slug>` 派生；runtime binding、创建时间和更新时间与 profile 的 provider settings 一起保存在 config 中。Provider authentication observation 持久化在共享的 `<TOKENLESS_HOME>/tokenless.sqlite3` 中。
 
 完整 config shape 如下：
 
@@ -376,7 +376,7 @@ tokenless profiles add -P work --set-default --json
 
 读取 `config.json` 中的 profiles，并返回全部 managed profiles。
 
-Tokenless API 数据库 `<TOKENLESS_HOME>/tokenless.sqlite3` 只存储 jobs；provider submission history 从 jobs 推导，profile records 仍保存在 `config.json`。
+共享的 `<TOKENLESS_HOME>/tokenless.sqlite3` 存储 jobs、provider Project 和 conversation mappings、Responses API continuation entries、output-savings events，以及 provider status observations。使用 Tokenless Harness 时，它会把 context table 加到同一个数据库。Provider submission history 从 jobs 推导，profile records 与 configuration 仍保存在 `config.json`。
 
 ```bash
 tokenless profiles list
@@ -387,7 +387,7 @@ tokenless profiles list --json
 
 ### `tokenless profiles status`
 
-对一家 provider 执行实时认证检查，然后在当前进程中更新 `auth`、可见 username、可见 subscription，以及新的 `checkedAt`。该 observation 不会持久化。
+对一家 provider 执行实时认证检查，然后在共享 Tokenless 数据库中持久化 `auth`、可见 username、可见 subscription，以及新的 `checkedAt`。
 
 ```bash
 tokenless profiles status -P work -p chatgpt --json
@@ -575,9 +575,9 @@ Workspace modes：
 - 使用 `auto` 或 `native` 的 routed `run` request 都要求 canonical `workspace.native` capability。目前没有 provider route 被公开，因此在 native Project release gate 完成前，这类 request 会在 browser mutation 之前失败。
 - Claude 与 Grok 的 lower-level adapter 已为显式真实 provider acceptance suite 实现实验性的可见原生 Project 创建/复用；仅有 implementation 不构成 router support 声明。
 - `workspace.native` 可路由后，`native` 将强制要求精确创建或复用原生 Project，绝不会降级到 conversation scope；出现重复的精确可见名称时 fail closed。
-- `conversation` 强制使用 conversation-scoped strategy，并且只在当前 daemon process 内复用 mapping。
+- `conversation` 强制使用 conversation-scoped strategy，并且复用共享 Tokenless 数据库中的 mapping。
 - 原生结果会报告 `created` 或 `reused`、canonical provider resource identity、provider/profile scope 和 instruction outcome；conversation 结果会报告 `fallback`。
-- Project 和 task conversation target 是当前进程内的精确 mapping；daemon 重启后会忘记它们。
+- Project 和 task conversation target 是保存在共享 Tokenless 数据库中的精确 mapping。
 
 ### `tokenless state`
 
@@ -613,7 +613,7 @@ tokenless cancel --job-id tlp_... --json
 tokenless provider-status -P default -p chatgpt --json
 ```
 
-如果需要实时检查并同时更新当前进程中的 profile observation，请使用 `tokenless profiles status`。
+如果需要实时检查并同时更新已持久化的 profile observation，请使用 `tokenless profiles status`。
 
 ### `tokenless provider-controls`
 
@@ -772,7 +772,7 @@ profiles list
 
 profiles status
     访问一家 provider，检查 auth/account controls，
-    并在当前进程内保存 auth、username、subscription 和 checkedAt
+    并在共享 tokenless.sqlite3 中保存 auth、username、subscription 和 checkedAt
 
 provider-status
     访问一家 provider 并返回实时 auth 结果，

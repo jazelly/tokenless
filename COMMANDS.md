@@ -19,8 +19,8 @@ This document is the public inventory of the `tokenless` command-line interface.
 | `tokenless config` | Read or update persistent Tokenless configuration. | None |
 | `tokenless upgrade` | Upgrade the global CLI, skills, local runtime, and run doctor. | None |
 | `tokenless profiles add` | Create a logical Tokenless profile for tabs and provider configuration. | None |
-| `tokenless profiles list` | List profiles and the current process's provider observations. | None |
-| `tokenless profiles status` | Check one provider live and keep the observation in current process memory. | Yes |
+| `tokenless profiles list` | List profiles and their persisted provider observations. | None |
+| `tokenless profiles status` | Check one provider live and persist the observation in the shared Tokenless database. | Yes |
 | `tokenless profiles open` | Open a managed profile headed, optionally navigating to one provider. | Optional |
 | `tokenless profiles set-default` | Select the default managed profile. | None |
 | `tokenless profiles clear` | Delete one or all managed profiles as a human maintenance action. | None |
@@ -259,7 +259,7 @@ Performs a read-only health report over Node.js, installed skills, packaged runt
 tokenless doctor --json
 ```
 
-`doctor` does not open provider pages, refresh authentication, start the daemon, or repair state. Each `checks.configuration.issues` entry includes a code, localized message, and next action. `checks.managedProfile.ok` reports profile/config health, while `checks.profileRuntime.ok` independently reports whether that profile has a resolvable browser binding. Provider readiness comes from the current process's profile observation. `checks.providerReadiness.ok` reports whether configured providers have current observations; `usableProviders` lists the providers eligible for implicit routing. Because the daemon is on demand, a normally stopped daemon and embedded browser runtime are reported as healthy stopped state rather than installation damage.
+`doctor` does not open provider pages, refresh authentication, start the daemon, or repair state. Each `checks.configuration.issues` entry includes a code, localized message, and next action. `checks.managedProfile.ok` reports profile/config health, while `checks.profileRuntime.ok` independently reports whether that profile has a resolvable browser binding. Provider readiness comes from the persisted profile observation. `checks.providerReadiness.ok` reports whether configured providers have current observations; `usableProviders` lists the providers eligible for implicit routing. Because the daemon is on demand, a normally stopped daemon and embedded browser runtime are reported as healthy stopped state rather than installation damage.
 
 Main options: `--browser`, `--daemon-url`, `--home`, and `--json`.
 
@@ -304,7 +304,7 @@ Configurable values:
 
 Provider membership belongs only to the selected entry in `profiles`. Routing requires that entry and never falls back to a global provider list.
 
-`config.json` is the only profile source. A profile slug is its identity, its browser directory is derived as `<TOKENLESS_HOME>/browser/profiles/<slug>`, and runtime binding plus creation/update timestamps live beside the profile's provider settings. Provider authentication observations are process-local and are not persisted.
+`config.json` is the only profile source. A profile slug is its identity, its browser directory is derived as `<TOKENLESS_HOME>/browser/profiles/<slug>`, and runtime binding plus creation/update timestamps live beside the profile's provider settings. Provider authentication observations are persisted in the shared `<TOKENLESS_HOME>/tokenless.sqlite3`.
 
 The config shape is:
 
@@ -376,7 +376,7 @@ tokenless profiles add -P work --set-default --json
 
 Reads profiles from `config.json` and returns every managed profile.
 
-The Tokenless API database `<TOKENLESS_HOME>/tokenless.sqlite3` stores jobs only; provider submission history is derived from those jobs, and profile records remain in `config.json`.
+The shared `<TOKENLESS_HOME>/tokenless.sqlite3` stores jobs, provider Project and conversation mappings, Responses API continuation entries, output-savings events, and provider status observations. Tokenless Harness adds its context table to the same database when used. Provider submission history is derived from jobs, while profile records and configuration remain in `config.json`.
 
 ```bash
 tokenless profiles list
@@ -387,7 +387,7 @@ This command is fast, read-only, and has no browser side effects. Provider field
 
 ### `tokenless profiles status`
 
-Performs a live authentication check against one provider, then updates `auth`, visible username, visible subscription, and a new `checkedAt` value in the current process. The observation is not persisted.
+Performs a live authentication check against one provider, then persists `auth`, visible username, visible subscription, and a new `checkedAt` value in the shared Tokenless database.
 
 ```bash
 tokenless profiles status -P work -p chatgpt --json
@@ -575,9 +575,9 @@ Workspace modes:
 - Routed `run` requests using `auto` or `native` require the canonical `workspace.native` capability. No provider route is currently advertised, so these requests fail before browser mutation until the native Project release gate is complete.
 - The lower-level Claude and Grok adapters implement experimental visible native Project create/reuse behavior for their explicit real-provider acceptance suite; implementation alone is not a router support claim.
 - After `workspace.native` becomes routeable, `native` will require exact native Project creation or reuse and will never degrade to conversation scope. Duplicate exact visible names fail closed.
-- `conversation` requires the conversation-scoped strategy and reuses mappings only within the current daemon process.
+- `conversation` requires the conversation-scoped strategy and reuses mappings stored in the shared Tokenless database.
 - Native results report `created` or `reused`, canonical provider resource identity, provider/profile scope, and the instruction outcome. Conversation results report `fallback`.
-- Project and task conversation targets are exact process-local mappings. Restarting the daemon forgets them.
+- Project and task conversation targets are exact mappings persisted in the shared Tokenless database.
 
 ### `tokenless state`
 
@@ -613,7 +613,7 @@ Performs a live provider authentication action and returns the result.
 tokenless provider-status -P default -p chatgpt --json
 ```
 
-For a live check that also updates the current process's profile observation, use `tokenless profiles status`.
+For a live check that also updates the persisted profile observation, use `tokenless profiles status`.
 
 ### `tokenless provider-controls`
 
@@ -772,7 +772,7 @@ profiles list
 
 profiles status
     visits one provider, checks auth/account controls,
-    and keeps auth, username, subscription, and checkedAt in current process memory
+    and persists auth, username, subscription, and checkedAt in the shared tokenless.sqlite3
 
 provider-status
     visits one provider and returns a live auth result,

@@ -416,7 +416,14 @@ test('SQLite completes current jobs and marks active jobs interrupted on reopen'
       ).all().map((row) => String(row.name)))
       assert.deepEqual(
         [...tables].sort(),
-        ['jobs'],
+        [
+          'api_response_ledger',
+          'jobs',
+          'output_savings_events',
+          'provider_projects',
+          'provider_statuses',
+          'provider_task_conversations',
+        ],
       )
       const jobColumns = database.prepare('PRAGMA table_info(jobs)').all().map((row) => String(row.name))
       assert.deepEqual(
@@ -450,7 +457,7 @@ test('SQLite completes current jobs and marks active jobs interrupted on reopen'
   }
 })
 
-test('provider Project and conversation mappings are process-local', {
+test('provider Project and conversation mappings survive store reopen', {
   timeout: 60_000,
 }, async () => {
   requireBuiltArtifacts()
@@ -524,19 +531,72 @@ test('provider Project and conversation mappings are process-local', {
     )
     store.close()
     store = await JobStore.open(homeDir)
+    assert.equal(store.resolveProviderTaskConversation({
+      provider: 'claude',
+      profile_id: 'profile-mapping',
+      task_id: 'task-mapping',
+    }).canonical_url, 'https://claude.ai/project/project-resource/chat/conversation-resource')
     assert.equal(store.resolveProviderMapping({
       provider: 'claude',
       profile_id: 'profile-mapping',
       project_name: 'TOKENLESS_E2E_PROJECT_MAPPING',
       task_id: 'task-mapping',
-    }), null)
-    assert.equal(store.resolveProviderTaskConversation({
+    }).project.resource_id, 'project-resource')
+    assert.equal(store.resolveProviderMapping({
       provider: 'claude',
       profile_id: 'profile-mapping',
+      project_name: 'TOKENLESS_E2E_PROJECT_MAPPING',
       task_id: 'task-mapping',
-    }), null)
+    }).conversation.canonical_url, 'https://claude.ai/project/project-resource/chat/conversation-resource')
   } finally {
     store.close()
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('provider auth observations survive ManagedProfileRegistry reopen', async () => {
+  requireBuiltArtifacts()
+  const homeDir = tempHome('tokenless-provider-statuses-')
+  const { ManagedProfileRegistry } = await importPlaywright()
+  try {
+    const registry = new ManagedProfileRegistry(homeDir)
+    await registry.addProfile({ slug: 'status-profile', setDefault: true })
+    const status = {
+      provider: 'chatgpt',
+      auth: 'authenticated',
+      access: 'signed_in_paid',
+      checkedAt: '2099-08-04T00:00:00.000Z',
+      account: {
+        name: 'Persisted User',
+        subscription: 'Plus',
+        tier: { class: 'signed_in_paid', label: 'Plus' },
+      },
+    }
+    await registry.updateProviderStatus('status-profile', status)
+    await assert.rejects(
+      registry.updateProviderStatus('status-profile', {
+        ...status,
+        provider: 'not-a-provider',
+      }),
+      (error) => error.code === 'invalid_provider_status',
+    )
+    const reopened = new ManagedProfileRegistry(homeDir)
+    const profile = await reopened.resolveProfile('status-profile')
+    assert.deepEqual(profile.lastObservedAuth.chatgpt, status)
+
+    const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'))
+    try {
+      database.prepare(
+        'INSERT INTO provider_statuses (profile_id, provider, status_json) VALUES (?, ?, ?)',
+      ).run('status-profile', 'claude', JSON.stringify({ ...status, provider: 'claude', auth: 'invalid' }))
+    } finally {
+      database.close()
+    }
+    await assert.rejects(
+      new ManagedProfileRegistry(homeDir).resolveProfile('status-profile'),
+      (error) => error.code === 'invalid_provider_status',
+    )
+  } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
@@ -833,6 +893,29 @@ test('built Playwright validators enforce the current internal schema IDs', {
   )
 })
 
+test('SQLite preserves the Responses ledger across store reopen', async () => {
+  requireBuiltArtifacts()
+  const homeDir = tempHome('tokenless-response-ledger-')
+  const { JobStore } = await import(`${pathToFileURL(path.join(cliDir, 'dist/server/src/jobs/store.js')).href}?test=${randomUUID()}`)
+  let store = await JobStore.open(homeDir)
+  try {
+    const entry = store.putApiResponse({
+      response_id: `resp_${'a'.repeat(32)}`,
+      provider: 'chatgpt',
+      model: 'tokenless/chatgpt',
+      execution_mode: 'browser',
+      transcript: [{ role: 'user', content: 'persisted response input' }],
+    })
+    assert.deepEqual(entry.transcript, [{ role: 'user', content: 'persisted response input' }])
+    store.close()
+    store = await JobStore.open(homeDir)
+    assert.deepEqual(store.getApiResponse(entry.response_id), entry)
+  } finally {
+    store.close()
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
 test('SQLite preserves provider fallback under one current job id', async () => {
   requireBuiltArtifacts()
   const homeDir = tempHome('tokenless-provider-fallback-store-')
@@ -1078,8 +1161,15 @@ test('SQLite attributes measured visible output to its triggering job', async ()
     )
     store.close()
     store = await JobStore.open(homeDir)
-    assert.equal(store.outputSavingsSummary().estimated_output_tokens, 0)
-    assert.deepEqual(store.clearOutputSavings(), { cleared: 0 })
+    assert.deepEqual(store.outputSavingsSummary(), {
+      estimated_output_tokens: 2,
+      visible_characters: 11,
+      response_count: 1,
+      job_count: 1,
+      first_measured_at: '2099-08-04T00:00:00.000Z',
+      last_measured_at: '2099-08-04T00:00:00.000Z',
+    })
+    assert.deepEqual(store.clearOutputSavings(), { cleared: 1 })
     assert.deepEqual(store.outputSavingsSummary(), {
       estimated_output_tokens: 0,
       visible_characters: 0,

@@ -371,6 +371,18 @@ test('local web control plane opens directly, establishes Dashboard sessions, an
     assert.equal(changed.status, 200)
     assert.equal((await changed.json()).language, 'zh-CN')
 
+    const configDocumentBefore = await fetch(`${daemon.origin}/dashboard-api/v1/config-document`, { headers: { cookie } })
+    assert.equal(configDocumentBefore.status, 200)
+    assert.equal(configDocumentBefore.headers.get('cache-control'), 'no-store')
+    const configDocumentBeforeBody = await configDocumentBefore.json()
+    assert.equal(typeof configDocumentBeforeBody.protocol, 'string')
+    assert.equal(typeof configDocumentBeforeBody.configPath, 'string')
+    assert.equal(Object.hasOwn(configDocumentBeforeBody, 'apiProxy'), true)
+    await writeTokenlessConfig({ homeDir, daemonUrl: 'http://127.0.0.1:18787' })
+    const configDocumentAfter = await fetch(`${daemon.origin}/dashboard-api/v1/config-document`, { headers: { cookie } })
+    assert.equal(configDocumentAfter.status, 200)
+    assert.equal((await configDocumentAfter.json()).daemonUrl, 'http://127.0.0.1:18787')
+
     const disableSavings = await fetch(`${daemon.origin}/dashboard-api/v1/output-savings/disable`, {
       method: 'POST',
       headers: {
@@ -447,6 +459,59 @@ test('local web control plane opens directly, establishes Dashboard sessions, an
     assert.equal(Object.hasOwn(createdProfileBody, 'preferences'), false)
     assert.equal(Object.hasOwn(await registry.resolveProfile('work'), 'label'), false)
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8')).profiles.work.enabledProviders, ['chatgpt'])
+
+    const fullConfigPatch = await fetch(`${daemon.origin}/dashboard-api/v1/config`, {
+      method: 'PATCH',
+      headers: {
+        cookie,
+        origin: daemon.origin,
+        'x-tokenless-csrf': sessionBody.csrf,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        defaultProfile: 'work',
+        daemonUrl: daemon.origin,
+        outputSavings: { enabled: false },
+        apiProxy: { enabled: true, conversationMode: 'continue-conversation', executionMode: 'browser' },
+        g4f: { enabled: true },
+        directProvider: { defaultBackend: 'native', providerBackends: { chatgpt: 'native' } },
+        router: { enabled: false, engine: 'chrome-prompt-api', providers: [] },
+      }),
+    })
+    assert.equal(fullConfigPatch.status, 200)
+    const fullConfig = JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8'))
+    assert.equal(fullConfig.defaultProfile, 'work')
+    assert.equal(fullConfig.daemonUrl, daemon.origin)
+    assert.deepEqual(fullConfig.apiProxy, { enabled: true, conversationMode: 'continue-conversation', executionMode: 'browser' })
+    assert.deepEqual(fullConfig.g4f, { enabled: true })
+    assert.deepEqual(fullConfig.directProvider, { defaultBackend: 'native', providerBackends: { chatgpt: 'native' } })
+
+    const profileProxyPatch = await fetch(`${daemon.origin}/dashboard-api/v1/profiles/work`, {
+      method: 'PATCH',
+      headers: {
+        cookie,
+        origin: daemon.origin,
+        'x-tokenless-csrf': sessionBody.csrf,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ proxy: { server: 'http://127.0.0.1:8080', bypass: ['localhost'] } }),
+    })
+    assert.equal(profileProxyPatch.status, 200)
+    assert.deepEqual((await profileProxyPatch.json()).proxy, { server: 'http://127.0.0.1:8080/', bypass: ['localhost'] })
+    const profileProxyConfig = JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8'))
+    assert.deepEqual(profileProxyConfig.profiles.work.proxy, { server: 'http://127.0.0.1:8080/', bypass: ['localhost'] })
+    const profileRolePatch = await fetch(`${daemon.origin}/dashboard-api/v1/profiles/work`, {
+      method: 'PATCH',
+      headers: {
+        cookie,
+        origin: daemon.origin,
+        'x-tokenless-csrf': sessionBody.csrf,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ roleLabel: 'Work profile' }),
+    })
+    assert.equal(profileRolePatch.status, 200)
+    assert.deepEqual((await profileRolePatch.json()).proxy, { server: 'http://127.0.0.1:8080/', bypass: ['localhost'] })
     const workProfile = await registry.resolveProfile('work')
     const profileConsole = await fetch(`${daemon.origin}/dashboard/?profile=${encodeURIComponent(workProfile.slug)}`, { headers: { cookie } })
     assert.equal(profileConsole.status, 200)
@@ -724,6 +789,28 @@ test('dashboard sessions are invalidated when the real daemon restarts', async (
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-ui-restart-')))
   let daemon = await startDaemon({ homeDir, host: '127.0.0.1', port: 0 })
   try {
+    const registry = new ManagedProfileRegistry(homeDir)
+    await registry.addProfile({ slug: 'restart-profile', setDefault: true })
+    const taskId = 'dashboard-restart-conversation'
+    const conversationUrl = 'https://chatgpt.com/c/dashboard-restart-conversation'
+    const job = daemon.store.createJob({
+      provider: 'chatgpt',
+      profile_id: 'restart-profile',
+      request_json: {
+        taskId,
+        actions: [{ action: 'prompt.input', payload: { text: 'Persist this Dashboard conversation' } }],
+      },
+    })
+    daemon.store.upsertProviderTaskConversation({
+      provider: 'chatgpt',
+      profile_id: 'restart-profile',
+      task_id: taskId,
+      canonical_url: conversationUrl,
+    })
+    const running = daemon.store.takeNextJob({}, 'restart-profile')
+    assert.equal(running.job_id, job.job_id)
+    daemon.store.completeJob(job.job_id, { result_json: { ok: true } })
+
     const root = await fetch(`${daemon.origin}/`, { redirect: 'manual' })
     const cookie = root.headers.get('set-cookie')?.split(';')[0]
     assert.match(cookie ?? '', /^tokenless_dashboard_session=/)
@@ -745,6 +832,12 @@ test('dashboard sessions are invalidated when the real daemon restarts', async (
     const replacementSession = await fetch(`${daemon.origin}/dashboard-api/v1/session`, { headers: { cookie } })
     assert.equal(replacementSession.status, 200)
     assert.match(replacementSession.headers.get('set-cookie') ?? '', /^tokenless_dashboard_session=/)
+    const replacementCookie = replacementSession.headers.get('set-cookie')?.split(';')[0]
+    const replacementSnapshot = await fetch(`${daemon.origin}/dashboard-api/v1/snapshot`, {
+      headers: { cookie: replacementCookie },
+    }).then((response) => response.json())
+    const restoredJob = replacementSnapshot.jobs.find((candidate) => candidate.jobId === job.job_id)
+    assert.equal(restoredJob?.conversationUrl, conversationUrl)
   } finally {
     await daemon.close()
     fs.rmSync(homeDir, { recursive: true, force: true })

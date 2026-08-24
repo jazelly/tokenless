@@ -1,6 +1,7 @@
 import { mkdir, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { isAbsolute, join, resolve, sep } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { providerRegistry } from '../../providers/registry.js'
 import { tokenlessError } from '../errors.js'
 import {
@@ -18,7 +19,17 @@ import type {
 } from '../../providers/registry.js'
 import type { BrowserRuntimeBinding } from '../../browser/runtime/types.js'
 
-const observedAuthByHome = new Map<string, Map<string, Partial<Record<ProviderId, ProviderStatus>>>>()
+const TOKENLESS_DATABASE_FILE = 'tokenless.sqlite3'
+const PROVIDER_AUTH_STATES = new Set(['authenticated', 'unauthenticated', 'unknown'])
+const PROVIDER_ACCESS_CLASSES = new Set([
+  'guest',
+  'sign_in_required',
+  'signed_in_free',
+  'signed_in_paid',
+  'signed_in_unknown',
+  'unknown',
+])
+const PROVIDER_ACCOUNT_CLASSES = new Set(['signed_in_free', 'signed_in_paid', 'signed_in_unknown'])
 
 export type ProviderStatus = {
   provider: ProviderId
@@ -63,7 +74,6 @@ export type ProfileRegistryPaths = {
 
 export class ManagedProfileRegistry {
   readonly paths: ProfileRegistryPaths
-  private readonly observedAuth: Map<string, Partial<Record<ProviderId, ProviderStatus>>>
 
   constructor(tokenlessHome = tokenlessHomeFromEnv()) {
     const resolvedHome = resolve(tokenlessHome)
@@ -72,8 +82,6 @@ export class ManagedProfileRegistry {
       browserDir: join(resolvedHome, 'browser'),
       profilesRoot: join(resolvedHome, 'browser', 'profiles'),
     }
-    this.observedAuth = observedAuthByHome.get(resolvedHome) ?? new Map()
-    observedAuthByHome.set(resolvedHome, this.observedAuth)
   }
 
   async addProfile(options: AddProfileOptions): Promise<ManagedProfileRecord> {
@@ -155,16 +163,24 @@ export class ManagedProfileRegistry {
       homeDir: this.paths.tokenlessHome,
       slug: normalized,
     })
-    this.observedAuth.delete(normalized)
+    this.withStatusDatabase((database) => {
+      database.prepare('DELETE FROM provider_statuses WHERE profile_id = ?').run(normalized)
+    })
     await rm(this.profileDirectory(normalized), { recursive: true, force: true })
     return { slug: normalized, removed: true }
   }
 
   async updateProviderStatus(slug: string, status: ProviderStatus): Promise<ManagedProfileRecord> {
     const profile = await this.resolveProfile(slug)
-    const current = this.observedAuth.get(profile.slug) ?? {}
-    this.observedAuth.set(profile.slug, { ...current, [status.provider]: status })
-    return { ...profile, lastObservedAuth: this.observedAuth.get(profile.slug) ?? {} }
+    const validated = validateProviderStatus(status)
+    this.withStatusDatabase((database) => {
+      database.prepare(
+        `INSERT INTO provider_statuses (profile_id, provider, status_json)
+         VALUES (?, ?, ?)
+         ON CONFLICT(profile_id, provider) DO UPDATE SET status_json = excluded.status_json`,
+      ).run(profile.slug, validated.provider, JSON.stringify(validated))
+    })
+    return { ...profile, lastObservedAuth: this.readObservedAuth(profile.slug) }
   }
 
   async bindRuntime(slug: string, runtimeBinding: BrowserRuntimeBinding): Promise<ManagedProfileRecord> {
@@ -211,7 +227,44 @@ export class ManagedProfileRegistry {
       slug,
       directory: this.profileDirectory(slug),
       ...(profile.runtimeBinding ? { runtimeBinding: profile.runtimeBinding } : {}),
-      lastObservedAuth: this.observedAuth.get(slug) ?? {},
+      lastObservedAuth: this.readObservedAuth(slug),
+    }
+  }
+
+  private readObservedAuth(slug: string): Partial<Record<ProviderId, ProviderStatus>> {
+    return this.withStatusDatabase((database) => {
+      const statuses: Partial<Record<ProviderId, ProviderStatus>> = {}
+      for (const row of database.prepare(
+        'SELECT provider, status_json FROM provider_statuses WHERE profile_id = ?',
+      ).all(slug)) {
+        const provider = String(row.provider)
+        try {
+          const status = validateProviderStatus(JSON.parse(String(row.status_json)))
+          if (status.provider !== provider) throw new Error('provider does not match its status row')
+          statuses[status.provider] = status
+        } catch (error) {
+          throw tokenlessError('invalid_provider_status', 'Stored provider status is malformed.', { cause: error })
+        }
+      }
+      return statuses
+    })
+  }
+
+  private withStatusDatabase<T>(callback: (database: DatabaseSync) => T): T {
+    const database = new DatabaseSync(join(this.paths.tokenlessHome, TOKENLESS_DATABASE_FILE))
+    try {
+      database.exec(`
+        PRAGMA busy_timeout = 250;
+        CREATE TABLE IF NOT EXISTS provider_statuses (
+          profile_id TEXT NOT NULL,
+          provider TEXT NOT NULL,
+          status_json TEXT NOT NULL,
+          PRIMARY KEY (profile_id, provider)
+        );
+      `)
+      return callback(database)
+    } finally {
+      database.close()
     }
   }
 
@@ -248,6 +301,52 @@ function defaultEnabledProviders() {
     .filter((provider) => provider.stage !== 'disabled')
     .sort((left, right) => left.setupOrder - right.setupOrder)
     .map((provider) => provider.id)
+}
+
+function validateProviderStatus(value: unknown): ProviderStatus {
+  if (
+    !isRecord(value) ||
+    !hasOnlyFields(value, ['provider', 'auth', 'access', 'checkedAt', 'account']) ||
+    !providerRegistry.resolve(value.provider) ||
+    !PROVIDER_AUTH_STATES.has(value.auth) ||
+    !PROVIDER_ACCESS_CLASSES.has(value.access) ||
+    typeof value.checkedAt !== 'string' ||
+    !validTimestamp(value.checkedAt)
+  ) {
+    throw tokenlessError('invalid_provider_status', 'Provider status is invalid.')
+  }
+  const account = value.account
+  if (account !== undefined && (
+    !isRecord(account) ||
+    !hasOnlyFields(account, ['name', 'subscription', 'tier']) ||
+    !nullableBoundedText(account.name) ||
+    !nullableBoundedText(account.subscription) ||
+    !isRecord(account.tier) ||
+    !hasOnlyFields(account.tier, ['class', 'label']) ||
+    !PROVIDER_ACCOUNT_CLASSES.has(account.tier.class) ||
+    !nullableBoundedText(account.tier.label)
+  )) {
+    throw tokenlessError('invalid_provider_status', 'Provider status account is invalid.')
+  }
+  return value as ProviderStatus
+}
+
+function hasOnlyFields(value: Record<string, unknown>, allowed: readonly string[]) {
+  const names = new Set(allowed)
+  return Object.keys(value).every((key) => names.has(key))
+}
+
+function nullableBoundedText(value: unknown) {
+  return value === null || (typeof value === 'string' && value.length <= 256)
+}
+
+function validTimestamp(value: string) {
+  if (value.length > 64) return false
+  try {
+    return new Date(value).toISOString() === value
+  } catch {
+    return false
+  }
 }
 
 function validateRuntimeBinding(value: BrowserRuntimeBinding): BrowserRuntimeBinding {
