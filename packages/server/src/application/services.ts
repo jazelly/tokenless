@@ -16,7 +16,7 @@ import {
   MANAGED_PLAYWRIGHT_JOB_ACTION,
 } from '../browser/job-contract.js'
 import { VISIBLE_ACTIONS } from '../providers/contracts.js'
-import { isG4fDirectOnlyProvider } from '../providers/direct/g4f-map.js'
+import { g4fProviderApiUrl, isG4fDirectOnlyProvider } from '../providers/direct/g4f-map.js'
 import {
   listProviderDescriptors,
   listProviderInstances,
@@ -110,7 +110,6 @@ export class TokenlessApplicationServices {
       pid: process.pid,
     }
     const daemonOrigin = this.origin()
-    const directEntryUrl = new URL('/v1/chat/completions', daemonOrigin).href
     const providers = listProviderDescriptors()
       .sort((left, right) => left.setupOrder - right.setupOrder)
       .map((provider) => ({
@@ -121,7 +120,7 @@ export class TokenlessApplicationServices {
         subscriptionSupport: provider.subscriptionSupport,
         entryUrls: {
           browser: provider.executionModes.includes('browser') ? provider.navigation.entryUrl : null,
-          direct: provider.executionModes.includes('direct') ? directEntryUrl : null,
+          direct: provider.executionModes.includes('direct') ? g4fProviderApiUrl(provider.id) : null,
         },
       }))
     const capabilityRoutes = listProviderTaskCapabilityRoutes()

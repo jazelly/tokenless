@@ -136,6 +136,50 @@ export const G4F_PROVIDER_HOME_URLS: Readonly<Record<G4fMappedProviderId, string
   yqcloud: 'https://chat9.yqcloud.top/',
 })
 
+/** Canonical provider-side API entry for each pinned G4F adapter. */
+export const G4F_PROVIDER_API_URLS: Readonly<Record<G4fMappedProviderId, string>> = Object.freeze({
+  chatgpt: 'https://chatgpt.com/backend-api/f/conversation',
+  claude: 'https://api.anthropic.com/v1',
+  gemini: 'https://gemini.google.com/_/BardChatUi/data/batchexecute',
+  grok: 'https://grok.com/rest/app-chat/conversations',
+  qwen: 'https://chat.qwen.ai/api/v2/chat/completions',
+  deepseek: 'https://chat.deepseek.com/api/v0/chat/completion',
+  perplexity: 'https://www.perplexity.ai/rest/sse/perplexity_ask',
+  zai: 'https://chat.z.ai/api/v2/chat/completions',
+  arena: 'https://arena.ai/nextjs-api/stream/create-evaluation',
+  meta: 'https://www.meta.ai/api/graphql/',
+  'black-forest-labs': 'https://black-forest-labs-flux-1-dev.hf.space/gradio_api',
+  blackbox: 'https://www.blackbox.ai/api/chat',
+  cerebras: 'https://api.cerebras.ai/v1',
+  cloudflare: 'wss://playground.ai.cloudflare.com/agents/playground',
+  cohere: 'https://api.cohere.ai/v2/chat',
+  deepinfra: 'https://api.deepinfra.com/v1/openai',
+  elevenlabs: 'https://api.elevenlabs.io/v1/text-to-speech',
+  'fenay-ai': 'https://fenayai.com/v1',
+  'github-copilot': 'https://api.githubcopilot.com',
+  glhf: 'https://glhf.chat/api/openai/v1',
+  groq: 'https://api.groq.com/openai/v1',
+  'hugging-face': 'https://huggingface.co/chat/conversation',
+  'microsoft-copilot': 'wss://copilot.microsoft.com/c/api/chat?api-version=2',
+  minimax: 'https://api.minimaxi.chat/v1',
+  nvidia: 'https://integrate.api.nvidia.com/v1',
+  ollama: 'https://ollama.com/api',
+  openrouter: 'https://openrouter.ai/api/v1',
+  'opera-aria': 'https://composer.opera-api.com/api/v2/a-chat',
+  phind: 'https://phindai.org/wp-admin/admin-ajax.php',
+  pi: 'https://pi.ai/api/chat',
+  pollinations: 'https://text.pollinations.ai/openai',
+  puter: 'https://api.puter.com/drivers/call',
+  replicate: 'https://api.replicate.com/v1',
+  gigachat: 'https://gigachat.devices.sberbank.ru/api/v1/chat/completions',
+  'stability-ai': 'https://stabilityai-stable-diffusion-3-5-large.hf.space/gradio_api/call/infer',
+  'teach-anything': 'https://www.teach-anything.com/api/generate',
+  'theb-ai': 'https://api.theb.ai/v1',
+  together: 'https://api.together.xyz/v1',
+  whiterabbitneo: 'https://www.whiterabbitneo.com/api/chat',
+  yqcloud: 'https://api.binjie.fun/api/generateStream',
+})
+
 /** Existing Tokenless identities that already have a browser adapter. */
 export const G4F_BROWSER_PROVIDER_IDS = Object.freeze([
   'chatgpt',
@@ -179,6 +223,10 @@ export function listG4fProviderCatalog(): readonly G4fProviderCatalogEntry[] {
 
 export function g4fProviderName(provider: string) {
   return G4F_PROVIDER_MAP[provider as G4fMappedProviderId] ?? null
+}
+
+export function g4fProviderApiUrl(provider: string) {
+  return G4F_PROVIDER_API_URLS[provider as G4fMappedProviderId] ?? null
 }
 
 export function isG4fProvider(provider: string) {

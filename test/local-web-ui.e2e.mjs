@@ -134,8 +134,8 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       await chatgptBrowserTooltip.hover()
       assert.equal(await chatgptBrowserTooltip.evaluate((element) => getComputedStyle(element).opacity), '1')
       const chatgptDirectMode = page.getByTestId('provider-mode-entry-chatgpt-direct')
-      assert.equal(await chatgptDirectMode.getAttribute('href'), `${daemon.origin}/v1/chat/completions`)
-      assert.match(await chatgptDirectMode.locator('.hover-tooltip-content').textContent(), /\/v1\/chat\/completions$/)
+      assert.equal(await chatgptDirectMode.getAttribute('href'), 'https://chatgpt.com/backend-api/f/conversation')
+      assert.match(await chatgptDirectMode.locator('.hover-tooltip-content').textContent(), /\/backend-api\/f\/conversation$/)
       assert.match(await page.getByTestId('overview-readiness-summary').textContent(), /^0\/\d+ signed in$/)
       await page.context().addCookies([{
         name: 'tokenless_dashboard_session',

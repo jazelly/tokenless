@@ -148,23 +148,25 @@ test('local web control plane opens directly, establishes Dashboard sessions, an
     assert.equal(new Set(snapshotBody.providers.map((provider) => provider.id)).size, 43)
     assert.equal(snapshotBody.providers.some((provider) => provider.id === 'ai-badgr'), false)
     assert.equal(snapshotBody.providers.some((provider) => provider.id === 'airforce'), false)
-    const directEntryUrl = new URL('/v1/chat/completions', daemon.origin).href
     for (const provider of snapshotBody.providers) {
       if (provider.executionModes.includes('browser')) {
         assert.equal(new URL(provider.entryUrls.browser).protocol, 'https:', `${provider.id} browser entry URL`)
       } else {
         assert.equal(provider.entryUrls.browser, null, `${provider.id} browser entry URL`)
       }
-      assert.equal(
-        provider.entryUrls.direct,
-        provider.executionModes.includes('direct') ? directEntryUrl : null,
-        `${provider.id} direct entry URL`,
-      )
+      if (provider.executionModes.includes('direct')) {
+        assert.equal(typeof provider.entryUrls.direct, 'string', `${provider.id} direct entry URL`)
+        const directUrl = new URL(provider.entryUrls.direct)
+        assert.ok(['https:', 'wss:'].includes(directUrl.protocol), `${provider.id} direct URL protocol`)
+        assert.notEqual(directUrl.origin, new URL(daemon.origin).origin, `${provider.id} direct URL daemon origin`)
+      } else {
+        assert.equal(provider.entryUrls.direct, null, `${provider.id} direct entry URL`)
+      }
     }
     assert.deepEqual(snapshotBody.providers.find((provider) => provider.id === 'chatgpt')?.executionModes, ['browser', 'direct'])
     assert.deepEqual(snapshotBody.providers.find((provider) => provider.id === 'chatgpt')?.entryUrls, {
       browser: 'https://chatgpt.com/',
-      direct: directEntryUrl,
+      direct: 'https://chatgpt.com/backend-api/f/conversation',
     })
     assert.deepEqual(snapshotBody.providers.find((provider) => provider.id === 'doubao')?.executionModes, ['browser'])
     assert.deepEqual(snapshotBody.providers.find((provider) => provider.id === 'doubao')?.entryUrls, {
@@ -173,8 +175,19 @@ test('local web control plane opens directly, establishes Dashboard sessions, an
     })
     assert.deepEqual(snapshotBody.providers.find((provider) => provider.id === 'black-forest-labs')?.entryUrls, {
       browser: null,
-      direct: directEntryUrl,
+      direct: 'https://black-forest-labs-flux-1-dev.hf.space/gradio_api',
     })
+    for (const [providerId, expectedDirectUrl] of Object.entries({
+      deepseek: 'https://chat.deepseek.com/api/v0/chat/completion',
+      cloudflare: 'wss://playground.ai.cloudflare.com/agents/playground',
+      'hugging-face': 'https://huggingface.co/chat/conversation',
+      'microsoft-copilot': 'wss://copilot.microsoft.com/c/api/chat?api-version=2',
+      ollama: 'https://ollama.com/api',
+      pollinations: 'https://text.pollinations.ai/openai',
+      replicate: 'https://api.replicate.com/v1',
+    })) {
+      assert.equal(snapshotBody.providers.find((provider) => provider.id === providerId)?.entryUrls.direct, expectedDirectUrl)
+    }
     assert.equal(snapshotBody.providers.find((provider) => provider.id === 'chatgpt')?.subscriptionSupport, 'supported')
     assert.equal(snapshotBody.providers.find((provider) => provider.id === 'arena')?.subscriptionSupport, 'unsupported')
     const registry = new ManagedProfileRegistry(homeDir)
