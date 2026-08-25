@@ -57,6 +57,12 @@ export function classifyProviderFailure(options: {
     return classified('user_resolvable_local_failure', response, false, false)
   }
   const lifecycle = options.actionLifecycle
+  if (
+    response.code === 'prompt_submit_actionability_timeout'
+    && lifecycle?.completion === 'records_submission'
+  ) {
+    return classified('safe_pre_submit_provider_failure', response, true, true)
+  }
   const reconstructable = !lifecycle?.mutating || lifecycle.reconstructablePreSubmit
   if (
     reconstructable &&
