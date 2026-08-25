@@ -40,6 +40,7 @@ import {
   openAiResponseStreamFrames,
   openAiStreamFrames,
   type ApiProxyDialect,
+  type ApiProxyRouting,
 } from '../universal-api/api-proxy.js'
 import type { G4fServiceProcess } from '../providers/direct/g4f/index.js'
 import { parseImageAssetReference, readPersistedImageAsset } from '../browser/image-assets.js'
@@ -744,7 +745,9 @@ async function handlePrivateProviderTurnRequest(
     const turnRef = decodeURIComponent(turnRoute[1] ?? '')
     const action = turnRoute[2] ?? null
     if (method === 'GET' && action === null) {
-      writeJson(response, 200, { turn: await providerTurn.read(turnRef) })
+      const read = await providerTurn.readWithRouting(turnRef)
+      writeApiProxyRoutingHeaders(response, read.routing, read.outcome)
+      writeJson(response, 200, { turn: read.turn })
       return true
     }
     if (method === 'POST' && action === 'cancel') {
@@ -915,6 +918,7 @@ async function handleApiProxyRequest(
       }
     }
     const completion = await apiProxy.complete(dialect, body, requestLifetime.signal)
+    writeApiProxyRoutingHeaders(response, completion.routing)
     if (body.stream === true) {
       writeApiProxyStream(response, dialect === 'openai'
         ? openAiStreamFrames(completion, requestedModel)
@@ -934,6 +938,7 @@ async function handleApiProxyRequest(
 function writeApiProxyError(response: ServerResponse, dialect: ApiProxyDialect, error: unknown) {
   if (response.destroyed || response.headersSent || response.writableEnded) return
   if (error instanceof ApiProxyError) {
+    writeApiProxyRoutingHeaders(response, error.routing)
     writeJson(response, error.status, apiProxyErrorBody(dialect, error.code, error.message, error.status, error.param))
     return
   }
@@ -948,6 +953,21 @@ function writeApiProxyError(response: ServerResponse, dialect: ApiProxyDialect, 
     status >= 500 ? 'The local Tokenless daemon encountered an error.' : daemonError.message,
     status,
   ))
+}
+
+function writeApiProxyRoutingHeaders(
+  response: ServerResponse,
+  routing: ApiProxyRouting | null | undefined,
+  outcome: 'pending' | 'completed' | 'failed' | undefined = undefined,
+) {
+  if (outcome !== undefined) response.setHeader('X-Tokenless-Route-Outcome', outcome)
+  if (!routing || !/^[a-z][a-z0-9-]{0,63}$/.test(routing.provider)) return
+  response.setHeader('X-Tokenless-Route-Mode', routing.mode)
+  response.setHeader('X-Tokenless-Route-Provider', routing.provider)
+  response.setHeader('X-Tokenless-Route-Fallback-Providers', routing.fallbackProviders.join(','))
+  response.setHeader('X-Tokenless-Route-Fallback-Used', routing.fallbackUsed ? '1' : '0')
+  response.setHeader('X-Tokenless-Route-Rate-Limited', routing.rateLimited ? '1' : '0')
+  response.setHeader('X-Tokenless-Route-Attempts', JSON.stringify(routing.attempts.slice(0, 5)))
 }
 
 /**

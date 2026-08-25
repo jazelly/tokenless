@@ -43,6 +43,16 @@ export type ProviderStatus = {
   }
 }
 
+/** Structured-control eligibility must use the same short-lived auth observation everywhere. */
+export function isFreshProviderObservation(
+  checkedAt: string | null | undefined,
+  now = Date.now(),
+) {
+  if (typeof checkedAt !== 'string') return false
+  const checkedAtMs = Date.parse(checkedAt)
+  return Number.isFinite(checkedAtMs) && checkedAtMs <= now && now - checkedAtMs <= 5 * 60 * 1000
+}
+
 export type ManagedProfileRecord = {
   slug: string
   directory: string

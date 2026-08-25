@@ -1509,6 +1509,14 @@ function safeFallbackRequest(
     if (lifecycle.mutating && !lifecycle.reconstructablePreSubmit) return null
   }
   const remaining = plan.alternatives.slice(1)
+  const attempts = [
+    ...(request.routingObservation?.attempts ?? []),
+    {
+      provider: request.provider,
+      outcome: 'fallback' as const,
+      reason: routingFailureReason(failure),
+    },
+  ]
   return validateManagedPlaywrightJobRequest({
     protocol: request.protocol,
     provider: alternative.provider,
@@ -1520,9 +1528,35 @@ function safeFallbackRequest(
     context: request.context,
     browserVisibility: request.browserVisibility,
     userHandoff: request.userHandoff,
+    routingObservation: {
+      protocol: 'tokenless.provider-routing-observation.v1',
+      attempts,
+    },
     ...(request.pagePolicy === undefined ? {} : { pagePolicy: request.pagePolicy }),
     actions: request.actions.map((action) => ({ ...action, provider: alternative.provider })),
   })
+}
+
+function routingFailureReason(failure: ClassifiedProviderFailure) {
+  const details = failure.details && typeof failure.details === 'object' && !Array.isArray(failure.details)
+    ? failure.details as Record<string, unknown>
+    : null
+  const values = [
+    failure.code,
+    details?.family,
+    details?.code,
+  ].filter((value): value is string => typeof value === 'string')
+    .map((value) => value.toLowerCase().replace(/-/gu, '_'))
+  if (values.some((value) => /(?:provider_sign_in|sign_in_required|authentication|auth|login)/u.test(value))) {
+    return 'auth' as const
+  }
+  if (values.some((value) => /(?:rate_limit|rate_limited|too_many_requests|http_429)/u.test(value))) {
+    return 'rate_limit' as const
+  }
+  if (values.some((value) => /(?:provider_plan_limited|plan_limit|capacity|quota)/u.test(value))) {
+    return 'capacity' as const
+  }
+  return 'unavailable' as const
 }
 
 function providerFallbackStopReason(

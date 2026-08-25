@@ -3,7 +3,10 @@ import { randomUUID } from 'node:crypto'
 import { readTokenlessConfig, type ApiProxyConversationMode, type ProviderBackend } from '../persistence/config.js'
 import { createManagedPlaywrightJobRequest } from '../browser/job-contract.js'
 import { VISIBLE_ACTIONS, createVisibleActionRequest } from '../browser/actions.js'
-import { ManagedProfileRegistry } from '../browser/profiles/registry.js'
+import {
+  isFreshProviderObservation,
+  ManagedProfileRegistry,
+} from '../browser/profiles/registry.js'
 import {
   getProviderInstanceById,
   providerRegistry,
@@ -48,6 +51,7 @@ export class ApiProxyError extends Error {
     readonly code: string,
     message: string,
     readonly param: string | null = null,
+    readonly routing: ApiProxyRouting | null = null,
   ) {
     super(message)
     this.name = 'ApiProxyError'
@@ -73,6 +77,22 @@ const JOB_POLL_INTERVAL_MS = 250
 const DEFAULT_JOB_TIMEOUT_MS = 10 * 60_000
 
 export type ApiProxyDialect = 'openai' | 'anthropic'
+
+export type ApiProxyRoutingAttempt = {
+  provider: string
+  outcome: 'fallback'
+  reason: 'rate_limit' | 'capacity' | 'auth' | 'unavailable'
+}
+
+/** Safe provider-routing metadata exposed to benchmark and API observers. */
+export type ApiProxyRouting = {
+  mode: 'auto' | 'explicit'
+  provider: string
+  fallbackProviders: string[]
+  fallbackUsed: boolean
+  rateLimited: boolean
+  attempts: ApiProxyRoutingAttempt[]
+}
 
 type NormalizedRequest = {
   provider: string
@@ -103,6 +123,7 @@ export type ApiProxyCompletion = {
   executionMode: 'browser' | 'direct'
   providerBackend: 'browser' | ProviderBackend
   structuredControlStrategy: string | null
+  routing?: ApiProxyRouting
   toolCalls?: { id: string; name: string; arguments: string }[]
 }
 
@@ -287,10 +308,11 @@ export class ApiProxyAdapter {
     if (executionMode === 'direct' && providerBackend === 'g4f') {
       const messages = providerMessages(selectedRequest)
       const completion = await this.completeG4f(selectedRequest, messages, signal)
-      return await validatedCompletion(selectedRequest, directRawCompletion(selectedRequest, completion, 'new-conversation'), async (prompt) => {
+      const validated = await validatedCompletion(selectedRequest, directRawCompletion(selectedRequest, completion, 'new-conversation'), async (prompt) => {
         const corrected = await this.completeG4f(selectedRequest, [...messages, { role: 'user', content: prompt }], signal)
         return directRawCompletion(selectedRequest, corrected, 'new-conversation')
       })
+      return withRouting(validated, request, selectedRequest, autoRoutes)
     }
 
     const plan = responseContext
@@ -311,7 +333,7 @@ export class ApiProxyAdapter {
       structuredControlStrategy: structuredControlStrategy(selectedRequest, selectedRoute),
       signal,
     })
-    return await validatedCompletion(selectedRequest, completion, async (prompt) => {
+    const validated = await validatedCompletion(selectedRequest, completion, async (prompt) => {
       const settledRoute = autoRoutes.find((route) => route.provider === completion.base.provider) ?? selectedRoute
       const correctionRequest = { ...selectedRequest, provider: completion.base.provider }
       const mapping = this.store.resolveProviderTaskConversation({
@@ -334,6 +356,7 @@ export class ApiProxyAdapter {
         signal,
       })
     })
+    return withRouting(validated, request, selectedRequest, autoRoutes)
   }
 
   private async completeG4f(
@@ -470,6 +493,7 @@ export class ApiProxyAdapter {
     const settled = await this.awaitTerminalJob(job.job_id, signal)
     const result = visibleResponse(settled.result_json)
     if (settled.status !== 'succeeded' || !result) throw apiProxyJobFailure(settled)
+    const routing = routingFromJob(settled)
     return {
       text: result.text,
       base: {
@@ -480,6 +504,7 @@ export class ApiProxyAdapter {
         executionMode,
         providerBackend,
         structuredControlStrategy,
+        ...(routing ? { routing } : {}),
       },
     }
   }
@@ -502,6 +527,25 @@ export class ApiProxyAdapter {
       }
       await delay(JOB_POLL_INTERVAL_MS)
     }
+  }
+}
+
+function withRouting(
+  completion: ApiProxyCompletion,
+  request: NormalizedRequest,
+  selectedRequest: NormalizedRequest,
+  routes: readonly ApiProxyStructuredControlRoute[],
+): ApiProxyCompletion {
+  return {
+    ...completion,
+    routing: {
+      mode: request.auto ? 'auto' : 'explicit',
+      provider: completion.provider,
+      fallbackProviders: request.auto ? routes.slice(1).map((route) => route.provider) : [],
+      fallbackUsed: request.auto && (completion.provider !== selectedRequest.provider || (completion.routing?.attempts.length ?? 0) > 0),
+      rateLimited: completion.routing?.rateLimited ?? false,
+      attempts: completion.routing?.attempts ?? [],
+    },
   }
 }
 
@@ -546,10 +590,17 @@ function autoStructuredControlRoutes(
     const observed = profile.lastObservedAuth[instance.id]
     const access = observed?.access ?? (observed?.auth === 'authenticated' ? 'signed_in_unknown' : 'unknown')
     const usable = access === 'guest' || access.startsWith('signed_in_')
+    const fresh = isFreshProviderObservation(observed?.checkedAt)
+    const runtimeEligibility = usable
+      ? (fresh ? 'eligible' as const : 'unchecked' as const)
+      : 'ineligible' as const
+    const reason = usable
+      ? (fresh ? null : observed?.checkedAt ? 'provider_auth_observation_stale' : 'provider_auth_observation_missing')
+      : `provider_access_${access}`
     return [{
       provider: instance.id,
-      runtimeEligibility: usable ? 'eligible' as const : 'ineligible' as const,
-      reason: usable ? null : `provider_access_${access}`,
+      runtimeEligibility,
+      reason,
       preferenceRank,
     }]
   })
@@ -1265,7 +1316,110 @@ function apiProxyJobFailure(job: Job) {
   const blocker = describeJson(job.blocker_json)
   const error = describeJson(job.error_json)
   const detail = blocker ?? error ?? `job ended as ${job.status}`
-  return new ApiProxyError(502, 'upstream_error', `api proxy job did not produce a visible response: ${detail}`)
+  return new ApiProxyError(
+    502,
+    'upstream_error',
+    `api proxy job did not produce a visible response: ${detail}`,
+    null,
+    routingFromJob(job),
+  )
+}
+
+export function routingFromJob(job: Job, modeOverride?: ApiProxyRouting['mode']): ApiProxyRouting | null {
+  if (typeof job.provider !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(job.provider)) return null
+  const request = job.request_json
+  const attempts = routingAttemptsFromRequest(request)
+  if (attempts === null) return null
+  const rateLimited = job.status !== 'succeeded' && jobIsRateLimited(job)
+  if (!request || typeof request !== 'object' || Array.isArray(request)) {
+    return {
+      mode: modeOverride ?? 'explicit',
+      provider: job.provider,
+      fallbackProviders: [],
+      fallbackUsed: false,
+      rateLimited,
+      attempts,
+    }
+  }
+  const fallback = (request as { fallback?: unknown }).fallback
+  let fallbackProviders: string[] = []
+  if (fallback !== undefined && fallback !== null) {
+    if (typeof fallback !== 'object' || Array.isArray(fallback)) return null
+    const fallbackRecord = fallback as Record<string, unknown>
+    if (
+      Object.keys(fallbackRecord).some((key) => !['protocol', 'mode', 'replay', 'alternatives'].includes(key))
+      || fallbackRecord.protocol !== 'tokenless.provider-fallback.v1'
+      || fallbackRecord.mode !== 'automatic'
+      || fallbackRecord.replay !== 'from_start'
+    ) return null
+    const alternatives = fallbackRecord.alternatives
+    if (!Array.isArray(alternatives) || alternatives.length > 5) return null
+    for (const alternative of alternatives) {
+      if (!alternative || typeof alternative !== 'object' || Array.isArray(alternative)) return null
+      const alternativeRecord = alternative as Record<string, unknown>
+      if (Object.keys(alternativeRecord).some((key) => !['provider', 'target', 'capabilityRoute'].includes(key))) return null
+      const provider = alternativeRecord.provider
+      if (typeof provider !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(provider)) return null
+      fallbackProviders.push(provider)
+    }
+  }
+  return {
+    mode: modeOverride ?? (fallback !== undefined && fallback !== null || attempts.length > 0 ? 'auto' : 'explicit'),
+    provider: job.provider,
+    fallbackProviders,
+    fallbackUsed: attempts.length > 0,
+    rateLimited,
+    attempts,
+  }
+}
+
+function routingAttemptsFromRequest(value: unknown): ApiProxyRoutingAttempt[] | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return []
+  const request = value as Record<string, unknown>
+  if (!Object.hasOwn(request, 'routingObservation')) return []
+  const observation = request.routingObservation
+  if (!observation || typeof observation !== 'object' || Array.isArray(observation)) return null
+  const observationRecord = observation as Record<string, unknown>
+  if (
+    Object.keys(observationRecord).some((key) => !['protocol', 'attempts'].includes(key))
+    || observationRecord.protocol !== 'tokenless.provider-routing-observation.v1'
+  ) return null
+  const attempts = observationRecord.attempts
+  if (!Array.isArray(attempts)) return null
+  if (attempts.length > 5) return null
+  const parsed: ApiProxyRoutingAttempt[] = []
+  for (const attempt of attempts) {
+    if (!attempt || typeof attempt !== 'object' || Array.isArray(attempt)) return null
+    const candidate = attempt as Record<string, unknown>
+    if (
+      Object.keys(candidate).some((key) => !['provider', 'outcome', 'reason'].includes(key))
+      ||
+      typeof candidate.provider !== 'string'
+      || !/^[a-z][a-z0-9-]{0,63}$/u.test(candidate.provider)
+      || candidate.outcome !== 'fallback'
+      || !['rate_limit', 'capacity', 'auth', 'unavailable'].includes(String(candidate.reason))
+    ) return null
+    parsed.push({
+      provider: candidate.provider,
+      outcome: 'fallback' as const,
+      reason: candidate.reason as ApiProxyRoutingAttempt['reason'],
+    })
+  }
+  return parsed
+}
+
+function jobIsRateLimited(job: Job) {
+  return [job.error_json, job.blocker_json].some((value) => hasRateLimitCode(value, 0))
+}
+
+function hasRateLimitCode(value: unknown, depth: number): boolean {
+  if (depth > 2 || !value || typeof value !== 'object' || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  for (const key of ['code', 'family', 'classification']) {
+    const candidate = record[key]
+    if (typeof candidate === 'string' && /rate[_-]?limit/iu.test(candidate)) return true
+  }
+  return ['failure', 'blocker', 'details', 'causeDetails'].some((key) => hasRateLimitCode(record[key], depth + 1))
 }
 
 function describeJson(value: unknown) {

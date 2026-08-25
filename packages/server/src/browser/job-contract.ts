@@ -60,8 +60,20 @@ export type ManagedPlaywrightJobRequest = {
   authContextId: string | null
   browserVisibility: BrowserVisibility
   userHandoff: boolean
+  routingObservation?: ManagedPlaywrightRoutingObservation | undefined
   pagePolicy?: ManagedPagePolicy | undefined
   actions: readonly VisibleActionRequest[]
+}
+
+export type ManagedPlaywrightRoutingAttempt = {
+  provider: ProviderId
+  outcome: 'fallback'
+  reason: 'rate_limit' | 'capacity' | 'auth' | 'unavailable'
+}
+
+export type ManagedPlaywrightRoutingObservation = {
+  protocol: 'tokenless.provider-routing-observation.v1'
+  attempts: readonly ManagedPlaywrightRoutingAttempt[]
 }
 
 export type ManagedPlaywrightFallbackAlternative = {
@@ -92,6 +104,7 @@ export type CreateManagedPlaywrightJobRequestInput = {
   authContextId?: unknown
   browserVisibility?: unknown
   userHandoff?: unknown
+  routingObservation?: unknown
   pagePolicy?: unknown
   actions: readonly (VisibleActionRequest | (Omit<Partial<VisibleActionWireRequest>, 'protocol' | 'provider'> & {
     requestId?: string | undefined
@@ -148,6 +161,7 @@ export function createManagedPlaywrightJobRequest(
     authContextId: validateAuthContextId(input.authContextId ?? null),
     browserVisibility: validateJobBrowserVisibility(input.browserVisibility ?? 'auto'),
     userHandoff: validateUserHandoff(input.userHandoff ?? false),
+    ...(input.routingObservation === undefined ? {} : { routingObservation: validateRoutingObservation(input.routingObservation) }),
     ...(input.pagePolicy === undefined ? {} : { pagePolicy: validateManagedPagePolicy(input.pagePolicy) }),
     actions,
   })
@@ -160,7 +174,7 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
   requireKeys(
     input,
     ['protocol'],
-    ['provider', 'target', 'taskId', 'pageRef', 'capabilityRoute', 'fallback', 'context', 'executionMode', 'providerBackend', 'authContextId', 'browserVisibility', 'pagePolicy', 'userHandoff', 'actions'],
+    ['provider', 'target', 'taskId', 'pageRef', 'capabilityRoute', 'fallback', 'context', 'executionMode', 'providerBackend', 'authContextId', 'browserVisibility', 'routingObservation', 'pagePolicy', 'userHandoff', 'actions'],
     'invalid_playwright_job_request',
   )
 
@@ -183,7 +197,7 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
     legacyV3
       ? ['protocol', 'provider', 'target', 'taskId', 'browserVisibility', 'actions']
       : ['protocol', 'provider', 'target', 'taskId', 'pageRef', 'browserVisibility', 'actions'],
-    ['capabilityRoute', 'fallback', 'context', 'executionMode', 'providerBackend', 'authContextId', 'pagePolicy', 'userHandoff'],
+    ['capabilityRoute', 'fallback', 'context', 'executionMode', 'providerBackend', 'authContextId', 'routingObservation', 'pagePolicy', 'userHandoff'],
     'invalid_playwright_job_request',
   )
   const provider = getProviderInstanceById(input.provider)
@@ -231,6 +245,9 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
     : validateContextEnvelope(input.context, { taskId, requirements: contextRequirements, actions })
   const browserVisibility = validateJobBrowserVisibility(input.browserVisibility)
   const userHandoff = validateUserHandoff(input.userHandoff ?? false)
+  const routingObservation = input.routingObservation === undefined
+    ? undefined
+    : validateRoutingObservation(input.routingObservation)
   const pagePolicy = input.pagePolicy === undefined ? undefined : validateManagedPagePolicy(input.pagePolicy)
   const providerBackend = validateProviderBackend(input.providerBackend ?? null)
   const authContextId = validateAuthContextId(input.authContextId ?? null)
@@ -263,6 +280,7 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
     authContextId,
     browserVisibility,
     userHandoff,
+    ...(routingObservation === undefined ? {} : { routingObservation }),
     ...(pagePolicy === undefined ? {} : { pagePolicy }),
     actions,
   }
@@ -367,6 +385,32 @@ function validateUserHandoff(value: unknown): boolean {
     throw tokenlessError('invalid_playwright_job_user_handoff', 'Managed Playwright user handoff must be true or false.')
   }
   return value
+}
+
+function validateRoutingObservation(value: unknown): ManagedPlaywrightRoutingObservation {
+  if (!isPlainRecord(value) || Object.keys(value).some((key) => !['protocol', 'attempts'].includes(key))) {
+    throw tokenlessError('invalid_playwright_routing_observation', 'Managed Playwright routing observation is invalid.')
+  }
+  if (value.protocol !== 'tokenless.provider-routing-observation.v1' || !Array.isArray(value.attempts) || value.attempts.length > 5) {
+    throw tokenlessError('invalid_playwright_routing_observation', 'Managed Playwright routing observation is invalid.')
+  }
+  const seen = new Set<ProviderId>()
+  const attempts = value.attempts.map((attempt) => {
+    if (!isPlainRecord(attempt) || Object.keys(attempt).some((key) => !['provider', 'outcome', 'reason'].includes(key))) {
+      throw tokenlessError('invalid_playwright_routing_observation', 'Managed Playwright routing observation is invalid.')
+    }
+    const provider = getProviderInstanceById(attempt.provider)
+    if (!provider || seen.has(provider.id) || attempt.outcome !== 'fallback' || !['rate_limit', 'capacity', 'auth', 'unavailable'].includes(String(attempt.reason))) {
+      throw tokenlessError('invalid_playwright_routing_observation', 'Managed Playwright routing observation is invalid.')
+    }
+    seen.add(provider.id)
+    return {
+      provider: provider.id,
+      outcome: 'fallback' as const,
+      reason: attempt.reason as ManagedPlaywrightRoutingAttempt['reason'],
+    }
+  })
+  return { protocol: 'tokenless.provider-routing-observation.v1', attempts }
 }
 
 function validateFallbackPlan(

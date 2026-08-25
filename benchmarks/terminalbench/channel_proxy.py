@@ -16,7 +16,6 @@ ALLOWED_COMPLETION_PATHS = {
     "/v1/openai/chat/completions",
 }
 ALLOWED_PROVIDER_TURN_PREFIX = "/v1/private/provider-turn/"
-BENCHMARK_AUDIT_PATH = "/v1/private/benchmark-audit"
 
 
 class ProxyServer(http.server.ThreadingHTTPServer):
@@ -71,7 +70,6 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         if (
             path not in ALLOWED_COMPLETION_PATHS
-            and path != BENCHMARK_AUDIT_PATH
             and not path.startswith(ALLOWED_PROVIDER_TURN_PREFIX)
         ):
             self.send_error(404)

@@ -4,8 +4,14 @@ import type { IncomingMessage } from 'node:http'
 import { deriveTaskId, readTokenlessConfig } from '../../../persistence/config.js'
 import { createManagedPlaywrightJobRequest } from '../../../browser/job-contract.js'
 import { VISIBLE_ACTIONS, createVisibleActionRequest } from '../../../browser/actions.js'
-import { ManagedProfileRegistry } from '../../../browser/profiles/registry.js'
-import { getProviderInstanceById, resolveTaskCapabilityRoute, type TaskCapabilityId } from '../../../providers/registry.js'
+import { isFreshProviderObservation, ManagedProfileRegistry } from '../../../browser/profiles/registry.js'
+import {
+  getProviderInstanceById,
+  resolveTaskCapabilityRoute,
+  resolveTaskCapabilityRoutes,
+  type TaskCapabilityId,
+  type TaskCapabilityRoute,
+} from '../../../providers/registry.js'
 import { DEFAULT_MAX_VISIBLE_ATTACHMENT_BYTES, removeStagedVisibleAttachmentBundle, stageVisibleAttachmentStream } from '../../../persistence/attachments.js'
 import {
   dropEphemeralProviderBundle,
@@ -23,10 +29,12 @@ import {
   type WebAiBinding,
   type WebAiTurn,
 } from '../../../jobs/store.js'
+import { routingFromJob, type ApiProxyRouting } from '../../../universal-api/api-proxy.js'
 
 const SYSTEM_PROMPT_LIMIT_BYTES = 1024 * 1024
 const REQUIRED_CAPABILITIES = ['conversation.chat', 'file.upload'] as const
 const WEB_AI_INTERACTION_PROTOCOL_V0 = 'tokenless.internal.web-ai-interaction-protocol/v0' as const
+const AUTO_PROVIDER = 'auto'
 
 type CapabilityDocument = {
   protocol: typeof WEB_AI_INTERACTION_PROTOCOL_V0
@@ -173,34 +181,45 @@ export class PrivateProviderTurnV0Adapter {
     if (hasEphemeralProviderBundle(attachment.bundle_id) !== ephemeral) {
       throw invalidInput('web ai request payload lifetime does not match its attachments')
     }
-    const route = resolveTaskCapabilityRoute({
-      requirements: REQUIRED_CAPABILITIES,
-      candidates: [{ provider: binding.provider, runtimeEligibility: 'unchecked' }],
-    })
-    if (!route.ok) throw invalidInput('web ai provider does not have a static chat and upload route')
+    const autoRoutes = binding.provider === AUTO_PROVIDER
+      ? await this.autoCapabilityRoutes(binding.profile_id)
+      : null
+    const provider = autoRoutes?.[0]?.provider ?? binding.provider
+    const route = autoRoutes?.[0]
+    let capabilityRoute: TaskCapabilityRoute
+    if (route) {
+      capabilityRoute = route
+    } else {
+      const explicitRoute = resolveTaskCapabilityRoute({
+        requirements: REQUIRED_CAPABILITIES,
+        candidates: [{ provider, runtimeEligibility: 'unchecked' }],
+      })
+      if (!explicitRoute.ok) throw invalidInput('web ai provider does not have a static chat and upload route')
+      capabilityRoute = explicitRoute.route
+    }
 
     const turnRef = opaqueRef('turn')
     const conversationRef = opaqueRef('conversation')
     const requestJson = createManagedPlaywrightJobRequest({
-      provider: binding.provider,
+      provider,
       taskId: deriveTaskId({ chatName: turnRef }),
       pageRef: conversationRef,
-      capabilityRoute: route.route,
-      fallback: null,
+      capabilityRoute,
+      fallback: autoRoutes ? automaticFallbackPlan(autoRoutes) : null,
       browserVisibility: 'auto',
       userHandoff: false,
       actions: [
         createVisibleActionRequest({
-          provider: binding.provider,
+          provider,
           action: VISIBLE_ACTIONS.FILE_UPLOAD,
           payload: { attachments: attachments.map((candidate, index) => ({
             protocol: descriptorProtocol(), bundleId: candidate.bundle_id, attachmentId: candidate.attachment_id,
             name: bootstrap.attachments[index]!.name, type: candidate.media_type, size: candidate.byte_length, sha256: candidate.sha256,
           })) },
         }),
-        createVisibleActionRequest({ provider: binding.provider, action: VISIBLE_ACTIONS.PROMPT_INPUT, payload: { text: bootstrap.text } }),
-        createVisibleActionRequest({ provider: binding.provider, action: VISIBLE_ACTIONS.PROMPT_SUBMIT, payload: {} }),
-        createVisibleActionRequest({ provider: binding.provider, action: VISIBLE_ACTIONS.RESPONSE_READ, payload: {} }),
+        createVisibleActionRequest({ provider, action: VISIBLE_ACTIONS.PROMPT_INPUT, payload: { text: bootstrap.text } }),
+        createVisibleActionRequest({ provider, action: VISIBLE_ACTIONS.PROMPT_SUBMIT, payload: {} }),
+        createVisibleActionRequest({ provider, action: VISIBLE_ACTIONS.RESPONSE_READ, payload: {} }),
       ],
     })
     const storedRequestJson = ephemeral
@@ -213,7 +232,7 @@ export class PrivateProviderTurnV0Adapter {
       attachment_refs: attachments.map((candidate) => candidate.attachment_ref),
       request_ref: request.requestRef,
       job: {
-        provider: binding.provider,
+        provider,
         request_json: storedRequestJson,
         profile_id: binding.profile_id,
         job_id: attachment.bundle_id,
@@ -222,7 +241,7 @@ export class PrivateProviderTurnV0Adapter {
     return this.project(turn, this.store.getJob(turn.job_id))
   }
 
-  private startContinuation(binding: WebAiBinding, request: StartTurnRequest, payloadLifetime: string | undefined) {
+  private async startContinuation(binding: WebAiBinding, request: StartTurnRequest, payloadLifetime: string | undefined) {
     if (request.conversation.mode !== 'continue' || !request.continuation) throw invalidInput('web ai continuation is invalid')
     const previous = this.store.getLatestWebAiTurnForConversation(request.conversation.conversationRef)
     if (!previous || previous.binding_ref !== binding.binding_ref) throw invalidInput('web ai continuation conversation was not found')
@@ -230,7 +249,13 @@ export class PrivateProviderTurnV0Adapter {
     if (previousJob.status !== 'succeeded' || !successfulResult(previousJob.result_json)) throw invalidInput('web ai continuation source turn has not succeeded')
     const previousRequest = previousJob.request_json as { taskId?: unknown }
     if (typeof previousRequest.taskId !== 'string') throw invalidInput('web ai continuation task identity is unavailable')
-    const mapping = this.store.resolveProviderTaskConversation({ provider: binding.provider, profile_id: binding.profile_id, task_id: previousRequest.taskId })
+    const previousProvider = previousJob.provider
+    if (previousProvider === AUTO_PROVIDER || !getProviderInstanceById(previousProvider)) {
+      throw invalidInput('web ai continuation source provider identity is unavailable')
+    }
+    await this.assertConfigured(previousProvider, binding.profile_id, 'browser')
+    const provider = previousProvider
+    const mapping = this.store.resolveProviderTaskConversation({ provider, profile_id: binding.profile_id, task_id: previousRequest.taskId })
     if (!mapping) throw invalidInput('web ai continuation provider conversation is unavailable')
     const requested = request.continuation.attachments
     const attachments = requested.map((descriptor) => this.store.getWebAiStagedAttachment(descriptor.attachmentRef))
@@ -247,23 +272,24 @@ export class PrivateProviderTurnV0Adapter {
     if (hasEphemeralProviderBundle(primary.bundle_id) !== ephemeral) {
       throw invalidInput('web ai request payload lifetime does not match its attachments')
     }
-    const route = resolveTaskCapabilityRoute({ requirements: REQUIRED_CAPABILITIES, candidates: [{ provider: binding.provider, runtimeEligibility: 'unchecked' }] })
-    if (!route.ok) throw invalidInput('web ai provider does not have a static chat and upload route')
+    const routeDecision = resolveTaskCapabilityRoute({ requirements: REQUIRED_CAPABILITIES, candidates: [{ provider, runtimeEligibility: 'unchecked' }] })
+    if (!routeDecision.ok) throw invalidInput('web ai provider does not have a static chat and upload route')
+    const route = routeDecision.route
     const turnRef = opaqueRef('turn')
     const requestJson = createManagedPlaywrightJobRequest({
-      provider: binding.provider,
+      provider,
       target: { kind: 'provider_home', url: mapping.canonical_url },
       taskId: previousRequest.taskId,
       pageRef: request.conversation.conversationRef,
-      capabilityRoute: route.route,
+      capabilityRoute: route,
       fallback: null,
       browserVisibility: 'auto',
       userHandoff: false,
       actions: [
-        createVisibleActionRequest({ provider: binding.provider, action: VISIBLE_ACTIONS.FILE_UPLOAD, payload: { attachments: attachments.map((attachment, index) => ({ protocol: descriptorProtocol(), bundleId: attachment!.bundle_id, attachmentId: attachment!.attachment_id, name: requested[index]!.name, type: attachment!.media_type, size: attachment!.byte_length, sha256: attachment!.sha256 })) } }),
-        createVisibleActionRequest({ provider: binding.provider, action: VISIBLE_ACTIONS.PROMPT_INPUT, payload: { text: request.continuation.text } }),
-        createVisibleActionRequest({ provider: binding.provider, action: VISIBLE_ACTIONS.PROMPT_SUBMIT, payload: {} }),
-        createVisibleActionRequest({ provider: binding.provider, action: VISIBLE_ACTIONS.RESPONSE_READ, payload: {} }),
+        createVisibleActionRequest({ provider, action: VISIBLE_ACTIONS.FILE_UPLOAD, payload: { attachments: attachments.map((attachment, index) => ({ protocol: descriptorProtocol(), bundleId: attachment!.bundle_id, attachmentId: attachment!.attachment_id, name: requested[index]!.name, type: attachment!.media_type, size: attachment!.byte_length, sha256: attachment!.sha256 })) } }),
+        createVisibleActionRequest({ provider, action: VISIBLE_ACTIONS.PROMPT_INPUT, payload: { text: request.continuation.text } }),
+        createVisibleActionRequest({ provider, action: VISIBLE_ACTIONS.PROMPT_SUBMIT, payload: {} }),
+        createVisibleActionRequest({ provider, action: VISIBLE_ACTIONS.RESPONSE_READ, payload: {} }),
       ],
     })
     const storedRequestJson = ephemeral
@@ -275,15 +301,29 @@ export class PrivateProviderTurnV0Adapter {
       conversation_ref: request.conversation.conversationRef,
       attachment_refs: attachments.map((attachment) => attachment!.attachment_ref),
       request_ref: request.requestRef,
-      job: { provider: binding.provider, request_json: storedRequestJson, profile_id: binding.profile_id, job_id: primary.bundle_id },
+      job: { provider, request_json: storedRequestJson, profile_id: binding.profile_id, job_id: primary.bundle_id },
     })
     return this.project(turn, this.store.getJob(turn.job_id))
   }
 
   async read(turnRef: string) {
+    return (await this.readWithRouting(turnRef)).turn
+  }
+
+  async readWithRouting(turnRef: string): Promise<{ turn: TurnState; outcome: 'pending' | 'completed' | 'failed'; routing: ApiProxyRouting | null }> {
     const turn = this.store.getWebAiTurn(turnRef)
     if (!turn) throw invalidInput('web ai turn was not found')
-    return this.project(turn, this.store.getJob(turn.job_id))
+    const job = hydrateEphemeralProviderJob(this.store.getJob(turn.job_id))
+    const outcome = job.status === 'succeeded'
+      ? successfulResult(job.result_json) ? 'completed' : 'failed'
+      : job.status === 'failed' || job.status === 'canceled'
+        ? 'failed'
+        : 'pending'
+    const binding = this.store.getWebAiBinding(turn.binding_ref)
+    const routing = binding
+      ? routingFromJob(job, binding.provider === AUTO_PROVIDER ? 'auto' : 'explicit')
+      : null
+    return { turn: this.project(turn, job), outcome, routing }
   }
 
   async cancel(turnRef: string) {
@@ -323,9 +363,9 @@ export class PrivateProviderTurnV0Adapter {
     return binding
   }
 
-  private async assertConfigured(provider: string, profileId: string) {
-    const providerInstance = getProviderInstanceById(provider)
-    if (!providerInstance || providerInstance.descriptor.stage === 'disabled') {
+  private async assertConfigured(provider: string, profileId: string, requiredExecutionMode?: 'browser') {
+    const providerInstance = provider === AUTO_PROVIDER ? null : getProviderInstanceById(provider)
+    if (provider !== AUTO_PROVIDER && (!providerInstance || providerInstance.descriptor.stage === 'disabled')) {
       throw invalidInput('web ai provider is not configured')
     }
     const [profiles, config] = await Promise.all([this.profiles.listProfiles(), readTokenlessConfig(this.store.homeDir)])
@@ -334,9 +374,46 @@ export class PrivateProviderTurnV0Adapter {
     if (!profile || !configured) {
       throw invalidInput('web ai provider/profile is not configured')
     }
+    if (provider === AUTO_PROVIDER) {
+      if (configured.enabledProviders.length === 0) throw invalidInput('web ai auto provider has no enabled browser providers')
+      return
+    }
     if (!configured.enabledProviders.includes(provider)) {
       throw invalidInput('web ai provider is not enabled for the managed profile')
     }
+    if (requiredExecutionMode !== undefined && !configured.providerModes[provider]?.includes(requiredExecutionMode)) {
+      throw invalidInput('web ai provider is not enabled for the required execution mode')
+    }
+  }
+
+  private async autoCapabilityRoutes(profileId: string): Promise<readonly TaskCapabilityRoute[]> {
+    const [profiles, config] = await Promise.all([this.profiles.listProfiles(), readTokenlessConfig(this.store.homeDir)])
+    const profile = profiles.find((candidate) => candidate.slug === profileId)
+    const configured = profile ? config.profiles[profile.slug] : undefined
+    if (!profile || !configured) throw invalidInput('web ai provider/profile is not configured')
+    const candidates = configured.enabledProviders.flatMap((provider, preferenceRank) => {
+      const instance = getProviderInstanceById(provider)
+      if (!instance || instance.descriptor.stage === 'disabled' || !configured.providerModes[instance.id]?.includes('browser')) return []
+      const observed = profile.lastObservedAuth[instance.id]
+      const access = observed?.access ?? (observed?.auth === 'authenticated' ? 'signed_in_unknown' : 'unknown')
+      const usable = access === 'guest' || access.startsWith('signed_in_')
+      const fresh = isFreshProviderObservation(observed?.checkedAt)
+      return [{
+        provider: instance.id,
+        runtimeEligibility: usable
+          ? (fresh ? 'eligible' as const : 'unchecked' as const)
+          : 'ineligible' as const,
+        reason: !usable
+          ? `provider_access_${access}`
+          : (fresh ? null : observed?.checkedAt ? 'provider_auth_observation_stale' : 'provider_auth_observation_missing'),
+        preferenceRank,
+      }]
+    })
+    const resolved = resolveTaskCapabilityRoutes({ requirements: REQUIRED_CAPABILITIES, candidates })
+    if (!resolved.ok || resolved.routes.length === 0) {
+      throw invalidInput('web ai auto has no current eligible provider with chat and upload evidence')
+    }
+    return resolved.routes
   }
 
   private bindingDocument(binding: WebAiBinding) {
@@ -472,7 +549,25 @@ function descriptorProtocol() {
   return 'tokenless.visible-attachment.v1' as const
 }
 
+function automaticFallbackPlan(routes: readonly TaskCapabilityRoute[]) {
+  const alternatives = routes.slice(1, 6).map((route) => ({
+    provider: route.provider,
+    target: {
+      kind: 'provider_home' as const,
+      url: getProviderInstanceById(route.provider)!.descriptor.navigation.homeUrl,
+    },
+    capabilityRoute: route,
+  }))
+  return alternatives.length === 0 ? null : {
+    protocol: 'tokenless.provider-fallback.v1' as const,
+    mode: 'automatic' as const,
+    replay: 'from_start' as const,
+    alternatives,
+  }
+}
+
 function staticCapabilities(provider: string): CapabilityDocument['supportedCapabilities'] {
+  if (provider === AUTO_PROVIDER) return REQUIRED_CAPABILITIES
   const supports = (capability: TaskCapabilityId) => resolveTaskCapabilityRoute({
     requirements: [capability],
     candidates: [{ provider, runtimeEligibility: 'unchecked' }],

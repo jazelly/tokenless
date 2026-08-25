@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-这条 lane 评测固定组合 `DeepSeek Harness + Tokenless API + Tokenless Harness adapter`。DeepSeek Harness 保留原生 Agent Loop、terminal tools、session 和 compaction；Tokenless API 提供 model turns，原生 DSH `subagent` 调用可以把 child task 委派给 Tokenless Harness。
+这条 lane 评测 `DeepSeek Harness + Tokenless API + Tokenless Harness adapter` 集成。DeepSeek Harness 保留原生 Agent Loop、terminal tools、session 和 compaction；Tokenless API 通过 `tokenless/auto` 提供 model turns，原生 DSH `subagent` 调用可以把 child task 委派给 Tokenless Harness。
 
 ## 固定基线
 
@@ -12,13 +12,13 @@
 | Dataset | `revision.json` 中 digest 固定的 `terminal-bench/terminal-bench-2` |
 | Tasks | 89 |
 | 正式尝试次数 | 每题 `k=5`，共 445 trials |
-| Harbor 与 DSH model retries | 0 |
+| Harbor trial retries | 0 |
 
-runner 不修改官方 task instruction、timeout、resources、environment 或 verifier。task container 只获得一个随机、仅允许 OpenAI completions、private Harness provider turns 与 benchmark audit events 的 task-scoped bearer；host daemon admin bearer 和 provider browser session 始终留在 host。
+runner 不修改官方 task instruction、timeout、resources、environment 或 verifier。task container 只获得一个随机、仅允许 OpenAI completions 与 private Harness provider turns 的 task-scoped bearer；host daemon admin bearer 和 provider browser session 始终留在 host。
 
 对于这条组合 lane，bridge 会把 DSH parent 第一次符合条件的 decision 约束为 DSH 原生 named `subagent` tool。child Tokenless Harness run 会在官方 task filesystem 内执行且只执行一次只读 workspace search probe，再把固定的 integration acknowledgement 交回 DSH parent；DSH parent 仍须使用自己的 terminal tools 完成并验证 task。这些约束只属于 benchmark adapter；官方 task text 与普通 Tokenless Harness 行为都不改变。
 
-只有同一 run 内存在有序 audit chain 才能证明 deep integration：Tokenless Harness 启动、发生真实 provider turn、child workspace tool 成功、child 成功 settled，随后 DSH parent 完成。DeepSeek transport boundary 只对 provider response Markdown 做必要规范化，以便严格校验 OpenAI-compatible JSON envelope。
+只有 host 观察到同一 run 内严格有序的 HTTP/process chain 才能证明 deep integration：parent completion request 被强制使用原生 named `subagent` tool 并成功完成；child bootstrap turn 及其 terminal provider routing 完成；child continuation turn 及其 terminal provider routing 完成；随后出现更晚的 parent completion/routing，最后 DSH process 返回。continuation boundary 证明 child result 确实回到了 parent flow，但不声称拥有直接 child-tool execution trace。DSH transport boundary 只对 provider response Markdown 做必要规范化，以便严格校验 OpenAI-compatible JSON envelope。
 
 ## 命令
 
@@ -28,15 +28,17 @@ npm run benchmark:terminalbench -- oracle --jobs-dir <path>
 npm run benchmark:terminalbench -- wiring \
   --home <tokenless-api-home> \
   --dsh-checkout <deepseek-harness-checkout> \
-  --provider deepseek \
   --profile web-ai \
   --jobs-dir <path>
 npm run benchmark:terminalbench -- full \
   --home <tokenless-api-home> \
   --dsh-checkout <deepseek-harness-checkout> \
-  --provider deepseek \
   --profile web-ai \
   --jobs-dir <path>
 ```
 
-`wiring` 以 `k=1` 运行一道未改写的官方 task。`full` 固定运行全部 89 tasks、`k=5`、单并发、零 Harbor retry，并设置 DSH provider `maxRetries: 0`。每个 job 都写入不含 secret 的 `tokenless-run.json`，公开 `deepIntegration.trialsWithCompleteChain`；至少存在一条 complete chain 才能证明 deep adapter。正式报告还要求全部 445 个 verifier rewards 齐全，Harbor trial error、cancellation 与 retry 均为零；DSH command failure 属于 agent outcome，会进入官方 verifier，而不会被误归类为 infrastructure exception。
+`wiring` 以 `k=1` 运行一道未改写的官方 task。`full` 固定运行全部 89 tasks、`k=5`、单并发、零 Harbor retry。DSH adapter identity 保持固定，但 parent 和 child 的每次 model turn 都请求 `tokenless/auto`；Tokenless API operation router 只从具备当前 structured-control evidence 的 provider 中选择，并可在 pre-submit 安全失败时 fallback。每个 job 都写入不含 secret 的 `tokenless-run.json`；正式报告把各 provider routing counts 与官方 verifier rewards 分开，并公开 `deepIntegration.trialsWithCompleteChain`。正式报告还要求全部 445 个 verifier rewards 齐全，Harbor trial error、cancellation 与 retry 均为零；DSH command failure 属于 agent outcome，会进入官方 verifier，而不会被误归类为 infrastructure exception。
+
+`deepIntegration` 报告 host 观察到的 parent completion request、child bootstrap/continuation start、terminal provider routing 与完整有序 chain。`providerRouting.providers` 汇总 parent 和 child 的 routing，只包含实际观察到的 provider ID，以及 `routed`、`attempted`、`rateLimited`、`fallback`、`completed`、`failed` 计数。`fallback` 表示某个 source provider 在 pre-submit 尝试后被放弃并转向 fallback；这次 fallback-out 同时计为 `failed=1`，其中 `rate_limit` attempt 的 `rateLimited` 只计入该 source provider。最终 provider 的 `rateLimited` 只描述它自身的 terminal failure；成功完成的 final provider 必须是 `rateLimited=false`。最终 provider 的 `completed` 与 `failed` 只描述它自己的终态。不包含 prompt、response、task text、credentials、browser session、DOM，也不伪造 token counts。
+
+每个 non-oracle trial 都必须有合法的 `deep-integration.jsonl` 和一条完整的 host-observed chain；缺失或非法 evidence 会让 report 失败，不会被跳过。可选的 DSH failure diagnostic 只写入受限 JSON classification 和 exception class name；不会保留原始 DSH stdout、stderr、exception message 或 provider output。

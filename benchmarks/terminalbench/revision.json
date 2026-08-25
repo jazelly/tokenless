@@ -11,8 +11,9 @@
   "runtimeImage": "node:22.22.0-bullseye@sha256:30abf318b514315981eadbfe3af859b094e0ef6ff99cfefcc0d23f24ca43c84f",
   "runtimePlatform": "linux/amd64",
   "agent": "benchmarks.terminalbench.dsh_tokenless_agent:DeepSeekHarnessTokenless",
-  "modelPattern": "tokenless/<provider>",
+  "model": "tokenless/auto",
   "wiringTask": "terminal-bench/openssl-selfsigned-cert",
   "protocol": "tokenless.terminalbench-channel.v1",
-  "auditProtocol": "tokenless.terminalbench-deep-audit.v1"
+  "auditProtocol": "tokenless.terminalbench-deep-audit.v1",
+  "routingProtocol": "tokenless.terminalbench-routing.v1"
 }

@@ -29,6 +29,7 @@ import {
 } from '../providers/registry.js'
 import {
   ManagedProfileRegistry,
+  isFreshProviderObservation,
   type ProviderStatus,
   type ManagedProfileRecord,
 } from '../browser/profiles/registry.js'
@@ -1182,8 +1183,7 @@ function controlProviderObservation(profile: ManagedProfileRecord, provider: Pro
   const access = observed?.access ?? (observed?.auth === 'authenticated' ? 'signed_in_unknown' : 'unknown')
   const usable = access === 'guest' || access.startsWith('signed_in_')
   const checkedAt = observed?.checkedAt ?? null
-  const checkedAtMs = checkedAt === null ? Number.NaN : Date.parse(checkedAt)
-  const fresh = Number.isFinite(checkedAtMs) && Date.now() - checkedAtMs <= 5 * 60 * 1000
+  const fresh = isFreshProviderObservation(checkedAt)
   return {
     provider,
     observed: observed !== undefined,

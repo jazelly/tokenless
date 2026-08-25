@@ -203,7 +203,6 @@ async function runOracle(args) {
   const report = await writeRunReport({
     jobDir,
     kind: 'oracle',
-    provider: null,
     profile: null,
     task,
     attemptsPerTask: 1,
@@ -216,9 +215,7 @@ async function runOracle(args) {
 
 async function runDeepSeekLane(kind, args) {
   const homeDir = path.resolve(requiredOption(args, '--home'))
-  const provider = requiredOption(args, '--provider')
   const profile = requiredOption(args, '--profile')
-  if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(provider)) throw new Error('--provider is invalid.')
   if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(profile)) throw new Error('--profile is invalid.')
   if (kind === 'full' && option(args, '--task') !== undefined) throw new Error('The full command always runs the unchanged 89-task dataset.')
 
@@ -238,19 +235,18 @@ async function runDeepSeekLane(kind, args) {
     'run',
     '-d', datasetIdentity(),
     '-a', revision.agent,
-    '-m', `tokenless/${provider}`,
+    '-m', revision.model,
     '-n', '1',
     '-k', String(attemptsPerTask),
     '--max-retries', '0',
     '--allow-agent-host', 'host.docker.internal',
     '--agent-include-logs', 'deep-integration.jsonl',
     '--agent-include-logs', 'dsh-tokenless-summary.json',
-    '--agent-include-logs', 'dsh-error.txt',
+    '--agent-include-logs', 'dsh-classification.json',
     '--ak', `runtime_archive=${prepared.runtimeArchive}`,
     '--ak', `proxy_script=${path.join(benchmarkRoot, 'channel_proxy.py')}`,
     '--ak', `tokenless_home=${homeDir}`,
     '--ak', `daemon_url=${daemon.url}`,
-    '--ak', `provider=${provider}`,
     '--ak', `profile=${profile}`,
     '--job-name', jobName,
     '--jobs-dir', jobsDir,
@@ -265,16 +261,19 @@ async function runDeepSeekLane(kind, args) {
   const report = await writeRunReport({
     jobDir,
     kind,
-    provider,
     profile,
     task,
     attemptsPerTask,
     expectedTrials,
+    runtimeArchive: prepared.runtimeArchive,
+    proxyScript: path.join(benchmarkRoot, 'channel_proxy.py'),
+    tokenlessHome: homeDir,
+    daemonUrl: daemon.url,
   })
   if (result.code !== 0) throw new Error(`Harbor ${kind} run exited ${result.code}; evidence is preserved at ${jobDir}.`)
   assertComplete(report, expectedTrials)
-  if (report.deepIntegration.completeChains === 0) {
-    throw new Error(`The ${kind} run observed no complete DSH parent -> Tokenless Harness provider -> child tool result -> DSH parent chain; evidence is preserved at ${jobDir}.`)
+  if (report.deepIntegration.trialsWithCompleteChain !== expectedTrials) {
+    throw new Error(`The ${kind} run is missing complete host-observed DSH parent -> child Tokenless Harness provider-turn evidence for every trial; evidence is preserved at ${jobDir}.`)
   }
   return report
 }
@@ -289,7 +288,18 @@ async function ensureHostDaemon(homeDir, explicitDaemonUrl) {
   })
 }
 
-async function writeRunReport({ jobDir, kind, provider, profile, task, attemptsPerTask, expectedTrials }) {
+async function writeRunReport({
+  jobDir,
+  kind,
+  profile,
+  task,
+  attemptsPerTask,
+  expectedTrials,
+  runtimeArchive,
+  proxyScript,
+  tokenlessHome,
+  daemonUrl,
+}) {
   const destination = path.join(jobDir, 'tokenless-run.json')
   await refuseExisting(destination)
   const official = await readJson(path.join(jobDir, 'result.json'))
@@ -304,7 +314,10 @@ async function writeRunReport({ jobDir, kind, provider, profile, task, attemptsP
     if (!await exists(path.join(directory, 'result.json'))) continue
     trialResults.push(await readJson(path.join(directory, 'result.json')))
     const auditPath = path.join(directory, 'agent', 'deep-integration.jsonl')
-    if (!await exists(auditPath)) continue
+    if (!await exists(auditPath)) {
+      if (kind !== 'oracle') throw new Error(`Missing deep-integration.jsonl for non-oracle trial ${directory}.`)
+      continue
+    }
     const auditEvents = []
     for (const line of (await fs.readFile(auditPath, 'utf8')).split(/\r?\n/u)) {
       if (!line.trim()) continue
@@ -314,15 +327,31 @@ async function writeRunReport({ jobDir, kind, provider, profile, task, attemptsP
     }
     deepTrials.push(deepIntegrationStats(auditEvents))
   }
-  validateResolvedRun({ official, jobConfig, trialResults, kind, task, attemptsPerTask, expectedTrials })
+  if (kind !== 'oracle' && deepTrials.length !== expectedTrials) {
+    throw new Error(`Expected deep-integration evidence for ${expectedTrials} non-oracle trials, found ${deepTrials.length}.`)
+  }
+  validateResolvedRun({
+    official,
+    jobConfig,
+    trialResults,
+    deepTrials,
+    kind,
+    task,
+    attemptsPerTask,
+    expectedTrials,
+    runtimeArchive,
+    proxyScript,
+    tokenlessHome,
+    daemonUrl,
+    profile,
+  })
   const rewards = trialResults
     .map((trial) => trial?.verifier_result?.rewards?.reward)
-    .filter((value) => typeof value === 'number')
   const [tokenlessRevision, tokenlessDirty] = await Promise.all([
     capture('git', ['rev-parse', 'HEAD'], { cwd: root }),
     capture('git', ['status', '--porcelain'], { cwd: root }),
   ])
-  const stats = official.stats ?? {}
+  const stats = official.stats
   const report = {
     schema: 'tokenless.terminalbench-run.v1',
     benchmark: revision.benchmark,
@@ -333,32 +362,71 @@ async function writeRunReport({ jobDir, kind, provider, profile, task, attemptsP
     task,
     attemptsPerTask,
     expectedTrials,
-    completedTrials: stats.n_completed_trials ?? 0,
-    erroredTrials: stats.n_errored_trials ?? 0,
-    cancelledTrials: stats.n_cancelled_trials ?? 0,
-    retries: stats.n_retries ?? 0,
+    completedTrials: stats.n_completed_trials,
+    erroredTrials: stats.n_errored_trials,
+    cancelledTrials: stats.n_cancelled_trials,
+    retries: stats.n_retries,
     rewards: {
       count: rewards.length,
       mean: rewards.length === 0 ? null : rewards.reduce((sum, value) => sum + value, 0) / rewards.length,
       passed: rewards.filter((value) => value === 1).length,
     },
     agent: kind === 'oracle' ? 'oracle' : 'deepseek-harness-tokenless-deep',
-    model: provider === null ? null : `tokenless/${provider}`,
-    provider,
+    model: kind === 'oracle' ? null : revision.model,
+    routingMode: kind === 'oracle' ? null : 'auto',
     profile,
     deepseekHarnessRevision: revision.deepseekHarnessRevision,
     tokenlessRevision: tokenlessRevision.trim(),
     tokenlessWorktreeDirty: tokenlessDirty.trim().length > 0,
     deepIntegration: aggregateDeepIntegration(deepTrials),
+    providerRouting: aggregateProviderRouting(deepTrials),
     jobDir,
   }
   await fs.writeFile(destination, `${JSON.stringify(report, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
   return report
 }
 
-function validateResolvedRun({ official, jobConfig, trialResults, kind, task, attemptsPerTask, expectedTrials }) {
+function validateResolvedRun({
+  official,
+  jobConfig,
+  trialResults,
+  deepTrials,
+  kind,
+  task,
+  attemptsPerTask,
+  expectedTrials,
+  runtimeArchive,
+  proxyScript,
+  tokenlessHome,
+  daemonUrl,
+  profile,
+}) {
   if (official.n_total_trials !== expectedTrials || trialResults.length !== expectedTrials) {
     throw new Error(`Harbor resolved ${String(official.n_total_trials)} total trials and wrote ${trialResults.length}; expected ${expectedTrials}.`)
+  }
+  validateHarborStats(official.stats, expectedTrials)
+  if (!Number.isSafeInteger(jobConfig.n_concurrent_trials) || jobConfig.n_concurrent_trials !== 1) {
+    throw new Error('Harbor resolved concurrency must be exactly one trial.')
+  }
+  const resolvedAttempts = jobConfig.n_attempts === undefined ? 1 : jobConfig.n_attempts
+  if (!Number.isSafeInteger(resolvedAttempts) || resolvedAttempts !== attemptsPerTask) {
+    throw new Error(`Harbor resolved k=${String(resolvedAttempts)}; expected k=${attemptsPerTask}.`)
+  }
+  const resolvedMaxRetries = jobConfig.retry === undefined ? 0 : jobConfig.retry?.max_retries
+  if (!Number.isSafeInteger(resolvedMaxRetries) || resolvedMaxRetries !== 0) {
+    throw new Error(`Harbor resolved max retries=${String(resolvedMaxRetries)}; expected zero.`)
+  }
+  if (kind !== 'oracle') {
+    if (deepTrials.length !== expectedTrials || deepTrials.some((trial) => trial.completeChains !== 1)) {
+      throw new Error('Every non-oracle trial must have exactly one complete host-observed deep-integration chain.')
+    }
+    validateDeepSeekAgent(jobConfig, {
+      runtime_archive: runtimeArchive,
+      proxy_script: proxyScript,
+      tokenless_home: tokenlessHome,
+      daemon_url: daemonUrl,
+      profile,
+    })
   }
   if (!Array.isArray(jobConfig.datasets) || jobConfig.datasets.length !== 1) {
     throw new Error('Harbor job config must resolve exactly one dataset.')
@@ -392,12 +460,80 @@ function validateResolvedRun({ official, jobConfig, trialResults, kind, task, at
     if (typeof trial.trial_name !== 'string' || trialNames.has(trial.trial_name)) {
       throw new Error('Harbor trial names must be present and unique.')
     }
+    if (typeof trial?.verifier_result?.rewards?.reward !== 'number' || !Number.isFinite(trial.verifier_result.rewards.reward)) {
+      throw new Error(`Harbor trial ${String(trial.trial_name)} is missing its verifier reward.`)
+    }
     trialNames.add(trial.trial_name)
     validateUnmodifiedTrialConfig(trial.config)
   }
   if (taskRefs.size !== expectedTaskCount || [...taskCounts.values()].some((count) => count !== attemptsPerTask)) {
     throw new Error(`Harbor did not produce exactly k=${attemptsPerTask} trials for every resolved task.`)
   }
+}
+
+function validateHarborStats(stats, expectedTrials) {
+  if (!stats || typeof stats !== 'object' || Array.isArray(stats)) {
+    throw new Error('Harbor result is missing resolved trial stats.')
+  }
+  for (const field of [
+    'n_completed_trials',
+    'n_errored_trials',
+    'n_running_trials',
+    'n_pending_trials',
+    'n_cancelled_trials',
+    'n_retries',
+  ]) {
+    if (!Number.isSafeInteger(stats[field]) || stats[field] < 0) {
+      throw new Error(`Harbor result is missing a valid stats.${field} field.`)
+    }
+  }
+  if (
+    stats.n_completed_trials !== expectedTrials
+    || stats.n_errored_trials !== 0
+    || stats.n_cancelled_trials !== 0
+    || stats.n_running_trials !== 0
+    || stats.n_pending_trials !== 0
+    || stats.n_retries !== 0
+    || stats.n_completed_trials + stats.n_errored_trials + stats.n_cancelled_trials !== expectedTrials
+  ) {
+    throw new Error('Harbor result stats are not a settled, zero-retry result for the resolved trial count.')
+  }
+}
+
+function validateDeepSeekAgent(jobConfig, expected) {
+  if (!expected || Object.values(expected).some((value) => typeof value !== 'string')) {
+    throw new Error('Terminal-Bench runtime launch values are incomplete.')
+  }
+  if (!Array.isArray(jobConfig.agents) || jobConfig.agents.length !== 1) {
+    throw new Error('Harbor must resolve exactly one DeepSeek Harness agent.')
+  }
+  const agent = jobConfig.agents[0]
+  if (!agent || typeof agent !== 'object' || Array.isArray(agent)) {
+    throw new Error('Harbor resolved an invalid DeepSeek Harness agent record.')
+  }
+  if (
+    agent.name !== revision.agent
+    || (agent.import_path !== undefined && agent.import_path !== null)
+    || agent.model_name !== revision.model
+    || !agent.kwargs
+    || typeof agent.kwargs !== 'object'
+    || Array.isArray(agent.kwargs)
+    || !sameStringSet(Object.keys(agent.kwargs), Object.keys(expected))
+    || Object.entries(expected).some(([key, value]) => agent.kwargs[key] !== value)
+    || (agent.env !== undefined && agent.env !== null)
+    || hasProviderPin(agent.kwargs)
+  ) {
+    throw new Error('Harbor did not resolve the provider-neutral DeepSeek Harness agent configuration.')
+  }
+}
+
+function hasProviderPin(value) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+    && Object.keys(value).some((key) => /provider/iu.test(key))
+}
+
+function sameStringSet(left, right) {
+  return left.length === right.length && left.every((value) => right.includes(value))
 }
 
 function validateUnmodifiedTrialConfig(config) {
@@ -427,62 +563,233 @@ function validateUnmodifiedTrialConfig(config) {
 
 function deepIntegrationStats(events) {
   const validTypes = new Set([
-    'harness.started',
     'api.completion.request',
-    'provider.turn.started',
-    'child.tool_result',
-    'harness.settled',
+    'child.turn.started',
+    'provider.routing',
     'dsh.parent.completed',
   ])
+  let nextParentOrdinal = 1
   for (const [index, event] of events.entries()) {
     if (!validTypes.has(event.type) || event.sequence !== index + 1) {
       throw new Error('Deep integration audit events are invalid or out of sequence.')
     }
+    if (event.type === 'api.completion.request') {
+      if (
+        Object.keys(event).some((key) => !['protocol', 'sequence', 'type', 'ordinal', 'forcedSubagent'].includes(key))
+        || event.ordinal !== nextParentOrdinal
+        || !Number.isSafeInteger(event.ordinal)
+        || event.ordinal < 1
+        || event.forcedSubagent !== true && event.forcedSubagent !== false
+      ) {
+        throw new Error('Host parent completion evidence is invalid.')
+      }
+      nextParentOrdinal += 1
+    } else if (event.type === 'child.turn.started') {
+      if (
+        Object.keys(event).some((key) => !['protocol', 'sequence', 'type', 'mode'].includes(key))
+        || (event.mode !== 'bootstrap' && event.mode !== 'continuation')
+      ) {
+        throw new Error('Host child turn evidence is invalid.')
+      }
+    } else if (event.type === 'provider.routing') {
+      validateProviderRoutingEvent(event)
+    } else if (Object.keys(event).some((key) => !['protocol', 'sequence', 'type'].includes(key))) {
+      throw new Error('Host DSH process evidence is invalid.')
+    }
   }
-  const started = events.filter((event) => event.type === 'harness.started')
-  let completeChains = 0
-  for (const start of started) {
-    const settled = events.find((event) => (
-      event.type === 'harness.settled'
-      && event.runId === start.runId
-      && event.status === 'succeeded'
-      && event.sequence > start.sequence
+
+  const parentRequests = events.filter((event) => event.type === 'api.completion.request')
+  const childStarts = events.filter((event) => event.type === 'child.turn.started')
+  const routing = events.filter((event) => event.type === 'provider.routing')
+  const firstForcedParent = parentRequests.find((event) => event.forcedSubagent === true)
+  const nextParentRequestAfterForced = firstForcedParent
+    ? parentRequests.find((event) => event.sequence > firstForcedParent.sequence)
+    : undefined
+  const firstParentRoute = firstForcedParent
+    ? routing.find((event) => (
+      event.scope === 'parent'
+      && event.outcome === 'completed'
+      && event.sequence > firstForcedParent.sequence
+      && (nextParentRequestAfterForced === undefined || event.sequence < nextParentRequestAfterForced.sequence)
     ))
-    if (!settled) continue
-    const providerTurn = events.some((event) => (
-      event.type === 'provider.turn.started'
-      && event.sequence > start.sequence
-      && event.sequence < settled.sequence
-      && event.status < 400
+    : undefined
+  const bootstrapStart = firstParentRoute
+    ? childStarts.find((event) => event.mode === 'bootstrap' && event.sequence > firstParentRoute.sequence)
+    : undefined
+  const nextChildStartAfterBootstrap = bootstrapStart
+    ? childStarts.find((event) => event.sequence > bootstrapStart.sequence)
+    : undefined
+  const bootstrapRoute = bootstrapStart
+    ? routing.find((event) => (
+      event.scope === 'child'
+      && event.outcome === 'completed'
+      && event.sequence > bootstrapStart.sequence
+      && (nextChildStartAfterBootstrap === undefined || event.sequence < nextChildStartAfterBootstrap.sequence)
     ))
-    const toolResult = events.some((event) => (
-      event.type === 'child.tool_result'
-      && event.runId === start.runId
-      && event.status === 'succeeded'
-      && event.sequence > start.sequence
-      && event.sequence < settled.sequence
+    : undefined
+  const continuationStart = bootstrapRoute
+    ? childStarts.find((event) => event.mode === 'continuation' && event.sequence > bootstrapRoute.sequence)
+    : undefined
+  const nextChildStartAfterContinuation = continuationStart
+    ? childStarts.find((event) => event.sequence > continuationStart.sequence)
+    : undefined
+  const continuationRoute = continuationStart
+    ? routing.find((event) => (
+      event.scope === 'child'
+      && event.outcome === 'completed'
+      && event.sequence > continuationStart.sequence
+      && (nextChildStartAfterContinuation === undefined || event.sequence < nextChildStartAfterContinuation.sequence)
     ))
-    const parentCompleted = events.some((event) => event.type === 'dsh.parent.completed' && event.sequence > settled.sequence)
-    if (providerTurn && toolResult && parentCompleted) completeChains += 1
-  }
+    : undefined
+  const laterParentRequest = continuationRoute
+    ? parentRequests.find((event) => event.sequence > continuationRoute.sequence && event.forcedSubagent === false)
+    : undefined
+  const nextParentRequestAfterLater = laterParentRequest
+    ? parentRequests.find((event) => event.sequence > laterParentRequest.sequence)
+    : undefined
+  const laterParentRoute = laterParentRequest
+    ? routing.find((event) => (
+      event.scope === 'parent'
+      && event.outcome === 'completed'
+      && event.sequence > laterParentRequest.sequence
+      && (nextParentRequestAfterLater === undefined || event.sequence < nextParentRequestAfterLater.sequence)
+    ))
+    : undefined
+  const parentCompleted = laterParentRoute
+    ? events.find((event) => event.type === 'dsh.parent.completed' && event.sequence > laterParentRoute.sequence)
+    : undefined
+  const completeChains = parentCompleted ? 1 : 0
   return {
-    started: started.length,
-    providerTurns: events.filter((event) => event.type === 'provider.turn.started' && event.status < 400).length,
-    toolResults: events.filter((event) => event.type === 'child.tool_result').length,
-    succeededToolResults: events.filter((event) => event.type === 'child.tool_result' && event.status === 'succeeded').length,
-    settled: events.filter((event) => event.type === 'harness.settled').length,
-    succeeded: events.filter((event) => event.type === 'harness.settled' && event.status === 'succeeded').length,
+    parentCompletionRequests: parentRequests.length,
+    forcedParentCompletionRequests: parentRequests.filter((event) => event.forcedSubagent === true).length,
+    childTurnStarts: childStarts.length,
+    childBootstrapTurns: childStarts.filter((event) => event.mode === 'bootstrap').length,
+    childContinuationTurns: childStarts.filter((event) => event.mode === 'continuation').length,
+    providerRoutingEvents: routing.length,
+    completedParentRouting: routing.filter((event) => event.scope === 'parent' && event.outcome === 'completed').length,
+    completedChildRouting: routing.filter((event) => event.scope === 'child' && event.outcome === 'completed').length,
     parentCompleted: events.filter((event) => event.type === 'dsh.parent.completed').length,
     completeChains,
+    providerRouting: providerRoutingStats(events),
   }
 }
 
 function aggregateDeepIntegration(trials) {
-  const fields = ['started', 'providerTurns', 'toolResults', 'succeededToolResults', 'settled', 'succeeded', 'parentCompleted', 'completeChains']
+  const fields = [
+    'parentCompletionRequests',
+    'forcedParentCompletionRequests',
+    'childTurnStarts',
+    'childBootstrapTurns',
+    'childContinuationTurns',
+    'providerRoutingEvents',
+    'completedParentRouting',
+    'completedChildRouting',
+    'parentCompleted',
+    'completeChains',
+  ]
   return {
     protocol: revision.auditProtocol,
     trialsWithCompleteChain: trials.filter((trial) => trial.completeChains > 0).length,
     ...Object.fromEntries(fields.map((field) => [field, trials.reduce((sum, trial) => sum + trial[field], 0)])),
+  }
+}
+
+function validateProviderRoutingEvent(event) {
+  if (
+    Object.keys(event).some((key) => ![
+      'protocol', 'sequence', 'type', 'scope', 'mode', 'provider',
+      'fallbackProviders', 'fallbackUsed', 'rateLimited', 'attempts', 'outcome',
+    ].includes(key))
+    ||
+    event.protocol !== revision.auditProtocol
+    || (event.scope !== 'parent' && event.scope !== 'child')
+    || (event.mode !== 'auto' && event.mode !== 'explicit')
+    || typeof event.provider !== 'string'
+    || !/^[a-z][a-z0-9-]{0,63}$/u.test(event.provider)
+    || !Array.isArray(event.fallbackProviders)
+    || event.fallbackProviders.length > 5
+    || event.fallbackProviders.some((provider) => typeof provider !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/u.test(provider))
+    || typeof event.fallbackUsed !== 'boolean'
+    || typeof event.rateLimited !== 'boolean'
+    || !Array.isArray(event.attempts)
+    || event.attempts.length > 5
+    || event.attempts.some((attempt) => (
+      !attempt
+      || typeof attempt !== 'object'
+      || Object.keys(attempt).some((key) => !['provider', 'outcome', 'reason'].includes(key))
+      || typeof attempt.provider !== 'string'
+      || !/^[a-z][a-z0-9-]{0,63}$/u.test(attempt.provider)
+      || attempt.outcome !== 'fallback'
+      || !['rate_limit', 'capacity', 'auth', 'unavailable'].includes(attempt.reason)
+    ))
+    || event.fallbackUsed !== (event.attempts.length > 0)
+    || (event.outcome !== 'completed' && event.outcome !== 'failed')
+    || event.outcome === 'completed' && event.rateLimited
+  ) {
+    throw new Error('Provider routing audit event is invalid.')
+  }
+}
+
+function providerRoutingStats(events) {
+  const providers = {}
+  for (const event of events) {
+    if (event.type !== 'provider.routing') continue
+    const current = providers[event.provider] ?? {
+      routed: 0,
+      attempted: 0,
+      rateLimited: 0,
+      fallback: 0,
+      completed: 0,
+      failed: 0,
+    }
+    current.routed += 1
+    current.attempted += 1
+    if (event.rateLimited) current.rateLimited += 1
+    if (event.outcome === 'completed') current.completed += 1
+    else current.failed += 1
+    providers[event.provider] = current
+    for (const attempt of event.attempts) {
+      const attempted = providers[attempt.provider] ?? {
+        routed: 0,
+        attempted: 0,
+        rateLimited: 0,
+        fallback: 0,
+        completed: 0,
+        failed: 0,
+      }
+      attempted.routed += 1
+      attempted.attempted += 1
+      attempted.fallback += 1
+      attempted.failed += 1
+      if (attempt.reason === 'rate_limit') attempted.rateLimited += 1
+      providers[attempt.provider] = attempted
+    }
+  }
+  return providers
+}
+
+function aggregateProviderRouting(trials) {
+  const providers = {}
+  for (const trial of trials) {
+    for (const [provider, counts] of Object.entries(trial.providerRouting ?? {})) {
+      const current = providers[provider] ?? {
+        routed: 0,
+        attempted: 0,
+        rateLimited: 0,
+        fallback: 0,
+        completed: 0,
+        failed: 0,
+      }
+      for (const field of ['routed', 'attempted', 'rateLimited', 'fallback', 'completed', 'failed']) {
+        current[field] += counts[field]
+      }
+      providers[provider] = current
+    }
+  }
+  return {
+    protocol: revision.routingProtocol,
+    mode: 'auto',
+    providers,
   }
 }
 
@@ -614,7 +921,7 @@ function helpText() {
     `  inspect\n` +
     `  prepare --dsh-checkout <path>\n` +
     `  oracle [--task terminal-bench/<name>] [--jobs-dir <path>]\n` +
-    `  wiring --home <path> --dsh-checkout <path> --provider <id> --profile <id> [--task terminal-bench/<name>]\n` +
-    `  full --home <path> --dsh-checkout <path> --provider <id> --profile <id>\n\n` +
-    `The full command is fixed to Harbor ${revision.harborVersion}, the 89-task Terminal-Bench 2.0 dataset, k=5, one concurrent trial, and zero agent retries.\n`
+    `  wiring --home <path> --dsh-checkout <path> --profile <id> [--task terminal-bench/<name>]\n` +
+    `  full --home <path> --dsh-checkout <path> --profile <id>\n\n` +
+    `The full command is fixed to Harbor ${revision.harborVersion}, the 89-task Terminal-Bench 2.0 dataset, k=5, one concurrent trial, and zero Harbor retries.\n`
 }
