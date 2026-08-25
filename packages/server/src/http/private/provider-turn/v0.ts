@@ -7,6 +7,7 @@ import { VISIBLE_ACTIONS, createVisibleActionRequest } from '../../../browser/ac
 import { isFreshProviderObservation, ManagedProfileRegistry } from '../../../browser/profiles/registry.js'
 import {
   getProviderInstanceById,
+  prioritizeTaskCapabilityRoutes,
   resolveTaskCapabilityRoute,
   resolveTaskCapabilityRoutes,
   type TaskCapabilityId,
@@ -46,6 +47,7 @@ type StartTurnRequest = {
   providerRef: string
   providerBindingRef: string
   requiredCapabilities: readonly ['conversation.chat', 'file.upload']
+  semanticPreference?: string
   conversation: { mode: 'new' } | { mode: 'continue'; conversationRef: string }
   bootstrap?: { text: string; attachments: readonly [{ kind: 'system_prompt'; name: string; attachmentRef: string; mediaType: 'text/markdown'; byteLength: number; sha256: string }, ...Array<{ kind: 'skill'; name: string; attachmentRef: string; mediaType: 'text/markdown'; byteLength: number; sha256: string }>] }
   continuation?: { text: string; attachments: readonly [{ kind: 'tool_result'; name: string; attachmentRef: string; mediaType: 'text/markdown'; byteLength: number; sha256: string }, ...Array<{ kind: 'skill'; name: string; attachmentRef: string; mediaType: 'text/markdown'; byteLength: number; sha256: string }>] }
@@ -159,6 +161,9 @@ export class PrivateProviderTurnV0Adapter {
     if (request.providerBindingRef !== binding.binding_ref || request.providerRef !== binding.provider_ref) {
       throw invalidInput('web ai request binding does not match the route')
     }
+    if (request.semanticPreference !== undefined && binding.provider !== AUTO_PROVIDER) {
+      throw invalidInput('web ai semantic preference is available only for an auto provider bootstrap')
+    }
     if (request.conversation.mode === 'continue') {
       return this.startContinuation(binding, request, payloadLifetime)
     }
@@ -182,7 +187,7 @@ export class PrivateProviderTurnV0Adapter {
       throw invalidInput('web ai request payload lifetime does not match its attachments')
     }
     const autoRoutes = binding.provider === AUTO_PROVIDER
-      ? await this.autoCapabilityRoutes(binding.profile_id)
+      ? await this.autoCapabilityRoutes(binding.profile_id, request.semanticPreference ?? null)
       : null
     const provider = autoRoutes?.[0]?.provider ?? binding.provider
     const route = autoRoutes?.[0]
@@ -208,6 +213,7 @@ export class PrivateProviderTurnV0Adapter {
       fallback: autoRoutes ? automaticFallbackPlan(autoRoutes) : null,
       browserVisibility: 'auto',
       userHandoff: false,
+      ...(request.semanticPreference === undefined ? {} : { semanticPreference: request.semanticPreference }),
       actions: [
         createVisibleActionRequest({
           provider,
@@ -386,7 +392,7 @@ export class PrivateProviderTurnV0Adapter {
     }
   }
 
-  private async autoCapabilityRoutes(profileId: string): Promise<readonly TaskCapabilityRoute[]> {
+  private async autoCapabilityRoutes(profileId: string, semanticPreference: string | null): Promise<readonly TaskCapabilityRoute[]> {
     const [profiles, config] = await Promise.all([this.profiles.listProfiles(), readTokenlessConfig(this.store.homeDir)])
     const profile = profiles.find((candidate) => candidate.slug === profileId)
     const configured = profile ? config.profiles[profile.slug] : undefined
@@ -413,7 +419,7 @@ export class PrivateProviderTurnV0Adapter {
     if (!resolved.ok || resolved.routes.length === 0) {
       throw invalidInput('web ai auto has no current eligible provider with chat and upload evidence')
     }
-    return resolved.routes
+    return prioritizeTaskCapabilityRoutes(resolved.routes, semanticPreference)
   }
 
   private bindingDocument(binding: WebAiBinding) {
@@ -461,24 +467,32 @@ export class PrivateProviderTurnV0Adapter {
   }
 }
 
-function strictObject(value: unknown, keys: readonly string[]) {
+function strictObject(value: unknown, keys: readonly string[], optionalKeys: readonly string[] = []) {
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) throw invalidInput('web ai request must be an object')
   const object = value as Record<string, unknown>
-  if (Object.keys(object).length !== keys.length || keys.some((key) => !Object.hasOwn(object, key))) throw invalidInput('web ai request contains unsupported fields')
+  const allowedKeys = new Set([...keys, ...optionalKeys])
+  if (Object.keys(object).some((key) => !allowedKeys.has(key)) || keys.some((key) => !Object.hasOwn(object, key))) throw invalidInput('web ai request contains unsupported fields')
   return object
 }
 
 function parseStartTurnRequest(value: unknown): StartTurnRequest {
   if (!isPlainRecord(value)) throw new Error('start_turn_request is invalid')
   const conversation = isPlainRecord(value.conversation) ? value.conversation : null
-  const request = strictObject(value, conversation?.mode === 'continue'
-    ? ['protocol', 'requestRef', 'providerRef', 'providerBindingRef', 'requiredCapabilities', 'conversation', 'continuation']
-    : ['protocol', 'requestRef', 'providerRef', 'providerBindingRef', 'requiredCapabilities', 'conversation', 'bootstrap'])
+  const request = strictObject(
+    value,
+    conversation?.mode === 'continue'
+      ? ['protocol', 'requestRef', 'providerRef', 'providerBindingRef', 'requiredCapabilities', 'conversation', 'continuation']
+      : ['protocol', 'requestRef', 'providerRef', 'providerBindingRef', 'requiredCapabilities', 'conversation', 'bootstrap'],
+    conversation?.mode === 'continue' ? [] : ['semanticPreference'],
+  )
   if (request.protocol !== WEB_AI_INTERACTION_PROTOCOL_V0 || !/^request:[a-f0-9]{32}$/.test(String(request.requestRef)) ||
     !/^provider:[a-f0-9]{32}$/.test(String(request.providerRef)) || !/^binding:[a-f0-9]{32}$/.test(String(request.providerBindingRef)) ||
     !Array.isArray(request.requiredCapabilities) || request.requiredCapabilities.length !== 2 || request.requiredCapabilities[0] !== 'conversation.chat' || request.requiredCapabilities[1] !== 'file.upload' ||
     !isPlainRecord(request.conversation) || (request.conversation.mode !== 'new' && request.conversation.mode !== 'continue')) {
     throw new Error('start_turn_request is invalid')
+  }
+  if (request.semanticPreference !== undefined && !isSemanticPreference(request.semanticPreference)) {
+    throw new Error('start_turn_request semanticPreference is invalid')
   }
   if (request.conversation.mode === 'continue') return parseContinueTurnRequest(request)
   if (Object.keys(request.conversation).length !== 1 ||
@@ -535,6 +549,10 @@ function boundedProvider(value: unknown) {
 function boundedProfileId(value: unknown) {
   if (typeof value !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(value)) throw invalidInput('web ai profileId is invalid')
   return value
+}
+
+function isSemanticPreference(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-z][a-z0-9-]{0,63}$/u.test(value)
 }
 
 function opaqueRef(kind: 'provider' | 'binding' | 'attachment' | 'turn' | 'conversation') {

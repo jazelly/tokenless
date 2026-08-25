@@ -12,6 +12,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const daemonServer = pathToFileURL(path.join(root, 'packages/server/dist/src/http/server.js')).href
 const daemonStore = pathToFileURL(path.join(root, 'packages/server/dist/src/jobs/store.js')).href
 const profileRegistry = pathToFileURL(path.join(root, 'packages/server/dist/src/browser/profiles/registry.js')).href
+const daemonConfig = pathToFileURL(path.join(root, 'packages/server/dist/src/persistence/config.js')).href
 const startExample = JSON.parse(fs.readFileSync(path.join(root, 'packages/contracts/examples/v0/start-turn-request.json'), 'utf8'))
 const maxStageBytes = 1024 * 1024
 
@@ -155,6 +156,123 @@ test('continuation reuses the proved provider conversation in the same process',
       assert.equal(continuedJob.request_json.target.url, 'https://chatgpt.com/c/tokenless-continuation')
 
       assert.equal((await client.read(continued.turnRef)).lifecycle, 'queued')
+    } finally {
+      await daemon.close()
+    }
+  })
+})
+
+test('auto bootstrap preference reorders eligible providers while continuation keeps the settled provider', async () => {
+  await withHome(async (homeDir) => {
+    const daemon = await startControlPlane(homeDir)
+    try {
+      const { ManagedProfileRegistry } = await import(profileRegistry)
+      const { writeTokenlessConfig } = await import(daemonConfig)
+      const registry = new ManagedProfileRegistry(homeDir)
+      const profile = await registry.addProfile({ slug: 'semantic-auto', setDefault: true })
+      for (const provider of ['chatgpt', 'grok']) {
+        await registry.updateProviderStatus(profile.slug, {
+          provider,
+          auth: 'authenticated',
+          access: 'signed_in_free',
+          checkedAt: new Date().toISOString(),
+        })
+      }
+      await writeTokenlessConfig({
+        homeDir,
+        profiles: {
+          [profile.slug]: {
+            roleLabel: '',
+            enabledProviders: ['chatgpt', 'grok'],
+            browserVisibility: 'headed',
+            proxy: null,
+          },
+        },
+      })
+      const token = fs.readFileSync(path.join(homeDir, 'daemon.token'), 'utf8').trim()
+      const client = createLocalHttpClient({ baseUrl: daemon.origin, token })
+      const binding = await client.bind('auto', profile.slug)
+      const attachment = await client.stage(binding.providerBindingRef, new TextEncoder().encode('# system\n'))
+      const preferredRequest = {
+        ...requestFor(binding, attachment, 'f'),
+        semanticPreference: 'grok',
+      }
+      const first = await client.start(binding.providerBindingRef, preferredRequest)
+      const firstMapping = daemon.store.getWebAiTurn(first.turnRef)
+      assert.ok(firstMapping)
+      const firstJob = daemon.store.getJob(firstMapping.job_id)
+      assert.equal(firstJob.provider, 'grok')
+      assert.equal(firstJob.request_json.semanticPreference, 'grok')
+      assert.equal(firstJob.request_json.fallback.alternatives[0].provider, 'chatgpt')
+
+      const running = daemon.store.takeNextJob({ job_id_prefix: firstJob.job_id }, firstJob.profile_id)
+      assert.ok(running)
+      daemon.store.recordProviderSubmission(running.job_id)
+      daemon.store.upsertProviderTaskConversation({
+        provider: 'grok',
+        profile_id: firstJob.profile_id,
+        task_id: firstJob.request_json.taskId,
+        canonical_url: 'https://grok.com/c/tokenless-semantic-continuation',
+        job_id: firstJob.job_id,
+      })
+      daemon.store.completeJob(firstJob.job_id, { result_json: successfulVisibleResult('first') })
+
+      const resultAttachment = await client.stage(binding.providerBindingRef, new TextEncoder().encode('{"result":"exact"}'), { name: 'tool-result.md' })
+      const continuationRequest = {
+        protocol: startExample.protocol,
+        requestRef: `request:${'1'.repeat(32)}`,
+        providerRef: binding.capabilities.providerRef,
+        providerBindingRef: binding.providerBindingRef,
+        requiredCapabilities: ['conversation.chat', 'file.upload'],
+        conversation: { mode: 'continue', conversationRef: first.conversationRef },
+        continuation: {
+          text: 'continue from the attached action result',
+          attachments: [{ kind: 'tool_result', name: 'tool-result.md', ...resultAttachment }],
+        },
+      }
+      await assert.rejects(client.continue(binding.providerBindingRef, { ...continuationRequest, semanticPreference: 'chatgpt' }))
+      const continued = await client.continue(binding.providerBindingRef, continuationRequest)
+      const continuedMapping = daemon.store.getWebAiTurn(continued.turnRef)
+      assert.ok(continuedMapping)
+      const continuedJob = daemon.store.getJob(continuedMapping.job_id)
+      assert.equal(continuedJob.provider, 'grok')
+      assert.equal(continuedJob.request_json.fallback, null)
+      assert.equal(Object.hasOwn(continuedJob.request_json, 'semanticPreference'), false)
+
+      await registry.updateProviderStatus(profile.slug, {
+        provider: 'grok',
+        auth: 'authenticated',
+        access: 'signed_in_free',
+        checkedAt: '2000-01-01T00:00:00.000Z',
+      })
+      const staleAttachment = await client.stage(binding.providerBindingRef, new TextEncoder().encode('# stale preference\n'))
+      const stalePreference = await client.start(binding.providerBindingRef, {
+        ...requestFor(binding, staleAttachment, '4'),
+        semanticPreference: 'grok',
+      })
+      const staleMapping = daemon.store.getWebAiTurn(stalePreference.turnRef)
+      assert.ok(staleMapping)
+      const staleJob = daemon.store.getJob(staleMapping.job_id)
+      assert.equal(staleJob.provider, 'chatgpt')
+      assert.equal(staleJob.request_json.semanticPreference, 'grok')
+
+      const ignoredAttachment = await client.stage(binding.providerBindingRef, new TextEncoder().encode('# ignored preference\n'))
+      const ignored = await client.start(binding.providerBindingRef, {
+        ...requestFor(binding, ignoredAttachment, '2'),
+        semanticPreference: 'deepseek',
+      })
+      const ignoredMapping = daemon.store.getWebAiTurn(ignored.turnRef)
+      assert.ok(ignoredMapping)
+      const ignoredJob = daemon.store.getJob(ignoredMapping.job_id)
+      assert.equal(ignoredJob.provider, 'chatgpt')
+      assert.equal(ignoredJob.request_json.semanticPreference, 'deepseek')
+
+      const explicitBinding = await client.bind('chatgpt', profile.slug)
+      const explicitAttachment = await client.stage(explicitBinding.providerBindingRef, new TextEncoder().encode('# explicit\n'))
+      await assertLocalHttpError(client.start(explicitBinding.providerBindingRef, {
+        ...requestFor(explicitBinding, explicitAttachment, '3'),
+        semanticPreference: 'grok',
+      }), 400, 'invalid_input')
     } finally {
       await daemon.close()
     }

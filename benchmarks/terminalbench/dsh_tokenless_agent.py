@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+import hashlib
 import http.client
 import http.server
 import json
@@ -24,11 +25,20 @@ from harbor.models.agent.context import AgentContext
 
 
 DSH_REVISION = "47f943859bef60e4160492346772ded9b24f765a"
+DATASET = "terminal-bench/terminal-bench-2"
+DATASET_REF = "sha256:c6fc2e2382c1dbae99b2d5ecd2f4f4a60c3c01e0d84642d69b4afd92e99d078b"
+TASK_COUNT = 89
+TASK_MANIFEST_SCHEMA = "tokenless.terminalbench-task-manifest.v1"
+SEMANTIC_MANIFEST_SCHEMA = "tokenless.terminalbench-semantic-manifest.v1"
+INSTRUCTION_DIGEST = "sha256:5b6a2e01c29b8f215daa2e430f75d2a12c3c4ffc627d8cf4ebc1b38cd0d353ea"
+TASK_REF_DIGEST = "sha256:82cddb9ea94d792455d3e32b3c8a60ed73003714ed01785ec3b1ec5c580bccba"
 CHANNEL_PROTOCOL = "tokenless.terminalbench-channel.v1"
-AUDIT_PROTOCOL = "tokenless.terminalbench-deep-audit.v1"
+AUDIT_PROTOCOL = "tokenless.terminalbench-deep-audit.v2"
 PROXY_PORT = 18765
 MAX_BRIDGE_BODY_BYTES = 8 * 1024 * 1024
 PROVIDER_ID_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
+SEMANTIC_TASK_TYPE_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+SEMANTIC_COMPLEXITIES = {"low", "medium", "high"}
 PROVIDER_REF_PATTERN = re.compile(r"^provider:[a-f0-9]{32}$")
 PROVIDER_BINDING_REF_PATTERN = re.compile(r"^binding:[a-f0-9]{32}$")
 PROVIDER_ATTACHMENT_REF_PATTERN = re.compile(r"^attachment:[a-f0-9]{32}$")
@@ -76,6 +86,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         control_token: str,
         channel_token: str,
         profile: str,
+        semantic_preference: str,
     ) -> None:
         super().__init__(address, _ScopedBridgeHandler)
         parsed = urlsplit(daemon_url)
@@ -99,6 +110,9 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         self.control_token = control_token
         self.channel_token = channel_token
         self.expected_profile = profile
+        if PROVIDER_ID_PATTERN.fullmatch(semantic_preference) is None:
+            raise ValueError("Terminal-Bench semantic preference is invalid.")
+        self.semantic_preference = semantic_preference
         self._audit_lock = threading.Lock()
         self._audit_events: list[dict[str, Any]] = []
         self._parent_completion_ordinal = 0
@@ -120,15 +134,20 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         self._provider_request_stages: dict[str, str] = {}
         self._provider_turn_refs: dict[str, str] = {}
         self._subagent_dispatch_lock = threading.Lock()
-        self._subagent_dispatched = False
+        self._subagent_dispatch_state = "available"
 
-    def should_require_subagent(self) -> bool:
+    def claim_subagent_dispatch(self) -> bool:
         with self._subagent_dispatch_lock:
-            return not self._subagent_dispatched
+            if self._subagent_dispatch_state != "available":
+                return False
+            self._subagent_dispatch_state = "claimed"
+            return True
 
-    def mark_subagent_dispatched(self) -> None:
+    def settle_subagent_dispatch(self, succeeded: bool) -> None:
         with self._subagent_dispatch_lock:
-            self._subagent_dispatched = True
+            if self._subagent_dispatch_state != "claimed":
+                raise RuntimeError("subagent dispatch claim is unavailable")
+            self._subagent_dispatch_state = "dispatched" if succeeded else "available"
 
     def record_event(self, value: dict[str, Any]) -> None:
         with self._audit_lock:
@@ -144,17 +163,31 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         with self._audit_lock:
             return [dict(event) for event in self._audit_events]
 
-    def record_parent_completion_request(self, forced_subagent: bool) -> None:
+    def record_parent_completion_request(self) -> int:
         with self._audit_lock:
             self._parent_completion_ordinal += 1
             ordinal = self._parent_completion_ordinal
-        self.record_event(
-            {
-                "type": "api.completion.request",
-                "ordinal": ordinal,
-                "forcedSubagent": forced_subagent,
-            }
-        )
+            self._audit_events.append(
+                {
+                    "protocol": AUDIT_PROTOCOL,
+                    "sequence": len(self._audit_events) + 1,
+                    "type": "api.completion.request",
+                    "ordinal": ordinal,
+                    "forcedSubagent": False,
+                }
+            )
+            return len(self._audit_events)
+
+    def mark_parent_completion_forced(self, sequence: int) -> None:
+        with self._audit_lock:
+            event = self._audit_events[sequence - 1]
+            if (
+                event.get("sequence") != sequence
+                or event.get("type") != "api.completion.request"
+                or event.get("forcedSubagent") is not False
+            ):
+                raise RuntimeError("parent completion audit reference is invalid")
+            event["forcedSubagent"] = True
 
     def record_child_turn_started(self, mode: str) -> None:
         self.record_event({"type": "child.turn.started", "mode": mode})
@@ -259,6 +292,8 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
                 if mode == "bootstrap":
                     if self._bootstrap_turn_ref is not None:
                         raise ValueError("provider bootstrap turn was already started")
+                    if start["semanticPreference"] not in {None, self.semantic_preference}:
+                        raise ValueError("provider bootstrap semantic preference does not match the task")
                 elif (
                     not self._bootstrap_succeeded
                     or self._continuation_turn_ref is not None
@@ -380,6 +415,25 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         if cls._json_object(body):
             raise ValueError("provider cancellation body must be empty")
 
+    def decorate_parent_completion_body(self, body: bytes | None) -> bytes:
+        value = self._json_object(body)
+        if value.get("model") != "tokenless/auto":
+            raise ValueError("DSH parent completion must use tokenless/auto")
+        tokenless = value.get("tokenless")
+        if tokenless is None:
+            tokenless = {}
+        if not isinstance(tokenless, dict):
+            raise ValueError("DSH parent tokenless options are invalid")
+        tokenless = dict(tokenless)
+        tokenless["semantic_preference"] = self.semantic_preference
+        value["tokenless"] = tokenless
+        return json.dumps(value, separators=(",", ":")).encode("utf-8")
+
+    def decorate_bootstrap_body(self, body: bytes | None) -> bytes:
+        value = self._json_object(body)
+        value["semanticPreference"] = self.semantic_preference
+        return json.dumps(value, separators=(",", ":")).encode("utf-8")
+
     @staticmethod
     def _parse_start_request(body: bytes | None) -> dict[str, Any]:
         value = _ScopedBridgeServer._json_object(body)
@@ -395,7 +449,10 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             "conversation",
             "bootstrap" if mode == "new" else "continuation",
         }
-        if set(value) != expected_keys:
+        if mode == "new":
+            if set(value) not in {expected_keys, expected_keys | {"semanticPreference"}}:
+                raise ValueError("provider turn start shape is invalid")
+        elif set(value) != expected_keys:
             raise ValueError("provider turn start shape is invalid")
         if (
             value.get("protocol") != WEB_AI_INTERACTION_PROTOCOL
@@ -412,12 +469,16 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         if mode == "new":
             if set(conversation) != {"mode"} or not isinstance(value.get("bootstrap"), dict):
                 raise ValueError("provider bootstrap shape is invalid")
+            semantic_preference = value.get("semanticPreference")
+            if semantic_preference is not None and PROVIDER_ID_PATTERN.fullmatch(str(semantic_preference)) is None:
+                raise ValueError("provider bootstrap semantic preference is invalid")
             return {
                 "mode": "bootstrap",
                 "requestRef": value["requestRef"],
                 "providerRef": value["providerRef"],
                 "providerBindingRef": value["providerBindingRef"],
                 "conversationRef": None,
+                "semanticPreference": semantic_preference,
             }
         if mode != "continue" or set(conversation) != {"mode", "conversationRef"}:
             raise ValueError("provider continuation shape is invalid")
@@ -430,6 +491,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             "providerRef": value["providerRef"],
             "providerBindingRef": value["providerBindingRef"],
             "conversationRef": conversation_ref,
+            "semanticPreference": None,
         }
 
     @classmethod
@@ -597,9 +659,20 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             return None
         fallback_used = upstream.getheader("X-Tokenless-Route-Fallback-Used")
         rate_limited = upstream.getheader("X-Tokenless-Route-Rate-Limited")
+        preference_requested_header = upstream.getheader(
+            "X-Tokenless-Route-Preference-Requested"
+        )
+        preference_honored = upstream.getheader(
+            "X-Tokenless-Route-Preference-Honored"
+        )
         attempts_header = upstream.getheader("X-Tokenless-Route-Attempts")
-        if attempts_header is None:
+        if attempts_header is None or preference_requested_header is None:
             return None
+        preference_requested = (
+            None
+            if preference_requested_header == ""
+            else preference_requested_header
+        )
         try:
             attempts_value = json.loads(attempts_header)
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -607,6 +680,12 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         if (
             fallback_used not in {"0", "1"}
             or rate_limited not in {"0", "1"}
+            or preference_honored not in {"0", "1"}
+            or (
+                preference_requested is not None
+                and PROVIDER_ID_PATTERN.fullmatch(preference_requested) is None
+            )
+            or (preference_honored == "1" and preference_requested is None)
             or not isinstance(attempts_value, list)
             or len(attempts_value) > 5
             or (fallback_used == "1") != bool(attempts_value)
@@ -635,6 +714,8 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             "fallbackProviders": fallback_providers,
             "fallbackUsed": fallback_used == "1",
             "rateLimited": rate_limited == "1",
+            "preferenceRequested": preference_requested,
+            "preferenceHonored": preference_honored == "1",
             "attempts": attempts,
         }
 
@@ -741,10 +822,20 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
                 provider_control_lock.release()
                 self.send_error(400)
                 return
+            if provider_operation["kind"] == "start" and provider_operation["mode"] == "bootstrap":
+                try:
+                    body = self.server.decorate_bootstrap_body(body)  # type: ignore[attr-defined]
+                except ValueError:
+                    provider_control_lock.release()
+                    self.send_error(400)
+                    return
+        subagent_claimed = False
+        subagent_claim_settled = False
+        parent_event_sequence = None
         if path in ALLOWED_COMPLETION_PATHS and self.command == "POST":
-            forced_subagent = False
             try:
-                request_value = json.loads(body or b"{}")
+                body = self.server.decorate_parent_completion_body(body)  # type: ignore[attr-defined]
+                request_value = json.loads(body)
                 tools = request_value.get("tools") if isinstance(request_value, dict) else None
                 has_subagent = isinstance(tools, list) and any(
                     isinstance(tool, dict)
@@ -752,27 +843,23 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
                     and tool["function"].get("name") == "subagent"
                     for tool in tools
                 )
-                if (
-                    isinstance(request_value, dict)
-                    and has_subagent
-                    and self.server.should_require_subagent()  # type: ignore[attr-defined]
-                ):
-                    request_value["tool_choice"] = {
-                        "type": "function",
-                        "function": {"name": "subagent"},
-                    }
+                if isinstance(request_value, dict) and has_subagent:
                     request_value["parallel_tool_calls"] = False
+                    subagent_claimed = self.server.claim_subagent_dispatch()  # type: ignore[attr-defined]
+                    if subagent_claimed:
+                        request_value["tool_choice"] = {
+                            "type": "function",
+                            "function": {"name": "subagent"},
+                        }
                     body = json.dumps(
                         request_value, separators=(",", ":")
                     ).encode("utf-8")
-                    forced_subagent = True
-            except (UnicodeDecodeError, json.JSONDecodeError):
-                pass
-            self.server.record_parent_completion_request(  # type: ignore[attr-defined]
-                forced_subagent
-            )
-        else:
-            forced_subagent = False
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+                self.send_error(400)
+                if provider_control_lock is not None:
+                    provider_control_lock.release()
+                return
+            parent_event_sequence = self.server.record_parent_completion_request()  # type: ignore[attr-defined]
         headers = {
             "Authorization": f"Bearer {self.server.control_token}",  # type: ignore[attr-defined]
             "Accept": self.headers.get("Accept", "application/json"),
@@ -797,23 +884,9 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
             control_body = None
             if provider_operation is not None:
                 control_body = self._read_bounded_response(upstream)
-                if provider_operation["kind"] == "turn_read":
-                    self.server.record_provider_turn_read(  # type: ignore[attr-defined]
-                        path, upstream
-                    )
                 self.server.commit_provider_turn_response(  # type: ignore[attr-defined]
                     provider_operation, upstream.status, control_body
                 )
-                if provider_operation["kind"] == "start" and upstream.status < 400:
-                    self.server.record_child_turn_started(  # type: ignore[attr-defined]
-                        provider_operation["mode"]
-                    )
-            elif path in ALLOWED_COMPLETION_PATHS and self.command == "POST":
-                self.server.record_upstream_route(  # type: ignore[attr-defined]
-                    upstream, "parent"
-                )
-            if forced_subagent and upstream.status < 400:
-                self.server.mark_subagent_dispatched()  # type: ignore[attr-defined]
             self.send_response(upstream.status)
             for name, value in upstream.getheaders():
                 if name.lower() not in {
@@ -836,16 +909,40 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
             if provider_operation is not None:
                 self.wfile.write(control_body or b"")
                 self.wfile.flush()
+                if provider_operation["kind"] == "turn_read":
+                    self.server.record_provider_turn_read(  # type: ignore[attr-defined]
+                        path, upstream
+                    )
+                if provider_operation["kind"] == "start" and upstream.status < 400:
+                    self.server.record_child_turn_started(  # type: ignore[attr-defined]
+                        provider_operation["mode"]
+                    )
             else:
                 while chunk := upstream.read(64 * 1024):
                     self.wfile.write(chunk)
                     self.wfile.flush()
+                if path in ALLOWED_COMPLETION_PATHS and self.command == "POST":
+                    if subagent_claimed:
+                        subagent_succeeded = upstream.status < 400
+                        if subagent_succeeded:
+                            self.server.mark_parent_completion_forced(  # type: ignore[attr-defined]
+                                parent_event_sequence
+                            )
+                        self.server.settle_subagent_dispatch(  # type: ignore[attr-defined]
+                            subagent_succeeded
+                        )
+                        subagent_claim_settled = True
+                    self.server.record_upstream_route(  # type: ignore[attr-defined]
+                        upstream, "parent"
+                    )
         except ValueError:
             self.close_connection = True
             self.send_error(502)
         except (OSError, http.client.HTTPException):
             self.close_connection = True
         finally:
+            if subagent_claimed and not subagent_claim_settled:
+                self.server.settle_subagent_dispatch(False)  # type: ignore[attr-defined]
             connection.close()
             if provider_control_lock is not None:
                 provider_control_lock.release()
@@ -885,6 +982,12 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
         self.tokenless_home = self._required_kwarg(kwargs, "tokenless_home")
         self.daemon_url = self._required_kwarg(kwargs, "daemon_url")
         self.profile = self._required_kwarg(kwargs, "profile")
+        self.task_manifest = Path(self._required_kwarg(kwargs, "task_manifest"))
+        self.semantic_manifest = Path(self._required_kwarg(kwargs, "semantic_manifest"))
+        self._manifest = self._load_task_manifest(self.task_manifest)
+        self._semantic_manifest, self.semantic_manifest_digest = self._load_semantic_manifest(
+            self.semantic_manifest, self._manifest
+        )
         if "provider" in kwargs:
             raise ValueError("Terminal-Bench DeepSeek Harness agent does not accept a fixed provider; use tokenless/auto.")
         super().__init__(*args, **kwargs)
@@ -892,6 +995,8 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
         for label, file_path in (
             ("runtime_archive", self.runtime_archive),
             ("proxy_script", self.proxy_script),
+            ("task_manifest", self.task_manifest),
+            ("semantic_manifest", self.semantic_manifest),
         ):
             if not file_path.is_file():
                 raise ValueError(f"Terminal-Bench {label} does not exist: {file_path}")
@@ -906,6 +1011,150 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
                 or any(character in value for character in "\r\n\0")
             ):
                 raise ValueError(f"Terminal-Bench {label} must be non-empty.")
+
+    @staticmethod
+    def _load_task_manifest(file_path: Path) -> dict[str, str]:
+        try:
+            manifest = json.loads(file_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            raise ValueError("Terminal-Bench task manifest is unreadable.") from error
+        if (
+            not isinstance(manifest, dict)
+            or manifest.get("schema") != TASK_MANIFEST_SCHEMA
+            or manifest.get("dataset") != DATASET
+            or manifest.get("datasetRef") != DATASET_REF
+            or manifest.get("instructionFile") != "instruction.md"
+            or manifest.get("taskCount") != TASK_COUNT
+            or manifest.get("instructionDigest") != INSTRUCTION_DIGEST
+            or manifest.get("taskRefDigest") != TASK_REF_DIGEST
+            or not isinstance(manifest.get("tasks"), dict)
+            or not isinstance(manifest.get("taskRefs"), dict)
+        ):
+            raise ValueError("Terminal-Bench task manifest does not match the pinned official dataset.")
+        tasks = manifest["tasks"]
+        task_refs = manifest["taskRefs"]
+        names = list(tasks)
+        if (
+            len(names) != TASK_COUNT
+            or names != sorted(names)
+            or list(task_refs) != names
+            or any(
+                not isinstance(name, str)
+                or re.fullmatch(r"[-a-z0-9]+", name) is None
+                or not isinstance(digest, str)
+                or re.fullmatch(r"sha256:[a-f0-9]{64}", digest) is None
+                for name, digest in tasks.items()
+            )
+            or any(
+                not isinstance(task_ref, str)
+                or re.fullmatch(r"sha256:[a-f0-9]{64}", task_ref) is None
+                for task_ref in task_refs.values()
+            )
+        ):
+            raise ValueError(f"Terminal-Bench task manifest must contain exactly {TASK_COUNT} sorted instruction digests.")
+        digest = "sha256:" + hashlib.sha256(
+            json.dumps(tasks, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
+        if manifest.get("instructionDigest") != digest:
+            raise ValueError("Terminal-Bench task manifest instruction digest is invalid.")
+        task_ref_digest = "sha256:" + hashlib.sha256(
+            json.dumps(task_refs, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
+        if manifest.get("taskRefDigest") != task_ref_digest:
+            raise ValueError("Terminal-Bench task manifest task ref digest is invalid.")
+        return {name: digest for name, digest in tasks.items()}
+
+    @staticmethod
+    def _load_semantic_manifest(
+        file_path: Path, task_manifest: dict[str, str]
+    ) -> tuple[dict[str, dict[str, Any]], str]:
+        try:
+            manifest = json.loads(file_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            raise ValueError("Terminal-Bench semantic manifest is unreadable.") from error
+        if (
+            not isinstance(manifest, dict)
+            or set(manifest) != {
+                "schema",
+                "dataset",
+                "datasetRef",
+                "officialInstructionDigest",
+                "entries",
+                "manifestDigest",
+            }
+            or manifest.get("schema") != SEMANTIC_MANIFEST_SCHEMA
+            or manifest.get("dataset") != DATASET
+            or manifest.get("datasetRef") != DATASET_REF
+            or manifest.get("officialInstructionDigest") != INSTRUCTION_DIGEST
+            or not isinstance(manifest.get("entries"), list)
+            or len(manifest["entries"]) != TASK_COUNT
+            or not isinstance(manifest.get("manifestDigest"), str)
+            or re.fullmatch(r"sha256:[a-f0-9]{64}", manifest["manifestDigest"]) is None
+        ):
+            raise ValueError("Terminal-Bench semantic manifest does not match the pinned official task hash manifest.")
+        official_digests = list(task_manifest.values())
+        entries = manifest["entries"]
+        sorted_entries = sorted(entries, key=lambda entry: str(entry.get("instructionDigest")) if isinstance(entry, dict) else "")
+        if entries != sorted_entries:
+            raise ValueError("Terminal-Bench semantic manifest entries must be sorted by full instruction digest.")
+        seen: set[str] = set()
+        result: dict[str, dict[str, Any]] = {}
+        for entry in entries:
+            if (
+                not isinstance(entry, dict)
+                or set(entry) != {
+                    "instructionDigest",
+                    "preferredProvider",
+                    "taskType",
+                    "complexity",
+                    "truncated",
+                }
+                or not isinstance(entry.get("instructionDigest"), str)
+                or re.fullmatch(r"sha256:[a-f0-9]{64}", entry["instructionDigest"]) is None
+                or entry["instructionDigest"] not in official_digests
+                or entry["instructionDigest"] in seen
+                or not isinstance(entry.get("preferredProvider"), str)
+                or PROVIDER_ID_PATTERN.fullmatch(entry["preferredProvider"]) is None
+                or not isinstance(entry.get("taskType"), str)
+                or SEMANTIC_TASK_TYPE_PATTERN.fullmatch(entry["taskType"]) is None
+                or entry.get("complexity") not in SEMANTIC_COMPLEXITIES
+                or not isinstance(entry.get("truncated"), bool)
+            ):
+                raise ValueError("Terminal-Bench semantic manifest entry is invalid or not an official instruction digest.")
+            digest = entry["instructionDigest"]
+            seen.add(digest)
+            result[digest] = {
+                "preferredProvider": entry["preferredProvider"],
+                "taskType": entry["taskType"],
+                "complexity": entry["complexity"],
+                "truncated": entry["truncated"],
+            }
+        if len(seen) != len(official_digests) or any(digest not in seen for digest in official_digests):
+            raise ValueError("Terminal-Bench semantic manifest must cover every official task instruction exactly once.")
+        canonical = {
+            "schema": manifest["schema"],
+            "dataset": manifest["dataset"],
+            "datasetRef": manifest["datasetRef"],
+            "officialInstructionDigest": manifest["officialInstructionDigest"],
+            "entries": entries,
+        }
+        manifest_digest = "sha256:" + hashlib.sha256(
+            json.dumps(canonical, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
+        if manifest["manifestDigest"] != manifest_digest:
+            raise ValueError("Terminal-Bench semantic manifest digest is invalid.")
+        return result, manifest_digest
+
+    def _validate_instruction(self, instruction: str) -> dict[str, Any]:
+        digest = "sha256:" + hashlib.sha256(instruction.encode("utf-8")).hexdigest()
+        if digest not in self._manifest.values():
+            raise ValueError("The Harbor instruction is not one of the pinned Terminal-Bench 2.0 task instructions.")
+        semantic = self._semantic_manifest.get(digest)
+        if semantic is None:
+            raise ValueError("The Harbor instruction has no semantic preference in the pinned manifest.")
+        if semantic["truncated"] != (len(instruction) > 4_000):
+            raise ValueError("The semantic manifest truncation observation does not match the official instruction.")
+        return semantic
 
     @staticmethod
     def _required_kwarg(kwargs: dict[str, Any], name: str) -> Any:
@@ -970,6 +1219,16 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
             "--version",
         )
         await self._upload_profile(environment)
+        await self._upload_agent_owned_file(
+            environment,
+            self.task_manifest,
+            "/installed-agent/terminal-bench-2-manifest.json",
+        )
+        await self._upload_agent_owned_file(
+            environment,
+            self.semantic_manifest,
+            "/installed-agent/terminalbench-semantic-manifest.json",
+        )
 
     async def _upload_profile(self, environment: BaseEnvironment) -> None:
         package = {
@@ -996,6 +1255,10 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
                 "  config:",
                 "    apiKeyEnv: DEEPSEEK_API_KEY",
                 f"    baseURL: http://127.0.0.1:{PROXY_PORT}/v1/openai",
+                "    streamIdleTimeoutMs: 660000",
+                "    retryPolicy:",
+                "      mode: normal",
+                "      maxRetries: 0",
                 "    models:",
                 f"      - id: {json.dumps(model)}",
                 f"        name: {json.dumps(model)}",
@@ -1005,6 +1268,8 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
                 "    provider: deepseek-official",
                 f"    model: {json.dumps(model)}",
                 "    reasoningEffort: high",
+                "- id: session-title-llm",
+                "  disabled: true",
                 "- id: tool-web",
                 "  disabled: true",
                 "- insert:",
@@ -1050,6 +1315,9 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
         context: AgentContext,
     ) -> None:
         del context
+        semantic = self._validate_instruction(instruction)
+        semantic_preference = semantic["preferredProvider"]
+        self.current_semantic_preference = semantic_preference
         control_token = (
             Path(self.tokenless_home) / "daemon.token"
         ).read_text(encoding="utf-8").strip()
@@ -1063,6 +1331,7 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
             control_token,
             channel_token,
             self.profile,
+            semantic_preference,
         )
         bridge_thread = threading.Thread(
             target=bridge.serve_forever,
@@ -1079,7 +1348,7 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
             try:
                 await self.exec_as_agent(
                     environment,
-                    "mkdir -p /tmp/dsh-terminalbench-home/profiles "
+                "mkdir -p /tmp/dsh-terminalbench-home/profiles "
                     "/tmp/tokenless-harness-home /logs/agent && "
                     "ln -s /installed-agent/profile "
                     "/tmp/dsh-terminalbench-home/profiles/headless && "
@@ -1201,6 +1470,8 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
             "dshRevision": DSH_REVISION,
             "model": "tokenless/auto",
             "routingMode": "auto",
+            "semanticManifestDigest": self.semantic_manifest_digest,
+            "semanticPreference": getattr(self, "current_semantic_preference", None),
             "taskScopedBridge": True,
             "containerReceivesHostAdminToken": False,
             "hostObservedBoundaries": {

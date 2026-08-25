@@ -58,8 +58,8 @@ import {
   const configuredProviderRules = $derived(normalizedProviderRules())
   const browserBinding = $derived(selectedBrowserBinding())
   const browserBindingKey = $derived(bindingKey(browserBinding))
-  const availabilityContext = $derived(`${browserBindingKey}\u0000${enabled ? 'enabled' : 'disabled'}`)
-  const currentObservation = $derived(observationBindingKey === browserBindingKey ? observation : null)
+  const availabilityContext = $derived(`${engine}\u0000${enabled ? 'enabled' : 'disabled'}`)
+  const currentObservation = $derived(observationBindingKey === availabilityContext ? observation : null)
   const displayedAvailability = $derived(!enabled ? 'disabled' : observedAvailabilityContext === availabilityContext ? availability : 'checking')
   const displayedAvailabilityError = $derived(enabled && observedAvailabilityContext === availabilityContext ? availabilityError : '')
   const displayedDownloadProgress = $derived(enabled && observedAvailabilityContext === availabilityContext ? downloadProgress : null)
@@ -98,9 +98,9 @@ import {
 
   async function refreshAvailability() {
     const binding = selectedBrowserBinding()
-    const requestedBindingKey = bindingKey(binding)
     const requestedEnabled = enabled
     const requestedContext = availabilityContext
+    const requestedBindingKey = requestedContext
     const invocationId = ++availabilityInvocationId
     availabilityError = ''
     downloadProgress = null
@@ -344,9 +344,9 @@ import {
       <small>{t('routerEngineHelp')}</small>
     </label>
     <div class="router-compatibility" data-testid="router-compatibility">
-      <div><small>{t('selectedBrowser')}</small><strong>{browserBinding.family} · {browserBinding.browserId}</strong></div>
-      <div><small>{t('browserVersion')}</small><strong>{currentObservation?.browserVersion ?? browserBinding.version ?? t('unknown')}</strong></div>
-      <div><small>{t('routerRequirement')}</small><strong>Google Chrome {CHROME_PROMPT_API_MIN_MAJOR}+</strong></div>
+      <div><small>{t('rendererBrowser')}</small><strong>{currentObservation?.browserFamily ?? t('unknown')} · {currentObservation?.browserId ?? t('unknown')}</strong></div>
+      <div><small>{t('browserVersion')}</small><strong>{currentObservation?.browserVersion ?? t('unknown')}</strong></div>
+      <div><small>{t('routerRequirement')}</small><strong>{t('routerBrowserRequirement')}</strong></div>
     </div>
     <div class="router-status-row">
       <div class="router-availability" data-testid="router-availability">

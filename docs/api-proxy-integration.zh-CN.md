@@ -149,15 +149,30 @@ tokenless/<provider>
 
 当前 scope 刻意保持狭窄：
 
-- 仅 browser execution，且请求必须包含 function tools、`json_object` 或 `json_schema`。
-- Candidate 必须在 selected profile 上启用、具有当前可用的 observed access、拥有 evidence-backed `conversation.chat` route，并满足全部 structured-control requirements。
+- Browser execution，且不带 provider-local backend 或 auth options。Plain text 会通过具有当前可用 observed access 的 enabled provider 的 eligible `conversation.chat` route；function-tool 与 JSON request 还要经过窄 structured-control evidence matrix。
+- Candidate 必须在 selected profile 上启用，并满足该请求对应的 route requirements。
 - Tool requirements 会区分调用、strict schema、完整 tool history 与 multiple-call output。只有当前 `tool_choice` 可能返回多个调用时，`parallel_tool_calls: true` 才要求 multiple-call evidence；`none` 与精确 named choice 不要求。
 - DeepSeek 凭已验证的 multiple/strict/history 与 JSON control 纳入；ChatGPT 凭已验证的 single-call strict/history 与 JSON control 纳入。Gemini tool control 因真实输出未通过 strict whole-response boundary 而排除。当前双 provider routing 与 schema 实跑记录见[脱敏 evidence](evidence/openai-auto-provider-routing-2026-08-15.md)。
-- Plain text、direct execution、provider backend/auth options、opaque replay 或不完整 candidate set 都会在创建 job 前失败。
+- Direct execution、provider backend/auth options、opaque replay 或不完整 candidate set 都会在创建 job 前失败。
 
 Auto call 使用只编码 provider origin 的版本化 opaque public id。后续 full-history turn 会在重新检查 current eligibility 后优先该 provider；调用方影响 id 也无法绕过 filter。Responses `previous_response_id` 以相同方式使用现有 ledger provider——它是 portable affinity，不是 hard pin。
 
-切换 provider 时，始终用完整 canonical assistant call 与 caller result 在 target provider 新建会话。Provider URL 与 opaque state 永不 replay。现有 Managed Playwright fallback plan 只可在 `provider_submitted_at` 前切换；submission 后任何 malformed、failed 或 ambiguous outcome 都是 terminal。Bounded final-escaping correction 固定在 settled provider 与 strategy 上，不再执行 auto resolution 或 fallback。
+切换 provider 时，始终用完整 canonical assistant call 与 caller result 在 target provider 新建会话。Provider URL 与 opaque state 永不 replay。现有 Managed Playwright fallback plan 可在 `provider_submitted_at` 前切换；唯一的 submission 后例外是 `tokenless/auto` 在尚无 visible response 时收到 provider-scoped terminal code `provider_rate_limited`，此时从 target provider home 重新开始，并记录一条有界的 `rate_limit` routing attempt。其他 malformed、failed、ambiguous、timeout、canceled 或 waiting-for-user 的 submission 后 outcome 都是 terminal。Bounded final-escaping correction 固定在 settled provider 与 strategy 上，不再执行 auto resolution 或 fallback。
+
+OpenAI 的 `tokenless/auto` 请求可以带一个 advisory 的 `tokenless.semantic_preference` provider id：
+
+```json
+{
+  "model": "tokenless/auto",
+  "messages": [{"role": "user", "content": "Hello"}],
+  "tokenless": {
+    "execution_mode": "browser",
+    "semantic_preference": "chatgpt"
+  }
+}
+```
+
+该 preference 只能在 provider 通过 access、capability 与 structured-control 检查后，在 operation router 当前最高 eligibility tier 内稳定重排；它不能把 stale `unchecked` provider 提到 fresh `eligible` provider 前面。Unknown、不可用或不 eligible 的 preference 会被忽略，不会启用或 pin 该 provider；精确的 `tokenless/<provider>` 请求与非 `auto` 请求会拒绝此字段。Response 的 `tokenless.routing` object 与 `X-Tokenless-Route-Preference-*` headers 会暴露有界的 requested id，以及它是否被选为 initial route（`1` 或 `0`）；后续安全 fallback 仍可能改变最终 provider。
 
 ## 请求体
 
@@ -518,7 +533,6 @@ Anthropic：
 | 400 | `invalid_request_error` | 请求体、tool catalog、tool choice、response format/schema、arguments 或历史配对错误 | 否 —— 修正请求 |
 | 400 | `invalid_json` | 请求体为空或不是 JSON | 否 |
 | 400 | `unsupported_parameter` | 旧版 `functions` / `function_call`，或 Anthropic tools/structured output | 否 |
-| 400 | `auto_structured_control_required` | `tokenless/auto` 收到 plain-text 请求 | 否 —— 请选择 exact provider 或加入 tools/structured output |
 | 400 | `auto_execution_mode_unsupported` / `auto_dialect_unsupported` | Auto 被要求使用 direct/provider-local/Anthropic state | 否 —— 使用已文档化的 OpenAI browser scope |
 | 401 | `control_auth_missing` | 缺少 bearer token | 否 |
 | 403 | `control_auth_rejected` | bearer token 错误 | 否 |
@@ -530,12 +544,12 @@ Anthropic：
 | 502 | `provider_output_protocol_error` | Tool 或 structured-final 校验失败；只有 nonce-correlated `final` 或 `tool_calls` strict JSON serialization failure 会获得一次 same-kind bounded correction | 不再重试 |
 | 503 | `api_proxy_disabled` | proxy 未开启 | 否 —— 请先开启 |
 | 503 | `model_not_available` | 该 provider 未在解析出的 profile 上启用 | 否 —— 请先启用 |
-| 503 | `auto_route_unavailable` | 没有 enabled、当前可用且有 evidence 的 provider 能满足完整 request | 否 —— 调整 scope 或 provider readiness |
-| 504 | `completion_timeout` | provider 在 10 分钟内没有回复 | 先检查当前 job 再决定 |
+| 503 | `auto_route_unavailable` | 没有 enabled、当前可用的 provider 能满足 conversation 或 structured-control route | 否 —— 调整 scope 或 provider readiness |
+| 504 | `completion_timeout` | provider 在 10 分钟内没有回复；exact local job 已被取消 | 先检查 response 与 job evidence 再决定 |
 
 除 499 之外的 `4xx` 表示调用方必须做出修改。`502`、`504`、`500` 属于运行期问题：同一请求稍后可能成功。这张表的全部意义就在于这一区分 —— 不要匹配 message 字符串。
 
-发生 `502` 与 `504` 时，底层浏览器 job **不会**被取消，可能仍在当前 daemon 进程中完成。请用 `tokenless state --job-id <id> --json` 检查后再决定；daemon 重启会把未完成工作标为 `job_interrupted`，不会恢复。
+发生 client disconnect（`499`）时，Tokenless 会取消处于 queued、running 或 waiting-for-user 的 exact local job。Completion timeout（`504`）只适用于 queued 或 running job，并会取消该 exact job；`waiting_for_user` job 则立即返回 `502`，保持不变，等待用户明确介入。如果 timeout 与 terminal success 或 failure 发生竞态，则返回实际 terminal job。两条路径都不会在 submission 后 replay prompt 或切换 provider。
 
 ## 硬性限制
 
@@ -544,7 +558,7 @@ Anthropic：
 | 属性 | 实际情况 |
 | --- | --- |
 | 延迟 | 秒到分钟级。真实浏览器导航、页面稳定、输入、提交、渲染。 |
-| 超时 | 10 分钟，随后返回 504。当前 daemon 进程可能仍在运行该 job——请用 `job_id` 查询。 |
+| 超时 | 10 分钟；返回 504 前会取消 exact local job，除非它已竞态进入 terminal success 或 failure。 |
 | 并发 | 单 profile 基本串行。一个浏览器、一个 provider 标签页。 |
 | Tool use | 支持一个或多个现代 function calls，可使用非流式或终态 SSE；由调用方执行。 |
 | 结构化输出 | 支持 OpenAI `json_object` 与本文记录的 closed-object `json_schema` subset；返回 valid final JSON 或明确错误。 |
@@ -633,7 +647,7 @@ console.log(message.content)
 - [ ] 不要用 `usage` 计算成本。
 - [ ] 把客户端超时提到 10 分钟以上；重试设为 0，改由自己控制重试。
 - [ ] 依据 HTTP 状态码而不是 `message` 分支：只重试 `500`、`502`、`504`。
-- [ ] 决定是否重试 `502` 或 `504` 前先检查 `job_id` —— 当前 daemon 进程可能仍在运行它。
+- [ ] 遇到 `499` 或 `504` 时，应预期 exact local job 已取消；submission 后绝不 replay 或切换 provider。
 - [ ] 每次调用都记录 `tokenless.job_id`。
 - [ ] 按串行执行预期设计；不要并发扇出请求。
 - [ ] Chat Completions/Anthropic 每次发送完整历史；Responses 要新建 provider chat 时省略 `previous_response_id`，只在已有 mapping 时使用它继续。
@@ -655,7 +669,7 @@ Packaged daemon 已通过真实 DeepSeek browser route 完成一次非流式单 
 仍有两点不应依赖：
 
 - **`502` 不会说明页面失败的原因。** 登录 blocker、CAPTCHA 与真正失败的 job 都报 `upstream_error`，需要用 `job_id` 进一步定位。
-- **超时或断开不会终止当前 daemon 进程中的浏览器 job。** 系统不会代为取消 provider 侧的工作，因此草率重试可能为同一 prompt 启动第二次 execution。
+- **超时或断开会取消 exact local job。** 已经 submission 的 provider-side work 不会 replay 或切换到另一 provider；调用方必须明确决定是否发起新请求。
 
 ## 参考
 

@@ -37,7 +37,7 @@ import type {
   ManagedProviderPageLease,
   PersistentContextManager as PersistentContextManagerType,
 } from './browser/context-manager.js'
-import type { DaemonJob, ManagedDaemonClient } from './daemon-client.js'
+import type { DaemonJob, ManagedDaemonClient, PostSubmissionRateLimitFallbackProof } from './daemon-client.js'
 import type { ManagedPlaywrightJobRequest } from './job-contract.js'
 import type { ProviderCapabilityId, ProviderId, TaskCapabilityId, TaskCapabilityRoute } from '../providers/registry.js'
 import type { BrowserVisibility } from '../browser-visibility.js'
@@ -611,6 +611,7 @@ export class ManagedPlaywrightRunnerService {
       const failOrFallback = async (failure: ClassifiedProviderFailure): Promise<never> => {
         throwIfStopped(signal, isCanceled)
         const fallbackRequest = safeFallbackRequest(request, state, failure)
+        const postSubmissionRateLimitProof = rateLimitFallbackProof(request, state, failure)
         if (!fallbackRequest) {
           throw classifiedFailureError(failure, providerFallbackStopReason(request, state, failure))
         }
@@ -623,6 +624,7 @@ export class ManagedPlaywrightRunnerService {
             effectiveVisibility: managedContext.effectiveBrowserVisibility,
             windowOpen: requestedBrowserVisibility !== 'headless',
           }),
+          ...(postSubmissionRateLimitProof === null ? {} : { postSubmissionRateLimitProof }),
         })
         throw new ProviderFallbackSignal()
       }
@@ -1228,6 +1230,7 @@ export class ManagedPlaywrightRunnerService {
     }
     const failure = classifyVisibleProviderBlocker(initial.primary)
     const fallbackRequest = safeFallbackRequest(options.request, options.state, failure)
+    const postSubmissionRateLimitProof = rateLimitFallbackProof(options.request, options.state, failure)
     if (fallbackRequest) {
       await this.daemonClient.fallbackJob({
         jobId: options.job.job_id,
@@ -1241,6 +1244,7 @@ export class ManagedPlaywrightRunnerService {
           }),
           failure,
         },
+        ...(postSubmissionRateLimitProof === null ? {} : { postSubmissionRateLimitProof }),
       })
       throw new ProviderFallbackSignal()
     }
@@ -1501,12 +1505,16 @@ function safeFallbackRequest(
 ): ManagedPlaywrightJobRequest | null {
   const plan = request.fallback
   const alternative = plan?.alternatives[0]
-  if (!plan || !alternative || !failure.automaticFallbackEligible || state.submitted !== null) return null
-  for (let index = 0; index < state.actionCursor; index += 1) {
-    const action = request.actions[index]
-    if (!action) return null
-    const lifecycle = getVisibleActionLifecycle(action.action)
-    if (lifecycle.mutating && !lifecycle.reconstructablePreSubmit) return null
+  const postSubmissionRateLimit = rateLimitFallbackProof(request, state, failure) !== null
+  if (!plan || !alternative || (!failure.automaticFallbackEligible && !postSubmissionRateLimit)) return null
+  if (state.submitted !== null && !postSubmissionRateLimit) return null
+  if (!postSubmissionRateLimit) {
+    for (let index = 0; index < state.actionCursor; index += 1) {
+      const action = request.actions[index]
+      if (!action) return null
+      const lifecycle = getVisibleActionLifecycle(action.action)
+      if (lifecycle.mutating && !lifecycle.reconstructablePreSubmit) return null
+    }
   }
   const remaining = plan.alternatives.slice(1)
   const attempts = [
@@ -1528,12 +1536,47 @@ function safeFallbackRequest(
     context: request.context,
     browserVisibility: request.browserVisibility,
     userHandoff: request.userHandoff,
+    ...(request.semanticPreference === undefined ? {} : { semanticPreference: request.semanticPreference }),
     routingObservation: {
       protocol: 'tokenless.provider-routing-observation.v1',
       attempts,
     },
     ...(request.pagePolicy === undefined ? {} : { pagePolicy: request.pagePolicy }),
     actions: request.actions.map((action) => ({ ...action, provider: alternative.provider })),
+  })
+}
+
+function rateLimitFallbackProof(
+  request: ManagedPlaywrightJobRequest,
+  state: RunnerExecutionState,
+  failure: ClassifiedProviderFailure,
+): PostSubmissionRateLimitFallbackProof | null {
+  const plan = request.fallback
+  if (
+    state.submitted === null ||
+    failure.code !== 'provider_rate_limited' ||
+    !failure.providerScoped ||
+    hasVisibleResponse(state) ||
+    !plan ||
+    plan.protocol !== 'tokenless.provider-fallback.v1' ||
+    plan.mode !== 'automatic' ||
+    plan.replay !== 'from_start' ||
+    plan.alternatives.length === 0
+  ) return null
+  return {
+    protocol: 'tokenless.provider-rate-limit-fallback.v1',
+    provider: request.provider,
+    code: 'provider_rate_limited',
+    providerScoped: true,
+    visibleResponse: false,
+  }
+}
+
+function hasVisibleResponse(state: RunnerExecutionState) {
+  return state.responses.some((response) => {
+    if (!response.ok || response.action !== VISIBLE_ACTIONS.RESPONSE_READ) return false
+    const result = response.result as Partial<ResponseReadResult>
+    return typeof result.text === 'string' && result.text.length > 0
   })
 }
 

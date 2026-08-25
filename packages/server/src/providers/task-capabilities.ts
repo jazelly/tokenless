@@ -628,6 +628,29 @@ export function resolveTaskCapabilityRoutes(options: {
   })
 }
 
+/**
+ * Reorders only routes that have already passed capability and runtime checks.
+ * A preference is advisory: an unknown or unavailable provider leaves the
+ * resolver's ranking unchanged.
+ */
+export function prioritizeTaskCapabilityRoutes<T extends {
+  provider: string
+  runtimeEligibility: TaskCapabilityRouteCandidate['runtimeEligibility']
+}>(
+  routes: readonly T[],
+  preferredProvider: string | null,
+): readonly T[] {
+  if (!preferredProvider) return routes
+  const preferredIndex = routes.findIndex((route) => route.provider === preferredProvider)
+  if (preferredIndex <= 0) return routes
+  if (routes[preferredIndex]!.runtimeEligibility !== routes[0]!.runtimeEligibility) return routes
+  return Object.freeze([
+    routes[preferredIndex]!,
+    ...routes.slice(0, preferredIndex),
+    ...routes.slice(preferredIndex + 1),
+  ])
+}
+
 function normalizedPreferenceRank(value: number | undefined, fallback: number) {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : fallback
 }

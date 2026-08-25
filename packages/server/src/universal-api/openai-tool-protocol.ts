@@ -650,9 +650,10 @@ function trimJsonWhitespace(value: string) {
 }
 
 function unwrapRawResponseFence(trimmed: string) {
-  if (!trimmed.startsWith('```')) return trimmed
-  if (countOccurrences(trimmed, '```') !== 2) fail('provider response contains multiple code fences')
-  const fenced = /^```(?:json|text)\r?\n([\s\S]*)\r?\n```$/.exec(trimmed)
+  const fenceCount = countOccurrences(trimmed, '```')
+  if (fenceCount === 0) return trimmed
+  if (fenceCount !== 2) fail('provider response contains multiple or incomplete code fences')
+  const fenced = /(?:^|\r?\n)```(?:json|text)?\r?\n([\s\S]*?)\r?\n```(?=$|\r?\n)/.exec(trimmed)
   if (!fenced) fail('provider response must use exactly one complete json or text code fence')
   return trimJsonWhitespace(fenced[1]!)
 }

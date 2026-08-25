@@ -55,6 +55,14 @@ export type CreateJobInput = {
   job_id?: string | undefined
 }
 
+export type PostSubmissionRateLimitFallbackProof = Readonly<{
+  protocol: 'tokenless.provider-rate-limit-fallback.v1'
+  provider: string
+  code: 'provider_rate_limited'
+  providerScoped: true
+  visibleResponse: false
+}>
+
 export type ApiResponseLedgerEntry = {
   response_id: string
   provider: string
@@ -833,6 +841,7 @@ export class JobStore {
     provider: string
     request_json: unknown
     blocker_json: unknown
+    postSubmissionRateLimitProof?: PostSubmissionRateLimitFallbackProof | undefined
   }) {
     const now = nowRfc3339()
     const provider = normalizeNonempty(input.provider, 'provider')
@@ -842,16 +851,27 @@ export class JobStore {
       if (!['running', 'waiting_for_user'].includes(job.status)) {
         throw invalidJobState(job.job_id, 'running or waiting_for_user', job.status)
       }
-      if (job.provider_submitted_at !== null) throw invalidInput('jobs cannot fallback after provider submission')
+      const postSubmissionRateLimitFallback = job.provider_submitted_at !== null &&
+        isPostSubmissionRateLimitFallback({
+          job,
+          nextProvider: provider,
+          requestJson: input.request_json,
+          proof: input.postSubmissionRateLimitProof,
+        })
+      if (job.provider_submitted_at !== null && !postSubmissionRateLimitFallback) {
+        throw invalidInput('jobs cannot fallback after provider submission')
+      }
       if (job.provider === provider) throw invalidInput('fallback provider must differ from the current provider')
       const result = this.run(
         `UPDATE jobs
          SET provider = ?, request_json = ?, status = 'running',
-             result_json = NULL, error_json = NULL, blocker_json = NULL, updated_at = ?
+             result_json = NULL, error_json = NULL, blocker_json = ?, provider_submitted_at = ?, updated_at = ?
          WHERE job_id = ?
            AND status IN ('running', 'waiting_for_user')`,
         provider,
         requestJson,
+        null,
+        postSubmissionRateLimitFallback ? null : job.provider_submitted_at,
         now,
         input.job_id,
       )
@@ -1575,6 +1595,68 @@ function nowRfc3339() {
 
 function nullableString(value: unknown) {
   return value === null || value === undefined ? null : String(value)
+}
+
+function isPostSubmissionRateLimitFallback(input: {
+  job: Job
+  nextProvider: string
+  requestJson: unknown
+  proof: PostSubmissionRateLimitFallbackProof | undefined
+}) {
+  const proof = input.proof
+  if (
+    !proof ||
+    Object.keys(proof).some((key) => !['protocol', 'provider', 'code', 'providerScoped', 'visibleResponse'].includes(key)) ||
+    proof.protocol !== 'tokenless.provider-rate-limit-fallback.v1' ||
+    proof.provider !== input.job.provider ||
+    proof.code !== 'provider_rate_limited' ||
+    proof.providerScoped !== true ||
+    proof.visibleResponse !== false ||
+    input.job.result_json !== null ||
+    !/^[a-z][a-z0-9-]{0,63}$/u.test(input.nextProvider)
+  ) return false
+
+  const currentRequest = jsonRecord(input.job.request_json)
+  const fallback = jsonRecord(currentRequest?.fallback)
+  if (
+    !fallback ||
+    Object.keys(fallback).some((key) => !['protocol', 'mode', 'replay', 'alternatives'].includes(key)) ||
+    fallback.protocol !== 'tokenless.provider-fallback.v1' ||
+    fallback.mode !== 'automatic' ||
+    fallback.replay !== 'from_start' ||
+    !Array.isArray(fallback.alternatives) ||
+    fallback.alternatives.length < 1 ||
+    fallback.alternatives.length > 5
+  ) return false
+  const firstAlternative = jsonRecord(fallback.alternatives[0])
+  if (!firstAlternative || firstAlternative.provider !== input.nextProvider) return false
+
+  const nextRequest = jsonRecord(input.requestJson)
+  if (nextRequest?.provider !== input.nextProvider) return false
+  const observation = jsonRecord(nextRequest?.routingObservation)
+  if (
+    !observation ||
+    Object.keys(observation).some((key) => !['protocol', 'attempts'].includes(key)) ||
+    observation.protocol !== 'tokenless.provider-routing-observation.v1' ||
+    !Array.isArray(observation.attempts) ||
+    observation.attempts.length < 1 ||
+    observation.attempts.length > 5
+  ) return false
+  for (const attempt of observation.attempts) {
+    const candidate = jsonRecord(attempt)
+    if (
+      !candidate ||
+      Object.keys(candidate).some((key) => !['provider', 'outcome', 'reason'].includes(key)) ||
+      typeof candidate.provider !== 'string' ||
+      !/^[a-z][a-z0-9-]{0,63}$/u.test(candidate.provider) ||
+      candidate.outcome !== 'fallback' ||
+      !['rate_limit', 'capacity', 'auth', 'unavailable'].includes(String(candidate.reason))
+    ) return false
+  }
+  const lastAttempt = jsonRecord(observation.attempts.at(-1))
+  return lastAttempt?.provider === input.job.provider &&
+    lastAttempt.outcome === 'fallback' &&
+    lastAttempt.reason === 'rate_limit'
 }
 
 function jsonRecord(value: unknown): Record<string, unknown> | null {

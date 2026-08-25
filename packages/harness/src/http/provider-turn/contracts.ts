@@ -91,6 +91,7 @@ export type NewTurnRequest = {
   providerRef: ProviderRef
   providerBindingRef: ProviderBindingRef
   requiredCapabilities: readonly ['conversation.chat', 'file.upload']
+  semanticPreference?: string | undefined
   conversation: { mode: 'new' }
   bootstrap: BootstrapStartMessage
 }

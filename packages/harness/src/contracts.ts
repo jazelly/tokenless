@@ -59,6 +59,7 @@ export type StartHarnessLocalHttpBootstrapInput = Omit<PrepareHarnessBootstrapTu
   provider: string
   profileId: string
   selectedSkills?: readonly SkillSelection[] | undefined
+  semanticPreference?: string | undefined
   requestRef?: string | undefined
   payloadLifetime?: 'ephemeral' | undefined
 }
@@ -361,6 +362,7 @@ export type ProviderTurnRequest = {
   tools?: readonly HarnessToolDescriptor[] | undefined
   finalOutput?: HarnessFinalOutputContract | undefined
   limits?: HarnessSkillLimits | undefined
+  semanticPreference?: string | undefined
   payloadLifetime?: 'ephemeral' | undefined
   continuation?: {
     providerRef: string

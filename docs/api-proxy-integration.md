@@ -149,15 +149,30 @@ A well-formed name for a provider that does not exist or is not built in returns
 
 The current scope is deliberately narrow:
 
-- Browser execution and a request containing function tools, `json_object`, or `json_schema`.
-- Candidates must be enabled on the selected profile, have currently usable observed access, expose an evidence-backed `conversation.chat` route, and satisfy every structured-control requirement.
+- Browser execution without provider-local backend or auth options. Plain text uses enabled providers with currently usable observed access through an eligible `conversation.chat` route; function-tool and JSON requests additionally use the narrow structured-control evidence matrix.
+- Candidates must be enabled on the selected profile and satisfy the route requirements for the request.
 - Tool requirements distinguish calls, strict schemas, complete tool history, and multiple-call output. `parallel_tool_calls: true` requires multiple-call evidence only when the current `tool_choice` may return multiple calls; `none` and an exact named choice do not.
 - DeepSeek is admitted for evidenced multiple/strict/history and JSON control. ChatGPT is admitted for evidenced single-call strict/history and JSON control. Gemini tool control is excluded because its real outputs failed the strict whole-response boundary. The current two-provider routing and schema runs are recorded in [redacted evidence](evidence/openai-auto-provider-routing-2026-08-15.md).
-- Unsupported plain text, direct execution, provider backend/auth options, opaque replay, or an incomplete candidate set fails before a job is created.
+- Unsupported direct execution, provider backend/auth options, opaque replay, or an incomplete candidate set fails before a job is created.
 
 Auto calls use versioned opaque public ids that encode only their provider origin. A later full-history turn prefers that provider after rechecking current eligibility; a caller-influenced id cannot bypass the filter. Responses `previous_response_id` uses its existing ledger provider the same way—as portable affinity, not a hard pin.
 
-Provider switching always starts a new target-provider conversation with the exact canonical assistant call and caller result. Provider URLs and opaque state are never replayed. The existing Managed Playwright fallback plan may switch only before `provider_submitted_at`; any malformed, failed, or ambiguous post-submission outcome is terminal. The bounded final-escaping correction stays on the settled provider and strategy with no auto resolution or fallback.
+Provider switching always starts a new target-provider conversation with the exact canonical assistant call and caller result. Provider URLs and opaque state are never replayed. The existing Managed Playwright fallback plan may switch before `provider_submitted_at`; its sole post-submission exception is `tokenless/auto` reporting the provider-scoped terminal code `provider_rate_limited` before any visible response, which restarts from the target provider home and records one bounded `rate_limit` routing attempt. Every other malformed, failed, ambiguous, timed-out, canceled, or waiting-for-user post-submission outcome is terminal. The bounded final-escaping correction stays on the settled provider and strategy with no auto resolution or fallback.
+
+An OpenAI `tokenless/auto` request may include an advisory `tokenless.semantic_preference` provider id:
+
+```json
+{
+  "model": "tokenless/auto",
+  "messages": [{"role": "user", "content": "Hello"}],
+  "tokenless": {
+    "execution_mode": "browser",
+    "semantic_preference": "chatgpt"
+  }
+}
+```
+
+The preference only stably reorders a provider within the operation router's highest current eligibility tier after access, capability, and structured-control checks. It cannot move a stale `unchecked` provider ahead of a freshly observed `eligible` provider. An unknown, unavailable, or ineligible preference is ignored without enabling or pinning that provider; exact `tokenless/<provider>` requests and non-`auto` requests reject the field. The response `tokenless.routing` object and `X-Tokenless-Route-Preference-*` headers expose the bounded requested id and whether it was selected as the initial route (`1` or `0`); a later safe fallback may still change the final provider.
 
 ## Request bodies
 
@@ -518,7 +533,6 @@ The status is the signal to branch on. Read `code` for the specific cause and tr
 | 400 | `invalid_request_error` | Malformed body, tool catalog, tool choice, response format/schema, arguments, or unpaired history | No — fix the request |
 | 400 | `invalid_json` | Body is empty or not JSON | No |
 | 400 | `unsupported_parameter` | Legacy `functions` / `function_call`, or Anthropic tools/structured output | No |
-| 400 | `auto_structured_control_required` | `tokenless/auto` received a plain-text request | No — choose an exact provider or add tools/structured output |
 | 400 | `auto_execution_mode_unsupported` / `auto_dialect_unsupported` | Auto was asked to use direct/provider-local/Anthropic state | No — use the documented OpenAI browser scope |
 | 401 | `control_auth_missing` | No bearer token | No |
 | 403 | `control_auth_rejected` | Wrong bearer token | No |
@@ -530,12 +544,12 @@ The status is the signal to branch on. Read `code` for the specific cause and tr
 | 502 | `provider_output_protocol_error` | Tool or structured-final validation failed; only a nonce-correlated strict JSON serialization failure for `final` or `tool_calls` receives one same-kind bounded correction | No further retry |
 | 503 | `api_proxy_disabled` | The proxy is off | No — enable it |
 | 503 | `model_not_available` | The provider is not enabled for the resolved profile | No — enable it |
-| 503 | `auto_route_unavailable` | No enabled, currently usable, evidence-backed provider satisfies the complete request | No — change scope or provider readiness |
-| 504 | `completion_timeout` | The provider did not answer within 10 minutes | Check the current job before deciding |
+| 503 | `auto_route_unavailable` | No enabled, currently usable provider satisfies the conversation or structured-control route | No — change scope or provider readiness |
+| 504 | `completion_timeout` | The provider did not answer within 10 minutes; the exact local job was canceled | Check the response and job evidence before deciding |
 
 A `4xx` other than 499 means the caller must change something. A `502`, `504`, or `500` is operational: the same request may succeed later. That distinction is the whole point of the table — do not match on message strings.
 
-On `502` and `504` the underlying browser job is **not** cancelled and may still complete in the current daemon process. Inspect it with `tokenless state --job-id <id> --json` before deciding what to do; a daemon restart marks unfinished work as `job_interrupted` rather than resuming it.
+On a client disconnect (`499`), Tokenless cancels the exact local job when it is queued, running, or waiting for user input. A completion timeout (`504`) applies only to queued or running jobs and cancels that exact job; a `waiting_for_user` job instead returns an immediate `502` and remains intact for explicit user intervention. If a timeout races a terminal success or failure, that real terminal job is returned instead. Neither path replays the submitted prompt or switches providers after submission.
 
 ## Hard limits
 
@@ -544,7 +558,7 @@ Design around these, not against them.
 | Property | Reality |
 | --- | --- |
 | Latency | Seconds to minutes. Real browser navigation, page settle, typing, submit, and render. |
-| Timeout | 10 minutes, then 504. The current daemon process may still be running the job — check `job_id`. |
+| Timeout | 10 minutes; the exact local job is canceled before 504 unless it wins a race to a terminal success or failure. |
 | Concurrency | Effectively serial per profile. One browser, one provider tab. |
 | Tool use | One or more modern function calls, non-streaming or terminal SSE; caller executes them. |
 | Structured output | OpenAI `json_object` and the documented closed-object `json_schema` subset; valid final JSON or explicit error. |
@@ -633,7 +647,7 @@ Note both SDKs need their default timeout raised and their retry count zeroed. D
 - [ ] Do not read `usage` for cost.
 - [ ] Raise client timeout above 10 minutes; set retries to 0 and handle retries yourself.
 - [ ] Branch on HTTP status, not on `message`: retry only `500`, `502`, and `504`.
-- [ ] Before deciding whether to retry a `502` or `504`, check `job_id` — the current daemon process may still be running it.
+- [ ] On `499` or `504`, expect the exact local job to be canceled; never replay or switch providers after submission.
 - [ ] Log `tokenless.job_id` on every call.
 - [ ] Expect serial execution; do not fan out concurrent requests.
 - [ ] For Chat Completions/Anthropic, send full history on every request; for Responses, omit `previous_response_id` when starting a fresh provider chat and use it only for a mapped continuation.
@@ -655,7 +669,7 @@ An [unmodified DSH multiple-call run](evidence/openai-multiple-tool-calls-deepse
 Two things a client should still not rely on:
 
 - **A `502` does not say why the page failed.** A sign-in blocker, a CAPTCHA, and a genuinely failed job all report `upstream_error`. Use `job_id` to find out which.
-- **A timeout or disconnect leaves the browser job running in the current daemon process.** Nothing cancels provider-side work on your behalf, so a naive retry can start a second execution for the same prompt.
+- **A timeout or disconnect cancels the exact local job.** Provider-side work that was already submitted is not replayed or switched to another provider, so a caller must decide explicitly whether a new request is appropriate.
 
 ## Reference
 

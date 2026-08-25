@@ -35,6 +35,7 @@ export function createLocalHttpProviderTurnClient(options: { baseUrl: string; to
           ...(request.tools ? { tools: request.tools } : {}),
           ...(request.finalOutput ? { finalOutput: request.finalOutput } : {}),
           ...(request.limits ? { limits: request.limits } : {}),
+          ...(request.semanticPreference === undefined ? {} : { semanticPreference: request.semanticPreference }),
           taskPrompt: request.taskPrompt ?? '',
           nonce: request.nonce,
           ...(request.payloadLifetime === undefined ? {} : { payloadLifetime: request.payloadLifetime }),

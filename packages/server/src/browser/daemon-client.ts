@@ -1,7 +1,7 @@
-import type { JobView as DaemonJob } from '../jobs/store.js'
+import type { JobView as DaemonJob, PostSubmissionRateLimitFallbackProof } from '../jobs/store.js'
 import type { ProviderCapacityProjection } from '../providers/rate-limit-policy.js'
 
-export type { JobView as DaemonJob } from '../jobs/store.js'
+export type { JobView as DaemonJob, PostSubmissionRateLimitFallbackProof } from '../jobs/store.js'
 
 type JobOptions = {
   jobId: string
@@ -28,6 +28,7 @@ export type ManagedDaemonClient = {
     provider: string
     request: unknown
     blocker: unknown
+    postSubmissionRateLimitProof?: PostSubmissionRateLimitFallbackProof | undefined
   }): Promise<DaemonJob>
   completeJob(options: JobOptions & {
     result?: unknown

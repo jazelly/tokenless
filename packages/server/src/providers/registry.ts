@@ -56,6 +56,7 @@ export {
   listProviderTaskCapabilityRoutes,
   listTaskCapabilityDefinitions,
   normalizeTaskCapabilityRequirements,
+  prioritizeTaskCapabilityRoutes,
   resolveTaskCapabilityRoute,
   resolveTaskCapabilityRoutes,
   taskCapabilityDefinition,

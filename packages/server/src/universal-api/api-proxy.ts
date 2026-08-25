@@ -12,6 +12,7 @@ import {
   providerRegistry,
   resolveApiProxyStructuredControlRoutes,
   resolveTaskCapabilityRoutes,
+  prioritizeTaskCapabilityRoutes,
   TASK_CAPABILITIES,
   type ApiProxyStructuredControlRequirements,
   type ApiProxyStructuredControlRoute,
@@ -92,6 +93,8 @@ export type ApiProxyRouting = {
   fallbackUsed: boolean
   rateLimited: boolean
   attempts: ApiProxyRoutingAttempt[]
+  preferenceRequested: string | null
+  preferenceHonored: boolean
 }
 
 type NormalizedRequest = {
@@ -105,6 +108,7 @@ type NormalizedRequest = {
   executionMode: 'browser' | 'direct' | null
   providerBackend: ProviderBackend | null
   authContextId: string | null
+  semanticPreference: string | null
   toolProtocol: {
     nonce: string
     tools: OpenAiFunctionTool[]
@@ -126,6 +130,12 @@ export type ApiProxyCompletion = {
   routing?: ApiProxyRouting
   toolCalls?: { id: string; name: string; arguments: string }[]
 }
+
+type ApiProxyRoute = Readonly<{
+  provider: ProviderId
+  capabilityRoute: TaskCapabilityRoute
+  strategy?: ApiProxyStructuredControlRoute['strategy']
+}>
 
 type RawApiProxyCompletion = {
   text: string
@@ -201,9 +211,9 @@ export class ApiProxyAdapter {
     const config = await readTokenlessConfig(this.store.homeDir)
     if (!config.apiProxy.enabled) throw apiProxyDisabled()
     const requestBody = plainRecord(body)
-    const options = normalizeTokenlessOptions(requestBody.tokenless)
-    const executionMode = options.executionMode ?? config.apiProxy.executionMode
     const model = providerFromModel(requestBody.model)
+    const options = normalizeTokenlessOptions(requestBody.tokenless, model.auto)
+    const executionMode = options.executionMode ?? config.apiProxy.executionMode
     const previous = previousResponse(requestBody.previous_response_id, this.store)
     if (previous) assertPreviousResponseRoute(previous, model.provider, String(requestBody.model), executionMode)
     const prepared = normalizeOpenAiResponsesRequest(requestBody, previous, createOpenAiResponseId())
@@ -227,8 +237,8 @@ export class ApiProxyAdapter {
     const config = await readTokenlessConfig(this.store.homeDir)
     if (!config.apiProxy.enabled) throw apiProxyDisabled()
     const requestBody = plainRecord(body)
-    const options = normalizeTokenlessOptions(requestBody.tokenless)
     const model = providerFromModel(requestBody.model)
+    const options = normalizeTokenlessOptions(requestBody.tokenless, model.auto)
     const executionMode = options.executionMode ?? config.apiProxy.executionMode
     const configuredBackend = options.providerBackend
       ?? config.directProvider.providerBackends[model.provider]
@@ -287,14 +297,18 @@ export class ApiProxyAdapter {
     if (!request.auto && !modeEnabledProviders.includes(request.provider)) {
       throw new ApiProxyError(503, 'model_not_available', `${executionMode === 'browser' ? 'Browser' : 'Direct'} mode is disabled for ${request.provider} in this profile.`, 'model')
     }
-    const autoRoutes = request.auto
-      ? autoStructuredControlRoutes(request, profile, modeEnabledProviders)
+    const autoRoutes: readonly ApiProxyRoute[] = request.auto
+      ? request.toolProtocol
+        ? autoStructuredControlRoutes(request, profile, modeEnabledProviders)
+        : autoConversationRoutes(request.semanticPreference, profile, modeEnabledProviders)
       : []
     if (request.auto && autoRoutes.length === 0) {
       throw new ApiProxyError(
         503,
         'auto_route_unavailable',
-        'No enabled provider with current profile access and real evidence can satisfy the complete structured-control request.',
+        request.toolProtocol
+          ? 'No enabled provider with current profile access and real evidence can satisfy the structured-control request.'
+          : 'No enabled provider with current profile access and conversation capability can satisfy the conversation request.',
         'model',
       )
     }
@@ -331,6 +345,7 @@ export class ApiProxyAdapter {
       capabilityRoute: selectedRoute?.capabilityRoute ?? null,
       fallbackRoutes: autoRoutes.slice(1),
       structuredControlStrategy: structuredControlStrategy(selectedRequest, selectedRoute),
+      semanticPreference: request.semanticPreference,
       signal,
     })
     const validated = await validatedCompletion(selectedRequest, completion, async (prompt) => {
@@ -353,6 +368,7 @@ export class ApiProxyAdapter {
         capabilityRoute: settledRoute?.capabilityRoute ?? null,
         fallbackRoutes: [],
         structuredControlStrategy: structuredControlStrategy(correctionRequest, settledRoute),
+        semanticPreference: correctionRequest.semanticPreference,
         signal,
       })
     })
@@ -438,6 +454,7 @@ export class ApiProxyAdapter {
     capabilityRoute,
     fallbackRoutes,
     structuredControlStrategy,
+    semanticPreference,
     signal,
   }: {
     request: NormalizedRequest
@@ -449,8 +466,9 @@ export class ApiProxyAdapter {
     executionMode: 'browser' | 'direct'
     providerBackend: 'browser' | ProviderBackend
     capabilityRoute: TaskCapabilityRoute | null
-    fallbackRoutes: readonly ApiProxyStructuredControlRoute[]
+    fallbackRoutes: readonly ApiProxyRoute[]
     structuredControlStrategy: string | null
+    semanticPreference: string | null
     signal: AbortSignal | undefined
   }): Promise<RawApiProxyCompletion> {
     const requestJson = createManagedPlaywrightJobRequest({
@@ -458,6 +476,7 @@ export class ApiProxyAdapter {
       taskId,
       browserVisibility: 'auto',
       userHandoff: false,
+      ...(semanticPreference === null ? {} : { semanticPreference }),
       executionMode,
       capabilityRoute,
       fallback: fallbackRoutes.length === 0 ? null : {
@@ -490,10 +509,11 @@ export class ApiProxyAdapter {
       profile_id: profileId,
     })
     await this.wake()
-    const settled = await this.awaitTerminalJob(job.job_id, signal)
+    const routingMode = request.auto ? 'auto' : 'explicit'
+    const settled = await this.awaitTerminalJob(job.job_id, signal, routingMode)
     const result = visibleResponse(settled.result_json)
-    if (settled.status !== 'succeeded' || !result) throw apiProxyJobFailure(settled)
-    const routing = routingFromJob(settled)
+    if (settled.status !== 'succeeded' || !result) throw apiProxyJobFailure(settled, routingMode)
+    const routing = routingFromJob(settled, routingMode)
     return {
       text: result.text,
       base: {
@@ -509,23 +529,48 @@ export class ApiProxyAdapter {
     }
   }
 
-  private async awaitTerminalJob(jobId: string, signal?: AbortSignal): Promise<Job> {
+  private async awaitTerminalJob(
+    jobId: string,
+    signal: AbortSignal | undefined,
+    modeOverride: ApiProxyRouting['mode'],
+  ): Promise<Job> {
     const deadline = Date.now() + this.timeoutMs
     for (;;) {
       const job = this.store.getJob(jobId)
       if (isTerminalJobStatus(job.status)) return job
-      if (job.status === 'waiting_for_user') throw apiProxyJobFailure(job)
       if (signal?.aborted) {
-        throw new ApiProxyError(499, 'client_closed_request', 'The client disconnected before completion.')
+        const settled = await this.cancelAbandonedJob(jobId, 'client_closed_request')
+        throw new ApiProxyError(
+          499,
+          'client_closed_request',
+          'The client disconnected before completion.',
+          null,
+          routingFromJob(settled, modeOverride),
+        )
       }
+      if (job.status === 'waiting_for_user') throw apiProxyJobFailure(job, modeOverride)
       if (Date.now() >= deadline) {
+        const settled = await this.cancelAbandonedJob(jobId, 'completion_timeout')
+        if (settled.status === 'succeeded' || settled.status === 'failed') return settled
         throw new ApiProxyError(
           504,
           'completion_timeout',
-          `The provider did not respond within ${Math.round(this.timeoutMs / 1000)}s; job ${jobId} is still running.`,
+          `The local job ${jobId} was canceled after the provider did not respond within ${Math.round(this.timeoutMs / 1000)}s.`,
+          null,
+          routingFromJob(settled, modeOverride),
         )
       }
       await delay(JOB_POLL_INTERVAL_MS)
+    }
+  }
+
+  private async cancelAbandonedJob(jobId: string, code: string): Promise<Job> {
+    try {
+      return await this.store.cancelJob(jobId, { code })
+    } catch (error) {
+      const current = this.store.getJob(jobId)
+      if (isTerminalJobStatus(current.status)) return current
+      throw error
     }
   }
 }
@@ -534,7 +579,7 @@ function withRouting(
   completion: ApiProxyCompletion,
   request: NormalizedRequest,
   selectedRequest: NormalizedRequest,
-  routes: readonly ApiProxyStructuredControlRoute[],
+  routes: readonly ApiProxyRoute[],
 ): ApiProxyCompletion {
   return {
     ...completion,
@@ -545,6 +590,10 @@ function withRouting(
       fallbackUsed: request.auto && (completion.provider !== selectedRequest.provider || (completion.routing?.attempts.length ?? 0) > 0),
       rateLimited: completion.routing?.rateLimited ?? false,
       attempts: completion.routing?.attempts ?? [],
+      preferenceRequested: request.auto ? request.semanticPreference : null,
+      preferenceHonored: request.auto
+        && request.semanticPreference !== null
+        && selectedRequest.provider === request.semanticPreference,
     },
   }
 }
@@ -560,14 +609,6 @@ function assertAutoRequestScope(
   config: Awaited<ReturnType<typeof readTokenlessConfig>>,
   request: NormalizedRequest,
 ) {
-  if (!request.toolProtocol) {
-    throw new ApiProxyError(
-      400,
-      'auto_structured_control_required',
-      'tokenless/auto currently requires function tools or json_object/json_schema structured output.',
-      'model',
-    )
-  }
   const executionMode = request.executionMode ?? config.apiProxy.executionMode
   if (executionMode !== 'browser' || request.providerBackend !== null || request.authContextId !== null) {
     throw new ApiProxyError(
@@ -583,8 +624,53 @@ function autoStructuredControlRoutes(
   request: NormalizedRequest,
   profile: Awaited<ReturnType<ManagedProfileRegistry['resolveProfile']>>,
   enabledProviders: readonly string[],
+): readonly ApiProxyRoute[] {
+  const conversation = resolveTaskCapabilityRoutes({
+    requirements: [TASK_CAPABILITIES.CONVERSATION_CHAT],
+    candidates: autoCapabilityCandidates(profile, enabledProviders),
+  })
+  if (!conversation.ok) return []
+  const preferredConversationRoutes = prioritizeTaskCapabilityRoutes(
+    conversation.routes,
+    request.semanticPreference,
+  )
+  return resolveApiProxyStructuredControlRoutes({
+    requirements: structuredControlRequirements(request),
+    candidates: preferredConversationRoutes.map((capabilityRoute, preferenceRank) => ({
+      provider: capabilityRoute.provider,
+      capabilityRoute,
+      preferenceRank,
+    })),
+    affinityProvider: request.affinityProvider,
+  }).map((route) => ({
+    provider: route.provider,
+    capabilityRoute: route.capabilityRoute,
+    strategy: route.strategy,
+  }))
+}
+
+function autoConversationRoutes(
+  semanticPreference: string | null,
+  profile: Awaited<ReturnType<ManagedProfileRegistry['resolveProfile']>>,
+  enabledProviders: readonly string[],
+): readonly ApiProxyRoute[] {
+  const conversation = resolveTaskCapabilityRoutes({
+    requirements: [TASK_CAPABILITIES.CONVERSATION_CHAT],
+    candidates: autoCapabilityCandidates(profile, enabledProviders),
+  })
+  if (!conversation.ok) return []
+  return prioritizeTaskCapabilityRoutes(conversation.routes, semanticPreference)
+    .map((capabilityRoute) => ({
+      provider: capabilityRoute.provider,
+      capabilityRoute,
+    }))
+}
+
+function autoCapabilityCandidates(
+  profile: Awaited<ReturnType<ManagedProfileRegistry['resolveProfile']>>,
+  enabledProviders: readonly string[],
 ) {
-  const candidates = enabledProviders.flatMap((provider, preferenceRank) => {
+  return enabledProviders.flatMap((provider, preferenceRank) => {
     const instance = getProviderInstanceById(provider)
     if (!instance || instance.descriptor.stage === 'disabled') return []
     const observed = profile.lastObservedAuth[instance.id]
@@ -603,20 +689,6 @@ function autoStructuredControlRoutes(
       reason,
       preferenceRank,
     }]
-  })
-  const conversation = resolveTaskCapabilityRoutes({
-    requirements: [TASK_CAPABILITIES.CONVERSATION_CHAT],
-    candidates,
-  })
-  if (!conversation.ok) return []
-  return resolveApiProxyStructuredControlRoutes({
-    requirements: structuredControlRequirements(request),
-    candidates: conversation.routes.map((capabilityRoute, preferenceRank) => ({
-      provider: capabilityRoute.provider,
-      capabilityRoute,
-      preferenceRank,
-    })),
-    affinityProvider: request.affinityProvider,
   })
 }
 
@@ -637,7 +709,7 @@ function structuredControlRequirements(request: NormalizedRequest): ApiProxyStru
 
 function structuredControlStrategy(
   request: NormalizedRequest,
-  route: ApiProxyStructuredControlRoute | null,
+  route: ApiProxyRoute | null,
 ) {
   if (!request.toolProtocol) return null
   return route?.strategy ?? (request.toolProtocol.tools.length > 0 ? 'prompt_tool_envelope' : 'prompt_json_envelope')
@@ -770,7 +842,7 @@ export function normalizeOpenAiRequest(body: unknown): NormalizedRequest {
   const choice = normalizeToolChoice(record.tool_choice, tools)
   const parallelToolCalls = normalizeParallelToolCalls(record.parallel_tool_calls)
   const messages = normalizeToolHistory(rawMessages, tools)
-  const options = normalizeTokenlessOptions(record.tokenless)
+  const options = normalizeTokenlessOptions(record.tokenless, model.auto)
   return {
     provider: model.provider,
     auto: model.auto,
@@ -818,7 +890,7 @@ function normalizeOpenAiResponsesRequest(
   const messages = normalizeResponsesHistory(responsesItemsToMessages(transcript), tools)
   const priorMessageCount = priorMessages.length
   const continuationMessages = previous ? messages.slice(priorMessageCount) : messages
-  const options = normalizeTokenlessOptions(body.tokenless)
+  const options = normalizeTokenlessOptions(body.tokenless, model.auto)
   return {
     request: {
       provider: model.provider,
@@ -1146,7 +1218,7 @@ export function normalizeAnthropicRequest(body: unknown): NormalizedRequest {
     messages.push({ role, content: anthropicContentText(message.content) })
   }
   rejectUnsupportedAnthropicToolFields(record)
-  const options = normalizeTokenlessOptions(record.tokenless)
+  const options = normalizeTokenlessOptions(record.tokenless, model.auto)
   return {
     provider: model.provider,
     auto: model.auto,
@@ -1261,8 +1333,13 @@ function providerFromModel(value: unknown) {
   return { provider, upstreamModel: modelParts.join('/'), auto: provider === 'auto' }
 }
 
-function normalizeTokenlessOptions(value: unknown): Pick<NormalizedRequest, 'executionMode' | 'providerBackend' | 'authContextId'> {
-  if (value === undefined) return { executionMode: null, providerBackend: null, authContextId: null }
+function normalizeTokenlessOptions(
+  value: unknown,
+  allowSemanticPreference = false,
+): Pick<NormalizedRequest, 'executionMode' | 'providerBackend' | 'authContextId' | 'semanticPreference'> {
+  if (value === undefined) {
+    return { executionMode: null, providerBackend: null, authContextId: null, semanticPreference: null }
+  }
   const options = plainRecord(value)
   const executionMode = options.execution_mode
   if (executionMode !== undefined && executionMode !== 'browser' && executionMode !== 'direct') {
@@ -1279,10 +1356,20 @@ function normalizeTokenlessOptions(value: unknown): Pick<NormalizedRequest, 'exe
   if (authContextId !== undefined && (typeof authContextId !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(authContextId))) {
     throw badRequest('tokenless.auth_context_id is invalid', 'tokenless.auth_context_id')
   }
+  const semanticPreference = options.semantic_preference
+  if (semanticPreference !== undefined && semanticPreference !== null && !allowSemanticPreference) {
+    throw badRequest('tokenless.semantic_preference is available only with tokenless/auto.', 'tokenless.semantic_preference')
+  }
+  if (semanticPreference !== undefined && semanticPreference !== null && (
+    typeof semanticPreference !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/u.test(semanticPreference)
+  )) {
+    throw badRequest('tokenless.semantic_preference must be a provider id.', 'tokenless.semantic_preference')
+  }
   return {
     executionMode: executionMode ?? null,
     providerBackend: providerBackend ?? null,
     authContextId: authContextId ?? null,
+    semanticPreference: typeof semanticPreference === 'string' ? semanticPreference : null,
   }
 }
 
@@ -1312,7 +1399,7 @@ function isTerminalJobStatus(status: Job['status']) {
   return status === 'succeeded' || status === 'failed' || status === 'canceled'
 }
 
-function apiProxyJobFailure(job: Job) {
+function apiProxyJobFailure(job: Job, modeOverride?: ApiProxyRouting['mode']) {
   const blocker = describeJson(job.blocker_json)
   const error = describeJson(job.error_json)
   const detail = blocker ?? error ?? `job ended as ${job.status}`
@@ -1321,7 +1408,7 @@ function apiProxyJobFailure(job: Job) {
     'upstream_error',
     `api proxy job did not produce a visible response: ${detail}`,
     null,
-    routingFromJob(job),
+    routingFromJob(job, modeOverride),
   )
 }
 
@@ -1339,8 +1426,12 @@ export function routingFromJob(job: Job, modeOverride?: ApiProxyRouting['mode'])
       fallbackUsed: false,
       rateLimited,
       attempts,
+      preferenceRequested: null,
+      preferenceHonored: false,
     }
   }
+  const preferenceRequested = semanticPreferenceFromRequest(request as Record<string, unknown>)
+  if (preferenceRequested === undefined) return null
   const fallback = (request as { fallback?: unknown }).fallback
   let fallbackProviders: string[] = []
   if (fallback !== undefined && fallback !== null) {
@@ -1370,7 +1461,20 @@ export function routingFromJob(job: Job, modeOverride?: ApiProxyRouting['mode'])
     fallbackUsed: attempts.length > 0,
     rateLimited,
     attempts,
+    preferenceRequested,
+    preferenceHonored: preferenceRequested !== null && (
+      job.provider === preferenceRequested || attempts.some((attempt) => attempt.provider === preferenceRequested)
+    ),
   }
+}
+
+function semanticPreferenceFromRequest(value: Record<string, unknown>): string | null | undefined {
+  if (!Object.hasOwn(value, 'semanticPreference')) return null
+  const preference = value.semanticPreference
+  if (preference === undefined || preference === null) return null
+  return typeof preference === 'string' && /^[a-z][a-z0-9-]{0,63}$/u.test(preference)
+    ? preference
+    : undefined
 }
 
 function routingAttemptsFromRequest(value: unknown): ApiProxyRoutingAttempt[] | null {
@@ -1474,7 +1578,7 @@ async function validatedCompletion(
   } catch (error) {
     const validationError = error instanceof Error ? error.message : 'invalid output'
     if (!(error instanceof OpenAiToolResponseProtocolError) || !error.correctionEligible || !error.correctionKind) {
-      throw providerOutputProtocolError(validationError)
+      throw providerOutputProtocolError(validationError, completion.base.routing)
     }
     const correctionKind = error.correctionKind
     const prompt = compileOpenAiToolCorrectionPrompt(
@@ -1487,7 +1591,10 @@ async function validatedCompletion(
       request.toolProtocol.responseFormat,
     )
     if (Buffer.byteLength(prompt, 'utf8') > MAX_PROMPT_BYTES) {
-      throw providerOutputProtocolError('bounded correction prompt exceeds the 1 MiB visible-prompt limit')
+      throw providerOutputProtocolError(
+        'bounded correction prompt exceeds the 1 MiB visible-prompt limit',
+        completion.base.routing,
+      )
     }
     completion = await correct(prompt)
     try {
@@ -1500,9 +1607,14 @@ async function validatedCompletion(
         request.toolProtocol.responseFormat,
       )
     } catch (correctedError) {
-      throw providerOutputProtocolError(correctedError instanceof Error ? correctedError.message : 'invalid corrected output')
+      throw providerOutputProtocolError(
+        correctedError instanceof Error ? correctedError.message : 'invalid corrected output',
+        completion.base.routing,
+      )
     }
-    if (result.kind !== correctionKind) throw providerOutputProtocolError('bounded correction changed the response kind')
+    if (result.kind !== correctionKind) {
+      throw providerOutputProtocolError('bounded correction changed the response kind', completion.base.routing)
+    }
   }
   if (result.kind === 'final') return { ...completion.base, text: result.content }
   return {
@@ -1542,11 +1654,13 @@ function autoProviderFromPublicCallId(value: unknown): ProviderId | null {
   return provider && getProviderInstanceById(provider) ? provider : null
 }
 
-function providerOutputProtocolError(detail: string) {
+function providerOutputProtocolError(detail: string, routing?: ApiProxyRouting) {
   return new ApiProxyError(
     502,
     'provider_output_protocol_error',
     `Provider response did not satisfy the Tokenless structured-control protocol: ${detail}.`,
+    null,
+    routing ?? null,
   )
 }
 
@@ -1737,6 +1851,7 @@ function tokenlessMetadata(completion: ApiProxyCompletion) {
     execution_mode: completion.executionMode,
     provider_backend: completion.providerBackend,
     structured_control_strategy: completion.structuredControlStrategy,
+    routing: completion.routing ?? null,
     citations: completion.citations,
   }
 }

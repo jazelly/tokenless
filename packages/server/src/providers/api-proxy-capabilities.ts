@@ -66,6 +66,16 @@ const API_PROXY_STRUCTURED_CONTROL = Object.freeze([
       'openai-auto-provider-routing-2026-08-15',
     ],
   }),
+  declaration({
+    provider: 'grok',
+    tools: true,
+    multipleCalls: false,
+    strictTools: true,
+    toolHistory: true,
+    jsonObject: false,
+    jsonSchema: false,
+    evidence: ['openai-structured-control-grok-2026-08-26'],
+  }),
 ] satisfies readonly ApiProxyStructuredControlDeclaration[])
 
 const DECLARATION_BY_PROVIDER = new Map(API_PROXY_STRUCTURED_CONTROL.map((entry) => [entry.provider, entry]))

@@ -25,6 +25,9 @@ export function parseCapabilityDocument(value: unknown): CapabilityDocument {
 export function parseStartTurnRequest(value: unknown): StartTurnRequest {
   const request = parse(value, 'start_turn_request', PROTOCOL_SCHEMA_IDS.startTurnRequest) as StartTurnRequest
   const isNew = request.conversation.mode === 'new'
+  if (!isNew && Object.hasOwn(request, 'semanticPreference')) {
+    throw new ProtocolValidationError('start_turn_request', 'semanticPreference is only valid on a new auto provider bootstrap.')
+  }
   const attachments = isNew
     ? (request as Extract<StartTurnRequest, { conversation: { mode: 'new' } }>).bootstrap.attachments
     : (request as Extract<StartTurnRequest, { conversation: { mode: 'continue' } }>).continuation.attachments

@@ -968,6 +968,8 @@ function writeApiProxyRoutingHeaders(
   response.setHeader('X-Tokenless-Route-Fallback-Used', routing.fallbackUsed ? '1' : '0')
   response.setHeader('X-Tokenless-Route-Rate-Limited', routing.rateLimited ? '1' : '0')
   response.setHeader('X-Tokenless-Route-Attempts', JSON.stringify(routing.attempts.slice(0, 5)))
+  response.setHeader('X-Tokenless-Route-Preference-Requested', routing.preferenceRequested ?? '')
+  response.setHeader('X-Tokenless-Route-Preference-Honored', routing.preferenceHonored ? '1' : '0')
 }
 
 /**

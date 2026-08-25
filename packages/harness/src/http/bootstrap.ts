@@ -96,6 +96,7 @@ export async function startHarnessLocalHttpBootstrap(
     requestRef: input.requestRef ?? `request:${randomBytes(16).toString('hex')}`,
     providerRef: binding.capabilities.providerRef,
     providerBindingRef: binding.providerBindingRef,
+    ...(input.semanticPreference === undefined ? {} : { semanticPreference: input.semanticPreference }),
     text: bootstrapText,
     attachments,
   })
@@ -420,12 +421,14 @@ async function canonicalStartRequest({
   requestRef,
   providerRef,
   providerBindingRef,
+  semanticPreference,
   text,
   attachments,
 }: {
   requestRef: string
   providerRef: string
   providerBindingRef: string
+  semanticPreference?: string | undefined
   text: string
   attachments: readonly [{ kind: 'system_prompt'; name: string; attachmentRef: string; mediaType: 'text/markdown'; byteLength: number; sha256: string }, ...Array<{ kind: 'skill'; name: string; attachmentRef: string; mediaType: 'text/markdown'; byteLength: number; sha256: string }>]
 }): Promise<StartTurnRequest> {
@@ -435,6 +438,7 @@ async function canonicalStartRequest({
     requestRef,
     providerRef,
     providerBindingRef,
+    ...(semanticPreference === undefined ? {} : { semanticPreference }),
     requiredCapabilities: REQUIRED_CAPABILITIES,
     conversation: { mode: 'new' },
     bootstrap: {

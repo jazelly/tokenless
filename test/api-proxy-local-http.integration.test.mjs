@@ -230,15 +230,16 @@ test('api proxy advertises every enabled provider as an explicit tokenless model
   })
 })
 
-test('explicit auto rejects plain, direct, and unevidenced provider-only requests before creating a job', async () => {
+test('auto accepts plain browser requests and keeps structured routing narrow', async () => {
   await withDaemon(async (daemon) => {
     await enableApiProxy(daemon.homeDir)
     const plain = await call(daemon, 'POST', '/v1/chat/completions', {
       model: 'tokenless/auto',
       messages: [{ role: 'user', content: 'hello' }],
+      tokenless: { execution_mode: 'browser' },
     })
-    assert.equal(plain.status, 400)
-    assert.equal(plain.body.error.code, 'auto_structured_control_required')
+    assert.equal(plain.status, 409)
+    assert.equal(plain.body.error.code, 'profile_not_configured')
 
     const direct = await call(daemon, 'POST', '/v1/chat/completions', {
       model: 'tokenless/auto',
@@ -271,6 +272,27 @@ test('explicit auto rejects plain, direct, and unevidenced provider-only request
         },
       },
     })
+    const plainReady = fetch(`${daemon.origin}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${daemon.token}`,
+      },
+      body: JSON.stringify({
+        model: 'tokenless/auto',
+        messages: [{ role: 'user', content: 'Read package.json.' }],
+        tokenless: { execution_mode: 'browser' },
+      }),
+    })
+    const plainJob = await waitForQueuedApiProxyJob(daemon, 'api-proxy:')
+    assert.equal(plainJob.provider, 'gemini')
+    assert.equal(plainJob.request_json.fallback, null)
+    daemon.store.cancelJob(plainJob.job_id, 'focused plain auto routing test completed')
+    const plainReadyResponse = await plainReady
+    assert.equal(plainReadyResponse.status, 502)
+    assert.equal(plainReadyResponse.headers.get('x-tokenless-route-mode'), 'auto')
+    assert.equal(plainReadyResponse.headers.get('x-tokenless-route-provider'), 'gemini')
+
     const unsupported = await call(daemon, 'POST', '/v1/chat/completions', {
       model: 'tokenless/auto',
       messages: [{ role: 'user', content: 'Read package.json.' }],
@@ -281,7 +303,126 @@ test('explicit auto rejects plain, direct, and unevidenced provider-only request
     assert.equal(unsupported.body.error.code, 'auto_route_unavailable')
 
     const jobs = await call(daemon, 'GET', '/v1/private/jobs')
-    assert.equal(jobs.body.length, 0)
+    assert.equal(jobs.body.filter((job) => job.status === 'queued' || job.status === 'running').length, 0)
+  })
+})
+
+test('auto semantic preference reorders only eligible conversation routes', async () => {
+  await withDaemon(async (daemon) => {
+    await enableApiProxy(daemon.homeDir)
+    const invalidScope = await call(daemon, 'POST', '/v1/chat/completions', {
+      model: 'tokenless/chatgpt',
+      messages: [{ role: 'user', content: 'hello' }],
+      tokenless: { semantic_preference: 'deepseek' },
+    })
+    assert.equal(invalidScope.status, 400)
+    assert.equal(invalidScope.body.error.code, 'invalid_request_error')
+
+    const { ManagedProfileRegistry } = await import(profileRegistryModule)
+    const registry = new ManagedProfileRegistry(daemon.homeDir)
+    await registry.addProfile({ slug: 'semantic-auto', setDefault: true })
+    for (const provider of ['deepseek', 'chatgpt']) {
+      await registry.updateProviderStatus('semantic-auto', {
+        provider,
+        auth: 'authenticated',
+        access: 'signed_in_free',
+        checkedAt: new Date().toISOString(),
+      })
+    }
+    const { writeTokenlessConfig } = await import(runtimeModule)
+    await writeTokenlessConfig({
+      homeDir: daemon.homeDir,
+      apiProxy: { enabled: true, conversationMode: 'new-conversation', executionMode: 'browser' },
+      profiles: {
+        'semantic-auto': {
+          roleLabel: '',
+          enabledProviders: ['deepseek', 'chatgpt'],
+          browserVisibility: 'headed',
+          proxy: null,
+        },
+      },
+    })
+
+    const preferred = fetch(`${daemon.origin}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${daemon.token}`,
+      },
+      body: JSON.stringify({
+        model: 'tokenless/auto',
+        messages: [{ role: 'user', content: 'hello' }],
+        tokenless: {
+          execution_mode: 'browser',
+          semantic_preference: 'chatgpt',
+        },
+      }),
+    })
+    const preferredJob = await waitForQueuedApiProxyJob(daemon, 'api-proxy:')
+    assert.equal(preferredJob.provider, 'chatgpt')
+    assert.equal(preferredJob.request_json.semanticPreference, 'chatgpt')
+    await daemon.store.cancelJob(preferredJob.job_id, 'focused semantic preference test completed')
+    const preferredResponse = await preferred
+    assert.equal(preferredResponse.status, 502)
+    assert.equal(preferredResponse.headers.get('x-tokenless-route-mode'), 'auto')
+    assert.equal(preferredResponse.headers.get('x-tokenless-route-provider'), 'chatgpt')
+    assert.equal(preferredResponse.headers.get('x-tokenless-route-preference-requested'), 'chatgpt')
+    assert.equal(preferredResponse.headers.get('x-tokenless-route-preference-honored'), '1')
+
+    const ignored = fetch(`${daemon.origin}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${daemon.token}`,
+      },
+      body: JSON.stringify({
+        model: 'tokenless/auto',
+        messages: [{ role: 'user', content: 'hello' }],
+        tokenless: {
+          execution_mode: 'browser',
+          semantic_preference: 'not-a-provider',
+        },
+      }),
+    })
+    const ignoredJob = await waitForQueuedApiProxyJob(daemon, 'api-proxy:')
+    assert.equal(ignoredJob.provider, 'chatgpt')
+    assert.equal(ignoredJob.request_json.semanticPreference, 'not-a-provider')
+    await daemon.store.cancelJob(ignoredJob.job_id, 'focused unavailable semantic preference test completed')
+    const ignoredResponse = await ignored
+    assert.equal(ignoredResponse.status, 502)
+    assert.equal(ignoredResponse.headers.get('x-tokenless-route-provider'), 'chatgpt')
+    assert.equal(ignoredResponse.headers.get('x-tokenless-route-preference-requested'), 'not-a-provider')
+    assert.equal(ignoredResponse.headers.get('x-tokenless-route-preference-honored'), '0')
+
+    await registry.updateProviderStatus('semantic-auto', {
+      provider: 'chatgpt',
+      auth: 'authenticated',
+      access: 'signed_in_free',
+      checkedAt: '2000-01-01T00:00:00.000Z',
+    })
+    const stalePreference = fetch(`${daemon.origin}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${daemon.token}`,
+      },
+      body: JSON.stringify({
+        model: 'tokenless/auto',
+        messages: [{ role: 'user', content: 'hello' }],
+        tokenless: {
+          execution_mode: 'browser',
+          semantic_preference: 'chatgpt',
+        },
+      }),
+    })
+    const stalePreferenceJob = await waitForQueuedApiProxyJob(daemon, 'api-proxy:')
+    assert.equal(stalePreferenceJob.provider, 'deepseek')
+    await daemon.store.cancelJob(stalePreferenceJob.job_id, 'focused stale semantic preference test completed')
+    const stalePreferenceResponse = await stalePreference
+    assert.equal(stalePreferenceResponse.status, 502)
+    assert.equal(stalePreferenceResponse.headers.get('x-tokenless-route-provider'), 'deepseek')
+    assert.equal(stalePreferenceResponse.headers.get('x-tokenless-route-preference-requested'), 'chatgpt')
+    assert.equal(stalePreferenceResponse.headers.get('x-tokenless-route-preference-honored'), '0')
   })
 })
 
@@ -352,6 +493,164 @@ test('explicit auto applies portable call-id affinity and persists one real fall
     await daemon.store.cancelJob(job.job_id, 'focused pre-submit routing test completed')
     const response = await pending
     assert.equal(response.status, 502)
+  })
+})
+
+test('auto rate-limit fallback preserves one local job and reports source attribution', async () => {
+  await withDaemon(async (daemon) => {
+    const { ManagedProfileRegistry } = await import(profileRegistryModule)
+    const registry = new ManagedProfileRegistry(daemon.homeDir)
+    await registry.addProfile({ slug: 'web-ai', setDefault: true })
+    for (const provider of ['deepseek', 'chatgpt']) {
+      await registry.updateProviderStatus('web-ai', {
+        provider,
+        auth: 'authenticated',
+        access: 'signed_in_free',
+        checkedAt: new Date().toISOString(),
+      })
+    }
+    const { writeTokenlessConfig } = await import(runtimeModule)
+    await writeTokenlessConfig({
+      homeDir: daemon.homeDir,
+      apiProxy: { enabled: true, conversationMode: 'new-conversation', executionMode: 'browser' },
+      profiles: {
+        'web-ai': {
+          roleLabel: '',
+          enabledProviders: ['deepseek', 'chatgpt'],
+          browserVisibility: 'headed',
+          proxy: null,
+        },
+      },
+    })
+
+    const pending = fetch(`${daemon.origin}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${daemon.token}`,
+      },
+      body: JSON.stringify({
+        model: 'tokenless/auto',
+        messages: [{ role: 'user', content: 'RATE_LIMIT_FALLBACK_HTTP' }],
+        tokenless: { execution_mode: 'browser' },
+      }),
+    })
+    const queued = await waitForQueuedApiProxyJob(daemon, 'api-proxy:')
+    assert.equal(queued.provider, 'chatgpt')
+    assert.equal(Object.hasOwn(queued.request_json, 'routingObservation'), false)
+
+    const running = daemon.store.takeNextJob({}, 'web-ai')
+    assert.ok(running)
+    const submitted = daemon.store.recordProviderSubmission(running.job_id)
+    assert.notEqual(submitted.provider_submitted_at, null)
+    const alternative = queued.request_json.fallback.alternatives[0]
+    const fallbackRequest = {
+      ...queued.request_json,
+      provider: alternative.provider,
+      target: alternative.target,
+      capabilityRoute: alternative.capabilityRoute,
+      fallback: null,
+      routingObservation: {
+        protocol: 'tokenless.provider-routing-observation.v1',
+        attempts: [{ provider: queued.provider, outcome: 'fallback', reason: 'rate_limit' }],
+      },
+      actions: queued.request_json.actions.map((action) => ({ ...action, provider: alternative.provider })),
+    }
+    assert.throws(
+      () => daemon.store.fallbackJob({
+        job_id: running.job_id,
+        provider: alternative.provider,
+        request_json: fallbackRequest,
+        blocker_json: { failure: { code: 'provider_rate_limited', providerScoped: true } },
+      }),
+      /after provider submission/,
+    )
+    const fallback = daemon.store.fallbackJob({
+      job_id: running.job_id,
+      provider: alternative.provider,
+      request_json: fallbackRequest,
+      blocker_json: { failure: { code: 'provider_rate_limited', providerScoped: true } },
+      postSubmissionRateLimitProof: {
+        protocol: 'tokenless.provider-rate-limit-fallback.v1',
+        provider: queued.provider,
+        code: 'provider_rate_limited',
+        providerScoped: true,
+        visibleResponse: false,
+      },
+    })
+    assert.equal(fallback.job_id, queued.job_id)
+    assert.equal(fallback.provider, 'deepseek')
+    assert.equal(fallback.provider_submitted_at, null)
+    daemon.store.completeJob(fallback.job_id, {
+      result_json: {
+        responses: [{
+          action: 'response.read',
+          ok: true,
+          result: { text: 'fallback answer', citations: [] },
+        }],
+      },
+    })
+
+    const response = await pending
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get('x-tokenless-route-mode'), 'auto')
+    assert.equal(response.headers.get('x-tokenless-route-provider'), 'deepseek')
+    assert.equal(response.headers.get('x-tokenless-route-fallback-used'), '1')
+    assert.equal(response.headers.get('x-tokenless-route-rate-limited'), '0')
+    assert.deepEqual(JSON.parse(response.headers.get('x-tokenless-route-attempts')), [{
+      provider: 'chatgpt',
+      outcome: 'fallback',
+      reason: 'rate_limit',
+    }])
+    const body = await response.json()
+    assert.equal(body.choices[0].message.content, 'fallback answer')
+  })
+})
+
+test('api proxy client abort cancels the exact local job', async () => {
+  await withDaemon(async (daemon) => {
+    const { ManagedProfileRegistry } = await import(profileRegistryModule)
+    const registry = new ManagedProfileRegistry(daemon.homeDir)
+    await registry.addProfile({ slug: 'web-ai', setDefault: true })
+    await registry.updateProviderStatus('web-ai', {
+      provider: 'chatgpt',
+      auth: 'authenticated',
+      access: 'signed_in_free',
+      checkedAt: new Date().toISOString(),
+    })
+    const { writeTokenlessConfig } = await import(runtimeModule)
+    await writeTokenlessConfig({
+      homeDir: daemon.homeDir,
+      apiProxy: { enabled: true, conversationMode: 'new-conversation', executionMode: 'browser' },
+      profiles: {
+        'web-ai': {
+          roleLabel: '',
+          enabledProviders: ['chatgpt'],
+          browserVisibility: 'headed',
+          proxy: null,
+        },
+      },
+    })
+
+    const controller = new AbortController()
+    const request = fetch(`${daemon.origin}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${daemon.token}`,
+      },
+      body: JSON.stringify({
+        model: 'tokenless/auto',
+        messages: [{ role: 'user', content: 'ABORT_LOCAL_JOB' }],
+        tokenless: { execution_mode: 'browser' },
+      }),
+      signal: controller.signal,
+    })
+    const job = await waitForQueuedApiProxyJob(daemon, 'api-proxy:')
+    controller.abort()
+    await request.catch(() => undefined)
+    const canceled = await waitForJobStatus(daemon, job.job_id, 'canceled')
+    assert.equal(canceled.status, 'canceled')
   })
 })
 
@@ -1275,6 +1574,15 @@ async function waitForQueuedApiProxyJob(daemon, taskPrefix) {
     await new Promise((resolve) => setTimeout(resolve, 25))
   }
   assert.fail(`timed out waiting for queued API proxy job with task prefix ${taskPrefix}`)
+}
+
+async function waitForJobStatus(daemon, jobId, status) {
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    const job = daemon.store.getJob(jobId)
+    if (job.status === status) return job
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+  assert.fail(`timed out waiting for job ${jobId} to reach ${status}`)
 }
 
 function functionTool(name) {

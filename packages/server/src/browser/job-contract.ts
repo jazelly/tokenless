@@ -60,6 +60,7 @@ export type ManagedPlaywrightJobRequest = {
   authContextId: string | null
   browserVisibility: BrowserVisibility
   userHandoff: boolean
+  semanticPreference?: string | undefined
   routingObservation?: ManagedPlaywrightRoutingObservation | undefined
   pagePolicy?: ManagedPagePolicy | undefined
   actions: readonly VisibleActionRequest[]
@@ -104,6 +105,7 @@ export type CreateManagedPlaywrightJobRequestInput = {
   authContextId?: unknown
   browserVisibility?: unknown
   userHandoff?: unknown
+  semanticPreference?: unknown
   routingObservation?: unknown
   pagePolicy?: unknown
   actions: readonly (VisibleActionRequest | (Omit<Partial<VisibleActionWireRequest>, 'protocol' | 'provider'> & {
@@ -161,6 +163,9 @@ export function createManagedPlaywrightJobRequest(
     authContextId: validateAuthContextId(input.authContextId ?? null),
     browserVisibility: validateJobBrowserVisibility(input.browserVisibility ?? 'auto'),
     userHandoff: validateUserHandoff(input.userHandoff ?? false),
+    ...(input.semanticPreference === undefined || input.semanticPreference === null
+      ? {}
+      : { semanticPreference: validateSemanticPreference(input.semanticPreference) }),
     ...(input.routingObservation === undefined ? {} : { routingObservation: validateRoutingObservation(input.routingObservation) }),
     ...(input.pagePolicy === undefined ? {} : { pagePolicy: validateManagedPagePolicy(input.pagePolicy) }),
     actions,
@@ -174,7 +179,7 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
   requireKeys(
     input,
     ['protocol'],
-    ['provider', 'target', 'taskId', 'pageRef', 'capabilityRoute', 'fallback', 'context', 'executionMode', 'providerBackend', 'authContextId', 'browserVisibility', 'routingObservation', 'pagePolicy', 'userHandoff', 'actions'],
+    ['provider', 'target', 'taskId', 'pageRef', 'capabilityRoute', 'fallback', 'context', 'executionMode', 'providerBackend', 'authContextId', 'browserVisibility', 'semanticPreference', 'routingObservation', 'pagePolicy', 'userHandoff', 'actions'],
     'invalid_playwright_job_request',
   )
 
@@ -197,7 +202,7 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
     legacyV3
       ? ['protocol', 'provider', 'target', 'taskId', 'browserVisibility', 'actions']
       : ['protocol', 'provider', 'target', 'taskId', 'pageRef', 'browserVisibility', 'actions'],
-    ['capabilityRoute', 'fallback', 'context', 'executionMode', 'providerBackend', 'authContextId', 'routingObservation', 'pagePolicy', 'userHandoff'],
+    ['capabilityRoute', 'fallback', 'context', 'executionMode', 'providerBackend', 'authContextId', 'semanticPreference', 'routingObservation', 'pagePolicy', 'userHandoff'],
     'invalid_playwright_job_request',
   )
   const provider = getProviderInstanceById(input.provider)
@@ -245,6 +250,9 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
     : validateContextEnvelope(input.context, { taskId, requirements: contextRequirements, actions })
   const browserVisibility = validateJobBrowserVisibility(input.browserVisibility)
   const userHandoff = validateUserHandoff(input.userHandoff ?? false)
+  const semanticPreference = input.semanticPreference === undefined || input.semanticPreference === null
+    ? undefined
+    : validateSemanticPreference(input.semanticPreference)
   const routingObservation = input.routingObservation === undefined
     ? undefined
     : validateRoutingObservation(input.routingObservation)
@@ -280,6 +288,7 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
     authContextId,
     browserVisibility,
     userHandoff,
+    ...(semanticPreference === undefined ? {} : { semanticPreference }),
     ...(routingObservation === undefined ? {} : { routingObservation }),
     ...(pagePolicy === undefined ? {} : { pagePolicy }),
     actions,
@@ -305,6 +314,13 @@ function validateAuthContextId(value: unknown) {
   if (value === null) return null
   if (typeof value !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(value)) {
     throw tokenlessError('invalid_playwright_job_auth_context', 'Managed Playwright authContextId is invalid.')
+  }
+  return value
+}
+
+function validateSemanticPreference(value: unknown) {
+  if (typeof value !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/u.test(value)) {
+    throw tokenlessError('invalid_playwright_semantic_preference', 'Managed Playwright semanticPreference is invalid.')
   }
   return value
 }

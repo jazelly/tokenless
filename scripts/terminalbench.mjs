@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -7,11 +8,25 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const benchmarkRoot = path.join(root, 'benchmarks', 'terminalbench')
 const revision = JSON.parse(await fs.readFile(path.join(benchmarkRoot, 'revision.json'), 'utf8'))
+const SEMANTIC_MANIFEST_SCHEMA = 'tokenless.terminalbench-semantic-manifest.v1'
+const SEMANTIC_TASK_TYPE_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/u
+const SEMANTIC_COMPLEXITIES = new Set(['low', 'medium', 'high'])
 const [command = 'help', ...argv] = process.argv.slice(2)
 
 try {
   if (command === 'inspect') {
-    output({ ok: true, ...revision })
+    const manifest = await validateTaskManifest()
+    output({
+      ok: true,
+      ...revision,
+      taskManifest: {
+        path: manifest.path,
+        datasetRef: manifest.datasetRef,
+        instructionDigest: manifest.instructionDigest,
+        taskRefDigest: manifest.taskRefDigest,
+        taskCount: manifest.taskCount,
+      },
+    })
   } else if (command === 'prepare') {
     output({ ok: true, prepared: await prepare(argv) })
   } else if (command === 'oracle') {
@@ -31,6 +46,8 @@ try {
 }
 
 async function prepare(args) {
+  const taskManifest = path.resolve(root, revision.taskManifest)
+  const manifest = await validateTaskManifest(taskManifest)
   const dshCheckout = path.resolve(option(args, '--dsh-checkout') ?? path.join(root, '..', 'deepseek-harness'))
   await assertPinnedCheckout(dshCheckout)
   const cacheDir = path.resolve(option(args, '--cache-dir') ?? path.join(benchmarkRoot, 'cache'))
@@ -58,6 +75,8 @@ async function prepare(args) {
     dshArtifacts,
     vendorArtifacts,
     tokenlessPackage,
+    taskManifest,
+    taskManifestDigest: manifest.instructionDigest,
   })
   await assertPinnedCheckout(dshCheckout)
   return {
@@ -67,6 +86,8 @@ async function prepare(args) {
     vendorArtifacts,
     tokenlessPackage,
     runtimeArchive,
+    taskManifest,
+    taskManifestDigest: manifest.instructionDigest,
   }
 }
 
@@ -216,8 +237,17 @@ async function runOracle(args) {
 async function runDeepSeekLane(kind, args) {
   const homeDir = path.resolve(requiredOption(args, '--home'))
   const profile = requiredOption(args, '--profile')
+  const semanticManifest = await validateSemanticManifest(path.resolve(requiredOption(args, '--semantic-manifest')))
   if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(profile)) throw new Error('--profile is invalid.')
   if (kind === 'full' && option(args, '--task') !== undefined) throw new Error('The full command always runs the unchanged 89-task dataset.')
+  const task = kind === 'wiring' ? (option(args, '--task') ?? revision.wiringTask) : null
+  const taskManifestIdentity = await validateTaskManifest()
+  if (task !== null) {
+    const taskName = task.startsWith('terminal-bench/') ? task.slice('terminal-bench/'.length) : ''
+    if (taskManifestIdentity.taskRefs[taskName] === undefined) {
+      throw new Error('The wiring task is not in the pinned Terminal-Bench task manifest.')
+    }
+  }
 
   const prepared = await prepare(args)
   const daemon = await ensureHostDaemon(homeDir, option(args, '--daemon-url'))
@@ -226,7 +256,6 @@ async function runDeepSeekLane(kind, args) {
   const jobDir = path.join(jobsDir, jobName)
   await refuseExisting(jobDir)
   await fs.mkdir(jobsDir, { recursive: true })
-  const task = kind === 'wiring' ? (option(args, '--task') ?? revision.wiringTask) : null
   const attemptsPerTask = kind === 'full' ? revision.attemptsPerTask : 1
   const expectedTrials = kind === 'full' ? revision.taskCount * attemptsPerTask : attemptsPerTask
 
@@ -248,6 +277,8 @@ async function runDeepSeekLane(kind, args) {
     '--ak', `tokenless_home=${homeDir}`,
     '--ak', `daemon_url=${daemon.url}`,
     '--ak', `profile=${profile}`,
+    '--ak', `task_manifest=${prepared.taskManifest}`,
+    '--ak', `semantic_manifest=${semanticManifest.path}`,
     '--job-name', jobName,
     '--jobs-dir', jobsDir,
     '--yes',
@@ -269,6 +300,8 @@ async function runDeepSeekLane(kind, args) {
     proxyScript: path.join(benchmarkRoot, 'channel_proxy.py'),
     tokenlessHome: homeDir,
     daemonUrl: daemon.url,
+    taskManifest: prepared.taskManifest,
+    semanticManifest,
   })
   if (result.code !== 0) throw new Error(`Harbor ${kind} run exited ${result.code}; evidence is preserved at ${jobDir}.`)
   assertComplete(report, expectedTrials)
@@ -299,6 +332,8 @@ async function writeRunReport({
   proxyScript,
   tokenlessHome,
   daemonUrl,
+  taskManifest,
+  semanticManifest = null,
 }) {
   const destination = path.join(jobDir, 'tokenless-run.json')
   await refuseExisting(destination)
@@ -330,6 +365,7 @@ async function writeRunReport({
   if (kind !== 'oracle' && deepTrials.length !== expectedTrials) {
     throw new Error(`Expected deep-integration evidence for ${expectedTrials} non-oracle trials, found ${deepTrials.length}.`)
   }
+  const taskManifestIdentity = await validateTaskManifest(taskManifest)
   validateResolvedRun({
     official,
     jobConfig,
@@ -344,6 +380,9 @@ async function writeRunReport({
     tokenlessHome,
     daemonUrl,
     profile,
+    taskManifest,
+    taskManifestIdentity,
+    semanticManifest,
   })
   const rewards = trialResults
     .map((trial) => trial?.verifier_result?.rewards?.reward)
@@ -380,6 +419,17 @@ async function writeRunReport({
     tokenlessWorktreeDirty: tokenlessDirty.trim().length > 0,
     deepIntegration: aggregateDeepIntegration(deepTrials),
     providerRouting: aggregateProviderRouting(deepTrials),
+    taskManifest: {
+      datasetRef: revision.datasetRef,
+      instructionDigest: taskManifestIdentity.instructionDigest,
+      taskRefDigest: taskManifestIdentity.taskRefDigest,
+      taskCount: revision.taskCount,
+    },
+    semanticManifest: semanticManifest === null ? null : {
+      schema: SEMANTIC_MANIFEST_SCHEMA,
+      manifestDigest: semanticManifest.manifestDigest,
+      taskCount: semanticManifest.taskCount,
+    },
     jobDir,
   }
   await fs.writeFile(destination, `${JSON.stringify(report, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
@@ -400,6 +450,9 @@ function validateResolvedRun({
   tokenlessHome,
   daemonUrl,
   profile,
+  taskManifest,
+  taskManifestIdentity,
+  semanticManifest,
 }) {
   if (official.n_total_trials !== expectedTrials || trialResults.length !== expectedTrials) {
     throw new Error(`Harbor resolved ${String(official.n_total_trials)} total trials and wrote ${trialResults.length}; expected ${expectedTrials}.`)
@@ -426,6 +479,8 @@ function validateResolvedRun({
       tokenless_home: tokenlessHome,
       daemon_url: daemonUrl,
       profile,
+      task_manifest: taskManifest,
+      semantic_manifest: semanticManifest?.path,
     })
   }
   if (!Array.isArray(jobConfig.datasets) || jobConfig.datasets.length !== 1) {
@@ -444,18 +499,25 @@ function validateResolvedRun({
     throw new Error('Harbor did not resolve the pinned Terminal-Bench dataset and task manifest.')
   }
   const taskCounts = new Map(dataset.task_names.map((taskName) => [taskName, 0]))
-  const taskRefs = new Map()
+  const resolvedTaskRefs = new Map()
   const trialNames = new Set()
   for (const trial of trialResults) {
     const taskName = trial.task_name
     const taskRef = trial.task_id?.ref
-    if (!taskCounts.has(taskName) || typeof taskRef !== 'string' || !/^sha256:[a-f0-9]{64}$/u.test(taskRef)) {
+    const manifestTaskName = typeof taskName === 'string' && taskName.startsWith('terminal-bench/')
+      ? taskName.slice('terminal-bench/'.length)
+      : null
+    if (
+      !taskCounts.has(taskName)
+      || manifestTaskName === null
+      || taskManifestIdentity.taskRefs[manifestTaskName] !== taskRef
+    ) {
       throw new Error('A trial does not belong to the resolved pinned task manifest.')
     }
-    if (taskRefs.has(taskName) && taskRefs.get(taskName) !== taskRef) {
+    if (resolvedTaskRefs.has(taskName) && resolvedTaskRefs.get(taskName) !== taskRef) {
       throw new Error(`Harbor resolved multiple task refs for ${taskName}.`)
     }
-    taskRefs.set(taskName, taskRef)
+    resolvedTaskRefs.set(taskName, taskRef)
     taskCounts.set(taskName, taskCounts.get(taskName) + 1)
     if (typeof trial.trial_name !== 'string' || trialNames.has(trial.trial_name)) {
       throw new Error('Harbor trial names must be present and unique.')
@@ -466,8 +528,136 @@ function validateResolvedRun({
     trialNames.add(trial.trial_name)
     validateUnmodifiedTrialConfig(trial.config)
   }
-  if (taskRefs.size !== expectedTaskCount || [...taskCounts.values()].some((count) => count !== attemptsPerTask)) {
+  if (resolvedTaskRefs.size !== expectedTaskCount || [...taskCounts.values()].some((count) => count !== attemptsPerTask)) {
     throw new Error(`Harbor did not produce exactly k=${attemptsPerTask} trials for every resolved task.`)
+  }
+}
+
+async function validateTaskManifest(manifestPath = path.resolve(root, revision.taskManifest)) {
+  const manifest = await readJson(manifestPath)
+  if (
+    manifest.schema !== 'tokenless.terminalbench-task-manifest.v1'
+    || manifest.dataset !== revision.dataset
+    || manifest.datasetRef !== revision.datasetRef
+    || manifest.instructionDigest !== revision.instructionDigest
+    || manifest.taskRefDigest !== revision.taskRefDigest
+    || manifest.instructionFile !== 'instruction.md'
+    || manifest.taskCount !== revision.taskCount
+    || !manifest.tasks
+    || typeof manifest.tasks !== 'object'
+    || Array.isArray(manifest.tasks)
+    || !manifest.taskRefs
+    || typeof manifest.taskRefs !== 'object'
+    || Array.isArray(manifest.taskRefs)
+  ) {
+    throw new Error('Terminal-Bench task manifest does not match the pinned official dataset.')
+  }
+  const taskNames = Object.keys(manifest.tasks)
+  const taskRefNames = Object.keys(manifest.taskRefs)
+  const sortedTaskNames = [...taskNames].sort()
+  if (
+    taskNames.length !== revision.taskCount
+    || taskNames.some((name, index) => name !== sortedTaskNames[index])
+    || taskRefNames.length !== taskNames.length
+    || taskRefNames.some((name, index) => name !== taskNames[index])
+    || taskNames.some((name) => !/^[-a-z0-9]+$/u.test(name))
+    || taskNames.some((name) => typeof manifest.tasks[name] !== 'string' || !/^sha256:[a-f0-9]{64}$/u.test(manifest.tasks[name]))
+    || taskNames.some((name) => typeof manifest.taskRefs[name] !== 'string' || !/^sha256:[a-f0-9]{64}$/u.test(manifest.taskRefs[name]))
+  ) {
+    throw new Error(`Terminal-Bench task manifest must contain exactly ${revision.taskCount} sorted instruction digests.`)
+  }
+  const instructionDigest = `sha256:${createHash('sha256').update(JSON.stringify(manifest.tasks)).digest('hex')}`
+  if (manifest.instructionDigest !== instructionDigest) {
+    throw new Error('Terminal-Bench task manifest instruction digest is invalid.')
+  }
+  const taskRefDigest = `sha256:${createHash('sha256').update(JSON.stringify(manifest.taskRefs)).digest('hex')}`
+  if (manifest.taskRefDigest !== taskRefDigest) {
+    throw new Error('Terminal-Bench task manifest task ref digest is invalid.')
+  }
+  const wiringTaskName = typeof revision.wiringTask === 'string' && revision.wiringTask.startsWith('terminal-bench/')
+    ? revision.wiringTask.slice('terminal-bench/'.length)
+    : ''
+  if (manifest.taskRefs[wiringTaskName] === undefined) {
+    throw new Error('Terminal-Bench wiring task is not in the pinned task manifest.')
+  }
+  return {
+    path: manifestPath,
+    datasetRef: manifest.datasetRef,
+    instructionDigest,
+    taskRefDigest,
+    taskRefs: Object.freeze({ ...manifest.taskRefs }),
+    taskCount: taskNames.length,
+  }
+}
+
+async function validateSemanticManifest(manifestPath) {
+  const manifest = await readJson(manifestPath)
+  const officialPath = path.resolve(root, revision.taskManifest)
+  const official = await readJson(officialPath)
+  await validateTaskManifest(officialPath)
+  const expectedKeys = ['schema', 'dataset', 'datasetRef', 'officialInstructionDigest', 'entries', 'manifestDigest']
+  if (
+    !manifest || typeof manifest !== 'object' || Array.isArray(manifest)
+    || !sameStringSet(Object.keys(manifest), expectedKeys)
+    || manifest.schema !== SEMANTIC_MANIFEST_SCHEMA
+    || manifest.dataset !== revision.dataset
+    || manifest.datasetRef !== revision.datasetRef
+    || manifest.officialInstructionDigest !== official.instructionDigest
+    || !Array.isArray(manifest.entries)
+    || manifest.entries.length !== revision.taskCount
+    || typeof manifest.manifestDigest !== 'string'
+    || !/^sha256:[a-f0-9]{64}$/u.test(manifest.manifestDigest)
+  ) {
+    throw new Error('Terminal-Bench semantic manifest does not match the pinned official task hash manifest.')
+  }
+  const officialDigests = Object.values(official.tasks)
+  const entries = manifest.entries
+  const sortedEntries = [...entries].sort((left, right) => {
+    const leftDigest = String(left?.instructionDigest)
+    const rightDigest = String(right?.instructionDigest)
+    return leftDigest < rightDigest ? -1 : leftDigest > rightDigest ? 1 : 0
+  })
+  if (entries.some((entry, index) => entry !== sortedEntries[index])) {
+    throw new Error('Terminal-Bench semantic manifest entries must be sorted by full instruction digest.')
+  }
+  const seen = new Set()
+  for (const entry of entries) {
+    if (
+      !entry || typeof entry !== 'object' || Array.isArray(entry)
+      || !sameStringSet(Object.keys(entry), ['instructionDigest', 'preferredProvider', 'taskType', 'complexity', 'truncated'])
+      || typeof entry.instructionDigest !== 'string'
+      || !/^sha256:[a-f0-9]{64}$/u.test(entry.instructionDigest)
+      || !officialDigests.includes(entry.instructionDigest)
+      || seen.has(entry.instructionDigest)
+      || typeof entry.preferredProvider !== 'string'
+      || !/^[a-z][a-z0-9-]{0,63}$/u.test(entry.preferredProvider)
+      || typeof entry.taskType !== 'string'
+      || !SEMANTIC_TASK_TYPE_PATTERN.test(entry.taskType)
+      || !SEMANTIC_COMPLEXITIES.has(entry.complexity)
+      || typeof entry.truncated !== 'boolean'
+    ) {
+      throw new Error('Terminal-Bench semantic manifest entry is invalid or not an official instruction digest.')
+    }
+    seen.add(entry.instructionDigest)
+  }
+  if (seen.size !== officialDigests.length || officialDigests.some((digest) => !seen.has(digest))) {
+    throw new Error('Terminal-Bench semantic manifest must cover every official task instruction exactly once.')
+  }
+  const canonical = {
+    schema: manifest.schema,
+    dataset: manifest.dataset,
+    datasetRef: manifest.datasetRef,
+    officialInstructionDigest: manifest.officialInstructionDigest,
+    entries,
+  }
+  const manifestDigest = `sha256:${createHash('sha256').update(JSON.stringify(canonical)).digest('hex')}`
+  if (manifest.manifestDigest !== manifestDigest) {
+    throw new Error('Terminal-Bench semantic manifest digest is invalid.')
+  }
+  return {
+    path: manifestPath,
+    manifestDigest,
+    taskCount: entries.length,
   }
 }
 
@@ -601,7 +791,11 @@ function deepIntegrationStats(events) {
   const parentRequests = events.filter((event) => event.type === 'api.completion.request')
   const childStarts = events.filter((event) => event.type === 'child.turn.started')
   const routing = events.filter((event) => event.type === 'provider.routing')
-  const firstForcedParent = parentRequests.find((event) => event.forcedSubagent === true)
+  const forcedParents = parentRequests.filter((event) => event.forcedSubagent === true)
+  if (forcedParents.length !== 1) {
+    throw new Error('Deep integration requires exactly one successful forced parent subagent dispatch.')
+  }
+  const firstForcedParent = forcedParents[0]
   const nextParentRequestAfterForced = firstForcedParent
     ? parentRequests.find((event) => event.sequence > firstForcedParent.sequence)
     : undefined
@@ -698,7 +892,8 @@ function validateProviderRoutingEvent(event) {
   if (
     Object.keys(event).some((key) => ![
       'protocol', 'sequence', 'type', 'scope', 'mode', 'provider',
-      'fallbackProviders', 'fallbackUsed', 'rateLimited', 'attempts', 'outcome',
+      'fallbackProviders', 'fallbackUsed', 'rateLimited', 'preferenceRequested',
+      'preferenceHonored', 'attempts', 'outcome',
     ].includes(key))
     ||
     event.protocol !== revision.auditProtocol
@@ -711,6 +906,12 @@ function validateProviderRoutingEvent(event) {
     || event.fallbackProviders.some((provider) => typeof provider !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/u.test(provider))
     || typeof event.fallbackUsed !== 'boolean'
     || typeof event.rateLimited !== 'boolean'
+    || event.preferenceRequested !== null && (
+      typeof event.preferenceRequested !== 'string'
+      || !/^[a-z][a-z0-9-]{0,63}$/u.test(event.preferenceRequested)
+    )
+    || typeof event.preferenceHonored !== 'boolean'
+    || event.preferenceHonored && event.preferenceRequested === null
     || !Array.isArray(event.attempts)
     || event.attempts.length > 5
     || event.attempts.some((attempt) => (
@@ -730,18 +931,25 @@ function validateProviderRoutingEvent(event) {
   }
 }
 
+function emptyProviderRoutingCounts() {
+  return {
+    routed: 0,
+    attempted: 0,
+    rateLimited: 0,
+    fallbackOut: 0,
+    completed: 0,
+    failed: 0,
+    preferenceRequested: 0,
+    preferenceHonored: 0,
+  }
+}
+
 function providerRoutingStats(events) {
-  const providers = {}
+  const scopes = { parent: {}, child: {} }
   for (const event of events) {
     if (event.type !== 'provider.routing') continue
-    const current = providers[event.provider] ?? {
-      routed: 0,
-      attempted: 0,
-      rateLimited: 0,
-      fallback: 0,
-      completed: 0,
-      failed: 0,
-    }
+    const providers = scopes[event.scope]
+    const current = providers[event.provider] ?? emptyProviderRoutingCounts()
     current.routed += 1
     current.attempted += 1
     if (event.rateLimited) current.rateLimited += 1
@@ -749,47 +957,43 @@ function providerRoutingStats(events) {
     else current.failed += 1
     providers[event.provider] = current
     for (const attempt of event.attempts) {
-      const attempted = providers[attempt.provider] ?? {
-        routed: 0,
-        attempted: 0,
-        rateLimited: 0,
-        fallback: 0,
-        completed: 0,
-        failed: 0,
-      }
+      const attempted = providers[attempt.provider] ?? emptyProviderRoutingCounts()
       attempted.routed += 1
       attempted.attempted += 1
-      attempted.fallback += 1
+      attempted.fallbackOut += 1
       attempted.failed += 1
       if (attempt.reason === 'rate_limit') attempted.rateLimited += 1
       providers[attempt.provider] = attempted
     }
+    if (event.preferenceRequested !== null) {
+      const preferred = providers[event.preferenceRequested] ?? emptyProviderRoutingCounts()
+      preferred.preferenceRequested += 1
+      if (event.preferenceHonored) preferred.preferenceHonored += 1
+      providers[event.preferenceRequested] = preferred
+    }
   }
-  return providers
+  return scopes
 }
 
 function aggregateProviderRouting(trials) {
-  const providers = {}
+  const scopes = { parent: { providers: {} }, child: { providers: {} } }
   for (const trial of trials) {
-    for (const [provider, counts] of Object.entries(trial.providerRouting ?? {})) {
-      const current = providers[provider] ?? {
-        routed: 0,
-        attempted: 0,
-        rateLimited: 0,
-        fallback: 0,
-        completed: 0,
-        failed: 0,
+    for (const scope of ['parent', 'child']) {
+      for (const [provider, counts] of Object.entries(trial.providerRouting?.[scope] ?? {})) {
+        const current = scopes[scope].providers[provider] ?? emptyProviderRoutingCounts()
+        for (const field of Object.keys(current)) current[field] += counts[field]
+        scopes[scope].providers[provider] = current
       }
-      for (const field of ['routed', 'attempted', 'rateLimited', 'fallback', 'completed', 'failed']) {
-        current[field] += counts[field]
-      }
-      providers[provider] = current
     }
   }
   return {
     protocol: revision.routingProtocol,
     mode: 'auto',
-    providers,
+    tokenUsage: {
+      availability: 'unavailable',
+      reason: 'browser_provider_turns_do_not_expose_token_usage',
+    },
+    scopes,
   }
 }
 
@@ -921,7 +1125,7 @@ function helpText() {
     `  inspect\n` +
     `  prepare --dsh-checkout <path>\n` +
     `  oracle [--task terminal-bench/<name>] [--jobs-dir <path>]\n` +
-    `  wiring --home <path> --dsh-checkout <path> --profile <id> [--task terminal-bench/<name>]\n` +
-    `  full --home <path> --dsh-checkout <path> --profile <id>\n\n` +
+    `  wiring --home <path> --dsh-checkout <path> --profile <id> --semantic-manifest <path> [--task terminal-bench/<name>]\n` +
+    `  full --home <path> --dsh-checkout <path> --profile <id> --semantic-manifest <path>\n\n` +
     `The full command is fixed to Harbor ${revision.harborVersion}, the 89-task Terminal-Bench 2.0 dataset, k=5, one concurrent trial, and zero Harbor retries.\n`
 }

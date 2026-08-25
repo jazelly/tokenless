@@ -65,9 +65,7 @@ export function createGeminiNanoAiEngine(): HarnessAiEngine {
   return {
     id: 'gemini-nano',
     async complete(input) {
-      const binding = input.browserBinding
-      if (!binding) throw new RouterEngineError('unsupported-browser-mode')
-      const observation = await inspectChromePromptApi(binding)
+      const observation = await inspectChromePromptApi()
       requireSupportedObservation(observation)
       const api = languageModelApi()
       if (!api) throw new RouterEngineError('api-missing', observation)
@@ -94,12 +92,12 @@ export function createRouterEngine(engine: RouterEngineId) {
   if (engine !== 'chrome-prompt-api') throw new RouterEngineError('unsupported-engine')
 
   return {
-    async inspect(browserBinding: RouterBrowserBinding): Promise<RouterEngineObservation> {
-      return await inspectChromePromptApi(browserBinding)
+    async inspect(_browserBinding: RouterBrowserBinding): Promise<RouterEngineObservation> {
+      return await inspectChromePromptApi()
     },
 
-    async availability(browserBinding: RouterBrowserBinding) {
-      const observation = await inspectChromePromptApi(browserBinding)
+    async availability(_browserBinding: RouterBrowserBinding) {
+      const observation = await inspectChromePromptApi()
       requireSupportedObservation(observation)
       const api = languageModelApi()
       if (!api) throw new RouterEngineError('api-missing', observation)
@@ -109,14 +107,14 @@ export function createRouterEngine(engine: RouterEngineId) {
     async route(
       task: string,
       providers: RouterProviderCandidate[],
-      browserBinding: RouterBrowserBinding,
+      _browserBinding: RouterBrowserBinding,
       callbacks: {
         onObservation: (observation: RouterEngineObservation) => void
         onAvailability: (availability: string) => void
         onDownloadProgress: (progress: number | null) => void
       },
     ): Promise<RouterResult> {
-      const observation = await inspectChromePromptApi(browserBinding)
+      const observation = await inspectChromePromptApi()
       callbacks.onObservation(observation)
       requireSupportedObservation(observation)
       const api = languageModelApi()
@@ -179,8 +177,8 @@ export function createRouterEngine(engine: RouterEngineId) {
       }
     },
 
-    async title(task: string, browserBinding: RouterBrowserBinding): Promise<string> {
-      const observation = await inspectChromePromptApi(browserBinding)
+    async title(task: string, _browserBinding: RouterBrowserBinding): Promise<string> {
+      const observation = await inspectChromePromptApi()
       requireSupportedObservation(observation)
       const api = languageModelApi()
       if (!api) throw new RouterEngineError('api-missing', observation)
@@ -210,19 +208,15 @@ export function createRouterEngine(engine: RouterEngineId) {
   }
 }
 
-async function inspectChromePromptApi(browserBinding: RouterBrowserBinding): Promise<RouterEngineObservation> {
+async function inspectChromePromptApi(): Promise<RouterEngineObservation> {
+  const identity = await chromeFamilyIdentity()
   const base = {
-    browserId: browserBinding.browserId,
-    browserFamily: browserBinding.family,
-    browserVersion: browserBinding.version,
+    browserId: identity.browserId,
+    browserFamily: 'renderer',
+    browserVersion: identity.version,
     minimumChromeMajor: CHROME_PROMPT_API_MIN_MAJOR,
   }
-  if (browserBinding.family !== 'system' || browserBinding.browserId !== 'chrome') {
-    return { ...base, supported: false, code: 'unsupported-browser-mode' }
-  }
-
-  const identity = await googleChromeIdentity()
-  const browserVersion = identity.version ?? browserBinding.version
+  const browserVersion = identity.version
   if (!identity.isGoogleChrome) {
     return { ...base, browserVersion, supported: false, code: 'unsupported-browser' }
   }
@@ -241,7 +235,7 @@ function requireSupportedObservation(observation: RouterEngineObservation) {
   throw new RouterEngineError(observation.code, observation)
 }
 
-async function googleChromeIdentity() {
+async function chromeFamilyIdentity() {
   const userAgentData = (navigator as Navigator & {
     userAgentData?: {
       brands?: Array<{ brand: string; version: string }>
@@ -261,7 +255,11 @@ async function googleChromeIdentity() {
   }
   const chrome = versions.find((brand) => brand.brand === 'Google Chrome')
   const observed = chrome ?? versions.find((brand) => !/not.?a.?brand/i.test(brand.brand))
-  return { isGoogleChrome: Boolean(chrome), version: observed?.version ?? null }
+  return {
+    browserId: chrome ? 'chrome' : observed?.brand ?? 'unknown',
+    isGoogleChrome: Boolean(chrome),
+    version: observed?.version ?? null,
+  }
 }
 
 function versionMajor(version: string | null) {
