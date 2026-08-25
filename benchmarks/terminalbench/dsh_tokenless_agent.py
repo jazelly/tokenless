@@ -450,7 +450,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             "bootstrap" if mode == "new" else "continuation",
         }
         if mode == "new":
-            if set(value) not in {expected_keys, expected_keys | {"semanticPreference"}}:
+            if set(value) != expected_keys and set(value) != (expected_keys | {"semanticPreference"}):
                 raise ValueError("provider turn start shape is invalid")
         elif set(value) != expected_keys:
             raise ValueError("provider turn start shape is invalid")
