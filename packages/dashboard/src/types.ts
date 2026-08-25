@@ -18,6 +18,10 @@ import type {
   DashboardSetupInput,
   DashboardSetupSnapshot,
   DashboardSnapshot,
+  DashboardTerminalBenchSemanticManifestEntry,
+  DashboardTerminalBenchSemanticManifestResult,
+  DashboardTerminalBenchSemanticManifestSave,
+  DashboardTerminalBenchSemanticTasks,
 } from 'tokenless-internal-shared/dashboard'
 
 export type {
@@ -67,6 +71,10 @@ export type {
   DashboardSetupSnapshot,
   DashboardSession,
   DashboardSnapshot,
+  DashboardTerminalBenchSemanticManifestEntry,
+  DashboardTerminalBenchSemanticManifestResult,
+  DashboardTerminalBenchSemanticManifestSave,
+  DashboardTerminalBenchSemanticTasks,
 } from 'tokenless-internal-shared/dashboard'
 
 export type Language = DashboardLanguage
@@ -136,6 +144,10 @@ export type DashboardActions = {
   readHarnessRun: (runId: string) => Promise<DashboardHarnessRunView>
   resumeHarnessRun: (runId: string, input: DashboardHarnessIntervention, announce?: boolean) => Promise<DashboardHarnessRunView>
   cancelHarnessRun: (runId: string, announce?: boolean) => Promise<DashboardHarnessRunView>
+  readTerminalBenchSemanticTasks: () => Promise<DashboardTerminalBenchSemanticTasks>
+  saveTerminalBenchSemanticManifest: (
+    input: DashboardTerminalBenchSemanticManifestSave,
+  ) => Promise<DashboardTerminalBenchSemanticManifestResult>
   quiesceRuntime: (announce?: boolean) => Promise<DashboardRuntimeStatus>
   enableOutputSavings: (announce?: boolean) => Promise<DashboardOutputSavingsState>
   disableOutputSavings: (announce?: boolean) => Promise<DashboardOutputSavingsState>

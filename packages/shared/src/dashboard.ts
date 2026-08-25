@@ -91,6 +91,38 @@ export type DashboardRouterConfig = {
   providers: DashboardRouterProviderRule[]
 }
 
+export type DashboardTerminalBenchSemanticTask = {
+  instructionDigest: string
+  instruction: string
+}
+
+export type DashboardTerminalBenchSemanticManifestEntry = {
+  instructionDigest: string
+  preferredProvider: string
+  taskType: string
+  complexity: 'low' | 'medium' | 'high'
+  truncated: boolean
+}
+
+export type DashboardTerminalBenchSemanticTasks = {
+  schema: 'tokenless.terminalbench-semantic-manifest-tasks.v1'
+  dataset: string
+  datasetRef: string
+  officialInstructionDigest: string
+  tasks: DashboardTerminalBenchSemanticTask[]
+}
+
+export type DashboardTerminalBenchSemanticManifestSave = {
+  token: string
+  entries: DashboardTerminalBenchSemanticManifestEntry[]
+}
+
+export type DashboardTerminalBenchSemanticManifestResult = {
+  fileName: string
+  manifestDigest: string
+  taskCount: number
+}
+
 export type DashboardConfig = {
   updatedAt: string | null
   profiles: { [slug: string]: DashboardProfileConfig }

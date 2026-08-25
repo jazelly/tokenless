@@ -185,6 +185,8 @@ export type BrowserRuntimeOpenProviderTabsResponse = BrowserRuntimeOpenProfileRe
 export type OpenDashboardOptions = DaemonClientOptions & {
   profileId?: string | undefined
   jobId?: string | undefined
+  semanticManifestOutput?: string | undefined
+  browserExecutablePath?: string | undefined
   open?: boolean | undefined
 }
 
@@ -744,6 +746,8 @@ export async function openTokenlessDashboard({
   signal,
   profileId,
   jobId,
+  semanticManifestOutput,
+  browserExecutablePath,
   open = true,
 }: OpenDashboardOptions = {}) {
   const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
@@ -753,25 +757,34 @@ export async function openTokenlessDashboard({
     body: {
       ...(profileId ? { profile_id: profileId } : {}),
       ...(jobId ? { job_id: jobId } : {}),
+      ...(semanticManifestOutput ? { semantic_manifest_output: semanticManifestOutput } : {}),
     },
     token: daemon.token,
     timeoutMs: requestTimeoutMs,
     signal,
   })
   if (!open) return { ...dashboard, opened: null }
-  await openUrlInDefaultBrowser(dashboard.url)
+  await openUrlInBrowser(dashboard.url, browserExecutablePath)
   return {
     ...dashboard,
     opened: { url: dashboard.url, reused: false },
   }
 }
 
-async function openUrlInDefaultBrowser(url: string) {
+async function openUrlInBrowser(url: string, browserExecutablePath?: string) {
+  if (browserExecutablePath) {
+    await spawnDetached(browserExecutablePath, [url])
+    return
+  }
   const [command, args] = process.platform === 'darwin'
     ? ['open', [url]] as const
     : process.platform === 'win32'
       ? ['cmd.exe', ['/d', '/s', '/c', 'start', '', url]] as const
       : ['xdg-open', [url]] as const
+  await spawnDetached(command, args)
+}
+
+async function spawnDetached(command: string, args: readonly string[]) {
   await new Promise<void>((resolve, reject) => {
     const child = spawn(command, args, { detached: true, stdio: 'ignore', windowsHide: true })
     child.once('error', reject)

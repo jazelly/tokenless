@@ -520,12 +520,13 @@ async function handleRequest(
     if (method === 'POST' && url.pathname === '/v1/private/control/dashboard') {
       const rawBody = await readBody(request)
       const body = rawBody ? parseJsonObject(rawBody) : {}
-      if (Object.keys(body).some((key) => key !== 'profile_id' && key !== 'job_id')) {
+      if (Object.keys(body).some((key) => key !== 'profile_id' && key !== 'job_id' && key !== 'semantic_manifest_output')) {
         throw invalidInput('request body must be valid JSON: unknown field')
       }
       const profileId = optionalString(body.profile_id)
       const jobId = optionalString(body.job_id)
-      const url = dashboardServer.dashboardUrl(profileId, jobId)
+      const semanticManifestOutput = optionalString(body.semantic_manifest_output)
+      const url = dashboardServer.dashboardUrl(profileId, jobId, semanticManifestOutput)
       writeJson(response, 200, { url, opened: null })
       return
     }

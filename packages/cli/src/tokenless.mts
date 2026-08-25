@@ -285,7 +285,7 @@ const TOP_LEVEL_USAGE = [
   'tokenless featurebench inspect --json',
   'tokenless profiles <subcommand> [options]',
   'tokenless agents <install|status|inspect|uninstall> <codex|dsh> [options]',
-  'tokenless dashboard [--profile <slug>] [--job-id <id>] [--no-open] [--json]',
+  'tokenless dashboard [--profile <slug>] [--job-id <id>] [--semantic-manifest-output <absolute-path>] [--no-open] [--json]',
   'tokenless menubar status --json',
   'tokenless savings <status|enable|disable|uninstall|clear> --json',
   'tokenless daemon stop [--json]',
@@ -670,8 +670,20 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
 
 async function dashboardCommand(args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
+  if (args.semanticManifestOutput !== undefined && args.noOpen === true) {
+    throw usageError(
+      'invalid_option',
+      '--semantic-manifest-output cannot be combined with --no-open.',
+    )
+  }
   const control = await ensureControlDaemon(args, homeDir)
   const daemon = control.daemon
+  const semanticManifestBrowser = args.semanticManifestOutput === undefined
+    ? null
+    : await new BrowserRuntimeManager({ homeDir }).ensure('chrome', {
+        allowDownload: false,
+        browserExecutablePath: (await readTokenlessConfig(homeDir)).browserExecutablePath,
+      })
   const profile = args.profile === undefined
     ? null
     : (await resolveControlProfile({
@@ -684,6 +696,8 @@ async function dashboardCommand(args: CliArgs) {
     daemonUrl: daemon.url,
     ...(profile === null ? {} : { profileId: profile.slug }),
     ...(args.jobId === undefined ? {} : { jobId: String(args.jobId) }),
+    ...(args.semanticManifestOutput === undefined ? {} : { semanticManifestOutput: path.resolve(String(args.semanticManifestOutput)) }),
+    ...(semanticManifestBrowser === null ? {} : { browserExecutablePath: semanticManifestBrowser.executablePath }),
     open: args.noOpen !== true,
   })
   printPayload({
@@ -692,7 +706,7 @@ async function dashboardCommand(args: CliArgs) {
     daemon: { url: daemon.url, started: daemon.started, pid: daemon.pid },
     profile: profile === null ? null : { slug: profile.slug },
     dashboard: {
-      url: dashboard.url,
+      url: args.semanticManifestOutput === undefined ? dashboard.url : redactSemanticManifestToken(dashboard.url),
       opened: dashboard.opened !== null,
       reused: dashboard.opened?.reused ?? false,
     },
@@ -700,10 +714,22 @@ async function dashboardCommand(args: CliArgs) {
       ? profile === null
         ? t('dashboardReady', { url: dashboard.url })
         : t('dashboardReadyForProfile', { profile: profile.slug, url: dashboard.url })
-      : profile === null
-        ? t('dashboardOpened')
-        : t('dashboardOpenedForProfile', { profile: profile.slug }),
+      : args.semanticManifestOutput !== undefined
+        ? profile === null
+          ? t('dashboardOpenedInChrome')
+          : t('dashboardOpenedInChromeForProfile', { profile: profile.slug })
+        : profile === null
+          ? t('dashboardOpened')
+          : t('dashboardOpenedForProfile', { profile: profile.slug }),
   }, args)
+}
+
+function redactSemanticManifestToken(value: string) {
+  const url = new URL(value)
+  if (url.searchParams.has('semanticManifestToken')) {
+    url.searchParams.set('semanticManifestToken', 'redacted')
+  }
+  return url.toString()
 }
 
 async function menubarCommand(subcommand: string | undefined, args: CliArgs) {
@@ -5493,7 +5519,7 @@ function createCommandContracts(): CommandContract[] {
     { command: 'upgrade', usage: ['tokenless upgrade [--check] [--json] [--home <dir>] [--daemon-url <url>] [--browser <browser>|--browsers <list>]'], options: ['check', 'json', 'home', 'daemonUrl', 'browser', 'browsers', 'daemonStartTimeoutMs'] },
     { command: 'doctor', usage: ['tokenless doctor --json'], options: ['home', 'json', 'browser', 'daemonUrl'] },
     { command: 'config', usage: ['tokenless config [--language <en|zh-CN>] [--browser <chrome|brave>] [--browser-executable-path <absolute-path>|--clear-browser-executable-path] [--daemon-url <url>] --json', 'tokenless config --profile <slug> [--provider-whitelist <list>] [--browser-visibility headed] --json'], options: ['home', 'json', 'profile', 'language', 'providerWhitelist', 'browser', 'browserExecutablePath', 'clearBrowserExecutablePath', 'browserVisibility', 'daemonUrl'] },
-    { command: 'dashboard', usage: ['tokenless dashboard [--profile <slug>] [--job-id <id>] [--no-open] [--json]'], options: ['home', 'json', 'profile', 'jobId', 'noOpen', 'daemonUrl', 'daemonStartTimeoutMs'] },
+    { command: 'dashboard', usage: ['tokenless dashboard [--profile <slug>] [--job-id <id>] [--semantic-manifest-output <absolute-path>] [--no-open] [--json]'], options: ['home', 'json', 'profile', 'jobId', 'semanticManifestOutput', 'noOpen', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'menubar', subcommand: 'status', usage: ['tokenless menubar status --json'], options: ['home', 'json', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'prompt', usage: ['tokenless --prompt <text> [--context <text>] [--file <path>]'], options: ['json', 'prompt', 'promptFile', 'context', 'contextFile', 'turnContextFile', 'projectRoot', 'files', 'output'] },
     { command: 'profiles', subcommand: 'add', usage: ['tokenless profiles add --profile <slug> [--browser <managed-chromium|cloak>] [--set-default] --json'], options: ['home', 'json', 'profile', 'browser', 'providerWhitelist', 'setDefault'] },
@@ -5557,6 +5583,7 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--target-url': 'targetUrl',
     '--task-id': 'taskId',
     '--job-id': 'jobId',
+    '--semantic-manifest-output': 'semanticManifestOutput',
     '--run-id': 'runId',
     '--agent-kind': 'agentKind',
     '--agent-session-id': 'agentSessionId',
@@ -7079,6 +7106,7 @@ function optionUsageLabel(option: string) {
     installCodex: '--install-codex',
     json: '--json',
     jobId: '--job-id <job-id>',
+    semanticManifestOutput: '--semantic-manifest-output <absolute-path>',
     language: '--language <en|zh-CN>',
     limit: '--limit <n>',
     longRunning: '--long-running',

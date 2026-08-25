@@ -6,6 +6,7 @@ import type {
 export type RouterEngineId = 'chrome-prompt-api'
 
 export const CHROME_PROMPT_API_MIN_MAJOR = 148
+export const ROUTER_TASK_TYPE_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/u
 
 export type RouterBrowserBinding = {
   browserId: string
@@ -148,7 +149,7 @@ export function createRouterEngine(engine: RouterEngineId) {
             properties: {
               providerId: { type: 'string', enum: providers.map((provider) => provider.providerId) },
               model: { enum: [...new Set(providers.map((provider) => provider.model))] },
-              taskType: { type: 'string' },
+              taskType: { type: 'string', pattern: '^[a-z][a-z0-9_-]{0,31}$' },
               complexity: { type: 'string', enum: ['low', 'medium', 'high'] },
               reason: { type: 'string' },
             },
@@ -162,6 +163,7 @@ export function createRouterEngine(engine: RouterEngineId) {
           !selectedProvider ||
           parsed.model !== selectedProvider.model ||
           typeof parsed.taskType !== 'string' ||
+          !ROUTER_TASK_TYPE_PATTERN.test(parsed.taskType) ||
           !['low', 'medium', 'high'].includes(String(parsed.complexity)) ||
           typeof parsed.reason !== 'string'
         ) {

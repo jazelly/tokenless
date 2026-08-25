@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 
 import { hasConfiguredTokenlessLanguage, readTokenlessConfig } from '../../persistence/config.js'
@@ -11,9 +12,15 @@ import type {
   DashboardProfileUpdate,
   DashboardProviderSelection,
   DashboardSetupInput,
+  DashboardTerminalBenchSemanticManifestEntry,
 } from 'tokenless-internal-shared/dashboard'
 import { DaemonError, daemonErrorCodeRetryable, daemonErrorStatus } from '../../errors.js'
 import { DashboardSessionManager } from './session.js'
+import {
+  readTerminalBenchSemanticTasks,
+  saveTerminalBenchSemanticManifest,
+  TerminalBenchSemanticManifestError,
+} from './terminalbench-semantic-manifest.js'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 type DashboardServerOptions = {
@@ -37,6 +44,7 @@ export class TokenlessDashboardServer {
   private readonly sessions: DashboardSessionManager
   private readonly origin: () => string
   private readonly resolveHarnessRunHandler: (() => Promise<DashboardHarnessRunHandler | undefined>) | undefined
+  private readonly semanticManifestTargets = new Map<string, { outputPath: string; expiresAt: number }>()
 
   constructor(options: DashboardServerOptions) {
     this.services = options.services
@@ -45,10 +53,24 @@ export class TokenlessDashboardServer {
     this.resolveHarnessRunHandler = options.resolveHarnessRunHandler
   }
 
-  dashboardUrl(profileId?: string | null, jobId?: string | null) {
-    const url = new URL(jobId ? '/dashboard/jobs/' : '/dashboard/overview/', this.origin())
+  dashboardUrl(profileId?: string | null, jobId?: string | null, semanticManifestOutput?: string | null) {
+    const url = new URL(
+      jobId ? '/dashboard/jobs/' : semanticManifestOutput ? '/dashboard/providers/' : '/dashboard/overview/',
+      this.origin(),
+    )
     if (profileId) url.searchParams.set('profile', profileId)
     if (jobId) url.searchParams.set('job', jobId)
+    if (semanticManifestOutput) {
+      if (!path.isAbsolute(semanticManifestOutput)) {
+        throw new TerminalBenchSemanticManifestError('Semantic manifest output path must be absolute.')
+      }
+      const token = randomUUID()
+      this.semanticManifestTargets.set(token, {
+        outputPath: semanticManifestOutput,
+        expiresAt: Date.now() + 30 * 60 * 1_000,
+      })
+      url.searchParams.set('semanticManifestToken', token)
+    }
     return url.toString()
   }
 
@@ -123,6 +145,27 @@ export class TokenlessDashboardServer {
         csrf: session.csrf,
         expiresAt: new Date(session.expiresAt).toISOString(),
       })
+      return true
+    }
+    if (method === 'GET' && url.pathname === '/dashboard-api/v1/terminalbench/semantic-manifest/tasks') {
+      this.requireSemanticManifestTarget(url.searchParams.get('token'))
+      this.writeJson(response, 200, await readTerminalBenchSemanticTasks())
+      return true
+    }
+    if (method === 'POST' && url.pathname === '/dashboard-api/v1/terminalbench/semantic-manifest') {
+      const body = await readJson<{ token?: unknown; entries?: unknown }>(request)
+      if (Object.keys(body).some((key) => key !== 'token' && key !== 'entries')) {
+        throw dashboardError('invalid_fields', 'Request contains unsupported fields.', 400)
+      }
+      const token = typeof body.token === 'string' ? body.token : ''
+      const target = this.takeSemanticManifestTarget(token)
+      if (!Array.isArray(body.entries)) {
+        throw dashboardError('dashboard_json_invalid', 'Semantic manifest entries must be an array.', 400)
+      }
+      this.writeJson(response, 201, await saveTerminalBenchSemanticManifest(
+        target.outputPath,
+        body.entries as DashboardTerminalBenchSemanticManifestEntry[],
+      ))
       return true
     }
     if (method === 'GET' && url.pathname === '/dashboard-api/v1/snapshot') {
@@ -276,6 +319,24 @@ export class TokenlessDashboardServer {
     response.setHeader('referrer-policy', 'no-referrer')
     response.setHeader('x-frame-options', 'DENY')
     response.setHeader('cache-control', 'no-store')
+  }
+
+  private requireSemanticManifestTarget(token: string | null) {
+    if (!token || !this.semanticManifestTargets.has(token)) {
+      throw dashboardError('terminalbench_manifest_target_required', 'Open Dashboard with an explicit semantic manifest output target.', 400)
+    }
+    const target = this.semanticManifestTargets.get(token)!
+    if (target.expiresAt <= Date.now()) {
+      this.semanticManifestTargets.delete(token)
+      throw dashboardError('terminalbench_manifest_target_expired', 'The semantic manifest output target has expired.', 400)
+    }
+    return target
+  }
+
+  private takeSemanticManifestTarget(token: string) {
+    const target = this.requireSemanticManifestTarget(token)
+    this.semanticManifestTargets.delete(token)
+    return target
   }
 
   private writeAsset(response: ServerResponse, status: number, body: string | Buffer, contentType: string) {

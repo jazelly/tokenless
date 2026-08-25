@@ -1,4 +1,5 @@
 export const HARNESS_SIDECAR_PROTOCOL = 'tokenless.harness-sidecar/v1' as const
+const ROUTER_TASK_TYPE_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/u
 
 export type HarnessSidecarJsonPrimitive = string | number | boolean | null
 export type HarnessSidecarJsonValue =
@@ -116,7 +117,7 @@ export function createHarnessFrontDoorSidecar(engine: HarnessAiEngine): HarnessF
           properties: {
             providerId: { type: 'string', enum: input.providers.map((provider) => provider.providerId) },
             model: { enum: [...new Set(input.providers.map((provider) => provider.model))] },
-            taskType: { type: 'string' },
+            taskType: { type: 'string', pattern: '^[a-z][a-z0-9_-]{0,31}$' },
             complexity: { type: 'string', enum: ['low', 'medium', 'high'] },
             reason: { type: 'string' },
           },
@@ -191,6 +192,7 @@ function readRoute(value: HarnessSidecarJsonValue, candidates: HarnessFrontDoorI
     !candidate ||
     model !== candidate.model ||
     typeof taskType !== 'string' ||
+    !ROUTER_TASK_TYPE_PATTERN.test(taskType) ||
     !['low', 'medium', 'high'].includes(String(complexity)) ||
     typeof reason !== 'string'
   ) {

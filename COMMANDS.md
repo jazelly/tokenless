@@ -234,11 +234,14 @@ tokenless dashboard
 tokenless dashboard --profile work
 tokenless dashboard --profile work --no-open --json
 tokenless dashboard --job-id <job-id>
+tokenless dashboard --semantic-manifest-output /absolute/path/terminal-bench-semantic-manifest.json
 ```
 
 `--no-open` prints the direct loopback Dashboard URL without launching a browser. Opening `/` redirects to `/dashboard/overview/` and establishes a short-lived `HttpOnly`, `SameSite=Strict` session cookie. Dashboard mutations continue to require exact-Origin and CSRF checks. The Dashboard can run in any browser; provider actions still execute in the selected profile's bound browser runtime. The dashboard never receives the daemon bearer token, provider cookies, browser storage, Keychain data, raw DOM, or private filesystem paths.
 
 `--job-id` opens the Jobs view and loads that job's detail automatically. `tokenless menubar status --json` starts or discovers the same-home daemon, then returns the daemon/runtime status, dashboard URL, active job count, and up to ten conversation summaries ordered by `updatedAt` descending. Conversation summaries contain only safe titles and public identifiers; they do not include prompts, transcripts, credentials, or private paths.
+
+`--semantic-manifest-output` opens the Providers view in the configured system Google Chrome with a one-use, expiring target for the pinned Terminal-Bench semantic-manifest action. In Google Chrome 148+ with Prompt API available, the local Dashboard automatically reads the pinned instruction packages, runs the production semantic router serially, and writes only the validator-compatible external manifest to the exact CLI-selected path. This action cannot be combined with `--no-open`, and command output redacts its one-use token.
 
 The dashboard provides Overview, Profiles, Providers, Capabilities, Jobs, and System/Diagnostics areas. Provider membership, visibility, role label, and an optional credential-free HTTP/HTTPS/SOCKS5 proxy are profile scoped. CLI state and cancellation commands remain available:
 

@@ -21,6 +21,9 @@ import type {
   DashboardSession,
   DashboardSnapshot,
   DashboardJobSummary,
+  DashboardTerminalBenchSemanticManifestResult,
+  DashboardTerminalBenchSemanticManifestSave,
+  DashboardTerminalBenchSemanticTasks,
 } from 'tokenless-internal-shared/dashboard'
 import type {
   DashboardHarnessIntervention,
@@ -50,6 +53,7 @@ export class DashboardRequestError extends Error {
 export class DashboardClient {
   private csrf = ''
   private snapshotEtag = ''
+  private readonly semanticManifestToken = new URL(location.href).searchParams.get('semanticManifestToken')
 
   constructor(private readonly currentLanguage: () => DashboardLanguage) {}
 
@@ -189,6 +193,23 @@ export class DashboardClient {
       method: 'POST',
       body: '{}',
     }))
+  }
+
+  async readTerminalBenchSemanticTasks(): Promise<DashboardTerminalBenchSemanticTasks> {
+    return await this.requireResult(this.request<DashboardTerminalBenchSemanticTasks>(
+      `/terminalbench/semantic-manifest/tasks?token=${encodeURIComponent(this.semanticManifestToken ?? '')}`,
+      { method: 'GET' },
+    ))
+  }
+
+  async saveTerminalBenchSemanticManifest(
+    input: DashboardTerminalBenchSemanticManifestSave,
+  ): Promise<DashboardTerminalBenchSemanticManifestResult> {
+    const body = { ...input, token: input.token || this.semanticManifestToken || '' }
+    return await this.requireResult(this.request<DashboardTerminalBenchSemanticManifestResult>(
+      '/terminalbench/semantic-manifest',
+      { method: 'POST', body: JSON.stringify(body) },
+    ))
   }
 
   async getHarnessExtensionPairing(pairingId: string): Promise<HarnessExtensionPairingRequest> {

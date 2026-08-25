@@ -234,11 +234,14 @@ tokenless dashboard
 tokenless dashboard --profile work
 tokenless dashboard --profile work --no-open --json
 tokenless dashboard --job-id <job-id>
+tokenless dashboard --semantic-manifest-output /absolute/path/terminal-bench-semantic-manifest.json
 ```
 
 `--no-open` 不启动浏览器，只输出可直接访问的 loopback Dashboard URL。打开 `/` 会跳转到 `/dashboard/overview/`，并建立短期有效的 `HttpOnly`、`SameSite=Strict` session cookie；所有 mutation 仍会校验 exact Origin 和 CSRF。Dashboard 可以在任意浏览器中运行；provider action 仍会在所选 profile 绑定的 browser runtime 中执行。Dashboard 不会收到 daemon bearer token、provider cookies、browser storage、Keychain 数据、raw DOM 或私有文件路径。
 
 `--job-id` 会打开 Jobs view，并自动加载该 job 的详情。`tokenless menubar status --json` 会启动或发现同一 Tokenless home 的 daemon，然后返回 daemon/runtime status、Dashboard URL、active job 数量，以及最多十条按 `updatedAt` 降序排列的 conversation 摘要。摘要只包含安全标题和公开标识符，不包含 prompt、transcript、credentials 或私有路径。
+
+`--semantic-manifest-output` 会在已配置的 system Google Chrome 中打开 Providers view，并为 pinned Terminal-Bench semantic-manifest action 创建一个只能使用一次、会过期的 target。在 Google Chrome 148+ 且 Prompt API 可用时，本地 Dashboard 会自动读取 pinned instruction packages，串行运行 production semantic router，并只把 validator 兼容的 external manifest 写入 CLI 明确指定的路径。此 action 不能与 `--no-open` 组合，command output 会脱敏一次性 token。
 
 Dashboard 包含 Overview、Profiles、Providers、Capabilities、Jobs 和 System/Diagnostics。Provider membership、visibility、role label，以及不带凭据的 HTTP/HTTPS/SOCKS5 proxy 都按 profile 配置。CLI 恢复入口仍然完整保留：
 

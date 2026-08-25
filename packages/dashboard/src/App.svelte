@@ -79,6 +79,8 @@
     readHarnessRun: (runId) => client.readHarnessRun(runId),
     resumeHarnessRun: (runId, input, announce = true) => perform(() => client.resumeHarnessRun(runId, input), announce),
     cancelHarnessRun: (runId, announce = true) => perform(() => client.cancelHarnessRun(runId), announce),
+    readTerminalBenchSemanticTasks: () => client.readTerminalBenchSemanticTasks(),
+    saveTerminalBenchSemanticManifest: (input) => client.saveTerminalBenchSemanticManifest(input),
     quiesceRuntime: (announce = true) => perform(() => client.quiesceRuntime(), announce),
     enableOutputSavings: (announce = true) => perform(() => client.enableOutputSavings(), announce),
     disableOutputSavings: (announce = true) => perform(() => client.disableOutputSavings(), announce),

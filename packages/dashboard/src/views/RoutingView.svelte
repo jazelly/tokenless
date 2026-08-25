@@ -1,10 +1,11 @@
 <script lang="ts">
   import { untrack } from 'svelte'
   import { RefreshCw } from '@lucide/svelte'
-import {
+  import {
     CHROME_PROMPT_API_MIN_MAJOR,
     createGeminiNanoAiEngine,
     createRouterEngine,
+    ROUTER_TASK_TYPE_PATTERN,
     RouterEngineError,
     type RouterBrowserBinding,
     type RouterEngineId,
@@ -18,6 +19,10 @@ import {
     type HarnessFrontDoorResult,
   } from 'tokenless-internal-shared/harness-sidecar'
   import type { DashboardActions, DashboardHarnessRunView, DashboardProvider, DashboardSnapshot } from '../types.js'
+  import type {
+    DashboardTerminalBenchSemanticManifestEntry,
+    DashboardTerminalBenchSemanticTasks,
+  } from '../types.js'
   import type { MessageKey } from '../i18n/index.js'
 
   let {
@@ -45,6 +50,12 @@ import {
   let frontDoorResult = $state<HarnessFrontDoorResult | null>(null)
   let harnessRun = $state<DashboardHarnessRunView | null>(null)
   let startingHarnessRun = $state(false)
+  let manifestBusy = $state(false)
+  let manifestProgress = $state(0)
+  let manifestError = $state('')
+  let manifestResult = $state<{ fileName: string; manifestDigest: string; taskCount: number } | null>(null)
+  let manifestToken = $state(new URL(location.href).searchParams.get('semanticManifestToken') ?? '')
+  let manifestStarted = $state(false)
   let observation = $state<RouterEngineObservation | null>(null)
   let observationBindingKey = $state('')
   let observedAvailabilityContext = $state('')
@@ -94,6 +105,19 @@ import {
       harnessRun = null
       formError = ''
     })
+  })
+
+  $effect(() => {
+    const ready = Boolean(
+      manifestToken
+      && enabled
+      && candidates.length > 0
+      && currentObservation?.supported === true
+      && displayedAvailability !== 'checking',
+    )
+    if (!ready || manifestStarted || manifestBusy) return
+    manifestStarted = true
+    untrack(() => void generateSemanticManifest())
   })
 
   async function refreshAvailability() {
@@ -298,6 +322,61 @@ import {
     }
   }
 
+  async function generateSemanticManifest() {
+    if (!enabled || manifestBusy) return
+    if (!manifestToken) {
+      manifestError = t('routerManifestTargetRequired')
+      return
+    }
+    if (enabledProviderCount === 0 || candidates.length === 0) {
+      manifestError = t('routerNeedsProviderRules')
+      return
+    }
+    manifestBusy = true
+    manifestProgress = 0
+    manifestError = ''
+    manifestResult = null
+    const binding = selectedBrowserBinding()
+    try {
+      const taskSet: DashboardTerminalBenchSemanticTasks = await actions.readTerminalBenchSemanticTasks()
+      const entries: DashboardTerminalBenchSemanticManifestEntry[] = []
+      for (const [index, candidate] of taskSet.tasks.entries()) {
+        const truncated = candidate.instruction.length > 4_000
+        const taskPrompt = truncated ? candidate.instruction.slice(0, 4_000) : candidate.instruction
+        const route = await createRouterEngine(engine).route(taskPrompt, candidates, binding, {
+          onObservation(value) {
+            observation = value
+            observationBindingKey = availabilityContext
+          },
+          onAvailability(value) {
+            availability = value
+            observedAvailabilityContext = availabilityContext
+          },
+          onDownloadProgress(value) {
+            downloadProgress = value
+          },
+        })
+        if (!ROUTER_TASK_TYPE_PATTERN.test(route.taskType)) {
+          throw new Error(t('routerManifestTaskTypeInvalid'))
+        }
+        entries.push({
+          instructionDigest: candidate.instructionDigest,
+          preferredProvider: route.providerId,
+          taskType: route.taskType,
+          complexity: route.complexity,
+          truncated,
+        })
+        manifestProgress = index + 1
+      }
+      entries.sort((left, right) => left.instructionDigest.localeCompare(right.instructionDigest))
+      manifestResult = await actions.saveTerminalBenchSemanticManifest({ token: manifestToken, entries })
+    } catch (error) {
+      manifestError = error instanceof Error ? error.message : t('requestFailed')
+    } finally {
+      manifestBusy = false
+    }
+  }
+
   async function startHarnessRun() {
     if (!frontDoorResult || startingHarnessRun) return
     const profile = selectedProfileState()
@@ -380,5 +459,14 @@ import {
     {:else if candidates.length === 0}<div class="inline-feedback warning" data-testid="router-provider-block">{t('routerNeedsProviderRules')}</div>{/if}
     <div class="form-actions"><button class="button primary" type="button" disabled={!enabled || running || busy || displayedAvailability === 'checking' || currentObservation?.supported === false || candidates.length === 0} onclick={run} data-testid="router-run">{running ? t('routerRunning') : t('runSemanticRouter')}</button></div>
     {#if result}<div class="router-result" data-testid="router-result"><h3>{t('routerResult')}</h3><pre>{JSON.stringify(result, null, 2)}</pre><button class="button secondary" type="button" disabled={startingHarnessRun || busy} onclick={startHarnessRun} data-testid="harness-run">{startingHarnessRun ? t('harnessStarting') : t('startHarnessRun')}</button>{#if harnessRun}<p class="muted" data-testid="harness-run-status">{t('harnessRun')}: {harnessRun.runId} · {harnessRun.status}</p>{/if}</div>{/if}
+  </section>
+
+  <section class="settings-section system-card router-manifest-card" data-testid="semantic-manifest-card">
+    <div class="settings-section-title"><div><h2>{t('routerSemanticManifest')}</h2><p>{t('routerSemanticManifestHelp')}</p></div></div>
+    <p class="form-note">{t('routerSemanticManifestTarget')}</p>
+    {#if manifestProgress > 0}<p class="form-note" data-testid="semantic-manifest-progress">{manifestProgress} / 89</p>{/if}
+    {#if manifestError}<div class="inline-feedback error" role="alert" data-testid="semantic-manifest-error">{manifestError}</div>{/if}
+    {#if manifestResult}<div class="inline-feedback success" role="status" data-testid="semantic-manifest-result">{t('routerSemanticManifestSaved')}: <code>{manifestResult.fileName}</code> · {manifestResult.manifestDigest}</div>{/if}
+    {#if manifestBusy}<p class="form-note" role="status">{t('routerSemanticManifestRunning')}</p>{/if}
   </section>
 </section>
