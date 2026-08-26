@@ -107,7 +107,7 @@ export async function submitDomPrompt(
     throw tokenlessError(
       'prompt_submit_actionability_timeout',
       `Timed out after ${controlTimeoutMs}ms waiting for an actionable visible prompt submit control.`,
-      { retryable: true },
+      { retryable: true, details: await promptSubmitDiagnostics(provider, page) },
     )
   }
   const baseline = {
@@ -157,6 +157,40 @@ async function claudeKeyboardSubmitComposer(
   if (provider.id !== 'claude') return null
   const composer = await firstVisibleLocator(page, provider.composerSelectors, 50)
   return composer && !await composerIsVisiblyEmpty(composer) ? composer : null
+}
+
+async function promptSubmitDiagnostics(
+  provider: ProviderDomDefinition,
+  page: Page,
+) {
+  const button = await firstVisibleLocator(page, provider.submitSelectors, 50)
+  const composer = await firstVisibleLocator(page, provider.composerSelectors, 50)
+  const documentState = await page.evaluate(() => ({
+    visibility: document.visibilityState,
+    focused: document.hasFocus(),
+  })).catch(() => ({ visibility: 'unknown', focused: false }))
+  const submit = button
+    ? await button.evaluate((element) => ({
+        visible: true,
+        disabled: element.hasAttribute('disabled'),
+        ariaDisabled: element.getAttribute('aria-disabled'),
+        dataDisabled: element.getAttribute('data-disabled'),
+      })).catch(() => ({ visible: true, disabled: null, ariaDisabled: null, dataDisabled: null }))
+    : { visible: false, disabled: null, ariaDisabled: null, dataDisabled: null }
+  const composerCharacters = composer
+    ? await composer.evaluate((element) => (
+        element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement
+          ? element.value.length
+          : (element.textContent ?? '').length
+      )).catch(() => null)
+    : null
+  return {
+    documentVisibility: documentState.visibility,
+    documentFocused: documentState.focused,
+    submit,
+    composerVisible: composer !== null,
+    composerCharacters,
+  }
 }
 
 async function waitForActionableSubmitControl(
