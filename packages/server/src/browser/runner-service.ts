@@ -766,7 +766,10 @@ export class ManagedPlaywrightRunnerService {
         })()
         if (!response.ok) {
           throwIfStopped(signal, isCanceled)
-          const error = tokenlessError(response.error.code, response.error.message, { retryable: response.error.retryable })
+          const error = tokenlessError(response.error.code, response.error.message, {
+            retryable: response.error.retryable,
+            ...(response.error.details === undefined ? {} : { details: response.error.details }),
+          })
           const failure = classifyProviderFailure({
             error,
             submitted: state.submitted !== null,

@@ -197,7 +197,7 @@ export abstract class BaseProvider<TId extends ProviderId = ProviderId> {
         return failure(request, error.code, error.message, error.retryable)
       }
       const response = errorResponse(error)
-      return failure(request, response.code, response.message, response.retryable)
+      return failure(request, response.code, response.message, response.retryable, response.details)
     }
   }
 
@@ -333,7 +333,13 @@ function success(request: VisibleActionRequest, result: VisibleActionResult): Vi
   }
 }
 
-function failure(request: VisibleActionRequest, code: string, message: string, retryable: boolean): VisibleActionResponse {
+function failure(
+  request: VisibleActionRequest,
+  code: string,
+  message: string,
+  retryable: boolean,
+  details?: unknown,
+): VisibleActionResponse {
   return {
     protocol: request.protocol,
     requestId: request.requestId,
@@ -345,6 +351,7 @@ function failure(request: VisibleActionRequest, code: string, message: string, r
       code,
       message,
       retryable,
+      ...(details === undefined ? {} : { details }),
     },
   }
 }
