@@ -35,7 +35,7 @@ export async function inputDomPrompt(
     )
     if (!composer) break
     composerObserved = true
-    if (await writePrompt(page, composer, text)) {
+    if (await writePrompt(page, composer, text, provider.id === 'claude')) {
       await dismissProviderAnnouncement(page, provider)
       return {
         visible: true as const,
@@ -237,14 +237,16 @@ async function composerIsVisiblyEmpty(locator: Locator) {
   }).catch(() => false)
 }
 
-async function writePrompt(page: Page, composer: Locator, text: string) {
+async function writePrompt(page: Page, composer: Locator, text: string, preferKeyboardInput = false) {
   if (await composerHasExpectedText(composer, text)) return true
-  try {
-    await composer.fill(text, { timeout: 2000 })
-    if (await composerHasExpectedText(composer, text)) return true
-  } catch {
-    // Hydration can replace a visible fallback composer while it is being filled.
-    if (await composerHasExpectedText(composer, text)) return true
+  if (!preferKeyboardInput) {
+    try {
+      await composer.fill(text, { timeout: 2000 })
+      if (await composerHasExpectedText(composer, text)) return true
+    } catch {
+      // Hydration can replace a visible fallback composer while it is being filled.
+      if (await composerHasExpectedText(composer, text)) return true
+    }
   }
   try {
     if (!await composer.isVisible({ timeout: 250 })) return false
