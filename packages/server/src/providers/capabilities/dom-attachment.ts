@@ -18,7 +18,6 @@ import type { ProviderActionCapability } from '../capability-set.js'
 import type { VisibleActionRequest } from '../contracts.js'
 import type { ProviderExecutionContext } from '../execution-context.js'
 import type { ProviderDomDefinition } from '../provider-definition.js'
-import { dismissProviderAnnouncement } from './prompt.js'
 import type { AttachmentInput, FileUploadResult, ProviderCapabilityInspection } from '../../browser/actions.js'
 import { readEphemeralProviderAttachment } from '../../runtime/ephemeral-provider-payloads.js'
 
@@ -73,7 +72,6 @@ async function uploadFiles(
   value: readonly AttachmentInput[],
   context: ProviderExecutionContext,
 ): Promise<FileUploadResult> {
-  await dismissProviderAnnouncement(page, provider)
   const attachments = value.map((attachment) => validateAttachmentInput(attachment))
   const files = await Promise.all(attachments.map((attachment) => resolveAttachmentPayload(context.attachmentRoot, attachment)))
   let fileInput = provider.id === 'doubao' || provider.id === 'deepseek'
