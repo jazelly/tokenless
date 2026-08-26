@@ -186,6 +186,8 @@ The job contract derives requirements again from visible actions, attachment med
 
 Before opening a provider page, each attempt also projects known profile-scoped provider capacity from the checked-in official-source catalog and stored submission history. A known exhausted window consumes the next full-capability route in the same execution when one exists; otherwise the request fails clearly instead of being delayed. Unknown or non-numeric limits remain explicit uncertainty and never become invented quotas.
 
+A visible provider rate-limit observation is also read from the existing job history. `minute`, `hour`, `day`, and `week` evidence temporarily defers that provider for the observed window; an explicit retry duration takes precedence, while an unknown window uses a five-minute routing cooldown. This runtime cooldown is not presented as a published provider quota.
+
 Each routed job carries `tokenless.context-envelope.v1`. It records the task identity, normalized requirements, role-bearing instructions, attachment provenance, output and constraint contracts, upstream agent state, and hashes of the prompt actions that actually deliver the context. Provider fallback reuses the same validated envelope and action payloads during the current execution.
 
 ## Setup and profiles

@@ -147,6 +147,25 @@ test('provider rate-limit policy projects subscription-aware cadence from SQLite
     assert.equal(cliPayload.ok, true)
     assert.equal(cliPayload.capacity.subscription.planId, 'plus')
     assert.equal(cliPayload.capacity.decision, 'defer')
+
+    const observedAt = new Date(Date.now() - 2_000).toISOString()
+    replaceObservedLimitHistory(database, profile.slug, observedAt)
+    const observedMinute = await capacity(daemon.url, token, profile.slug, 'chatgpt', 'signed_in_paid', 'Plus')
+    assert.equal(observedMinute.decision, 'defer')
+    assert.match(observedMinute.reason, /real provider page showed a minute rate limit/u)
+    const observedWeek = await capacity(daemon.url, token, profile.slug, 'grok', 'signed_in_unknown', null)
+    assert.equal(observedWeek.decision, 'defer')
+    assert.match(observedWeek.reason, /real provider page showed a week rate limit/u)
+    const unaffectedProvider = await capacity(daemon.url, token, profile.slug, 'claude', 'signed_in_paid', 'Pro')
+    assert.equal(unaffectedProvider.decision, 'unknown')
+
+    appendProviderSuccess(database, profile.slug, 'chatgpt', new Date().toISOString())
+    const recoveredProvider = await capacity(daemon.url, token, profile.slug, 'chatgpt', 'signed_in_paid', 'Plus')
+    assert.equal(recoveredProvider.decision, 'admit')
+
+    replaceObservedLimitHistory(database, profile.slug, new Date(Date.now() - 61_000).toISOString())
+    const expiredMinute = await capacity(daemon.url, token, profile.slug, 'chatgpt', 'signed_in_paid', 'Plus')
+    assert.equal(expiredMinute.decision, 'admit')
   } finally {
     database?.close()
     await shutdownDaemon(daemon).catch(() => undefined)
@@ -195,6 +214,62 @@ function replacePromptHistory(database, profileId, timestamps, modelLabel = null
         submittedAt,
       )
     }
+}
+
+function replaceObservedLimitHistory(database, profileId, observedAt) {
+  database.exec('DELETE FROM jobs;')
+  database.prepare(`INSERT INTO jobs (
+    job_id, profile_id, provider, status,
+    request_json, error_json, provider_submitted_at, created_at, updated_at
+  ) VALUES (?, ?, 'grok', 'failed', ?, ?, ?, ?, ?)`).run(
+    randomUUID(),
+    profileId,
+    JSON.stringify({
+      provider: 'grok',
+      routingObservation: {
+        protocol: 'tokenless.provider-routing-observation.v1',
+        attempts: [{
+          provider: 'chatgpt',
+          outcome: 'fallback',
+          reason: 'rate_limit',
+          observedAt,
+          providerSubmitted: false,
+          visibleProof: 'visible-rate-limit-text:minute',
+          limitWindow: 'minute',
+        }],
+      },
+      actions: [{ action: 'prompt.submit', payload: {} }],
+    }),
+    JSON.stringify({
+      code: 'provider_rate_limited',
+      details: {
+        causeDetails: {
+          family: 'rate_limit',
+          visibleProof: 'visible-rate-limit-text:week',
+          limitWindow: 'week',
+          retryAfterSeconds: null,
+        },
+      },
+    }),
+    observedAt,
+    observedAt,
+    observedAt,
+  )
+}
+
+function appendProviderSuccess(database, profileId, provider, observedAt) {
+  database.prepare(`INSERT INTO jobs (
+    job_id, profile_id, provider, status,
+    request_json, provider_submitted_at, created_at, updated_at
+  ) VALUES (?, ?, ?, 'succeeded', ?, ?, ?, ?)`).run(
+    randomUUID(),
+    profileId,
+    provider,
+    JSON.stringify({ provider, actions: [{ action: 'prompt.submit', payload: {} }] }),
+    observedAt,
+    observedAt,
+    observedAt,
+  )
 }
 
 async function capacity(url, token, profileId, provider, accessClass, tierLabel, subscriptionLabel = null) {

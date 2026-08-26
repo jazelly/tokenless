@@ -191,6 +191,10 @@ request
 
 Job 必须携带明确的 provider/profile identity。Unsupported control、ambiguous page、unexpected navigation、authentication blocker 与 selector drift 都必须 fail closed；已提交或状态不明确的 provider mutation 不得被静默重新提交。Provider-specific conversation 与 Project URL、provider control、exact continuation、不可重建 mutation 及 submission 后 state 都会抑制 automatic fallback；唯一例外是狭窄的 `tokenless/auto` private provider-turn submission 前序列 `file.upload` → `prompt.input` → `prompt.submit` → `response.read`，它保留 settled conversation 为 primary，并且只携带可重建的 provider-home alternative。
 
+每次打开 provider 页面前，系统还会根据 checked-in official-source catalog 与已保存的 submission history 估算 profile-scoped provider capacity。已知耗尽的 window 会在当前 execution 中使用下一条 full-capability route；否则请求会清晰失败，而不是进入延迟队列。Unknown 或 non-numeric limit 会保持为明确的不确定性，不会被编造成 quota。
+
+系统也会从现有 job history 读取真实可见的 provider rate-limit observation。`minute`、`hour`、`day` 与 `week` evidence 会在对应 observed window 内暂时 defer 该 provider；明确的 retry duration 优先，unknown window 使用五分钟 routing cooldown。这个 runtime cooldown 不会被宣称为 provider 发布的 quota。
+
 ## Setup and profiles
 
 `tokenless setup` 通过 `BrowserRuntimeManager` 选择并验证一个 runtime，再创建或选择兼容的 clean managed profile。Tokenless 不复制现有 Chrome、Brave 或 Cloak profile，也不导入它们的 authentication state；用户在可见的 managed profile 中完成登录。

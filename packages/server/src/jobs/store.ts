@@ -31,6 +31,19 @@ import {
 export type { JobStatus } from '../errors.js'
 
 const MAX_OUTPUT_SAVINGS_SOURCE_BYTES = 4 * 1024 * 1024
+const OBSERVED_RATE_LIMIT_WINDOW_SECONDS = Object.freeze({
+  minute: 60,
+  hour: 60 * 60,
+  day: 24 * 60 * 60,
+  week: 7 * 24 * 60 * 60,
+  unknown: 5 * 60,
+})
+
+type ObservedRateLimit = {
+  observedAt: string
+  limitWindow: keyof typeof OBSERVED_RATE_LIMIT_WINDOW_SECONDS
+  retryAfterSeconds?: number | undefined
+}
 
 export type Job = {
   job_id: string
@@ -745,7 +758,7 @@ export class JobStore {
     const profileId = normalizeProfileId(input.profile_id, 'profile_id')
     const accessClass = normalizeNonempty(input.access_class, 'access_class')
     const now = nowRfc3339()
-    return providerCapacityPolicy.project({
+    const projection = providerCapacityPolicy.project({
       provider,
       profileId,
       accessClass,
@@ -755,6 +768,14 @@ export class JobStore {
       history: this.providerSubmissionHistory(provider, profileId, now),
       now,
     })
+    const observedLimit = this.providerObservedRateLimit(provider, profileId, now)
+    return observedLimit === null
+      ? projection
+      : {
+          ...projection,
+          decision: 'defer',
+          reason: `A real provider page showed a ${observedLimit.limitWindow} rate limit; defer this provider until ${observedLimit.eligibleAt}.`,
+        }
   }
 
   projectJobProviderCapacity(
@@ -1032,6 +1053,49 @@ export class JobStore {
       submittedAt: String(row.provider_submitted_at),
       requestJson: parseJson(row.request_json),
     }))
+  }
+
+  private providerObservedRateLimit(providerId: string, profileId: string, now: string) {
+    const nowMs = Date.parse(now)
+    const since = new Date(nowMs - OBSERVED_RATE_LIMIT_WINDOW_SECONDS.week * 1000).toISOString()
+    let latest: ObservedRateLimit | null = null
+    for (const row of this.all(
+      `SELECT provider, status, request_json, error_json, blocker_json, provider_submitted_at, updated_at
+       FROM jobs
+       WHERE profile_id = ? AND updated_at > ? AND updated_at <= ?
+       ORDER BY updated_at ASC, job_id ASC`,
+      profileId,
+      since,
+      now,
+    )) {
+      const request = jsonRecord(parseJson(row.request_json))
+      const routingObservation = jsonRecord(request?.routingObservation)
+      if (routingObservation?.protocol === 'tokenless.provider-routing-observation.v1' && Array.isArray(routingObservation.attempts)) {
+        for (const attempt of routingObservation.attempts) {
+          const candidate = observedRateLimitFromRoutingAttempt(attempt, providerId)
+          if (candidate && (!latest || candidate.observedAt > latest.observedAt)) latest = candidate
+        }
+      }
+      if (String(row.provider) !== providerId) continue
+      const observedAt = String(row.updated_at)
+      for (const value of [parseOptionalJson(row.error_json), parseOptionalJson(row.blocker_json)]) {
+        const candidate = observedRateLimitFromEvidence(value, observedAt)
+        if (candidate && (!latest || candidate.observedAt > latest.observedAt)) latest = candidate
+      }
+      if (
+        latest &&
+        row.status === 'succeeded' &&
+        row.provider_submitted_at !== null &&
+        observedAt > latest.observedAt
+      ) latest = null
+    }
+    if (!latest) return null
+    const observedMs = Date.parse(latest.observedAt)
+    const delaySeconds = latest.retryAfterSeconds ?? OBSERVED_RATE_LIMIT_WINDOW_SECONDS[latest.limitWindow]
+    const eligibleAtMs = observedMs + delaySeconds * 1000
+    return eligibleAtMs > nowMs
+      ? { ...latest, eligibleAt: new Date(eligibleAtMs).toISOString() }
+      : null
   }
 
   private initialize() {
@@ -1666,6 +1730,53 @@ function isPostSubmissionRateLimitFallback(input: {
     lastAttempt.outcome === 'fallback' &&
     lastAttempt.reason === 'rate_limit' &&
     lastAttempt.providerSubmitted === true
+}
+
+function observedRateLimitFromRoutingAttempt(value: unknown, providerId: string): ObservedRateLimit | null {
+  const attempt = jsonRecord(value)
+  if (
+    attempt?.provider !== providerId ||
+    attempt.reason !== 'rate_limit' ||
+    typeof attempt.visibleProof !== 'string' ||
+    !attempt.visibleProof.startsWith('visible-') ||
+    typeof attempt.observedAt !== 'string'
+  ) return null
+  return observedRateLimit(attempt, attempt.observedAt)
+}
+
+function observedRateLimitFromEvidence(value: unknown, observedAt: string, depth = 0): ObservedRateLimit | null {
+  if (depth > 6) return null
+  const record = jsonRecord(value)
+  if (!record) return null
+  if (
+    record.family === 'rate_limit' &&
+    typeof record.visibleProof === 'string' &&
+    record.visibleProof.startsWith('visible-')
+  ) return observedRateLimit(record, observedAt)
+  for (const nested of Object.values(record)) {
+    const candidate = observedRateLimitFromEvidence(nested, observedAt, depth + 1)
+    if (candidate) return candidate
+  }
+  return null
+}
+
+function observedRateLimit(value: Record<string, unknown>, observedAt: string): ObservedRateLimit | null {
+  const observedMs = Date.parse(observedAt)
+  if (!Number.isFinite(observedMs)) return null
+  const limitWindow = typeof value.limitWindow === 'string' && Object.hasOwn(OBSERVED_RATE_LIMIT_WINDOW_SECONDS, value.limitWindow)
+    ? value.limitWindow as ObservedRateLimit['limitWindow']
+    : 'unknown'
+  const retryAfterSeconds = typeof value.retryAfterSeconds === 'number' &&
+    Number.isSafeInteger(value.retryAfterSeconds) &&
+    value.retryAfterSeconds >= 1 &&
+    value.retryAfterSeconds <= OBSERVED_RATE_LIMIT_WINDOW_SECONDS.week
+    ? value.retryAfterSeconds
+    : undefined
+  return {
+    observedAt: new Date(observedMs).toISOString(),
+    limitWindow,
+    ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }),
+  }
 }
 
 function jsonRecord(value: unknown): Record<string, unknown> | null {

@@ -159,6 +159,8 @@ Auto calls use versioned opaque public ids that encode only their provider origi
 
 Provider switching always starts a new target-provider conversation with the exact canonical assistant call and caller result. Provider URLs and opaque state are never replayed. The existing Managed Playwright fallback plan may switch before `provider_submitted_at`; its sole post-submission exception is `tokenless/auto` reporting the provider-scoped terminal code `provider_rate_limited` before any visible response, which restarts from the target provider home and records one bounded `rate_limit` routing attempt. Every other malformed, failed, ambiguous, timed-out, canceled, or waiting-for-user post-submission outcome is terminal. The bounded final-escaping correction stays on the settled provider and strategy with no auto resolution or fallback.
 
+Real visible rate-limit observations already stored on jobs temporarily remove that provider from subsequent execution attempts for the observed minute, hour, day, or week window. An explicit retry duration wins; an unknown window uses a five-minute cooldown. Exact provider requests still fail clearly instead of switching.
+
 For a private provider-turn continuation, `tokenless/auto` keeps the settled provider conversation and exact mapping as the primary target. Only the exact portable action sequence `file.upload` → `prompt.input` → `prompt.submit` → `response.read` may carry currently eligible auto alternatives from provider-home targets; `conversation.continue` routes and nonportable actions do not receive fallback alternatives. An exact provider binding remains pinned with no fallback.
 
 An OpenAI `tokenless/auto` request may include an advisory `tokenless.semantic_preference` provider id:
