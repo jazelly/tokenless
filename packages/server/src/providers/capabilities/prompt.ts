@@ -69,7 +69,7 @@ export async function inputDomPrompt(
   )
 }
 
-async function dismissProviderAnnouncement(page: Page, provider: ProviderDomDefinition) {
+export async function dismissProviderAnnouncement(page: Page, provider: ProviderDomDefinition) {
   if (provider.id === 'claude') {
     const notNow = page.locator('button')
       .filter({ visible: true, hasText: /^\s*Not now\s*$/u })
@@ -78,6 +78,7 @@ async function dismissProviderAnnouncement(page: Page, provider: ProviderDomDefi
     if (!await notNow.isEnabled({ timeout: 500 }).catch(() => false)) return
     await notNow.click({ timeout: 5000 })
     await notNow.waitFor({ state: 'hidden', timeout: 2000 })
+    await page.reload({ waitUntil: 'domcontentloaded' })
     return
   }
   if (provider.id !== 'zai') return
