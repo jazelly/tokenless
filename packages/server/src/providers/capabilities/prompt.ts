@@ -86,7 +86,8 @@ export async function submitDomPrompt(
 ) {
   const controlTimeoutMs = provider.interactionTimings.promptControlTimeoutMs
   const button = await waitForActionableSubmitControl(provider, page, signal)
-  if (!button) {
+  const keyboardSubmit = !button && await claudeKeyboardSubmitIsAvailable(provider, page)
+  if (!button && !keyboardSubmit) {
     throw tokenlessError(
       'prompt_submit_actionability_timeout',
       `Timed out after ${controlTimeoutMs}ms waiting for an actionable visible prompt submit control.`,
@@ -98,11 +99,12 @@ export async function submitDomPrompt(
     url: page.url(),
   }
   try {
-    await button.click({ timeout: 5000 })
+    if (button) await button.click({ timeout: 5000 })
+    else await page.keyboard.press('Enter')
   } catch (error) {
     throw tokenlessError(
       'prompt_submit_failed',
-      'The visible prompt submit control could not be clicked.',
+      'The visible prompt submit control could not be activated.',
       { retryable: false, cause: error },
     )
   }
@@ -127,6 +129,15 @@ export async function submitDomPrompt(
     `No visible provider submission transition followed the click within ${acceptanceTimeoutMs}ms.`,
     { retryable: false },
   )
+}
+
+async function claudeKeyboardSubmitIsAvailable(
+  provider: ProviderDomDefinition,
+  page: Page,
+) {
+  if (provider.id !== 'claude') return false
+  const composer = await firstVisibleLocator(page, provider.composerSelectors, 50)
+  return composer !== null && !await composerIsVisiblyEmpty(composer)
 }
 
 async function waitForActionableSubmitControl(
@@ -160,7 +171,7 @@ function assertNotAborted(signal: AbortSignal | undefined) {
 async function submissionTransitionIsVisible(
   provider: ProviderDomDefinition,
   page: Page,
-  clickedButton: Locator,
+  clickedButton: Locator | null,
   baseline: { answerCount: number, url: string },
 ) {
   const conversationChanged = page.url() !== baseline.url
@@ -168,8 +179,8 @@ async function submissionTransitionIsVisible(
   const providerBusy = await countVisibleLocators(page, provider.busySelectors) > 0
   if (conversationChanged || answerStarted || providerBusy) return true
   if (provider.id === 'qwen') return false
-  if (!await clickedButton.isVisible({ timeout: 50 }).catch(() => false)) return true
-  if (!await clickedButton.isEnabled({ timeout: 50 }).catch(() => false)) return true
+  if (clickedButton && !await clickedButton.isVisible({ timeout: 50 }).catch(() => false)) return true
+  if (clickedButton && !await clickedButton.isEnabled({ timeout: 50 }).catch(() => false)) return true
   const composer = await firstVisibleLocator(page, provider.composerSelectors, 50)
   if (!composer || await composerIsVisiblyEmpty(composer)) return true
   return false
