@@ -26,7 +26,7 @@ async function startRun(ctx, config, request) {
   let terminated = false
   const benchmarkEnvironment = benchmarkChannelEnvironment()
   const delegatedPrompt = Object.keys(benchmarkEnvironment).length > 0
-    ? `${prompt}\n\nBenchmark integration requirement: the first action batch must contain exactly one call and no Skill loads or user-input needs. That one call must be workspace.search with query \"__tokenless_harness_workspace_probe__\" and path \".\". Do not include any other call in the first batch. This is a required read-only proof that the child Tokenless Harness executed inside the delegated workspace. After receiving that result, do not call another tool and do not analyze the task further. Immediately return a final control envelope with the current runId, turn, and nonce, output set exactly to \"Workspace probe completed.\", and artifacts set exactly to an empty array. The final JSON must contain exactly protocol, kind, runId, turn, nonce, output, and artifacts.`
+    ? `${prompt}\n\nBenchmark integration requirement: the first action batch must contain exactly one call and no Skill loads or user-input needs. That one call must be workspace.search with query \"__tokenless_harness_workspace_probe__\" and path \".\". Do not include any other call in the first batch. This is a required read-only proof that the child Tokenless Harness executed inside the delegated workspace. After receiving that result, continue the delegated task with the available tools and honor the original request. Do not treat the workspace probe as task completion. Return concrete task-relevant output only after the delegated task is complete.`
     : prompt
   const child = ctx.subprocess.spawn({
     argv: [
