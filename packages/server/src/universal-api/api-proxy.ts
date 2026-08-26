@@ -543,7 +543,13 @@ export class ApiProxyAdapter {
         : remainingRequestMs
       let settled: Job
       try {
-        settled = await this.awaitTerminalJob(job.job_id, signal, routingMode, attemptTimeoutMs)
+        settled = await this.awaitTerminalJob(
+          job.job_id,
+          signal,
+          routingMode,
+          attemptTimeoutMs,
+          requestDeadline,
+        )
       } catch (error) {
         const canceled = this.store.getJob(job.job_id)
         const observedAttempts = routingAttemptsFromRequest(canceled.request_json)
@@ -605,10 +611,26 @@ export class ApiProxyAdapter {
     signal: AbortSignal | undefined,
     modeOverride: ApiProxyRouting['mode'],
     timeoutMs = this.timeoutMs,
+    requestDeadline?: number,
   ): Promise<Job> {
-    const deadline = Date.now() + timeoutMs
+    const startedAt = Date.now()
+    let deadline = startedAt + timeoutMs
+    let observedProvider: string | null = null
     for (;;) {
       const job = this.store.getJob(jobId)
+      if (requestDeadline !== undefined && job.provider !== observedProvider) {
+        observedProvider = job.provider
+        const routing = routingFromJob(job, modeOverride)
+        const routeCount = (routing?.fallbackProviders.length ?? 0) + 1
+        const remainingRequestMs = Math.max(1, requestDeadline - Date.now())
+        deadline = Math.max(
+          deadline,
+          Math.min(
+            requestDeadline,
+            Date.now() + Math.max(1, Math.floor(remainingRequestMs / routeCount)),
+          ),
+        )
+      }
       if (isTerminalJobStatus(job.status)) return job
       if (signal?.aborted) {
         const settled = await this.cancelAbandonedJob(jobId, 'client_closed_request')
@@ -627,7 +649,7 @@ export class ApiProxyAdapter {
         throw new ApiProxyError(
           504,
           'completion_timeout',
-          `The local job ${jobId} was canceled after the provider did not respond within ${Math.round(timeoutMs / 1000)}s.`,
+          `The local job ${jobId} was canceled after the provider did not respond within ${Math.round((deadline - startedAt) / 1000)}s.`,
           null,
           routingFromJob(settled, modeOverride),
         )
