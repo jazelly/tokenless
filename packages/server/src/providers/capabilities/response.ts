@@ -157,6 +157,22 @@ export async function readDomResponse(
     }
   }, undefined, { timeout: 5000 })
   const completeText = normalizeVisibleText(response.text)
+  if (
+    provider.id === 'chatgpt' &&
+    /^(?:chatgpt said:\s*)?the message you submitted was too long(?:[,.]|\s)/iu.test(completeText)
+  ) {
+    throw tokenlessError(
+      'provider_input_too_long',
+      'ChatGPT visibly rejected the submitted prompt because it exceeds the provider input limit.',
+      {
+        retryable: true,
+        details: {
+          family: 'input_limit',
+          visibleProof: 'visible-chatgpt-message-too-long',
+        },
+      },
+    )
+  }
   captureVisibleOutput?.(completeText)
   const text = boundVisibleText(completeText)
   const citations = await answer.locator('a[href]').evaluateAll((anchors) => anchors.slice(0, 24).map((anchor) => ({

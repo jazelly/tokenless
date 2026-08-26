@@ -640,7 +640,7 @@ test('auto rate-limit fallback preserves one local job and reports source attrib
       provider: alternative.provider,
       request_json: fallbackRequest,
       blocker_json: { failure: { code: 'provider_rate_limited', providerScoped: true } },
-      postSubmissionRateLimitProof: {
+      postSubmissionFallbackProof: {
         protocol: 'tokenless.provider-rate-limit-fallback.v1',
         provider: queued.provider,
         code: 'provider_rate_limited',

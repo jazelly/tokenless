@@ -52,6 +52,9 @@ export function classifyProviderFailure(options: {
 }): ClassifiedProviderFailure {
   const response = errorResponse(options.error)
   if (options.submitted) {
+    if (response.code === 'provider_input_too_long') {
+      return classified('post_submission_failure', response, true, true)
+    }
     return classified('post_submission_failure', response, true, false)
   }
   if (USER_RESOLVABLE_LOCAL_CODES.has(response.code) || response.code.startsWith('invalid_')) {

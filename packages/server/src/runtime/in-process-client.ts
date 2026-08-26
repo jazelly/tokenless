@@ -44,9 +44,9 @@ export function createInProcessDaemonClient(store: JobStore): ManagedDaemonClien
       provider: options.provider,
       request_json: options.request,
       blocker_json: options.blocker,
-      ...(options.postSubmissionRateLimitProof === undefined
+      ...(options.postSubmissionFallbackProof === undefined
         ? {}
-        : { postSubmissionRateLimitProof: options.postSubmissionRateLimitProof }),
+        : { postSubmissionFallbackProof: options.postSubmissionFallbackProof }),
     }))),
     completeJob: (options) => inProcessDaemonRequest(options.signal, () => {
       const hasResult = options.result !== undefined && options.result !== null

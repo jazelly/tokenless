@@ -68,13 +68,21 @@ export type CreateJobInput = {
   job_id?: string | undefined
 }
 
-export type PostSubmissionRateLimitFallbackProof = Readonly<{
-  protocol: 'tokenless.provider-rate-limit-fallback.v1'
-  provider: string
-  code: 'provider_rate_limited'
-  providerScoped: true
-  visibleResponse: false
-}>
+export type PostSubmissionFallbackProof =
+  | Readonly<{
+    protocol: 'tokenless.provider-rate-limit-fallback.v1'
+    provider: string
+    code: 'provider_rate_limited'
+    providerScoped: true
+    visibleResponse: false
+  }>
+  | Readonly<{
+    protocol: 'tokenless.provider-input-limit-fallback.v1'
+    provider: string
+    code: 'provider_input_too_long'
+    providerScoped: true
+    visibleResponse: false
+  }>
 
 export type ApiResponseLedgerEntry = {
   response_id: string
@@ -862,7 +870,7 @@ export class JobStore {
     provider: string
     request_json: unknown
     blocker_json: unknown
-    postSubmissionRateLimitProof?: PostSubmissionRateLimitFallbackProof | undefined
+    postSubmissionFallbackProof?: PostSubmissionFallbackProof | undefined
   }) {
     const now = nowRfc3339()
     const provider = normalizeNonempty(input.provider, 'provider')
@@ -872,14 +880,14 @@ export class JobStore {
       if (!['running', 'waiting_for_user'].includes(job.status)) {
         throw invalidJobState(job.job_id, 'running or waiting_for_user', job.status)
       }
-      const postSubmissionRateLimitFallback = job.provider_submitted_at !== null &&
-        isPostSubmissionRateLimitFallback({
+      const postSubmissionFallback = job.provider_submitted_at !== null &&
+        isPostSubmissionFallback({
           job,
           nextProvider: provider,
           requestJson: input.request_json,
-          proof: input.postSubmissionRateLimitProof,
+          proof: input.postSubmissionFallbackProof,
         })
-      if (job.provider_submitted_at !== null && !postSubmissionRateLimitFallback) {
+      if (job.provider_submitted_at !== null && !postSubmissionFallback) {
         throw invalidInput('jobs cannot fallback after provider submission')
       }
       if (job.provider === provider) throw invalidInput('fallback provider must differ from the current provider')
@@ -892,7 +900,7 @@ export class JobStore {
         provider,
         requestJson,
         null,
-        postSubmissionRateLimitFallback ? null : job.provider_submitted_at,
+        postSubmissionFallback ? null : job.provider_submitted_at,
         now,
         input.job_id,
       )
@@ -1661,19 +1669,24 @@ function nullableString(value: unknown) {
   return value === null || value === undefined ? null : String(value)
 }
 
-function isPostSubmissionRateLimitFallback(input: {
+function isPostSubmissionFallback(input: {
   job: Job
   nextProvider: string
   requestJson: unknown
-  proof: PostSubmissionRateLimitFallbackProof | undefined
+  proof: PostSubmissionFallbackProof | undefined
 }) {
   const proof = input.proof
+  const expected = proof?.protocol === 'tokenless.provider-rate-limit-fallback.v1'
+    ? { code: 'provider_rate_limited', reason: 'rate_limit' }
+    : proof?.protocol === 'tokenless.provider-input-limit-fallback.v1'
+      ? { code: 'provider_input_too_long', reason: 'capacity' }
+      : null
   if (
     !proof ||
+    !expected ||
     Object.keys(proof).some((key) => !['protocol', 'provider', 'code', 'providerScoped', 'visibleResponse'].includes(key)) ||
-    proof.protocol !== 'tokenless.provider-rate-limit-fallback.v1' ||
     proof.provider !== input.job.provider ||
-    proof.code !== 'provider_rate_limited' ||
+    proof.code !== expected.code ||
     proof.providerScoped !== true ||
     proof.visibleResponse !== false ||
     input.job.result_json !== null ||
@@ -1728,7 +1741,7 @@ function isPostSubmissionRateLimitFallback(input: {
   const lastAttempt = jsonRecord(observation.attempts.at(-1))
   return lastAttempt?.provider === input.job.provider &&
     lastAttempt.outcome === 'fallback' &&
-    lastAttempt.reason === 'rate_limit' &&
+    lastAttempt.reason === expected.reason &&
     lastAttempt.providerSubmitted === true
 }
 

@@ -37,7 +37,7 @@ import type {
   ManagedProviderPageLease,
   PersistentContextManager as PersistentContextManagerType,
 } from './browser/context-manager.js'
-import type { DaemonJob, ManagedDaemonClient, PostSubmissionRateLimitFallbackProof } from './daemon-client.js'
+import type { DaemonJob, ManagedDaemonClient, PostSubmissionFallbackProof } from './daemon-client.js'
 import type { ManagedPlaywrightJobRequest } from './job-contract.js'
 import type { ProviderCapabilityId, ProviderId, TaskCapabilityId, TaskCapabilityRoute } from '../providers/registry.js'
 import type { BrowserVisibility } from '../browser-visibility.js'
@@ -611,7 +611,7 @@ export class ManagedPlaywrightRunnerService {
       const failOrFallback = async (failure: ClassifiedProviderFailure): Promise<never> => {
         throwIfStopped(signal, isCanceled)
         const fallbackRequest = safeFallbackRequest(request, state, failure)
-        const postSubmissionRateLimitProof = rateLimitFallbackProof(request, state, failure)
+        const postSubmissionFallbackProof = providerRejectionFallbackProof(request, state, failure)
         if (!fallbackRequest) {
           throw classifiedFailureError(failure, providerFallbackStopReason(request, state, failure))
         }
@@ -624,7 +624,7 @@ export class ManagedPlaywrightRunnerService {
             effectiveVisibility: managedContext.effectiveBrowserVisibility,
             windowOpen: requestedBrowserVisibility !== 'headless',
           }),
-          ...(postSubmissionRateLimitProof === null ? {} : { postSubmissionRateLimitProof }),
+          ...(postSubmissionFallbackProof === null ? {} : { postSubmissionFallbackProof }),
         })
         throw new ProviderFallbackSignal()
       }
@@ -1234,7 +1234,7 @@ export class ManagedPlaywrightRunnerService {
     }
     const failure = classifyVisibleProviderBlocker(initial.primary)
     const fallbackRequest = safeFallbackRequest(options.request, options.state, failure)
-    const postSubmissionRateLimitProof = rateLimitFallbackProof(options.request, options.state, failure)
+    const postSubmissionFallbackProof = providerRejectionFallbackProof(options.request, options.state, failure)
     if (fallbackRequest) {
       await this.daemonClient.fallbackJob({
         jobId: options.job.job_id,
@@ -1248,7 +1248,7 @@ export class ManagedPlaywrightRunnerService {
           }),
           failure,
         },
-        ...(postSubmissionRateLimitProof === null ? {} : { postSubmissionRateLimitProof }),
+        ...(postSubmissionFallbackProof === null ? {} : { postSubmissionFallbackProof }),
       })
       throw new ProviderFallbackSignal()
     }
@@ -1509,10 +1509,10 @@ function safeFallbackRequest(
 ): ManagedPlaywrightJobRequest | null {
   const plan = request.fallback
   const alternative = plan?.alternatives[0]
-  const postSubmissionRateLimit = rateLimitFallbackProof(request, state, failure) !== null
-  if (!plan || !alternative || (!failure.automaticFallbackEligible && !postSubmissionRateLimit)) return null
-  if (state.submitted !== null && !postSubmissionRateLimit) return null
-  if (!postSubmissionRateLimit) {
+  const postSubmissionFallback = providerRejectionFallbackProof(request, state, failure) !== null
+  if (!plan || !alternative || (!failure.automaticFallbackEligible && !postSubmissionFallback)) return null
+  if (state.submitted !== null && !postSubmissionFallback) return null
+  if (!postSubmissionFallback) {
     for (let index = 0; index < state.actionCursor; index += 1) {
       const action = request.actions[index]
       if (!action) return null
@@ -1553,15 +1553,15 @@ function safeFallbackRequest(
   })
 }
 
-function rateLimitFallbackProof(
+function providerRejectionFallbackProof(
   request: ManagedPlaywrightJobRequest,
   state: RunnerExecutionState,
   failure: ClassifiedProviderFailure,
-): PostSubmissionRateLimitFallbackProof | null {
+): PostSubmissionFallbackProof | null {
   const plan = request.fallback
   if (
     state.submitted === null ||
-    failure.code !== 'provider_rate_limited' ||
+    !['provider_rate_limited', 'provider_input_too_long'].includes(failure.code) ||
     !failure.providerScoped ||
     hasVisibleResponse(state) ||
     !plan ||
@@ -1570,10 +1570,16 @@ function rateLimitFallbackProof(
     plan.replay !== 'from_start' ||
     plan.alternatives.length === 0
   ) return null
-  return {
+  return failure.code === 'provider_rate_limited' ? {
     protocol: 'tokenless.provider-rate-limit-fallback.v1',
     provider: request.provider,
     code: 'provider_rate_limited',
+    providerScoped: true,
+    visibleResponse: false,
+  } : {
+    protocol: 'tokenless.provider-input-limit-fallback.v1',
+    provider: request.provider,
+    code: 'provider_input_too_long',
     providerScoped: true,
     visibleResponse: false,
   }
@@ -1603,7 +1609,7 @@ function routingFailureReason(failure: ClassifiedProviderFailure) {
   if (values.some((value) => /(?:rate_limit|rate_limited|too_many_requests|http_429)/u.test(value))) {
     return 'rate_limit' as const
   }
-  if (values.some((value) => /(?:provider_plan_limited|plan_limit|capacity|quota)/u.test(value))) {
+  if (values.some((value) => /(?:provider_plan_limited|provider_input_too_long|plan_limit|input_limit|capacity|quota)/u.test(value))) {
     return 'capacity' as const
   }
   return 'unavailable' as const
@@ -1613,7 +1619,7 @@ function routingFailureEvidence(failure: ClassifiedProviderFailure) {
   const details = failure.details && typeof failure.details === 'object' && !Array.isArray(failure.details)
     ? failure.details as Record<string, unknown>
     : null
-  if (details?.family !== 'rate_limit' && details?.family !== 'plan_limit') return {}
+  if (details?.family !== 'rate_limit' && details?.family !== 'plan_limit' && details?.family !== 'input_limit') return {}
   const visibleProof = typeof details?.visibleProof === 'string' && /^[a-z0-9:_-]{1,160}$/u.test(details.visibleProof)
     ? details.visibleProof
     : undefined
