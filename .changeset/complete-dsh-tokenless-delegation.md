@@ -2,4 +2,4 @@
 'tokenless': minor
 ---
 
-Let DeepSeek Harness benchmark subagents complete one bounded read-only inspection after the required workspace proof and return its task-relevant result.
+Let DeepSeek Harness benchmark agents inspect one file, delegate one bounded read-only workspace pass, then batch the resulting changes and verify them.

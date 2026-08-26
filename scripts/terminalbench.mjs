@@ -796,10 +796,21 @@ function deepIntegrationStats(events) {
     throw new Error('Deep integration requires exactly one successful forced parent subagent dispatch.')
   }
   const firstForcedParent = forcedParents[0]
+  const initialParentRequest = firstForcedParent?.ordinal === 2
+    ? parentRequests.find((event) => event.ordinal === 1 && event.forcedSubagent === false)
+    : undefined
+  const initialParentRoute = initialParentRequest && firstForcedParent
+    ? routing.find((event) => (
+      event.scope === 'parent'
+      && event.outcome === 'completed'
+      && event.sequence > initialParentRequest.sequence
+      && event.sequence < firstForcedParent.sequence
+    ))
+    : undefined
   const nextParentRequestAfterForced = firstForcedParent
     ? parentRequests.find((event) => event.sequence > firstForcedParent.sequence)
     : undefined
-  const firstParentRoute = firstForcedParent
+  const firstParentRoute = firstForcedParent && initialParentRoute
     ? routing.find((event) => (
       event.scope === 'parent'
       && event.outcome === 'completed'

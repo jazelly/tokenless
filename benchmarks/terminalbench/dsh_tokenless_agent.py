@@ -161,7 +161,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         with self._audit_lock:
             return [dict(event) for event in self._audit_events]
 
-    def record_parent_completion_request(self) -> int:
+    def record_parent_completion_request(self) -> tuple[int, int]:
         with self._audit_lock:
             self._parent_completion_ordinal += 1
             ordinal = self._parent_completion_ordinal
@@ -174,7 +174,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
                     "forcedSubagent": False,
                 }
             )
-            return len(self._audit_events)
+            return len(self._audit_events), ordinal
 
     def mark_parent_completion_forced(self, sequence: int) -> None:
         with self._audit_lock:
@@ -847,7 +847,9 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
         subagent_claimed = False
         subagent_claim_settled = False
         parent_event_sequence = None
+        parent_ordinal = None
         if path in ALLOWED_COMPLETION_PATHS and self.command == "POST":
+            parent_event_sequence, parent_ordinal = self.server.record_parent_completion_request()  # type: ignore[attr-defined]
             try:
                 body = self.server.decorate_parent_completion_body(body)  # type: ignore[attr-defined]
                 request_value = json.loads(body)
@@ -858,14 +860,37 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
                     and tool["function"].get("name") == "subagent"
                     for tool in tools
                 )
+                has_read = isinstance(tools, list) and any(
+                    isinstance(tool, dict)
+                    and isinstance(tool.get("function"), dict)
+                    and tool["function"].get("name") == "read"
+                    for tool in tools
+                )
                 if isinstance(request_value, dict) and has_subagent:
                     request_value["parallel_tool_calls"] = False
-                    subagent_claimed = self.server.claim_subagent_dispatch()  # type: ignore[attr-defined]
-                    if subagent_claimed:
+                    if parent_ordinal == 1:
+                        if not has_read:
+                            raise ValueError("DSH parent read-only inspection tool is unavailable")
+                        request_value["tools"] = [
+                            tool
+                            for tool in tools
+                            if not (
+                                isinstance(tool, dict)
+                                and isinstance(tool.get("function"), dict)
+                                and tool["function"].get("name") == "subagent"
+                            )
+                        ]
                         request_value["tool_choice"] = {
                             "type": "function",
-                            "function": {"name": "subagent"},
+                            "function": {"name": "read"},
                         }
+                    else:
+                        subagent_claimed = self.server.claim_subagent_dispatch()  # type: ignore[attr-defined]
+                        if subagent_claimed:
+                            request_value["tool_choice"] = {
+                                "type": "function",
+                                "function": {"name": "subagent"},
+                            }
                     body = json.dumps(
                         request_value, separators=(",", ":")
                     ).encode("utf-8")
@@ -874,7 +899,6 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
                 if provider_control_lock is not None:
                     provider_control_lock.release()
                 return
-            parent_event_sequence = self.server.record_parent_completion_request()  # type: ignore[attr-defined]
         headers = {
             "Authorization": f"Bearer {self.server.control_token}",  # type: ignore[attr-defined]
             "Accept": self.headers.get("Accept", "application/json"),
@@ -1265,7 +1289,7 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
                 "- id: system-prompt",
                 "  config:",
                 "    persona: >-",
-                "      You are a coding agent powered by the {{model}} model. Your working directory is {{cwd}}. Before executing each user task yourself, call subagent exactly once with a self-contained request to inspect the current workspace with its tools and return concrete task-relevant analysis. Wait for that result and use it only as input. Then use your own tools to complete the requested workspace changes and verify the observable result. Never stop at analysis, instructions for the user, or a claim of success without executing the task. Do not delegate more than once.",
+                "      You are a coding agent powered by the {{model}} model. Your working directory is {{cwd}}. Start each user task with exactly one read tool call to inspect the most relevant workspace file without changing it. Then call subagent exactly once with a self-contained request to inspect the current workspace with its tools and return concrete task-relevant analysis. Wait for that result and use it only as input. Then use your own tools to complete the requested workspace changes and verify the observable result. Batch independent permitted changes into one edit or terminal command and verify them together; do not perform equivalent independent replacements one per model turn when they can be combined safely. Never stop at analysis, instructions for the user, or a claim of success without executing the task. Do not delegate more than once.",
                 "- id: llm-deepseek",
                 "  config:",
                 "    apiKeyEnv: DEEPSEEK_API_KEY",
