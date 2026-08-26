@@ -160,7 +160,7 @@ async function waitForActionableSubmitControl(
       const actionable = await button.click({ trial: true, timeout: trialTimeoutMs })
         .then(() => true)
         .catch(() => false)
-      if (actionable) return button
+      if (actionable || provider.id === 'claude') return button
     }
     if (Date.now() >= deadline) break
     await waitForNextDomObservation(page, deadline, attempt, signal)
