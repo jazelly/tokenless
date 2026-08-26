@@ -14,7 +14,7 @@ No provider fixture, response interception, or local provider replica was used.
 
 A real completed Claude JSON code-block response did not contain `.font-claude-response-body`, so the previous answer selector left two submitted jobs unsettled until their exact jobs were canceled. Targeted live-page inspection showed the completed assistant markdown under `[data-is-streaming="false"]`; the provider answer selector was widened only to that real terminal scope.
 
-A later auto-routed parent request filled the real Claude composer but Playwright could not establish click actionability for the visible send control before the 15-second deadline. Live-page probes showed that a 62,025-character composer still exposed an enabled `chat-input-send` control and that pressing Enter submitted a short probe and produced the exact expected response. The repair therefore adds only a Claude-specific Enter activation when the visible composer is non-empty and no click-actionable send control is available.
+A later auto-routed parent request filled the real Claude composer but Playwright could not establish click actionability for the visible send control before the 15-second deadline. Live-page probes showed that a 62,025-character composer still exposed an enabled `chat-input-send` control and that pressing Enter on the focused composer submitted a short probe and produced the exact expected response. A packaged CLI probe then showed that page-level Enter without restoring composer focus produced no visible submission transition. The repair therefore adds only a Claude-specific Enter activation on the non-empty composer locator when no click-actionable send control is available.
 
 ## Proven properties
 

@@ -86,8 +86,10 @@ export async function submitDomPrompt(
 ) {
   const controlTimeoutMs = provider.interactionTimings.promptControlTimeoutMs
   const button = await waitForActionableSubmitControl(provider, page, signal)
-  const keyboardSubmit = !button && await claudeKeyboardSubmitIsAvailable(provider, page)
-  if (!button && !keyboardSubmit) {
+  const keyboardSubmitComposer = !button
+    ? await claudeKeyboardSubmitComposer(provider, page)
+    : null
+  if (!button && !keyboardSubmitComposer) {
     throw tokenlessError(
       'prompt_submit_actionability_timeout',
       `Timed out after ${controlTimeoutMs}ms waiting for an actionable visible prompt submit control.`,
@@ -100,7 +102,7 @@ export async function submitDomPrompt(
   }
   try {
     if (button) await button.click({ timeout: 5000 })
-    else await page.keyboard.press('Enter')
+    else await keyboardSubmitComposer!.press('Enter', { timeout: 5000 })
   } catch (error) {
     throw tokenlessError(
       'prompt_submit_failed',
@@ -126,18 +128,18 @@ export async function submitDomPrompt(
   } while (Date.now() < deadline)
   throw tokenlessError(
     'prompt_submit_not_accepted',
-    `No visible provider submission transition followed the click within ${acceptanceTimeoutMs}ms.`,
+    `No visible provider submission transition followed the activation within ${acceptanceTimeoutMs}ms.`,
     { retryable: false },
   )
 }
 
-async function claudeKeyboardSubmitIsAvailable(
+async function claudeKeyboardSubmitComposer(
   provider: ProviderDomDefinition,
   page: Page,
 ) {
-  if (provider.id !== 'claude') return false
+  if (provider.id !== 'claude') return null
   const composer = await firstVisibleLocator(page, provider.composerSelectors, 50)
-  return composer !== null && !await composerIsVisiblyEmpty(composer)
+  return composer && !await composerIsVisiblyEmpty(composer) ? composer : null
 }
 
 async function waitForActionableSubmitControl(
