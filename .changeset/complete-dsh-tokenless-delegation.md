@@ -2,4 +2,4 @@
 'tokenless': minor
 ---
 
-Let DeepSeek Harness benchmark subagents continue their delegated task after the required workspace proof.
+Let DeepSeek Harness benchmark subagents complete one bounded read-only inspection after the required workspace proof and return its task-relevant result.
