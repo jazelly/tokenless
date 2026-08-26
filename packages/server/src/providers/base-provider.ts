@@ -236,7 +236,7 @@ export abstract class BaseProvider<TId extends ProviderId = ProviderId> {
   }
 
   protected async clearPrompt(page: Page, context: ProviderExecutionContext): Promise<VisibleActionResult> {
-    return await clearDomPrompt(this.definition, page, context.signal)
+    return await clearDomPrompt(this.definition, page, context.signal, context.resetPromptDraft === true)
   }
 
   protected submitPrompt(page: Page, context: ProviderExecutionContext): Promise<VisibleActionResult> {

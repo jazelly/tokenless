@@ -13,6 +13,7 @@ export type ProviderExecutionContext = {
   assetRoot?: string
   requirements?: readonly TaskCapabilityId[]
   responsePreparation?: ProviderActionPreparation
+  resetPromptDraft?: boolean
   signal?: AbortSignal
   now?: () => Date
   captureVisibleOutput?: CaptureVisibleOutput

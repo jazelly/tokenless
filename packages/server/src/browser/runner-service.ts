@@ -748,6 +748,7 @@ export class ManagedPlaywrightRunnerService {
           ...(lifecycle.completion === 'reads_response' && state.preparation !== null
             ? { responsePreparation: state.preparation }
             : {}),
+          ...(request.pagePolicy === 'replace' ? { resetPromptDraft: true } : {}),
           signal,
           now: this.now,
           ...(attachmentRoot === undefined ? {} : { attachmentRoot }),

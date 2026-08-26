@@ -20,13 +20,52 @@ export async function clearDomPrompt(
   provider: ProviderDomDefinition,
   page: Page,
   signal?: AbortSignal,
+  resetDraft = false,
 ) {
   await inputDomPrompt(provider, page, '', signal)
-  if (provider.id === 'claude') await clearClaudeDraftAttachments(provider, page, signal)
+  if (provider.id === 'claude') {
+    await clearClaudeDraftAttachments(provider, page, signal)
+    if (resetDraft) await reloadClearedClaudeDraft(provider, page, signal)
+  }
   return {
     visible: true as const,
     inputProof: 'empty' as const,
   }
+}
+
+async function reloadClearedClaudeDraft(
+  provider: ProviderDomDefinition,
+  page: Page,
+  signal: AbortSignal | undefined,
+) {
+  assertNotAborted(signal)
+  try {
+    await page.reload({
+      waitUntil: 'domcontentloaded',
+      timeout: provider.interactionTimings.promptControlTimeoutMs,
+    })
+  } catch (error) {
+    assertNotAborted(signal)
+    throw tokenlessError(
+      'prompt_clear_failed',
+      'The cleared Claude draft could not be reloaded.',
+      { retryable: true, cause: error },
+    )
+  }
+  const composer = await waitForVisibleLocator(
+    page,
+    provider.composerSelectors,
+    provider.interactionTimings.promptControlTimeoutMs,
+  )
+  const visibleAttachmentCount = await page.locator('[data-testid="file-thumbnail"]')
+    .filter({ visible: true })
+    .count()
+  if (composer && await composerIsVisiblyEmpty(composer) && visibleAttachmentCount === 0) return
+  throw tokenlessError(
+    'prompt_clear_failed',
+    'The cleared Claude draft did not remain empty after reload.',
+    { retryable: true },
+  )
 }
 
 export async function inputDomPrompt(
