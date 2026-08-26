@@ -152,7 +152,7 @@ tokenless/<provider>
 - Browser execution，且不带 provider-local backend 或 auth options。Plain text 会通过具有当前可用 observed access 的 enabled provider 的 eligible `conversation.chat` route；function-tool 与 JSON request 还要经过窄 structured-control evidence matrix。
 - Candidate 必须在 selected profile 上启用，并满足该请求对应的 route requirements。
 - Tool requirements 会区分调用、strict schema、完整 tool history 与 multiple-call output。只有当前 `tool_choice` 可能返回多个调用时，`parallel_tool_calls: true` 才要求 multiple-call evidence；`none` 与精确 named choice 不要求。
-- DeepSeek 凭已验证的 multiple/strict/history 与 JSON control 纳入；ChatGPT 凭已验证的 single-call strict/history 与 JSON control 纳入。Gemini tool control 因真实输出未通过 strict whole-response boundary 而排除。当前双 provider routing 与 schema 实跑记录见[脱敏 evidence](evidence/openai-auto-provider-routing-2026-08-15.md)。
+- DeepSeek 凭已验证的 multiple/strict/history 与 JSON control 纳入；ChatGPT 凭已验证的 single-call strict/history 与 JSON control 纳入。Claude 与 Grok 只凭已验证的 single-call strict/history control 纳入；multiple calls 与 JSON control 仍排除。Gemini tool control 因真实输出未通过 strict whole-response boundary 而排除。见 [auto routing](evidence/openai-auto-provider-routing-2026-08-15.md)、[Claude](evidence/openai-structured-control-claude-2026-08-26.md)与 [Grok](evidence/openai-structured-control-grok-2026-08-26.md) evidence。
 - Direct execution、provider backend/auth options、opaque replay 或不完整 candidate set 都会在创建 job 前失败。
 
 Auto call 使用只编码 provider origin 的版本化 opaque public id。后续 full-history turn 会在重新检查 current eligibility 后优先该 provider；调用方影响 id 也无法绕过 filter。Responses `previous_response_id` 以相同方式使用现有 ledger provider——它是 portable affinity，不是 hard pin。

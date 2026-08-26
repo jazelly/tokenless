@@ -307,6 +307,60 @@ test('auto accepts plain browser requests and keeps structured routing narrow', 
   })
 })
 
+test('auto admits Claude only for its evidenced single-call structured-control scope', async () => {
+  await withDaemon(async (daemon) => {
+    const { ManagedProfileRegistry } = await import(profileRegistryModule)
+    const registry = new ManagedProfileRegistry(daemon.homeDir)
+    await registry.addProfile({ slug: 'web-ai', setDefault: true })
+    await registry.updateProviderStatus('web-ai', {
+      provider: 'claude',
+      auth: 'authenticated',
+      access: 'signed_in_free',
+      checkedAt: new Date().toISOString(),
+    })
+    const { writeTokenlessConfig } = await import(runtimeModule)
+    await writeTokenlessConfig({
+      homeDir: daemon.homeDir,
+      apiProxy: { enabled: true, conversationMode: 'new-conversation', executionMode: 'browser' },
+      profiles: {
+        'web-ai': {
+          roleLabel: '',
+          enabledProviders: ['claude'],
+          browserVisibility: 'headed',
+          proxy: null,
+        },
+      },
+    })
+
+    const tool = functionTool('read_file')
+    tool.function.strict = true
+    const pending = fetch(`${daemon.origin}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${daemon.token}`,
+      },
+      body: JSON.stringify({
+        model: 'tokenless/auto',
+        messages: [{ role: 'user', content: 'Read package.json.' }],
+        tools: [tool],
+        tool_choice: { type: 'function', function: { name: 'read_file' } },
+        parallel_tool_calls: false,
+      }),
+    })
+    const job = await waitForQueuedApiProxyJob(daemon, 'api-proxy:')
+    assert.equal(job.provider, 'claude')
+    assert.equal(job.request_json.capabilityRoute.provider, 'claude')
+    assert.equal(job.request_json.fallback, null)
+    assert.match(job.request_json.actions[0].payload.text, /tokenless\.openai-tools\/v1/u)
+
+    await daemon.store.cancelJob(job.job_id, 'focused Claude structured-control route test completed')
+    const response = await pending
+    assert.equal(response.status, 502)
+    assert.equal(response.headers.get('x-tokenless-route-provider'), 'claude')
+  })
+})
+
 test('auto semantic preference reorders only eligible conversation routes', async () => {
   await withDaemon(async (daemon) => {
     await enableApiProxy(daemon.homeDir)

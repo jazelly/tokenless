@@ -67,6 +67,16 @@ const API_PROXY_STRUCTURED_CONTROL = Object.freeze([
     ],
   }),
   declaration({
+    provider: 'claude',
+    tools: true,
+    multipleCalls: false,
+    strictTools: true,
+    toolHistory: true,
+    jsonObject: false,
+    jsonSchema: false,
+    evidence: ['openai-structured-control-claude-2026-08-26'],
+  }),
+  declaration({
     provider: 'grok',
     tools: true,
     multipleCalls: false,

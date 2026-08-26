@@ -50,6 +50,7 @@ export class ClaudeProvider extends BaseProvider<'claude'> {
         'button[type="submit"]',
       ]),
       answerSelectors: Object.freeze([
+        '[data-is-streaming="false"] .standard-markdown',
         '.standard-markdown:has(.font-claude-response-body)',
       ]),
       fileInputSelectors: Object.freeze([
