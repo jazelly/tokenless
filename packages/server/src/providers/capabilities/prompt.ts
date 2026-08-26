@@ -22,15 +22,62 @@ export async function clearDomPrompt(
   signal?: AbortSignal,
   resetDraft = false,
 ) {
-  await inputDomPrompt(provider, page, '', signal)
   if (provider.id === 'claude') {
+    await clearClaudePromptDraft(provider, page, signal)
     await clearClaudeDraftAttachments(provider, page, signal)
     if (resetDraft) await reloadClearedClaudeDraft(provider, page, signal)
-  }
+  } else await inputDomPrompt(provider, page, '', signal)
   return {
     visible: true as const,
     inputProof: 'empty' as const,
   }
+}
+
+async function clearClaudePromptDraft(
+  provider: ProviderDomDefinition,
+  page: Page,
+  signal: AbortSignal | undefined,
+) {
+  await dismissProviderAnnouncement(page, provider)
+  const composer = await waitForVisibleLocator(
+    page,
+    provider.composerSelectors,
+    provider.interactionTimings.promptControlTimeoutMs,
+  )
+  if (!composer) {
+    throw tokenlessError(
+      'prompt_clear_failed',
+      'No visible Claude composer was available to clear.',
+      { retryable: true },
+    )
+  }
+  if (await composerIsVisiblyEmpty(composer)) return
+  await composer.evaluate((element) => {
+    element.focus()
+    if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+      element.select()
+      return
+    }
+    const range = document.createRange()
+    range.selectNodeContents(element)
+    const selection = window.getSelection()
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+  })
+  await page.keyboard.press('Backspace')
+  const deadline = Date.now() + provider.interactionTimings.promptControlTimeoutMs
+  let attempt = 0
+  while (Date.now() <= deadline) {
+    assertNotAborted(signal)
+    if (await composerIsVisiblyEmpty(composer)) return
+    await waitForNextDomObservation(page, deadline, attempt, signal)
+    attempt += 1
+  }
+  throw tokenlessError(
+    'prompt_clear_failed',
+    'The visible Claude prompt draft could not be cleared.',
+    { retryable: true },
+  )
 }
 
 async function reloadClearedClaudeDraft(
