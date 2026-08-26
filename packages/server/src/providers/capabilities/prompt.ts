@@ -102,7 +102,10 @@ export async function submitDomPrompt(
   }
   try {
     if (button) await button.click({ timeout: 5000 })
-    else await keyboardSubmitComposer!.press('Enter', { timeout: 5000 })
+    else {
+      await keyboardSubmitComposer!.focus({ timeout: 5000 })
+      await page.keyboard.press('Enter')
+    }
   } catch (error) {
     throw tokenlessError(
       'prompt_submit_failed',
