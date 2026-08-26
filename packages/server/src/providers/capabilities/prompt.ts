@@ -60,11 +60,19 @@ async function reloadClearedClaudeDraft(
   const visibleAttachmentCount = await page.locator('[data-testid="file-thumbnail"]')
     .filter({ visible: true })
     .count()
-  if (composer && await composerIsVisiblyEmpty(composer) && visibleAttachmentCount === 0) return
+  const composerEmpty = composer ? await composerIsVisiblyEmpty(composer) : null
+  if (composerEmpty === true && visibleAttachmentCount === 0) return
   throw tokenlessError(
     'prompt_clear_failed',
     'The cleared Claude draft did not remain empty after reload.',
-    { retryable: true },
+    {
+      retryable: true,
+      details: {
+        composerVisible: composer !== null,
+        composerEmpty,
+        visibleAttachmentTiles: visibleAttachmentCount,
+      },
+    },
   )
 }
 
