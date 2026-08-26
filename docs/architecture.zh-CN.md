@@ -189,7 +189,7 @@ request
   → complete the job and return normalized result
 ```
 
-Job 必须携带明确的 provider/profile identity。Unsupported control、ambiguous page、unexpected navigation、authentication blocker 与 selector drift 都必须 fail closed；已提交或状态不明确的 provider mutation 不得被静默重新提交。
+Job 必须携带明确的 provider/profile identity。Unsupported control、ambiguous page、unexpected navigation、authentication blocker 与 selector drift 都必须 fail closed；已提交或状态不明确的 provider mutation 不得被静默重新提交。Provider-specific conversation 与 Project URL、provider control、exact continuation、不可重建 mutation 及 submission 后 state 都会抑制 automatic fallback；唯一例外是狭窄的 `tokenless/auto` private provider-turn submission 前序列 `file.upload` → `prompt.input` → `prompt.submit` → `response.read`，它保留 settled conversation 为 primary，并且只携带可重建的 provider-home alternative。
 
 ## Setup and profiles
 

@@ -281,6 +281,9 @@ export class PrivateProviderTurnV0Adapter {
     const routeDecision = resolveTaskCapabilityRoute({ requirements: REQUIRED_CAPABILITIES, candidates: [{ provider, runtimeEligibility: 'unchecked' }] })
     if (!routeDecision.ok) throw invalidInput('web ai provider does not have a static chat and upload route')
     const route = routeDecision.route
+    const fallbackRoutes = binding.provider === AUTO_PROVIDER
+      ? (await this.autoCapabilityRoutes(binding.profile_id, null, true)).filter((candidate) => candidate.provider !== provider)
+      : []
     const turnRef = opaqueRef('turn')
     const requestJson = createManagedPlaywrightJobRequest({
       provider,
@@ -288,7 +291,7 @@ export class PrivateProviderTurnV0Adapter {
       taskId: previousRequest.taskId,
       pageRef: request.conversation.conversationRef,
       capabilityRoute: route,
-      fallback: null,
+      fallback: fallbackRoutes.length === 0 ? null : automaticFallbackPlan([route, ...fallbackRoutes]),
       browserVisibility: 'auto',
       userHandoff: false,
       actions: [
@@ -392,7 +395,7 @@ export class PrivateProviderTurnV0Adapter {
     }
   }
 
-  private async autoCapabilityRoutes(profileId: string, semanticPreference: string | null): Promise<readonly TaskCapabilityRoute[]> {
+  private async autoCapabilityRoutes(profileId: string, semanticPreference: string | null, allowEmpty = false): Promise<readonly TaskCapabilityRoute[]> {
     const [profiles, config] = await Promise.all([this.profiles.listProfiles(), readTokenlessConfig(this.store.homeDir)])
     const profile = profiles.find((candidate) => candidate.slug === profileId)
     const configured = profile ? config.profiles[profile.slug] : undefined
@@ -417,6 +420,7 @@ export class PrivateProviderTurnV0Adapter {
     })
     const resolved = resolveTaskCapabilityRoutes({ requirements: REQUIRED_CAPABILITIES, candidates })
     if (!resolved.ok || resolved.routes.length === 0) {
+      if (allowEmpty) return []
       throw invalidInput('web ai auto has no current eligible provider with chat and upload evidence')
     }
     return prioritizeTaskCapabilityRoutes(resolved.routes, semanticPreference)

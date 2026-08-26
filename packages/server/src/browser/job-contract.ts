@@ -127,6 +127,12 @@ const AUTOMATIC_FALLBACK_ACTIONS = new Set<string>([
   VISIBLE_ACTIONS.PROMPT_SUBMIT,
   VISIBLE_ACTIONS.RESPONSE_READ,
 ])
+const PRIVATE_PROVIDER_CONTINUATION_FALLBACK_ACTIONS = [
+  VISIBLE_ACTIONS.FILE_UPLOAD,
+  VISIBLE_ACTIONS.PROMPT_INPUT,
+  VISIBLE_ACTIONS.PROMPT_SUBMIT,
+  VISIBLE_ACTIONS.RESPONSE_READ,
+] as const
 
 export function createManagedPlaywrightJobRequest(
   input: CreateManagedPlaywrightJobRequestInput
@@ -249,7 +255,7 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
   assertImageCapabilityContract(provider.id, contextRequirements, actions)
   const fallback = input.fallback === undefined || input.fallback === null
     ? null
-    : validateFallbackPlan(input.fallback, provider, target, capabilityRoute)
+    : validateFallbackPlan(input.fallback, provider, target, capabilityRoute, actions)
   const context = input.context === undefined || input.context === null
     ? createContextEnvelope({ taskId, requirements: contextRequirements, actions })
     : validateContextEnvelope(input.context, { taskId, requirements: contextRequirements, actions })
@@ -461,6 +467,7 @@ function validateFallbackPlan(
   currentProvider: ProviderInstance,
   currentTarget: ManagedPlaywrightSafeTarget,
   currentRoute: TaskCapabilityRoute | null,
+  actions: readonly VisibleActionRequest[],
 ): ManagedPlaywrightFallbackPlan {
   if (!isPlainRecord(input)) {
     throw tokenlessError('invalid_playwright_job_fallback', 'Managed Playwright fallback plan must be an object.')
@@ -475,8 +482,11 @@ function validateFallbackPlan(
   if (currentRoute.requirements.includes('conversation.continue')) {
     throw tokenlessError('invalid_playwright_job_fallback', 'Exact provider conversation continuation cannot fallback automatically.')
   }
-  if (!isProviderHomeTarget(currentTarget, currentProvider)) {
-    throw tokenlessError('invalid_playwright_job_fallback', 'Automatic provider fallback requires provider-home targets, not provider-specific conversations or Projects.')
+  if (
+    !isProviderHomeTarget(currentTarget, currentProvider) &&
+    (!isPrivateProviderContinuationFallback(actions) || !isDeclaredConversationTarget(currentTarget, currentProvider))
+  ) {
+    throw tokenlessError('invalid_playwright_job_fallback', 'Automatic provider fallback from a provider conversation requires the exact portable private continuation action sequence.')
   }
   if (!Array.isArray(input.alternatives) || input.alternatives.length < 1 || input.alternatives.length > 5) {
     throw tokenlessError('invalid_playwright_job_fallback', 'Automatic provider fallback requires one to five alternatives.')
@@ -810,6 +820,33 @@ function imageSurfaceActionIndex(provider: ProviderId, actions: readonly Visible
 
 function isProviderHomeTarget(target: ManagedPlaywrightSafeTarget, provider: ProviderInstance) {
   return canonicalUrl(target.url) === canonicalUrl(provider.descriptor.navigation.homeUrl)
+}
+
+function isPrivateProviderContinuationFallback(actions: readonly VisibleActionRequest[]) {
+  return actions.length === PRIVATE_PROVIDER_CONTINUATION_FALLBACK_ACTIONS.length && actions.every((action, index) => (
+    action.action === PRIVATE_PROVIDER_CONTINUATION_FALLBACK_ACTIONS[index]
+  ))
+}
+
+function isDeclaredConversationTarget(target: ManagedPlaywrightSafeTarget, provider: ProviderInstance) {
+  const canonical = provider.navigation.canonicalTarget(target.url)
+  if (!canonical) return false
+  const targetSegments = canonical.pathname.split('/').filter(Boolean)
+  const matchesPattern = (pattern: typeof provider.navigation.pagePatterns[number]) => {
+    let declared: URL
+    try {
+      declared = new URL(pattern.urlPattern)
+    } catch {
+      return false
+    }
+    if (declared.origin.toLowerCase() !== canonical.origin.toLowerCase()) return false
+    const declaredSegments = declared.pathname.split('/').filter(Boolean)
+    return targetSegments.length === declaredSegments.length && declaredSegments.every((segment, index) => (
+      segment.startsWith(':') ? targetSegments[index] !== '' : segment === targetSegments[index]
+    ))
+  }
+  if (provider.navigation.pagePatterns.some((pattern) => pattern.kind !== 'conversation' && matchesPattern(pattern))) return false
+  return provider.navigation.pagePatterns.some((pattern) => pattern.kind === 'conversation' && matchesPattern(pattern))
 }
 
 function canonicalUrl(value: string) {

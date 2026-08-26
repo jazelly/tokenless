@@ -159,6 +159,8 @@ Auto call 使用只编码 provider origin 的版本化 opaque public id。后续
 
 切换 provider 时，始终用完整 canonical assistant call 与 caller result 在 target provider 新建会话。Provider URL 与 opaque state 永不 replay。现有 Managed Playwright fallback plan 可在 `provider_submitted_at` 前切换；唯一的 submission 后例外是 `tokenless/auto` 在尚无 visible response 时收到 provider-scoped terminal code `provider_rate_limited`，此时从 target provider home 重新开始，并记录一条有界的 `rate_limit` routing attempt。其他 malformed、failed、ambiguous、timeout、canceled 或 waiting-for-user 的 submission 后 outcome 都是 terminal。Bounded final-escaping correction 固定在 settled provider 与 strategy 上，不再执行 auto resolution 或 fallback。
 
+对于 private provider-turn continuation，`tokenless/auto` 会保留 settled provider conversation 与 exact mapping 作为 primary target。只有精确的 portable action sequence `file.upload` → `prompt.input` → `prompt.submit` → `response.read` 可以携带从 provider-home target 开始的当前 eligible auto alternatives；`conversation.continue` route 与 nonportable action 不会获得 fallback alternative。精确 provider binding 始终 pinned 且没有 fallback。
+
 OpenAI 的 `tokenless/auto` 请求可以带一个 advisory 的 `tokenless.semantic_preference` provider id：
 
 ```json

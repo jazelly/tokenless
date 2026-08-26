@@ -154,6 +154,7 @@ test('continuation reuses the proved provider conversation in the same process',
       const continuedJob = daemon.store.getJob(continuedMapping.job_id)
       assert.equal(continuedJob.request_json.taskId, firstJob.request_json.taskId)
       assert.equal(continuedJob.request_json.target.url, 'https://chatgpt.com/c/tokenless-continuation')
+      assert.equal(continuedJob.request_json.fallback, null)
 
       assert.equal((await client.read(continued.turnRef)).lifecycle, 'queued')
     } finally {
@@ -183,7 +184,7 @@ test('auto bootstrap preference reorders eligible providers while continuation k
         profiles: {
           [profile.slug]: {
             roleLabel: '',
-            enabledProviders: ['chatgpt', 'grok'],
+            enabledProviders: ['grok', 'chatgpt'],
             browserVisibility: 'headed',
             proxy: null,
           },
@@ -195,24 +196,24 @@ test('auto bootstrap preference reorders eligible providers while continuation k
       const attachment = await client.stage(binding.providerBindingRef, new TextEncoder().encode('# system\n'))
       const preferredRequest = {
         ...requestFor(binding, attachment, 'f'),
-        semanticPreference: 'grok',
+        semanticPreference: 'chatgpt',
       }
       const first = await client.start(binding.providerBindingRef, preferredRequest)
       const firstMapping = daemon.store.getWebAiTurn(first.turnRef)
       assert.ok(firstMapping)
       const firstJob = daemon.store.getJob(firstMapping.job_id)
-      assert.equal(firstJob.provider, 'grok')
-      assert.equal(firstJob.request_json.semanticPreference, 'grok')
-      assert.equal(firstJob.request_json.fallback.alternatives[0].provider, 'chatgpt')
+      assert.equal(firstJob.provider, 'chatgpt')
+      assert.equal(firstJob.request_json.semanticPreference, 'chatgpt')
+      assert.equal(firstJob.request_json.fallback.alternatives[0].provider, 'grok')
 
       const running = daemon.store.takeNextJob({ job_id_prefix: firstJob.job_id }, firstJob.profile_id)
       assert.ok(running)
       daemon.store.recordProviderSubmission(running.job_id)
       daemon.store.upsertProviderTaskConversation({
-        provider: 'grok',
+        provider: 'chatgpt',
         profile_id: firstJob.profile_id,
         task_id: firstJob.request_json.taskId,
-        canonical_url: 'https://grok.com/c/tokenless-semantic-continuation',
+        canonical_url: 'https://chatgpt.com/c/tokenless-semantic-continuation',
         job_id: firstJob.job_id,
       })
       daemon.store.completeJob(firstJob.job_id, { result_json: successfulVisibleResult('first') })
@@ -235,8 +236,8 @@ test('auto bootstrap preference reorders eligible providers while continuation k
       const continuedMapping = daemon.store.getWebAiTurn(continued.turnRef)
       assert.ok(continuedMapping)
       const continuedJob = daemon.store.getJob(continuedMapping.job_id)
-      assert.equal(continuedJob.provider, 'grok')
-      assert.equal(continuedJob.request_json.fallback, null)
+      assert.equal(continuedJob.provider, 'chatgpt')
+      assert.equal(continuedJob.request_json.fallback.alternatives[0].provider, 'grok')
       assert.equal(Object.hasOwn(continuedJob.request_json, 'semanticPreference'), false)
 
       await registry.updateProviderStatus(profile.slug, {
