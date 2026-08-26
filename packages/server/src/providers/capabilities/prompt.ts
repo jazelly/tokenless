@@ -179,6 +179,56 @@ async function promptSubmitDiagnostics(
         dataDisabled: element.getAttribute('data-disabled'),
       })).catch(() => ({ visible: true, disabled: null, ariaDisabled: null, dataDisabled: null }))
     : { visible: false, disabled: null, ariaDisabled: null, dataDisabled: null }
+  const disabledReason = button
+    ? await (async () => {
+        await button.hover({ timeout: 1000 }).catch(() => undefined)
+        await page.waitForTimeout(250)
+        return await button.evaluate((element) => {
+          const isVisible = (candidate: Element | null): candidate is HTMLElement => {
+            if (!(candidate instanceof HTMLElement)) return false
+            const style = window.getComputedStyle(candidate)
+            const rect = candidate.getBoundingClientRect()
+            return style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0 && rect.width > 0 && rect.height > 0
+          }
+          const describedBy = (element.getAttribute('aria-describedby') ?? '')
+            .split(/\s+/u)
+            .filter(Boolean)
+            .map((id) => document.getElementById(id))
+            .filter((candidate): candidate is HTMLElement => candidate instanceof HTMLElement)
+          const tooltips = Array.from(document.querySelectorAll('[role="tooltip"]')).filter(isVisible)
+          const parts = [
+            element.getAttribute('title') ?? '',
+            element.getAttribute('aria-description') ?? '',
+            ...describedBy.map((candidate) => candidate.textContent ?? ''),
+            ...tooltips.map((candidate) => candidate.textContent ?? ''),
+          ].filter((value) => value.trim() !== '')
+          const text = parts.join(' ').replace(/\s+/gu, ' ').trim().toLowerCase()
+          const category = text === ''
+            ? 'none'
+            : /(?:upgrade|subscribe|paid plan|plan limit|usage limit|message limit)/u.test(text)
+              ? 'plan_limit'
+              : /(?:rate limit|too many requests|try again later|quota|(?:reached|hit).{0,80}limit|limit.{0,80}(?:reset|reached|hit))/u.test(text)
+                ? 'rate_limit'
+                : /(?:attachment|file).{0,80}(?:processing|uploading|parsing|failed|unsupported)/u.test(text)
+                  ? 'attachment_processing'
+                  : /(?:model).{0,80}(?:unavailable|unsupported|select|choose)/u.test(text)
+                    ? 'model_unavailable'
+                    : /(?:empty|write|enter|type).{0,80}(?:prompt|message)/u.test(text)
+                      ? 'input_empty'
+                      : /(?:unavailable|disabled|cannot|can't|unable)/u.test(text)
+                        ? 'unavailable'
+                        : 'unknown'
+          return {
+            category,
+            sources: {
+              attribute: element.hasAttribute('title') || element.hasAttribute('aria-description'),
+              describedBy: describedBy.length > 0,
+              visibleTooltip: tooltips.length > 0,
+            },
+          }
+        }).catch(() => null)
+      })()
+    : null
   const surface = await page.evaluate(({ composerSelectors, submitSelectors }) => {
     const isVisible = (element: Element | null): element is HTMLElement => {
       if (!(element instanceof HTMLElement)) return false
@@ -234,6 +284,7 @@ async function promptSubmitDiagnostics(
     documentVisibility: documentState.visibility,
     documentFocused: documentState.focused,
     submit,
+    disabledReason,
     composerVisible: composer !== null,
     composerCharacters,
     surface,
