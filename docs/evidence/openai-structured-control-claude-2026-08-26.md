@@ -16,6 +16,8 @@ A real completed Claude JSON code-block response did not contain `.font-claude-r
 
 A later auto-routed parent request filled the real Claude composer but Playwright could not establish click actionability for the visible send control before the 15-second deadline. Live-page probes showed that a 62,025-character composer still exposed an enabled `chat-input-send` control and that pressing Enter on the focused composer submitted a short probe and produced the exact expected response. A packaged CLI probe then showed that page-level Enter without restoring composer focus produced no visible submission transition. The repair therefore adds only a Claude-specific Enter activation on the non-empty composer locator when no click-actionable send control is available.
 
+The next real Terminal-Bench parent reached Claude after ChatGPT exposed a minute limit and Grok remained capacity-deferred. Claude returned a nonce-correlated `tool_calls` envelope selecting the declared `edit` function, but used `new_str` where the live catalog required `new_string`; the API rejected the missing required property and DSH exited non-zero. The existing one-shot bounded correction is therefore admitted for a structurally valid tool-call envelope whose arguments alone fail the declared JSON Schema. It remains bound to the same provider, response kind, selected function order, and argument values.
+
 ## Proven properties
 
 | Probe | Result | Redacted job |

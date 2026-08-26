@@ -408,7 +408,15 @@ export function parseOpenAiToolResponse(
         fail(`provider selected tool '${tool.name}' when tool_choice requires '${choice.name}'`)
       }
       const argumentsValue = record(call.arguments, `provider tool calls[${index}].arguments`)
-      assertSchemaValue(tool, argumentsValue, `arguments for tool '${tool.name}'`)
+      try {
+        assertSchemaValue(tool, argumentsValue, `arguments for tool '${tool.name}'`)
+      } catch (error) {
+        throw new OpenAiToolResponseProtocolError(
+          error instanceof Error ? error.message : `arguments for tool '${tool.name}' do not satisfy its JSON Schema`,
+          true,
+          'tool_calls',
+        )
+      }
       return { name: tool.name, arguments: argumentsValue }
     })
     return { kind: 'tool_calls', content: envelope.content, calls }
