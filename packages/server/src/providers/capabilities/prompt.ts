@@ -86,6 +86,8 @@ async function reloadClearedClaudeDraft(
   signal: AbortSignal | undefined,
 ) {
   assertNotAborted(signal)
+  await page.waitForTimeout(1000)
+  assertNotAborted(signal)
   try {
     await page.reload({
       waitUntil: 'domcontentloaded',
