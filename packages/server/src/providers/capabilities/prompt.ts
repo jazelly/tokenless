@@ -285,22 +285,7 @@ async function writePrompt(page: Page, composer: Locator, text: string, preferKe
   try {
     if (!await composer.isVisible({ timeout: 250 })) return false
     await composer.click({ timeout: 1000 })
-    if (preferKeyboardInput) {
-      await composer.evaluate((element) => {
-        if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
-          element.select()
-          return
-        }
-        const selection = window.getSelection()
-        if (!selection) return
-        const range = document.createRange()
-        range.selectNodeContents(element)
-        selection.removeAllRanges()
-        selection.addRange(range)
-      })
-    } else {
-      await page.keyboard.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A')
-    }
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A')
     if (text.length === 0) await page.keyboard.press('Backspace')
     else await page.keyboard.insertText(text)
     return await composerHasExpectedText(composer, text)
