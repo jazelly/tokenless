@@ -31,7 +31,7 @@ try {
     output({ ok: true, prepared: await prepare(argv) })
   } else if (command === 'oracle') {
     output({ ok: true, run: await runOracle(argv) })
-  } else if (command === 'wiring' || command === 'full') {
+  } else if (command === 'wiring' || command === 'sweep' || command === 'full') {
     output({ ok: true, run: await runDeepSeekLane(command, argv) })
   } else if (command === 'help' || command === '--help' || command === '-h') {
     process.stdout.write(helpText())
@@ -239,7 +239,9 @@ async function runDeepSeekLane(kind, args) {
   const profile = requiredOption(args, '--profile')
   const semanticManifest = await validateSemanticManifest(path.resolve(requiredOption(args, '--semantic-manifest')))
   if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(profile)) throw new Error('--profile is invalid.')
-  if (kind === 'full' && option(args, '--task') !== undefined) throw new Error('The full command always runs the unchanged 89-task dataset.')
+  if ((kind === 'full' || kind === 'sweep') && option(args, '--task') !== undefined) {
+    throw new Error(`The ${kind} command always runs the unchanged 89-task dataset.`)
+  }
   const task = kind === 'wiring' ? (option(args, '--task') ?? revision.wiringTask) : null
   const taskManifestIdentity = await validateTaskManifest()
   if (task !== null) {
@@ -257,7 +259,7 @@ async function runDeepSeekLane(kind, args) {
   await refuseExisting(jobDir)
   await fs.mkdir(jobsDir, { recursive: true })
   const attemptsPerTask = kind === 'full' ? revision.attemptsPerTask : 1
-  const expectedTrials = kind === 'full' ? revision.taskCount * attemptsPerTask : attemptsPerTask
+  const expectedTrials = kind === 'wiring' ? attemptsPerTask : revision.taskCount * attemptsPerTask
   const tokenEstimatorScript = path.join(benchmarkRoot, 'token_estimator.mjs')
 
   const harborArgs = [
@@ -312,6 +314,9 @@ async function runDeepSeekLane(kind, args) {
   assertComplete(report, expectedTrials)
   if (report.deepIntegration.trialsWithCompleteChain !== expectedTrials) {
     throw new Error(`The ${kind} run is missing complete host-observed DSH parent -> child Tokenless Harness provider-turn evidence for every trial; evidence is preserved at ${jobDir}.`)
+  }
+  if (kind === 'sweep' && report.rewards.passed !== expectedTrials) {
+    throw new Error(`The Terminal-Bench sweep phase gate requires verifier reward 1 for all ${expectedTrials} trials; evidence is preserved at ${jobDir}.`)
   }
   return report
 }
@@ -419,7 +424,7 @@ async function writeRunReport({
     harborVersion: revision.harborVersion,
     dataset: revision.dataset,
     datasetRef: revision.datasetRef,
-    taskCount: kind === 'full' ? revision.taskCount : 1,
+    taskCount: kind === 'wiring' ? 1 : revision.taskCount,
     task,
     attemptsPerTask,
     expectedTrials,
@@ -583,7 +588,7 @@ function validateResolvedRun({
     throw new Error('Harbor job config must resolve exactly one dataset.')
   }
   const dataset = jobConfig.datasets[0]
-  const expectedTaskCount = kind === 'full' ? revision.taskCount : 1
+  const expectedTaskCount = kind === 'wiring' ? 1 : revision.taskCount
   if (
     dataset.name !== revision.dataset
     || dataset.ref !== revision.datasetRef
@@ -1418,6 +1423,7 @@ function helpText() {
     `  prepare --dsh-checkout <path>\n` +
     `  oracle [--task terminal-bench/<name>] [--jobs-dir <path>]\n` +
     `  wiring --home <path> --dsh-checkout <path> --profile <id> --semantic-manifest <path> [--task terminal-bench/<name>]\n` +
+    `  sweep --home <path> --dsh-checkout <path> --profile <id> --semantic-manifest <path>\n` +
     `  full --home <path> --dsh-checkout <path> --profile <id> --semantic-manifest <path>\n\n` +
-    `The full command is fixed to Harbor ${revision.harborVersion}, the 89-task Terminal-Bench 2.0 dataset, k=5, one concurrent trial, and zero Harbor retries.\n`
+    `The sweep command is a fixed 89-task, k=1 phase gate; full is fixed to Harbor ${revision.harborVersion}, the 89-task Terminal-Bench 2.0 dataset, k=5, one concurrent trial, and zero Harbor retries.\n`
 }

@@ -11,12 +11,13 @@
 | Harbor | `0.22.0` |
 | Dataset | `revision.json` 中 digest 固定的 `terminal-bench/terminal-bench-2` |
 | Tasks | 89 |
-| 正式尝试次数 | 每题 `k=5`，共 445 trials |
+| Phase gate | `sweep`：每题 `k=1`，共 89 trials，要求每题 verifier reward 为 1 |
+| 正式尝试次数 | `full`：每题 `k=5`，共 445 trials |
 | Harbor trial retries | 0 |
 
 runner 不修改官方 task instruction、timeout、resources、environment 或 verifier。task container 只获得一个随机、仅允许 OpenAI completions 与 private Harness provider turns 的 task-scoped bearer；host daemon admin bearer 和 provider browser session 始终留在 host。
 
-对于这条组合 lane，bridge 会把 DSH parent 的第一次 decision 约束为一个结构性只读的 `read` inspection，再把下一次符合条件的 decision 约束为 DSH 原生 named `subagent` tool。child Tokenless Harness run 会先在官方 task filesystem 内执行且只执行一次只读 workspace search probe，然后执行一次综合只读 inspection batch，并在下一 turn 返回当前最佳的 task-relevant result。DSH parent 必须在最终验证前合并执行彼此独立且合规的改动；如果允许的改动集合有限且存在本地 verifier，则用一次 terminal script 搜索，而不是每个 model turn 只尝试一个候选。benchmark child registry 只暴露 `workspace.read` 与 `workspace.search`，且不提供 MCP server 或可写 tool binding，因此 DSH parent 继续负责 task mutation 与最终验证。这些约束只属于 benchmark adapter；官方 task text 与普通 Tokenless Harness 行为都不改变。
+对于这条组合 lane，bridge 会把 DSH parent 的第一次 decision 约束为一个结构性只读的 `read` inspection，再把下一次符合条件的 decision 约束为 DSH 原生 named `subagent` tool。child Tokenless Harness run 会先在官方 task filesystem 内执行且只执行一次只读 workspace search probe，然后执行一次综合只读 inspection batch，并在下一 turn 返回当前最佳的 task-relevant result。DSH parent 必须在最终验证前合并执行彼此独立且合规的改动；如果允许的改动集合有限且存在本地 verifier，则只使用一次 terminal search script，搜索与最终验证合计最多执行 64 次 verifier execution（包括最后一次 final verification），总计最多 120 秒，不得枚举 power set 或启动第二次搜索。benchmark child registry 只暴露 `workspace.read` 与 `workspace.search`，且不提供 MCP server 或可写 tool binding，因此 DSH parent 继续负责 task mutation 与最终验证。这些约束只属于 benchmark adapter；官方 task text 与普通 Tokenless Harness 行为都不改变。
 
 只有 host 观察到同一 run 内严格有序的 HTTP/process chain 才能证明 deep integration：最初的 parent 只读 inspection completion 与 routing 完成；随后一个 parent completion request 被强制使用原生 named `subagent` tool 并成功完成；child bootstrap turn 及其 terminal provider routing 完成；同一 provider conversation 上可以执行一个或多个 child continuation turn，并分别记录 terminal routing；随后出现更晚的 parent completion/routing，最后 DSH process 返回。continuation boundary 证明 child result 确实回到了 parent flow，但不声称拥有直接 child-tool execution trace。DSH transport boundary 只对 provider response Markdown 做必要规范化，以便严格校验 OpenAI-compatible JSON envelope。
 
@@ -25,6 +26,12 @@ runner 不修改官方 task instruction、timeout、resources、environment 或 
 ```sh
 npm run benchmark:terminalbench -- inspect
 npm run benchmark:terminalbench -- oracle --jobs-dir <path>
+npm run benchmark:terminalbench -- sweep \
+  --home <tokenless-api-home> \
+  --dsh-checkout <deepseek-harness-checkout> \
+  --profile web-ai \
+  --semantic-manifest <external-semantic-manifest.json> \
+  --jobs-dir <path>
 npm run benchmark:terminalbench -- wiring \
   --home <tokenless-api-home> \
   --dsh-checkout <deepseek-harness-checkout> \
@@ -39,7 +46,7 @@ npm run benchmark:terminalbench -- full \
   --jobs-dir <path>
 ```
 
-`wiring` 以 `k=1` 运行一道未改写的官方 task。`full` 固定运行全部 89 tasks、`k=5`、单并发、零 Harbor retry。仓库提交的 task manifest 会把每个官方 task name 同时绑定到 Harbor task ref 和完整 instruction digest。两个命令还要求一个 external semantic manifest：必须有 89 个按顺序排列、与这些 instruction digest 完全匹配的 entry；每个 entry 只能包含完整 instruction digest、`preferredProvider`、有界 `taskType`、`complexity`（`low`/`medium`/`high`）和 `truncated`，并带确定性的 whole-manifest digest。DSH adapter identity 保持固定，但 parent 和 child 的每次 model turn 都请求 `tokenless/auto`；manifest preference 只是 advisory，只能在 operation router 当前最高 eligibility tier 内重排 provider。benchmark profile 禁用 DSH model-request retry，并让 Tokenless API deadline 先完成终态处理，因此 submitted turn 的 exact local job 仍在运行时绝不会被 replay。每个 job 都写入不含 secret 的 `tokenless-run.json` 并记录 semantic manifest digest；正式报告把各 provider routing counts 与官方 verifier rewards 分开，并公开 `deepIntegration.trialsWithCompleteChain`。正式报告还要求全部 445 个 verifier rewards 齐全，Harbor trial error、cancellation 与 retry 均为零；DSH command failure 属于 agent outcome，会进入官方 verifier，而不会被误归类为 infrastructure exception。
+`wiring` 以 `k=1` 运行一道未改写的官方 task。`sweep` 会对全部 89 个未改写官方 task 各运行一次（`k=1`、单并发、零 Harbor retry），并作为 phase gate：只有 89 个 trial 全部 settle、没有 infrastructure error/cancellation/retry、每条 deep chain 完整且 verifier reward 全部为 `1` 时才算成功。`full` 固定运行全部 89 tasks、`k=5`、单并发、零 Harbor retry。仓库提交的 task manifest 会把每个官方 task name 同时绑定到 Harbor task ref 和完整 instruction digest。三个 DeepSeek Harness 命令都要求一个 external semantic manifest：必须有 89 个按顺序排列、与这些 instruction digest 完全匹配的 entry；每个 entry 只能包含完整 instruction digest、`preferredProvider`、有界 `taskType`、`complexity`（`low`/`medium`/`high`）和 `truncated`，并带确定性的 whole-manifest digest。DSH adapter identity 保持固定，但 parent 和 child 的每次 model turn 都请求 `tokenless/auto`；manifest preference 只是 advisory，只能在 operation router 当前最高 eligibility tier 内重排 provider。benchmark profile 禁用 DSH model-request retry，并让 Tokenless API deadline 先完成终态处理，因此 submitted turn 的 exact local job 仍在运行时绝不会被 replay。每个 job 都写入不含 secret 的 `tokenless-run.json` 并记录 semantic manifest digest；正式报告把各 provider routing counts 与 official verifier rewards 分开，并公开 `deepIntegration.trialsWithCompleteChain`。DSH command failure 属于 agent outcome，会进入 official verifier，而不会被误归类为 infrastructure exception；sweep 失败时保留 job evidence 且命令返回 nonzero。
 
 `deepIntegration` 报告 host 观察到的 parent completion request、child bootstrap/continuation start、terminal provider routing 与完整有序 chain。只有完整 response body 已成功 relay 后，route 才会成为 terminal evidence。`providerRouting.scopes.parent.providers` 和 `providerRouting.scopes.child.providers` 将 parent 与 child 分开计数：`routed`、`attempted`、`submitted`、`rateLimited`、`fallbackOut`、`completed`、`failed`、`preferenceRequested`、`preferenceHonored`，以及估算 input/output/total tokens。`fallbackOut` 表示 source provider 被放弃并转向 fallback，同时计为 `failed=1`；`rate_limit` attempt 的 `rateLimited` 只计入该 source provider。最终 provider counters 只描述它自身的 terminal outcome。
 
