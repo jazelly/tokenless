@@ -228,7 +228,7 @@ The provider-session machine is intentionally separate from the daemon job state
 - The provider-session machine handles one page observation cycle: `wait`, `continue_guest`, `ready(guest|account|unknown)`, `handoff`, or `terminal`.
 - The daemon records business facts with states `queued`, `running`, `waiting_for_user`, `succeeded`, `failed`, `canceled`, and `timed_out`; active execution remains in the daemon process.
 - A provider `handoff` becomes the current execution's `waiting_for_user` state. It does not create a replacement job.
-- A plan, quota, rate-limit, maintenance, region, capability-UI, navigation, or surface-readiness failure remains structurally classified and is not collapsed into authentication. A safe pre-submit provider-scoped failure may consume the next capability-compatible fallback route; ambiguous external state and post-submission failures never do.
+- A plan, quota, rate-limit, maintenance, region, capability-UI, navigation, or surface-readiness failure remains structurally classified and is not collapsed into authentication. A safe pre-submit provider-scoped failure may consume the next capability-compatible fallback route. The only broader completion boundary is a `tokenless/auto` new-conversation request: it cancels a submitted provider that exhausts its bounded share of the existing request deadline before starting the next untried route, with each route attempted at most once. Ambiguous external state, exact providers, and provider-specific continuation remain terminal.
 
 ## Local control plane
 

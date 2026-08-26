@@ -462,7 +462,7 @@ export class ApiProxyAdapter {
     providerBackend,
     capabilityRoute,
     fallbackRoutes,
-    structuredControlStrategy,
+    structuredControlStrategy: initialStructuredControlStrategy,
     semanticPreference,
     signal,
   }: {
@@ -480,61 +480,119 @@ export class ApiProxyAdapter {
     semanticPreference: string | null
     signal: AbortSignal | undefined
   }): Promise<RawApiProxyCompletion> {
-    const requestJson = createManagedPlaywrightJobRequest({
-      provider: request.provider,
-      taskId,
-      browserVisibility: 'auto',
-      userHandoff: false,
-      ...(semanticPreference === null ? {} : { semanticPreference }),
-      executionMode,
-      capabilityRoute,
-      fallback: fallbackRoutes.length === 0 ? null : {
-        protocol: 'tokenless.provider-fallback.v1',
-        mode: 'automatic',
-        replay: 'from_start',
-        alternatives: fallbackRoutes.slice(0, 5).map((route) => ({
-          provider: route.provider,
-          target: {
-            kind: 'provider_home' as const,
-            url: getProviderInstanceById(route.provider)!.descriptor.navigation.homeUrl,
-          },
-          capabilityRoute: route.capabilityRoute,
-        })),
-      },
-      ...(targetUrl ? { target: { kind: 'provider_home' as const, url: targetUrl } } : {}),
-      actions: [
-        createVisibleActionRequest({
-          provider: request.provider,
-          action: VISIBLE_ACTIONS.PROMPT_INPUT,
-          payload: { text: promptText },
-        }),
-        createVisibleActionRequest({ provider: request.provider, action: VISIBLE_ACTIONS.PROMPT_SUBMIT, payload: {} }),
-        createVisibleActionRequest({ provider: request.provider, action: VISIBLE_ACTIONS.RESPONSE_READ, payload: {} }),
-      ],
-    })
-    const job = this.store.createJob({
-      provider: request.provider,
-      request_json: requestJson,
-      profile_id: profileId,
-    })
-    await this.wake()
-    const routingMode = request.auto ? 'auto' : 'explicit'
-    const settled = await this.awaitTerminalJob(job.job_id, signal, routingMode)
-    const result = visibleResponse(settled.result_json)
-    if (settled.status !== 'succeeded' || !result) throw apiProxyJobFailure(settled, routingMode)
-    const routing = routingFromJob(settled, routingMode)
-    return {
-      text: result.text,
-      base: {
-        provider: settled.provider,
-        citations: result.citations,
-        jobId: settled.job_id,
-        conversationMode,
+    let currentRequest = request
+    let currentCapabilityRoute = capabilityRoute
+    let currentTargetUrl = targetUrl
+    let currentStructuredControlStrategy = initialStructuredControlStrategy
+    let remainingRoutes = [...fallbackRoutes.slice(0, 5)]
+    let carriedAttempts: ApiProxyRoutingAttempt[] = []
+    const requestDeadline = Date.now() + this.timeoutMs
+    for (;;) {
+      const requestJson = createManagedPlaywrightJobRequest({
+        provider: currentRequest.provider,
+        taskId,
+        browserVisibility: 'auto',
+        userHandoff: false,
+        ...(semanticPreference === null ? {} : { semanticPreference }),
         executionMode,
-        providerBackend,
-        structuredControlStrategy,
-        ...(routing ? { routing } : {}),
-      },
+        capabilityRoute: currentCapabilityRoute,
+        fallback: remainingRoutes.length === 0 ? null : {
+          protocol: 'tokenless.provider-fallback.v1',
+          mode: 'automatic',
+          replay: 'from_start',
+          alternatives: remainingRoutes.map((route) => ({
+            provider: route.provider,
+            target: {
+              kind: 'provider_home' as const,
+              url: getProviderInstanceById(route.provider)!.descriptor.navigation.homeUrl,
+            },
+            capabilityRoute: route.capabilityRoute,
+          })),
+        },
+        ...(carriedAttempts.length === 0 ? {} : {
+          routingObservation: {
+            protocol: 'tokenless.provider-routing-observation.v1',
+            attempts: carriedAttempts,
+          },
+        }),
+        ...(currentTargetUrl ? { target: { kind: 'provider_home' as const, url: currentTargetUrl } } : {}),
+        actions: [
+          createVisibleActionRequest({
+            provider: currentRequest.provider,
+            action: VISIBLE_ACTIONS.PROMPT_INPUT,
+            payload: { text: promptText },
+          }),
+          createVisibleActionRequest({ provider: currentRequest.provider, action: VISIBLE_ACTIONS.PROMPT_SUBMIT, payload: {} }),
+          createVisibleActionRequest({ provider: currentRequest.provider, action: VISIBLE_ACTIONS.RESPONSE_READ, payload: {} }),
+        ],
+      })
+      const job = this.store.createJob({
+        provider: currentRequest.provider,
+        request_json: requestJson,
+        profile_id: profileId,
+      })
+      await this.wake()
+      const routingMode = currentRequest.auto ? 'auto' : 'explicit'
+      const remainingRequestMs = Math.max(1, requestDeadline - Date.now())
+      const attemptTimeoutMs = currentRequest.auto && remainingRoutes.length > 0
+        ? Math.max(1, Math.floor(remainingRequestMs / (remainingRoutes.length + 1)))
+        : remainingRequestMs
+      let settled: Job
+      try {
+        settled = await this.awaitTerminalJob(job.job_id, signal, routingMode, attemptTimeoutMs)
+      } catch (error) {
+        const canceled = this.store.getJob(job.job_id)
+        const observedAttempts = routingAttemptsFromRequest(canceled.request_json)
+        const usedProviders = new Set([
+          ...(observedAttempts ?? []).map((attempt) => attempt.provider),
+          canceled.provider,
+        ])
+        const eligibleRoutes = remainingRoutes.filter((route) => !usedProviders.has(route.provider))
+        const nextRoute = eligibleRoutes[0]
+        if (
+          !(error instanceof ApiProxyError) ||
+          error.code !== 'completion_timeout' ||
+          !currentRequest.auto ||
+          conversationMode !== 'new-conversation' ||
+          canceled.provider_submitted_at === null ||
+          observedAttempts === null ||
+          !nextRoute ||
+          observedAttempts.length >= 5 ||
+          Date.now() >= requestDeadline
+        ) throw error
+        carriedAttempts = [
+          ...observedAttempts,
+          {
+            provider: canceled.provider,
+            outcome: 'fallback',
+            reason: 'unavailable',
+            observedAt: new Date().toISOString(),
+            providerSubmitted: true,
+          },
+        ]
+        currentRequest = { ...request, provider: nextRoute.provider, upstreamModel: '' }
+        currentCapabilityRoute = nextRoute.capabilityRoute
+        currentTargetUrl = null
+        currentStructuredControlStrategy = structuredControlStrategy(currentRequest, nextRoute)
+        remainingRoutes = eligibleRoutes.slice(1)
+        continue
+      }
+      const result = visibleResponse(settled.result_json)
+      if (settled.status !== 'succeeded' || !result) throw apiProxyJobFailure(settled, routingMode)
+      const routing = routingFromJob(settled, routingMode)
+      return {
+        text: result.text,
+        base: {
+          provider: settled.provider,
+          citations: result.citations,
+          jobId: settled.job_id,
+          conversationMode,
+          executionMode,
+          providerBackend,
+          structuredControlStrategy: currentStructuredControlStrategy,
+          ...(routing ? { routing } : {}),
+        },
+      }
     }
   }
 
@@ -542,8 +600,9 @@ export class ApiProxyAdapter {
     jobId: string,
     signal: AbortSignal | undefined,
     modeOverride: ApiProxyRouting['mode'],
+    timeoutMs = this.timeoutMs,
   ): Promise<Job> {
-    const deadline = Date.now() + this.timeoutMs
+    const deadline = Date.now() + timeoutMs
     for (;;) {
       const job = this.store.getJob(jobId)
       if (isTerminalJobStatus(job.status)) return job
@@ -564,7 +623,7 @@ export class ApiProxyAdapter {
         throw new ApiProxyError(
           504,
           'completion_timeout',
-          `The local job ${jobId} was canceled after the provider did not respond within ${Math.round(this.timeoutMs / 1000)}s.`,
+          `The local job ${jobId} was canceled after the provider did not respond within ${Math.round(timeoutMs / 1000)}s.`,
           null,
           routingFromJob(settled, modeOverride),
         )

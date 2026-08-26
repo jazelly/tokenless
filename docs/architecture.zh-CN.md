@@ -228,6 +228,8 @@ Public capability vocabulary、provider mapping、evidence ladder 与 extension 
 
 Native Project/workspace、file upload、model/effort selection、conversation continuation 与 provider-specific controls 都必须有对应的 real-provider evidence。没有证据的 capability 必须报告为 unavailable 或 unknown，不能靠猜测进入 route table。
 
+Plan、quota、rate-limit、maintenance、region、capability UI、navigation 与 surface-readiness failure 都保持结构化分类，不会被压缩成 authentication。Safe pre-submit provider-scoped failure 可以使用下一条 capability-compatible fallback route。唯一更宽的 completion boundary 是 `tokenless/auto` new-conversation request：submitted provider 用完现有 request deadline 中分配给它的有界份额后，会先被 cancel，再启动下一条尚未尝试的 route；每条 route 最多尝试一次。Ambiguous external state、精确 provider 与 provider-specific continuation 仍是 terminal。
+
 ## Browser visibility policy
 
 Browser visibility 由 global fallback 与 profile-scoped preference 决定，默认使用 `auto`。Headless job 不能因为 blocker 静默提交替代 request；需要用户处理时，当前 execution 进入 `waiting_for_user`，保留同一个 `jobId`、`taskId` 与 profile identity；`headless` 模式则清晰失败。Chromium sandbox 保持开启，CDP 是 managed browser control boundary。

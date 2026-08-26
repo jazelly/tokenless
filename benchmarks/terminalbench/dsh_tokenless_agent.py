@@ -1285,6 +1285,8 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
             connection.request(self.command, self.path, body=body, headers=headers)
             upstream = connection.getresponse()
             control_body = None
+            parent_error_body = None
+            parent_route_recorded = False
             committed_provider_turn = None
             if provider_operation is not None:
                 control_body = self._read_bounded_response(upstream)
@@ -1308,6 +1310,19 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
                         provider_operation["inputText"],
                         provider_operation["attachmentRefs"],
                     )
+            elif (
+                path in ALLOWED_COMPLETION_PATHS
+                and self.command == "POST"
+                and upstream.status >= 400
+            ):
+                parent_error_body = self._read_bounded_response(upstream)
+                self.server.record_upstream_route(  # type: ignore[attr-defined]
+                    upstream,
+                    "parent",
+                    (body or b"").decode("utf-8"),
+                    "",
+                )
+                parent_route_recorded = True
             self.send_response(upstream.status)
             for name, value in upstream.getheaders():
                 if name.lower() not in {
@@ -1319,6 +1334,8 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
                     self.send_header(name, value)
             if provider_operation is not None:
                 self.send_header("Content-Length", str(len(control_body or b"")))
+            elif parent_error_body is not None:
+                self.send_header("Content-Length", str(len(parent_error_body)))
             else:
                 content_length = upstream.getheader("Content-Length")
                 if content_length is not None:
@@ -1338,6 +1355,9 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
                     self.server.record_child_turn_started(  # type: ignore[attr-defined]
                         provider_operation["mode"]
                     )
+            elif parent_error_body is not None:
+                self.wfile.write(parent_error_body)
+                self.wfile.flush()
             else:
                 relayed_body = bytearray()
                 relayed_body_complete = True
@@ -1348,7 +1368,11 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
                         relayed_body_complete = False
                     self.wfile.write(chunk)
                     self.wfile.flush()
-                if path in ALLOWED_COMPLETION_PATHS and self.command == "POST":
+                if (
+                    path in ALLOWED_COMPLETION_PATHS
+                    and self.command == "POST"
+                    and not parent_route_recorded
+                ):
                     if subagent_claimed:
                         subagent_succeeded = upstream.status < 400
                         if subagent_succeeded:
