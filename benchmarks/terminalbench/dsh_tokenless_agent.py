@@ -35,7 +35,7 @@ SEMANTIC_MANIFEST_SCHEMA = "tokenless.terminalbench-semantic-manifest.v1"
 INSTRUCTION_DIGEST = "sha256:5b6a2e01c29b8f215daa2e430f75d2a12c3c4ffc627d8cf4ebc1b38cd0d353ea"
 TASK_REF_DIGEST = "sha256:82cddb9ea94d792455d3e32b3c8a60ed73003714ed01785ec3b1ec5c580bccba"
 CHANNEL_PROTOCOL = "tokenless.terminalbench-channel.v1"
-AUDIT_PROTOCOL = "tokenless.terminalbench-deep-audit.v3"
+AUDIT_PROTOCOL = "tokenless.terminalbench-deep-audit.v4"
 PROXY_PORT = 18765
 MAX_BRIDGE_BODY_BYTES = 8 * 1024 * 1024
 PROVIDER_ID_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
@@ -1692,7 +1692,10 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
                 "- id: system-prompt",
                 "  config:",
                 "    persona: >-",
-                "      You are a coding agent powered by the {{model}} model. Your working directory is {{cwd}}. Start each user task with exactly one read tool call to inspect the most relevant workspace file without changing it. Then call subagent exactly once with a self-contained request to inspect the current workspace with its tools and return concrete task-relevant analysis. Wait for that result and use it only as input. Then use your own tools to complete the requested workspace changes and verify the observable result. Batch independent permitted changes into one edit or terminal command and verify them together. When a task has a finite set of allowed changes and a local verifier, use one terminal script to search the allowed candidates, run the verifier, and keep a passing workspace state; do not alternate one candidate edit and one verifier call across model turns. Before running that script, calculate its maximum candidate and verifier counts. Never enumerate a power set, never use a loop whose upper bound is the full candidate count, and never run more than 64 total verifier executions, including any final verification, or 120 seconds total across search and final verification. If that bounded search does not pass, preserve the best measured task-permitted candidate, perform one final verification within that same budget, and continue without launching another search. Keep any temporary search machinery outside protected workspace files and apply only task-permitted workspace changes. Never stop at analysis, instructions for the user, or a claim of success without executing the task. Do not delegate more than once.",
+                "      You are a coding agent powered by the {{model}} model. Your working directory is {{cwd}}. Start each user task with exactly one read tool call to inspect the most relevant workspace file without changing it. Then call subagent exactly once with a self-contained request to inspect the current workspace with its tools and return concrete task-relevant analysis. Wait for that result and use it only as input. Then use your own tools to complete the requested workspace changes and verify the observable result. Batch independent permitted changes into one edit or terminal command and verify them together. When a task has a finite set of allowed changes and a local verifier, use one terminal script to search the allowed candidates, run the verifier, and keep a passing workspace state; do not alternate one candidate edit and one verifier call across model turns. Before the first candidate, the script itself must set one monotonic deadline and one total verifier counter. It must increment that counter for every verifier execution, including any final verification, stop cleanly at the deadline or at 64 total executions, track the best candidate using a numeric verifier-derived result, and preserve that best candidate. Never enumerate a power set, never use a loop whose upper bound is the full candidate count, and never launch a second search. If the bounded search does not pass, perform one final verification only when that same counter and deadline still permit it, then continue with the preserved best candidate. Keep any temporary search machinery outside protected workspace files and apply only task-permitted workspace changes. Never stop at analysis, instructions for the user, or a claim of success without executing the task. Do not delegate more than once.",
+                "- id: bash-sandbox",
+                "  config:",
+                "    timeoutMs: 120000",
                 "- id: llm-deepseek",
                 "  config:",
                 "    apiKeyEnv: DEEPSEEK_API_KEY",
@@ -1785,6 +1788,7 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
         )
         bridge_thread.start()
         bridge_port = int(bridge.server_address[1])
+        dsh_outcome = "failed"
         try:
             await self._start_container_proxy(
                 environment, bridge_port, channel_token
@@ -1814,6 +1818,7 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
                     },
                     cwd=environment.task_env_config.workdir,
                 )
+                dsh_outcome = "succeeded"
             except NonZeroAgentExitCodeError:
                 self._write_dsh_classification(
                     "dsh_nonzero_exit", NonZeroAgentExitCodeError.__name__
@@ -1823,9 +1828,11 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
                     "dsh_execution_error", type(error).__name__
                 )
                 raise
-            bridge.record_event({"type": "dsh.parent.completed"})
         finally:
             try:
+                bridge.record_event(
+                    {"type": "dsh.parent.completed", "outcome": dsh_outcome}
+                )
                 await self._stop_container_proxy(environment)
             finally:
                 bridge.shutdown()

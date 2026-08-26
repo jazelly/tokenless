@@ -312,8 +312,22 @@ async function runDeepSeekLane(kind, args) {
   })
   if (result.code !== 0) throw new Error(`Harbor ${kind} run exited ${result.code}; evidence is preserved at ${jobDir}.`)
   assertComplete(report, expectedTrials)
-  if (report.deepIntegration.trialsWithCompleteChain !== expectedTrials) {
-    throw new Error(`The ${kind} run is missing complete host-observed DSH parent -> child Tokenless Harness provider-turn evidence for every trial; evidence is preserved at ${jobDir}.`)
+  if (
+    kind === 'sweep'
+    && report.deepIntegration.trialsWithCompleteChain !== expectedTrials
+  ) {
+    throw new Error(`The Terminal-Bench sweep phase gate requires complete host-observed DSH parent -> child Tokenless Harness provider-turn evidence for every trial; evidence is preserved at ${jobDir}.`)
+  }
+  if (
+    kind === 'sweep'
+    && (
+      report.deepIntegration.successfulDshParents !== expectedTrials
+      || report.deepIntegration.failedDshParents !== 0
+      || report.deepIntegration.unsettledParentCompletionRequests !== 0
+      || report.deepIntegration.forcedParentCompletionRequests !== expectedTrials
+    )
+  ) {
+    throw new Error(`The Terminal-Bench sweep phase gate requires one successful DSH parent completion, one forced subagent request, and one terminal parent routing event per trial; evidence is preserved at ${jobDir}.`)
   }
   if (kind === 'sweep' && report.rewards.passed !== expectedTrials) {
     throw new Error(`The Terminal-Bench sweep phase gate requires verifier reward 1 for all ${expectedTrials} trials; evidence is preserved at ${jobDir}.`)
@@ -569,8 +583,11 @@ function validateResolvedRun({
     throw new Error(`Harbor resolved max retries=${String(resolvedMaxRetries)}; expected zero.`)
   }
   if (kind !== 'oracle') {
-    if (deepTrials.length !== expectedTrials || deepTrials.some((trial) => trial.completeChains !== 1)) {
-      throw new Error('Every non-oracle trial must have exactly one complete host-observed deep-integration chain.')
+    if (deepTrials.length !== expectedTrials) {
+      throw new Error(`Every non-oracle trial must have one deep-integration audit record; found ${deepTrials.length} for ${expectedTrials} trials.`)
+    }
+    if (kind === 'sweep' && deepTrials.some((trial) => trial.completeChains !== 1)) {
+      throw new Error('Every Terminal-Bench sweep trial must have exactly one complete host-observed deep-integration chain.')
     }
     validateDeepSeekAgent(jobConfig, {
       runtime_archive: runtimeArchive,
@@ -859,6 +876,9 @@ function deepIntegrationStats(events, trial) {
     'provider.routing',
     'dsh.parent.completed',
   ])
+  if (events.length === 0) {
+    throw new Error('Deep integration audit evidence is empty.')
+  }
   let nextParentOrdinal = 1
   for (const [index, event] of events.entries()) {
     if (!validTypes.has(event.type) || event.sequence !== index + 1) {
@@ -884,8 +904,13 @@ function deepIntegrationStats(events, trial) {
       }
     } else if (event.type === 'provider.routing') {
       validateProviderRoutingEvent(event)
-    } else if (Object.keys(event).some((key) => !['protocol', 'sequence', 'type'].includes(key))) {
-      throw new Error('Host DSH process evidence is invalid.')
+    } else if (event.type === 'dsh.parent.completed') {
+      if (
+        Object.keys(event).some((key) => !['protocol', 'sequence', 'type', 'outcome'].includes(key))
+        || !['succeeded', 'failed'].includes(event.outcome)
+      ) {
+        throw new Error('Host DSH process evidence is invalid.')
+      }
     }
   }
 
@@ -893,13 +918,10 @@ function deepIntegrationStats(events, trial) {
   const childStarts = events.filter((event) => event.type === 'child.turn.started')
   const routing = events.filter((event) => event.type === 'provider.routing')
   const estimatorRevisions = new Set(routing.map((event) => event.tokenEstimate.estimatorRevision))
-  if (estimatorRevisions.size !== 1) {
+  if (estimatorRevisions.size > 1) {
     throw new Error('Deep integration token estimates must use one estimator revision per trial.')
   }
   const forcedParents = parentRequests.filter((event) => event.forcedSubagent === true)
-  if (forcedParents.length !== 1) {
-    throw new Error('Deep integration requires exactly one successful forced parent subagent dispatch.')
-  }
   const firstForcedParent = forcedParents[0]
   const initialParentRequest = firstForcedParent?.ordinal === 2
     ? parentRequests.find((event) => event.ordinal === 1 && event.forcedSubagent === false)
@@ -967,9 +989,25 @@ function deepIntegrationStats(events, trial) {
     ))
     : undefined
   const parentCompleted = laterParentRoute
-    ? events.find((event) => event.type === 'dsh.parent.completed' && event.sequence > laterParentRoute.sequence)
+    ? events.find((event) => (
+      event.type === 'dsh.parent.completed'
+      && event.sequence > laterParentRoute.sequence
+    ))
     : undefined
   const completeChains = parentCompleted ? 1 : 0
+  const terminalParentRoutes = routing.filter((event) => (
+    event.scope === 'parent'
+    && (event.outcome === 'completed' || event.outcome === 'failed')
+  ))
+  const unsettledParentCompletionRequests = parentRequests.reduce((count, request, index) => {
+    const nextRequest = parentRequests[index + 1]
+    const settled = terminalParentRoutes.some((route) => (
+      route.sequence > request.sequence
+      && (nextRequest === undefined || route.sequence < nextRequest.sequence)
+    ))
+    return count + (settled ? 0 : 1)
+  }, 0)
+  const dshParentCompletions = events.filter((event) => event.type === 'dsh.parent.completed')
   return {
     trial,
     parentCompletionRequests: parentRequests.length,
@@ -980,9 +1018,12 @@ function deepIntegrationStats(events, trial) {
     providerRoutingEvents: routing.length,
     completedParentRouting: routing.filter((event) => event.scope === 'parent' && event.outcome === 'completed').length,
     completedChildRouting: routing.filter((event) => event.scope === 'child' && event.outcome === 'completed').length,
-    parentCompleted: events.filter((event) => event.type === 'dsh.parent.completed').length,
+    parentCompleted: dshParentCompletions.length,
+    successfulDshParents: dshParentCompletions.filter((event) => event.outcome === 'succeeded').length,
+    failedDshParents: dshParentCompletions.filter((event) => event.outcome === 'failed').length,
+    unsettledParentCompletionRequests,
     completeChains,
-    tokenEstimatorRevision: [...estimatorRevisions][0],
+    tokenEstimatorRevision: estimatorRevisions.size === 1 ? [...estimatorRevisions][0] : null,
     providerRouting: providerRoutingStats(events),
     limitObservations: limitObservationEvents(events),
   }
@@ -999,6 +1040,9 @@ function aggregateDeepIntegration(trials) {
     'completedParentRouting',
     'completedChildRouting',
     'parentCompleted',
+    'successfulDshParents',
+    'failedDshParents',
+    'unsettledParentCompletionRequests',
     'completeChains',
   ]
   return {
@@ -1259,13 +1303,26 @@ function aggregateProviderRouting(trials) {
     ...event,
   }))).sort((left, right) => left.observedAt.localeCompare(right.observedAt) || left.trial.localeCompare(right.trial))
   const estimated = Object.values(scopes).flatMap((scope) => Object.values(scope.providers))
-  const estimatorRevisions = new Set(trials.map((trial) => trial.tokenEstimatorRevision))
+  const estimatorRevisions = new Set(
+    trials
+      .map((trial) => trial.tokenEstimatorRevision)
+      .filter((revisionValue) => revisionValue !== null && revisionValue !== undefined),
+  )
   if (trials.length === 0) {
     return {
       protocol: revision.routingProtocol,
       mode: 'not_applicable',
       tokenUsage: { availability: 'not_applicable' },
       limitObservations: { events: [], count: 0 },
+      scopes,
+    }
+  }
+  if (estimatorRevisions.size === 0) {
+    return {
+      protocol: revision.routingProtocol,
+      mode: 'not_applicable',
+      tokenUsage: { availability: 'not_applicable' },
+      limitObservations: { events: limitEvents, count: limitEvents.length },
       scopes,
     }
   }
