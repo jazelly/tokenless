@@ -18,7 +18,7 @@ runner 不修改官方 task instruction、timeout、resources、environment 或 
 
 对于这条组合 lane，bridge 会把 DSH parent 第一次符合条件的 decision 约束为 DSH 原生 named `subagent` tool。child Tokenless Harness run 会先在官方 task filesystem 内执行且只执行一次只读 workspace search probe，然后继续 parent 提供的、内容完整的 delegated inspection，并把真实的 task-relevant result 交回 parent。benchmark child registry 只暴露 `workspace.read` 与 `workspace.search`，且不提供 MCP server 或可写 tool binding，因此 DSH parent 继续负责 task mutation 与最终验证。这些约束只属于 benchmark adapter；官方 task text 与普通 Tokenless Harness 行为都不改变。
 
-只有 host 观察到同一 run 内严格有序的 HTTP/process chain 才能证明 deep integration：parent completion request 被强制使用原生 named `subagent` tool 并成功完成；child bootstrap turn 及其 terminal provider routing 完成；child continuation turn 及其 terminal provider routing 完成；随后出现更晚的 parent completion/routing，最后 DSH process 返回。continuation boundary 证明 child result 确实回到了 parent flow，但不声称拥有直接 child-tool execution trace。DSH transport boundary 只对 provider response Markdown 做必要规范化，以便严格校验 OpenAI-compatible JSON envelope。
+只有 host 观察到同一 run 内严格有序的 HTTP/process chain 才能证明 deep integration：parent completion request 被强制使用原生 named `subagent` tool 并成功完成；child bootstrap turn 及其 terminal provider routing 完成；同一 provider conversation 上可以执行一个或多个 child continuation turn，并分别记录 terminal routing；随后出现更晚的 parent completion/routing，最后 DSH process 返回。continuation boundary 证明 child result 确实回到了 parent flow，但不声称拥有直接 child-tool execution trace。DSH transport boundary 只对 provider response Markdown 做必要规范化，以便严格校验 OpenAI-compatible JSON envelope。
 
 ## 命令
 

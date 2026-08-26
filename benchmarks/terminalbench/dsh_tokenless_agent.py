@@ -121,18 +121,16 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         self._provider_state_lock = threading.Lock()
         self._provider_binding_ref: str | None = None
         self._provider_ref: str | None = None
-        self._bootstrap_request_ref: str | None = None
         self._bootstrap_turn_ref: str | None = None
         self._bootstrap_conversation_ref: str | None = None
         self._bootstrap_succeeded = False
-        self._bootstrap_terminal = False
-        self._continuation_request_ref: str | None = None
         self._continuation_turn_ref: str | None = None
         self._continuation_succeeded = False
-        self._continuation_terminal = False
         self._provider_request_refs: set[str] = set()
         self._provider_request_stages: dict[str, str] = {}
+        self._provider_request_turn_refs: dict[str, str] = {}
         self._provider_turn_refs: dict[str, str] = {}
+        self._provider_turn_request_refs: dict[str, str] = {}
         self._subagent_dispatch_lock = threading.Lock()
         self._subagent_dispatch_state = "available"
 
@@ -224,7 +222,9 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
                     raise ValueError("provider request reference is unknown")
                 if stage == "bootstrap" and self._continuation_turn_ref is not None:
                     raise ValueError("provider request cancellation is out of sequence")
-                turn_ref = self._turn_ref_for_stage_locked(stage)
+                turn_ref = self._provider_request_turn_refs.get(request_ref)
+                if turn_ref is None or turn_ref != self._turn_ref_for_stage_locked(stage):
+                    raise ValueError("provider request cancellation is out of sequence")
             return {
                 "kind": "request_cancel",
                 "requestRef": request_ref,
@@ -273,7 +273,10 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
                     raise ValueError("provider attachment request is invalid")
                 if self._bootstrap_turn_ref is None:
                     stage = "bootstrap"
-                elif self._bootstrap_succeeded and self._continuation_turn_ref is None:
+                elif self._bootstrap_succeeded and (
+                    self._continuation_turn_ref is None
+                    or self._continuation_succeeded
+                ):
                     stage = "continuation"
                 else:
                     raise ValueError("provider attachment is out of sequence")
@@ -296,7 +299,10 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
                         raise ValueError("provider bootstrap semantic preference does not match the task")
                 elif (
                     not self._bootstrap_succeeded
-                    or self._continuation_turn_ref is not None
+                    or (
+                        self._continuation_turn_ref is not None
+                        and not self._continuation_succeeded
+                    )
                     or start["conversationRef"] != self._bootstrap_conversation_ref
                 ):
                     raise ValueError("provider continuation turn is out of sequence")
@@ -342,30 +348,33 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
                 if mode == "bootstrap":
                     if self._bootstrap_turn_ref is not None:
                         raise ValueError("provider bootstrap response was duplicated")
-                    self._bootstrap_request_ref = operation["requestRef"]
                     self._bootstrap_turn_ref = turn_ref
                     self._bootstrap_conversation_ref = turn["conversationRef"]
                 else:
                     if (
-                        self._continuation_turn_ref is not None
-                        or not self._bootstrap_succeeded
+                        not self._bootstrap_succeeded
+                        or (
+                            self._continuation_turn_ref is not None
+                            and not self._continuation_succeeded
+                        )
                         or turn["conversationRef"] != self._bootstrap_conversation_ref
                     ):
                         raise ValueError("provider continuation response is out of sequence")
-                    self._continuation_request_ref = operation["requestRef"]
                     self._continuation_turn_ref = turn_ref
+                    self._continuation_succeeded = False
                 self._provider_request_refs.add(operation["requestRef"])
                 self._provider_request_stages[operation["requestRef"]] = mode
+                self._provider_request_turn_refs[operation["requestRef"]] = turn_ref
                 self._provider_turn_refs[turn_ref] = mode
+                self._provider_turn_request_refs[turn_ref] = operation["requestRef"]
                 self._apply_turn_lifecycle_locked(mode, turn["lifecycle"])
             return
         if kind in {"turn_read", "turn_cancel"}:
             stage = operation["stage"]
-            expected_request_ref = self._request_ref_for_stage(stage)
             expected_conversation_ref = self._conversation_ref_for_stage(stage)
             turn = self._parse_turn_response(
                 body,
-                expected_request_ref=expected_request_ref,
+                expected_request_ref=operation["requestRef"],
                 expected_provider_ref=self._provider_ref,
                 expected_binding_ref=self._provider_binding_ref,
                 expected_turn_ref=operation["turnRef"],
@@ -396,7 +405,17 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
                 raise ValueError("provider turn reference is unknown")
             if kind == "turn_cancel" and stage == "bootstrap" and self._continuation_turn_ref is not None:
                 raise ValueError("provider turn cancellation is out of sequence")
-        return {"kind": kind, "stage": stage, "turnRef": turn_ref}
+            if turn_ref != self._turn_ref_for_stage_locked(stage):
+                raise ValueError("provider turn operation is out of sequence")
+            request_ref = self._provider_turn_request_refs.get(turn_ref)
+            if request_ref is None:
+                raise ValueError("provider turn request reference is unavailable")
+        return {
+            "kind": kind,
+            "stage": stage,
+            "turnRef": turn_ref,
+            "requestRef": request_ref,
+        }
 
     @staticmethod
     def _json_object(body: bytes | None) -> dict[str, Any]:
@@ -612,26 +631,22 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         if lifecycle not in {"succeeded", "failed", "cancelled"}:
             return
         if stage == "bootstrap":
-            self._bootstrap_terminal = True
             self._bootstrap_succeeded = lifecycle == "succeeded"
         elif stage == "continuation":
-            self._continuation_terminal = True
             self._continuation_succeeded = lifecycle == "succeeded"
         else:
             raise ValueError("provider turn stage is invalid")
 
     def _turn_ref_for_stage_locked(self, stage: str) -> str:
-        turn_ref = self._bootstrap_turn_ref if stage == "bootstrap" else self._continuation_turn_ref
+        if stage == "bootstrap":
+            turn_ref = self._bootstrap_turn_ref
+        elif stage == "continuation":
+            turn_ref = self._continuation_turn_ref
+        else:
+            raise ValueError("provider turn stage is invalid")
         if turn_ref is None:
             raise ValueError("provider turn reference is unavailable")
         return turn_ref
-
-    def _request_ref_for_stage(self, stage: str) -> str:
-        with self._provider_state_lock:
-            request_ref = self._bootstrap_request_ref if stage == "bootstrap" else self._continuation_request_ref
-        if request_ref is None:
-            raise ValueError("provider request reference is unavailable")
-        return request_ref
 
     def _conversation_ref_for_stage(self, stage: str) -> str:
         with self._provider_state_lock:

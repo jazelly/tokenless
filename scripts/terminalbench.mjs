@@ -807,36 +807,37 @@ function deepIntegrationStats(events) {
       && (nextParentRequestAfterForced === undefined || event.sequence < nextParentRequestAfterForced.sequence)
     ))
     : undefined
-  const bootstrapStart = firstParentRoute
-    ? childStarts.find((event) => event.mode === 'bootstrap' && event.sequence > firstParentRoute.sequence)
-    : undefined
-  const nextChildStartAfterBootstrap = bootstrapStart
-    ? childStarts.find((event) => event.sequence > bootstrapStart.sequence)
-    : undefined
-  const bootstrapRoute = bootstrapStart
-    ? routing.find((event) => (
-      event.scope === 'child'
-      && event.outcome === 'completed'
-      && event.sequence > bootstrapStart.sequence
-      && (nextChildStartAfterBootstrap === undefined || event.sequence < nextChildStartAfterBootstrap.sequence)
+  const childWindowEnd = nextParentRequestAfterForced?.sequence ?? Number.POSITIVE_INFINITY
+  const delegatedChildStarts = firstParentRoute
+    ? childStarts.filter((event) => (
+      event.sequence > firstParentRoute.sequence
+      && event.sequence < childWindowEnd
     ))
+    : []
+  const childModesValid = delegatedChildStarts.length >= 2
+    && delegatedChildStarts[0]?.mode === 'bootstrap'
+    && delegatedChildStarts.slice(1).every((event) => event.mode === 'continuation')
+  const completedChildRoutes = childModesValid
+    ? delegatedChildStarts.map((start, index) => {
+      const nextStart = delegatedChildStarts[index + 1]
+      const end = nextStart?.sequence ?? childWindowEnd
+      return routing.find((event) => (
+        event.scope === 'child'
+        && event.outcome === 'completed'
+        && event.sequence > start.sequence
+        && event.sequence < end
+      ))
+    })
+    : []
+  const allChildRoutesComplete = completedChildRoutes.length === delegatedChildStarts.length
+    && completedChildRoutes.every(Boolean)
+  const finalChildRoute = allChildRoutesComplete
+    ? completedChildRoutes[completedChildRoutes.length - 1]
     : undefined
-  const continuationStart = bootstrapRoute
-    ? childStarts.find((event) => event.mode === 'continuation' && event.sequence > bootstrapRoute.sequence)
-    : undefined
-  const nextChildStartAfterContinuation = continuationStart
-    ? childStarts.find((event) => event.sequence > continuationStart.sequence)
-    : undefined
-  const continuationRoute = continuationStart
-    ? routing.find((event) => (
-      event.scope === 'child'
-      && event.outcome === 'completed'
-      && event.sequence > continuationStart.sequence
-      && (nextChildStartAfterContinuation === undefined || event.sequence < nextChildStartAfterContinuation.sequence)
-    ))
-    : undefined
-  const laterParentRequest = continuationRoute
-    ? parentRequests.find((event) => event.sequence > continuationRoute.sequence && event.forcedSubagent === false)
+  const laterParentRequest = finalChildRoute
+    && nextParentRequestAfterForced
+    && nextParentRequestAfterForced.sequence > finalChildRoute.sequence
+    ? nextParentRequestAfterForced
     : undefined
   const nextParentRequestAfterLater = laterParentRequest
     ? parentRequests.find((event) => event.sequence > laterParentRequest.sequence)
