@@ -553,7 +553,7 @@ async function writePrompt(page: Page, composer: Locator, text: string, preferKe
         selection?.removeAllRanges()
         selection?.addRange(range)
       })
-      await page.keyboard.type(text)
+      await page.keyboard.insertText(text)
       if (await composerHasExpectedText(composer, text)) return true
     } catch {
       if (await composerHasExpectedText(composer, text)) return true
