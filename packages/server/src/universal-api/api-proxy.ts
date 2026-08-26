@@ -83,6 +83,11 @@ export type ApiProxyRoutingAttempt = {
   provider: string
   outcome: 'fallback'
   reason: 'rate_limit' | 'capacity' | 'auth' | 'unavailable'
+  observedAt: string
+  providerSubmitted: boolean
+  visibleProof?: string
+  limitWindow?: 'minute' | 'hour' | 'day' | 'week' | 'unknown'
+  retryAfterSeconds?: number
 }
 
 /** Safe provider-routing metadata exposed to benchmark and API observers. */
@@ -95,6 +100,10 @@ export type ApiProxyRouting = {
   attempts: ApiProxyRoutingAttempt[]
   preferenceRequested: string | null
   preferenceHonored: boolean
+  providerSubmitted: boolean
+  visibleProof?: string
+  limitWindow?: 'minute' | 'hour' | 'day' | 'week' | 'unknown'
+  retryAfterSeconds?: number
 }
 
 type NormalizedRequest = {
@@ -594,6 +603,10 @@ function withRouting(
       preferenceHonored: request.auto
         && request.semanticPreference !== null
         && selectedRequest.provider === request.semanticPreference,
+      providerSubmitted: completion.routing?.providerSubmitted ?? true,
+      ...(completion.routing?.visibleProof === undefined ? {} : { visibleProof: completion.routing.visibleProof }),
+      ...(completion.routing?.limitWindow === undefined ? {} : { limitWindow: completion.routing.limitWindow }),
+      ...(completion.routing?.retryAfterSeconds === undefined ? {} : { retryAfterSeconds: completion.routing.retryAfterSeconds }),
     },
   }
 }
@@ -1418,6 +1431,7 @@ export function routingFromJob(job: Job, modeOverride?: ApiProxyRouting['mode'])
   const attempts = routingAttemptsFromRequest(request)
   if (attempts === null) return null
   const rateLimited = job.status !== 'succeeded' && jobIsRateLimited(job)
+  const limitEvidence = routeLimitEvidence(job)
   if (!request || typeof request !== 'object' || Array.isArray(request)) {
     return {
       mode: modeOverride ?? 'explicit',
@@ -1428,6 +1442,8 @@ export function routingFromJob(job: Job, modeOverride?: ApiProxyRouting['mode'])
       attempts,
       preferenceRequested: null,
       preferenceHonored: false,
+      providerSubmitted: job.provider_submitted_at !== null,
+      ...limitEvidence,
     }
   }
   const preferenceRequested = semanticPreferenceFromRequest(request as Record<string, unknown>)
@@ -1465,6 +1481,43 @@ export function routingFromJob(job: Job, modeOverride?: ApiProxyRouting['mode'])
     preferenceHonored: preferenceRequested !== null && (
       job.provider === preferenceRequested || attempts.some((attempt) => attempt.provider === preferenceRequested)
     ),
+    providerSubmitted: job.provider_submitted_at !== null,
+    ...limitEvidence,
+  }
+}
+
+function routeLimitEvidence(job: Job): Pick<ApiProxyRouting, 'visibleProof' | 'limitWindow' | 'retryAfterSeconds'> {
+  const find = (value: unknown, depth = 0): Record<string, unknown> | null => {
+    if (depth > 5 || !value || typeof value !== 'object' || Array.isArray(value)) return null
+    const record = value as Record<string, unknown>
+    if (
+      (record.family === 'rate_limit' || record.family === 'plan_limit')
+      && typeof record.visibleProof === 'string'
+    ) return record
+    for (const nested of Object.values(record)) {
+      const found = find(nested, depth + 1)
+      if (found) return found
+    }
+    return null
+  }
+  const details = find(job.error_json) ?? find(job.blocker_json)
+  if (!details) return {}
+  const visibleProof = typeof details.visibleProof === 'string' && /^[a-z0-9:_-]{1,160}$/u.test(details.visibleProof)
+    ? details.visibleProof
+    : undefined
+  const limitWindow = typeof details.limitWindow === 'string' && ['minute', 'hour', 'day', 'week', 'unknown'].includes(details.limitWindow)
+    ? details.limitWindow as ApiProxyRouting['limitWindow']
+    : undefined
+  const retryAfterSeconds = typeof details.retryAfterSeconds === 'number'
+    && Number.isSafeInteger(details.retryAfterSeconds)
+    && details.retryAfterSeconds >= 1
+    && details.retryAfterSeconds <= 604_800
+    ? details.retryAfterSeconds
+    : undefined
+  return {
+    ...(visibleProof === undefined ? {} : { visibleProof }),
+    ...(limitWindow === undefined ? {} : { limitWindow }),
+    ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }),
   }
 }
 
@@ -1496,17 +1549,32 @@ function routingAttemptsFromRequest(value: unknown): ApiProxyRoutingAttempt[] | 
     if (!attempt || typeof attempt !== 'object' || Array.isArray(attempt)) return null
     const candidate = attempt as Record<string, unknown>
     if (
-      Object.keys(candidate).some((key) => !['provider', 'outcome', 'reason'].includes(key))
+      Object.keys(candidate).some((key) => ![
+        'provider', 'outcome', 'reason', 'observedAt', 'providerSubmitted', 'visibleProof', 'limitWindow', 'retryAfterSeconds',
+      ].includes(key))
       ||
       typeof candidate.provider !== 'string'
       || !/^[a-z][a-z0-9-]{0,63}$/u.test(candidate.provider)
       || candidate.outcome !== 'fallback'
       || !['rate_limit', 'capacity', 'auth', 'unavailable'].includes(String(candidate.reason))
+      || typeof candidate.observedAt !== 'string'
+      || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(candidate.observedAt)
+      || typeof candidate.providerSubmitted !== 'boolean'
+      || (candidate.visibleProof !== undefined && (typeof candidate.visibleProof !== 'string' || !/^[a-z0-9:_-]{1,160}$/u.test(candidate.visibleProof)))
+      || (candidate.limitWindow !== undefined && !['minute', 'hour', 'day', 'week', 'unknown'].includes(String(candidate.limitWindow)))
+      || (candidate.retryAfterSeconds !== undefined && (typeof candidate.retryAfterSeconds !== 'number' || !Number.isSafeInteger(candidate.retryAfterSeconds) || candidate.retryAfterSeconds < 1 || candidate.retryAfterSeconds > 604_800))
     ) return null
     parsed.push({
       provider: candidate.provider,
       outcome: 'fallback' as const,
       reason: candidate.reason as ApiProxyRoutingAttempt['reason'],
+      observedAt: candidate.observedAt,
+      providerSubmitted: candidate.providerSubmitted,
+      ...(candidate.visibleProof === undefined ? {} : { visibleProof: candidate.visibleProof as string }),
+      ...(candidate.limitWindow === undefined ? {} : {
+        limitWindow: candidate.limitWindow as Exclude<ApiProxyRoutingAttempt['limitWindow'], undefined>,
+      }),
+      ...(candidate.retryAfterSeconds === undefined ? {} : { retryAfterSeconds: candidate.retryAfterSeconds as number }),
     })
   }
   return parsed

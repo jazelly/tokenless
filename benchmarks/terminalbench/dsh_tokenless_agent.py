@@ -10,7 +10,9 @@ import json
 import re
 import secrets
 import shlex
+import subprocess
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, override
 from urllib.parse import unquote, urlsplit
@@ -33,7 +35,7 @@ SEMANTIC_MANIFEST_SCHEMA = "tokenless.terminalbench-semantic-manifest.v1"
 INSTRUCTION_DIGEST = "sha256:5b6a2e01c29b8f215daa2e430f75d2a12c3c4ffc627d8cf4ebc1b38cd0d353ea"
 TASK_REF_DIGEST = "sha256:82cddb9ea94d792455d3e32b3c8a60ed73003714ed01785ec3b1ec5c580bccba"
 CHANNEL_PROTOCOL = "tokenless.terminalbench-channel.v1"
-AUDIT_PROTOCOL = "tokenless.terminalbench-deep-audit.v2"
+AUDIT_PROTOCOL = "tokenless.terminalbench-deep-audit.v3"
 PROXY_PORT = 18765
 MAX_BRIDGE_BODY_BYTES = 8 * 1024 * 1024
 PROVIDER_ID_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
@@ -87,6 +89,9 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         channel_token: str,
         profile: str,
         semantic_preference: str,
+        token_estimator_node: str,
+        token_estimator_script: str,
+        tokenless_home: str,
     ) -> None:
         super().__init__(address, _ScopedBridgeHandler)
         parsed = urlsplit(daemon_url)
@@ -113,6 +118,9 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         if PROVIDER_ID_PATTERN.fullmatch(semantic_preference) is None:
             raise ValueError("Terminal-Bench semantic preference is invalid.")
         self.semantic_preference = semantic_preference
+        self.token_estimator_node = token_estimator_node
+        self.token_estimator_script = token_estimator_script
+        self.tokenless_home = tokenless_home
         self._audit_lock = threading.Lock()
         self._audit_events: list[dict[str, Any]] = []
         self._parent_completion_ordinal = 0
@@ -131,6 +139,8 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         self._provider_request_turn_refs: dict[str, str] = {}
         self._provider_turn_refs: dict[str, str] = {}
         self._provider_turn_request_refs: dict[str, str] = {}
+        self._attachment_text: dict[str, str] = {}
+        self._child_turn_input_text: dict[str, str] = {}
         self._subagent_dispatch_lock = threading.Lock()
         self._subagent_dispatch_state = "available"
 
@@ -189,6 +199,147 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
 
     def record_child_turn_started(self, mode: str) -> None:
         self.record_event({"type": "child.turn.started", "mode": mode})
+
+    def record_attachment_text(self, attachment_ref: str, body: bytes) -> None:
+        try:
+            text = body.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise ValueError("provider text attachment is not UTF-8") from error
+        with self._provider_state_lock:
+            self._attachment_text[attachment_ref] = text
+
+    def record_child_turn_input(
+        self,
+        turn_ref: str,
+        prompt_text: str,
+        attachment_refs: list[str],
+    ) -> None:
+        with self._provider_state_lock:
+            attachments = []
+            for attachment_ref in attachment_refs:
+                text = self._attachment_text.pop(attachment_ref, None)
+                if text is None:
+                    raise ValueError("provider turn attachment text is unavailable")
+                attachments.append(text)
+            self._child_turn_input_text[turn_ref] = "\n\n".join(
+                [prompt_text, *attachments]
+            )
+
+    def _token_estimate(
+        self,
+        input_text: str,
+        output_text: str | None,
+        route: dict[str, Any],
+        outcome: str,
+        basis: str,
+        observed_at: str,
+    ) -> dict[str, Any]:
+        if output_text is None:
+            return {
+                "availability": "unavailable",
+                "reason": "response_too_large",
+            }
+        input_estimate = self._estimate_text(input_text)
+        output_estimate = self._estimate_text(output_text)
+        if (
+            input_estimate.get("availability") != "estimated"
+            or output_estimate.get("availability") != "estimated"
+            or input_estimate.get("estimator") != output_estimate.get("estimator")
+            or input_estimate.get("estimatorRevision")
+            != output_estimate.get("estimatorRevision")
+        ):
+            return {
+                "availability": "unavailable",
+                "reason": "token_estimator_unavailable",
+            }
+        input_tokens = input_estimate["tokens"]
+        output_tokens = output_estimate["tokens"]
+        interactions = []
+        for attempt in route["attempts"]:
+            submitted = attempt["providerSubmitted"]
+            interaction = {
+                "provider": attempt["provider"],
+                "outcome": "fallback",
+                "observedAt": attempt["observedAt"],
+                "providerSubmitted": submitted,
+                "inputTokens": input_tokens if submitted else 0,
+                "outputTokens": 0,
+                "totalTokens": input_tokens if submitted else 0,
+            }
+            interactions.append(interaction)
+        final_submitted = route["providerSubmitted"]
+        final_input_tokens = input_tokens if final_submitted else 0
+        final_output_tokens = output_tokens if final_submitted else 0
+        interactions.append(
+            {
+                "provider": route["provider"],
+                "outcome": outcome,
+                "observedAt": observed_at,
+                "providerSubmitted": final_submitted,
+                "inputTokens": final_input_tokens,
+                "outputTokens": final_output_tokens,
+                "totalTokens": final_input_tokens + final_output_tokens,
+            }
+        )
+        return {
+            "availability": "estimated",
+            "basis": basis,
+            "estimator": input_estimate["estimator"],
+            "estimatorRevision": input_estimate["estimatorRevision"],
+            "inputCharacters": input_estimate["characters"],
+            "inputTextSha256": input_estimate["sourceTextSha256"],
+            "outputCharacters": output_estimate["characters"],
+            "outputTextSha256": output_estimate["sourceTextSha256"],
+            "interactions": interactions,
+            "totalTokens": sum(item["totalTokens"] for item in interactions),
+        }
+
+    def _estimate_text(self, text: str) -> dict[str, Any]:
+        try:
+            completed = subprocess.run(
+                [
+                    self.token_estimator_node,
+                    self.token_estimator_script,
+                    self.tokenless_home,
+                ],
+                input=text,
+                text=True,
+                capture_output=True,
+                timeout=20,
+                check=False,
+            )
+            value = json.loads(completed.stdout)
+        except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+            return {"availability": "unavailable"}
+        if completed.returncode != 0 or not isinstance(value, dict):
+            return {"availability": "unavailable"}
+        if value.get("availability") == "unavailable":
+            return value
+        if (
+            set(value)
+            != {
+                "availability",
+                "estimator",
+                "estimatorRevision",
+                "tokens",
+                "characters",
+                "sourceTextSha256",
+            }
+            or value.get("availability") != "estimated"
+            or value.get("estimator") != "o200k_base"
+            or not isinstance(value.get("estimatorRevision"), str)
+            or not value["estimatorRevision"]
+            or not isinstance(value.get("tokens"), int)
+            or isinstance(value.get("tokens"), bool)
+            or value["tokens"] < 0
+            or not isinstance(value.get("characters"), int)
+            or isinstance(value.get("characters"), bool)
+            or value["characters"] < 0
+            or not isinstance(value.get("sourceTextSha256"), str)
+            or re.fullmatch(r"[a-f0-9]{64}", value["sourceTextSha256"]) is None
+        ):
+            return {"availability": "unavailable"}
+        return value
 
     def validate_provider_turn_request(
         self, method: str, path: str, body: bytes | None
@@ -312,7 +463,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
 
     def commit_provider_turn_response(
         self, operation: dict[str, Any], status: int, body: bytes
-    ) -> None:
+    ) -> dict[str, str] | None:
         if status >= 400:
             return
         kind = operation["kind"]
@@ -328,8 +479,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             self._parse_binding_response(body, expected_binding_ref=operation["bindingRef"], expected_provider_ref=self._provider_ref)
             return
         if kind == "attachment":
-            self._parse_attachment_response(body)
-            return
+            return {"attachmentRef": self._parse_attachment_response(body)}
         if kind == "start":
             turn = self._parse_turn_response(
                 body,
@@ -368,7 +518,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
                 self._provider_turn_refs[turn_ref] = mode
                 self._provider_turn_request_refs[turn_ref] = operation["requestRef"]
                 self._apply_turn_lifecycle_locked(mode, turn["lifecycle"])
-            return
+            return {"turnRef": turn["turnRef"]}
         if kind in {"turn_read", "turn_cancel"}:
             stage = operation["stage"]
             expected_conversation_ref = self._conversation_ref_for_stage(stage)
@@ -384,7 +534,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
                 if self._provider_turn_refs.get(operation["turnRef"]) != stage:
                     raise ValueError("provider turn response reference changed")
                 self._apply_turn_lifecycle_locked(stage, turn["lifecycle"])
-            return
+            return {"turnRef": turn["turnRef"]}
         if kind == "request_cancel":
             turn = self._parse_request_cancellation_response(body)
             if turn["turnRef"] != operation["turnRef"] or turn["conversationRef"] != self._conversation_ref_for_stage(operation["stage"]):
@@ -498,6 +648,11 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
                 "providerBindingRef": value["providerBindingRef"],
                 "conversationRef": None,
                 "semanticPreference": semantic_preference,
+                "inputText": value["bootstrap"]["text"],
+                "attachmentRefs": [
+                    attachment["attachmentRef"]
+                    for attachment in value["bootstrap"]["attachments"]
+                ],
             }
         if mode != "continue" or set(conversation) != {"mode", "conversationRef"}:
             raise ValueError("provider continuation shape is invalid")
@@ -511,6 +666,11 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             "providerBindingRef": value["providerBindingRef"],
             "conversationRef": conversation_ref,
             "semanticPreference": None,
+            "inputText": value["continuation"]["text"],
+            "attachmentRefs": [
+                attachment["attachmentRef"]
+                for attachment in value["continuation"]["attachments"]
+            ],
         }
 
     @classmethod
@@ -542,7 +702,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         return binding_ref, provider_ref
 
     @classmethod
-    def _parse_attachment_response(cls, body: bytes) -> None:
+    def _parse_attachment_response(cls, body: bytes) -> str:
         value = cls._json_object(body)
         attachment = value.get("attachment")
         if set(value) != {"attachment"} or not isinstance(attachment, dict) or set(attachment) != {"attachmentRef", "mediaType", "byteLength", "sha256"}:
@@ -558,6 +718,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             or re.fullmatch(r"[a-f0-9]{64}", attachment["sha256"]) is None
         ):
             raise ValueError("provider attachment response identity is invalid")
+        return attachment["attachmentRef"]
 
     @classmethod
     def _parse_turn_response(
@@ -680,6 +841,18 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         preference_honored = upstream.getheader(
             "X-Tokenless-Route-Preference-Honored"
         )
+        provider_submitted = upstream.getheader(
+            "X-Tokenless-Route-Provider-Submitted"
+        )
+        visible_proof_header = upstream.getheader(
+            "X-Tokenless-Route-Visible-Proof"
+        )
+        limit_window_header = upstream.getheader(
+            "X-Tokenless-Route-Limit-Window"
+        )
+        retry_after_header = upstream.getheader(
+            "X-Tokenless-Route-Retry-After-Seconds"
+        )
         attempts_header = upstream.getheader("X-Tokenless-Route-Attempts")
         if attempts_header is None or preference_requested_header is None:
             return None
@@ -696,6 +869,24 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             fallback_used not in {"0", "1"}
             or rate_limited not in {"0", "1"}
             or preference_honored not in {"0", "1"}
+            or provider_submitted not in {"0", "1"}
+            or visible_proof_header is None
+            or limit_window_header is None
+            or retry_after_header is None
+            or (
+                visible_proof_header != ""
+                and re.fullmatch(r"[a-z0-9:_-]{1,160}", visible_proof_header)
+                is None
+            )
+            or limit_window_header
+            not in {"", "minute", "hour", "day", "week", "unknown"}
+            or (
+                retry_after_header != ""
+                and (
+                    not retry_after_header.isdigit()
+                    or not 1 <= int(retry_after_header) <= 604_800
+                )
+            )
             or (
                 preference_requested is not None
                 and PROVIDER_ID_PATTERN.fullmatch(preference_requested) is None
@@ -710,16 +901,75 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         for attempt in attempts_value:
             if (
                 not isinstance(attempt, dict)
-                or set(attempt) != {"provider", "outcome", "reason"}
+                or any(
+                    key
+                    not in {
+                        "provider",
+                        "outcome",
+                        "reason",
+                        "observedAt",
+                        "providerSubmitted",
+                        "visibleProof",
+                        "limitWindow",
+                        "retryAfterSeconds",
+                    }
+                    for key in attempt
+                )
+                or not {
+                    "provider",
+                    "outcome",
+                    "reason",
+                    "observedAt",
+                    "providerSubmitted",
+                }.issubset(attempt)
                 or not isinstance(attempt.get("provider"), str)
                 or PROVIDER_ID_PATTERN.fullmatch(attempt["provider"]) is None
                 or attempt.get("outcome") != "fallback"
+                or not isinstance(attempt.get("observedAt"), str)
+                or re.fullmatch(
+                    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z",
+                    attempt["observedAt"],
+                )
+                is None
+                or not isinstance(attempt.get("providerSubmitted"), bool)
                 or attempt.get("reason") not in {
                     "rate_limit",
                     "capacity",
                     "auth",
                     "unavailable",
                 }
+                or (
+                    "visibleProof" in attempt
+                    and (
+                        not isinstance(attempt["visibleProof"], str)
+                        or re.fullmatch(r"[a-z0-9:_-]{1,160}", attempt["visibleProof"])
+                        is None
+                    )
+                )
+                or (
+                    "limitWindow" in attempt
+                    and attempt["limitWindow"]
+                    not in {"minute", "hour", "day", "week", "unknown"}
+                )
+                or (
+                    "retryAfterSeconds" in attempt
+                    and (
+                        not isinstance(attempt["retryAfterSeconds"], int)
+                        or isinstance(attempt["retryAfterSeconds"], bool)
+                        or not 1 <= attempt["retryAfterSeconds"] <= 604_800
+                    )
+                )
+                or (
+                    any(
+                        key in attempt
+                        for key in {
+                            "visibleProof",
+                            "limitWindow",
+                            "retryAfterSeconds",
+                        }
+                    )
+                    and attempt.get("reason") not in {"rate_limit", "capacity"}
+                )
             ):
                 return None
             attempts.append(dict(attempt))
@@ -731,11 +981,21 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             "rateLimited": rate_limited == "1",
             "preferenceRequested": preference_requested,
             "preferenceHonored": preference_honored == "1",
+            "providerSubmitted": provider_submitted == "1",
+            "visibleProof": visible_proof_header or None,
+            "limitWindow": limit_window_header or None,
+            "retryAfterSeconds": (
+                int(retry_after_header) if retry_after_header else None
+            ),
             "attempts": attempts,
         }
 
     def record_upstream_route(
-        self, upstream: http.client.HTTPResponse, scope: str
+        self,
+        upstream: http.client.HTTPResponse,
+        scope: str,
+        input_text: str,
+        output_text: str | None,
     ) -> None:
         route = self._parse_route_headers(upstream)
         if route is None:
@@ -749,17 +1009,29 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
                 {"type": "provider.routing.invalid", "reason": "rate_limit_attribution"}
             )
             return
+        observed_at = datetime.now(timezone.utc).isoformat(
+            timespec="milliseconds"
+        ).replace("+00:00", "Z")
         self.record_event(
             {
                 "type": "provider.routing",
+                "observedAt": observed_at,
                 "scope": scope,
                 **route,
                 "outcome": outcome,
+                "tokenEstimate": self._token_estimate(
+                    input_text,
+                    output_text if outcome == "completed" else "",
+                    route,
+                    outcome,
+                    "normalized_openai_request_and_visible_assistant_text",
+                    observed_at,
+                ),
             }
         )
 
     def record_provider_turn_read(
-        self, path: str, upstream: http.client.HTTPResponse
+        self, path: str, upstream: http.client.HTTPResponse, body: bytes
     ) -> None:
         outcome = upstream.getheader("X-Tokenless-Route-Outcome")
         route = self._parse_route_headers(upstream)
@@ -786,9 +1058,101 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
                 {"type": "provider.routing.invalid", "reason": "rate_limit_attribution"}
             )
             return
+        turn_ref = unquote(path.rsplit("/", 1)[-1])
+        with self._provider_state_lock:
+            input_text = self._child_turn_input_text.pop(turn_ref, None)
+        if input_text is None:
+            self.record_event(
+                {"type": "provider.routing.invalid", "reason": "child_token_input"}
+            )
+            return
+        output_text = self._provider_turn_output_text(body) if outcome == "completed" else ""
+        observed_at = datetime.now(timezone.utc).isoformat(
+            timespec="milliseconds"
+        ).replace("+00:00", "Z")
         self.record_event(
-            {"type": "provider.routing", "scope": "child", **route, "outcome": outcome}
+            {
+                "type": "provider.routing",
+                "observedAt": observed_at,
+                "scope": "child",
+                **route,
+                "outcome": outcome,
+                "tokenEstimate": self._token_estimate(
+                    input_text,
+                    output_text,
+                    route,
+                    outcome,
+                    "provider_turn_prompt_attachments_and_visible_assistant_text",
+                    observed_at,
+                ),
+            }
         )
+
+    @classmethod
+    def _provider_turn_output_text(cls, body: bytes) -> str:
+        value = cls._json_object(body)
+        turn = value.get("turn")
+        result = turn.get("result") if isinstance(turn, dict) else None
+        text = result.get("text") if isinstance(result, dict) else None
+        return text if isinstance(text, str) else ""
+
+    @staticmethod
+    def _completion_output_text(body: bytes) -> str:
+        try:
+            text = body.decode("utf-8")
+        except UnicodeDecodeError:
+            return ""
+        payloads: list[dict[str, Any]] = []
+        if "data:" in text:
+            for line in text.splitlines():
+                if not line.startswith("data:"):
+                    continue
+                data = line.removeprefix("data:").strip()
+                if not data or data == "[DONE]":
+                    continue
+                try:
+                    value = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(value, dict):
+                    payloads.append(value)
+        else:
+            try:
+                value = json.loads(text)
+            except json.JSONDecodeError:
+                return ""
+            if isinstance(value, dict):
+                payloads.append(value)
+        parts: list[str] = []
+        for payload in payloads:
+            choices = payload.get("choices")
+            if not isinstance(choices, list):
+                continue
+            for choice in choices:
+                if not isinstance(choice, dict):
+                    continue
+                message = choice.get("delta", choice.get("message"))
+                if not isinstance(message, dict):
+                    continue
+                content = message.get("content")
+                if isinstance(content, str):
+                    parts.append(content)
+                tool_calls = message.get("tool_calls")
+                if not isinstance(tool_calls, list):
+                    continue
+                for tool_call in tool_calls:
+                    function = (
+                        tool_call.get("function")
+                        if isinstance(tool_call, dict)
+                        else None
+                    )
+                    if not isinstance(function, dict):
+                        continue
+                    for key in ("name", "arguments"):
+                        value = function.get(key)
+                        if isinstance(value, str):
+                            parts.append(value)
+        return "".join(parts)
 
 
 class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
@@ -921,11 +1285,29 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
             connection.request(self.command, self.path, body=body, headers=headers)
             upstream = connection.getresponse()
             control_body = None
+            committed_provider_turn = None
             if provider_operation is not None:
                 control_body = self._read_bounded_response(upstream)
-                self.server.commit_provider_turn_response(  # type: ignore[attr-defined]
+                committed_provider_turn = self.server.commit_provider_turn_response(  # type: ignore[attr-defined]
                     provider_operation, upstream.status, control_body
                 )
+                if (
+                    provider_operation["kind"] == "attachment"
+                    and committed_provider_turn is not None
+                    and body is not None
+                ):
+                    self.server.record_attachment_text(  # type: ignore[attr-defined]
+                        committed_provider_turn["attachmentRef"], body
+                    )
+                if (
+                    provider_operation["kind"] == "start"
+                    and committed_provider_turn is not None
+                ):
+                    self.server.record_child_turn_input(  # type: ignore[attr-defined]
+                        committed_provider_turn["turnRef"],
+                        provider_operation["inputText"],
+                        provider_operation["attachmentRefs"],
+                    )
             self.send_response(upstream.status)
             for name, value in upstream.getheaders():
                 if name.lower() not in {
@@ -950,14 +1332,20 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
                 self.wfile.flush()
                 if provider_operation["kind"] == "turn_read":
                     self.server.record_provider_turn_read(  # type: ignore[attr-defined]
-                        path, upstream
+                        path, upstream, control_body or b""
                     )
                 if provider_operation["kind"] == "start" and upstream.status < 400:
                     self.server.record_child_turn_started(  # type: ignore[attr-defined]
                         provider_operation["mode"]
                     )
             else:
+                relayed_body = bytearray()
+                relayed_body_complete = True
                 while chunk := upstream.read(64 * 1024):
+                    if len(relayed_body) + len(chunk) <= MAX_BRIDGE_BODY_BYTES:
+                        relayed_body.extend(chunk)
+                    else:
+                        relayed_body_complete = False
                     self.wfile.write(chunk)
                     self.wfile.flush()
                 if path in ALLOWED_COMPLETION_PATHS and self.command == "POST":
@@ -972,7 +1360,14 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
                         )
                         subagent_claim_settled = True
                     self.server.record_upstream_route(  # type: ignore[attr-defined]
-                        upstream, "parent"
+                        upstream,
+                        "parent",
+                        (body or b"").decode("utf-8"),
+                        (
+                            self.server._completion_output_text(bytes(relayed_body))  # type: ignore[attr-defined]
+                            if relayed_body_complete
+                            else None
+                        ),
                     )
         except ValueError:
             self.close_connection = True
@@ -1018,6 +1413,12 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
             self._required_kwarg(kwargs, "runtime_archive")
         )
         self.proxy_script = Path(self._required_kwarg(kwargs, "proxy_script"))
+        self.token_estimator_script = Path(
+            self._required_kwarg(kwargs, "token_estimator_script")
+        )
+        self.token_estimator_node = Path(
+            self._required_kwarg(kwargs, "token_estimator_node")
+        )
         self.tokenless_home = self._required_kwarg(kwargs, "tokenless_home")
         self.daemon_url = self._required_kwarg(kwargs, "daemon_url")
         self.profile = self._required_kwarg(kwargs, "profile")
@@ -1034,6 +1435,8 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
         for label, file_path in (
             ("runtime_archive", self.runtime_archive),
             ("proxy_script", self.proxy_script),
+            ("token_estimator_script", self.token_estimator_script),
+            ("token_estimator_node", self.token_estimator_node),
             ("task_manifest", self.task_manifest),
             ("semantic_manifest", self.semantic_manifest),
         ):
@@ -1371,6 +1774,9 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
             channel_token,
             self.profile,
             semantic_preference,
+            str(self.token_estimator_node),
+            str(self.token_estimator_script),
+            self.tokenless_home,
         )
         bridge_thread = threading.Thread(
             target=bridge.serve_forever,

@@ -1523,6 +1523,9 @@ function safeFallbackRequest(
       provider: request.provider,
       outcome: 'fallback' as const,
       reason: routingFailureReason(failure),
+      observedAt: new Date().toISOString(),
+      providerSubmitted: state.submitted !== null,
+      ...routingFailureEvidence(failure),
     },
   ]
   return validateManagedPlaywrightJobRequest({
@@ -1600,6 +1603,30 @@ function routingFailureReason(failure: ClassifiedProviderFailure) {
     return 'capacity' as const
   }
   return 'unavailable' as const
+}
+
+function routingFailureEvidence(failure: ClassifiedProviderFailure) {
+  const details = failure.details && typeof failure.details === 'object' && !Array.isArray(failure.details)
+    ? failure.details as Record<string, unknown>
+    : null
+  if (details?.family !== 'rate_limit' && details?.family !== 'plan_limit') return {}
+  const visibleProof = typeof details?.visibleProof === 'string' && /^[a-z0-9:_-]{1,160}$/u.test(details.visibleProof)
+    ? details.visibleProof
+    : undefined
+  const limitWindow = typeof details?.limitWindow === 'string' && ['minute', 'hour', 'day', 'week', 'unknown'].includes(details.limitWindow)
+    ? details.limitWindow as 'minute' | 'hour' | 'day' | 'week' | 'unknown'
+    : undefined
+  const retryAfterSeconds = typeof details?.retryAfterSeconds === 'number'
+    && Number.isSafeInteger(details.retryAfterSeconds)
+    && details.retryAfterSeconds >= 1
+    && details.retryAfterSeconds <= 604_800
+    ? details.retryAfterSeconds
+    : undefined
+  return {
+    ...(visibleProof === undefined ? {} : { visibleProof }),
+    ...(limitWindow === undefined ? {} : { limitWindow }),
+    ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }),
+  }
 }
 
 function providerFallbackStopReason(

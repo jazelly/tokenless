@@ -70,6 +70,11 @@ export type ManagedPlaywrightRoutingAttempt = {
   provider: ProviderId
   outcome: 'fallback'
   reason: 'rate_limit' | 'capacity' | 'auth' | 'unavailable'
+  observedAt: string
+  providerSubmitted: boolean
+  visibleProof?: string | undefined
+  limitWindow?: 'minute' | 'hour' | 'day' | 'week' | 'unknown' | undefined
+  retryAfterSeconds?: number | undefined
 }
 
 export type ManagedPlaywrightRoutingObservation = {
@@ -412,11 +417,28 @@ function validateRoutingObservation(value: unknown): ManagedPlaywrightRoutingObs
   }
   const seen = new Set<ProviderId>()
   const attempts = value.attempts.map((attempt) => {
-    if (!isPlainRecord(attempt) || Object.keys(attempt).some((key) => !['provider', 'outcome', 'reason'].includes(key))) {
+    if (!isPlainRecord(attempt) || Object.keys(attempt).some((key) => ![
+      'provider', 'outcome', 'reason', 'observedAt', 'providerSubmitted', 'visibleProof', 'limitWindow', 'retryAfterSeconds',
+    ].includes(key))) {
       throw tokenlessError('invalid_playwright_routing_observation', 'Managed Playwright routing observation is invalid.')
     }
     const provider = getProviderInstanceById(attempt.provider)
-    if (!provider || seen.has(provider.id) || attempt.outcome !== 'fallback' || !['rate_limit', 'capacity', 'auth', 'unavailable'].includes(String(attempt.reason))) {
+    const visibleProof = attempt.visibleProof
+    const limitWindow = attempt.limitWindow
+    const retryAfterSeconds = attempt.retryAfterSeconds
+    if (
+      !provider
+      || seen.has(provider.id)
+      || attempt.outcome !== 'fallback'
+      || !['rate_limit', 'capacity', 'auth', 'unavailable'].includes(String(attempt.reason))
+      || typeof attempt.observedAt !== 'string'
+      || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(attempt.observedAt)
+      || typeof attempt.providerSubmitted !== 'boolean'
+      || (visibleProof !== undefined && (typeof visibleProof !== 'string' || !/^[a-z0-9:_-]{1,160}$/u.test(visibleProof)))
+      || (limitWindow !== undefined && !['minute', 'hour', 'day', 'week', 'unknown'].includes(String(limitWindow)))
+      || (retryAfterSeconds !== undefined && (typeof retryAfterSeconds !== 'number' || !Number.isSafeInteger(retryAfterSeconds) || retryAfterSeconds < 1 || retryAfterSeconds > 604_800))
+      || ((visibleProof !== undefined || limitWindow !== undefined || retryAfterSeconds !== undefined) && !['rate_limit', 'capacity'].includes(String(attempt.reason)))
+    ) {
       throw tokenlessError('invalid_playwright_routing_observation', 'Managed Playwright routing observation is invalid.')
     }
     seen.add(provider.id)
@@ -424,6 +446,11 @@ function validateRoutingObservation(value: unknown): ManagedPlaywrightRoutingObs
       provider: provider.id,
       outcome: 'fallback' as const,
       reason: attempt.reason as ManagedPlaywrightRoutingAttempt['reason'],
+      observedAt: attempt.observedAt,
+      providerSubmitted: attempt.providerSubmitted,
+      ...(visibleProof === undefined ? {} : { visibleProof }),
+      ...(limitWindow === undefined ? {} : { limitWindow: limitWindow as ManagedPlaywrightRoutingAttempt['limitWindow'] }),
+      ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }),
     }
   })
   return { protocol: 'tokenless.provider-routing-observation.v1', attempts }

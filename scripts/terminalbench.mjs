@@ -258,6 +258,7 @@ async function runDeepSeekLane(kind, args) {
   await fs.mkdir(jobsDir, { recursive: true })
   const attemptsPerTask = kind === 'full' ? revision.attemptsPerTask : 1
   const expectedTrials = kind === 'full' ? revision.taskCount * attemptsPerTask : attemptsPerTask
+  const tokenEstimatorScript = path.join(benchmarkRoot, 'token_estimator.mjs')
 
   const harborArgs = [
     ...harborPrefix(),
@@ -274,6 +275,8 @@ async function runDeepSeekLane(kind, args) {
     '--agent-include-logs', 'dsh-classification.json',
     '--ak', `runtime_archive=${prepared.runtimeArchive}`,
     '--ak', `proxy_script=${path.join(benchmarkRoot, 'channel_proxy.py')}`,
+    '--ak', `token_estimator_script=${tokenEstimatorScript}`,
+    '--ak', `token_estimator_node=${process.execPath}`,
     '--ak', `tokenless_home=${homeDir}`,
     '--ak', `daemon_url=${daemon.url}`,
     '--ak', `profile=${profile}`,
@@ -298,6 +301,8 @@ async function runDeepSeekLane(kind, args) {
     expectedTrials,
     runtimeArchive: prepared.runtimeArchive,
     proxyScript: path.join(benchmarkRoot, 'channel_proxy.py'),
+    tokenEstimatorScript,
+    tokenEstimatorNode: process.execPath,
     tokenlessHome: homeDir,
     daemonUrl: daemon.url,
     taskManifest: prepared.taskManifest,
@@ -330,6 +335,8 @@ async function writeRunReport({
   expectedTrials,
   runtimeArchive,
   proxyScript,
+  tokenEstimatorScript,
+  tokenEstimatorNode,
   tokenlessHome,
   daemonUrl,
   taskManifest,
@@ -360,7 +367,7 @@ async function writeRunReport({
       if (event.protocol !== revision.auditProtocol) throw new Error(`Unexpected deep-integration audit protocol in ${auditPath}.`)
       auditEvents.push(event)
     }
-    deepTrials.push(deepIntegrationStats(auditEvents))
+    deepTrials.push(deepIntegrationStats(auditEvents, path.basename(directory)))
   }
   if (kind !== 'oracle' && deepTrials.length !== expectedTrials) {
     throw new Error(`Expected deep-integration evidence for ${expectedTrials} non-oracle trials, found ${deepTrials.length}.`)
@@ -377,6 +384,8 @@ async function writeRunReport({
     expectedTrials,
     runtimeArchive,
     proxyScript,
+    tokenEstimatorScript,
+    tokenEstimatorNode,
     tokenlessHome,
     daemonUrl,
     profile,
@@ -390,6 +399,19 @@ async function writeRunReport({
     capture('git', ['rev-parse', 'HEAD'], { cwd: root }),
     capture('git', ['status', '--porcelain'], { cwd: root }),
   ])
+  const providerRouting = aggregateProviderRouting(deepTrials)
+  const routedProviders = new Set(Object.values(providerRouting.scopes)
+    .flatMap((scope) => Object.entries(scope.providers))
+    .filter(([, counts]) => counts.attempted > 0)
+    .map(([provider]) => provider))
+  const accountPlans = kind === 'oracle'
+    ? { providers: {} }
+    : await benchmarkProviderPlanSnapshot({
+        tokenlessHome,
+        daemonUrl,
+        profile,
+        routedProviders,
+      })
   const stats = official.stats
   const report = {
     schema: 'tokenless.terminalbench-run.v1',
@@ -418,7 +440,10 @@ async function writeRunReport({
     tokenlessRevision: tokenlessRevision.trim(),
     tokenlessWorktreeDirty: tokenlessDirty.trim().length > 0,
     deepIntegration: aggregateDeepIntegration(deepTrials),
-    providerRouting: aggregateProviderRouting(deepTrials),
+    providerRouting: {
+      ...providerRouting,
+      accountPlans,
+    },
     taskManifest: {
       datasetRef: revision.datasetRef,
       instructionDigest: taskManifestIdentity.instructionDigest,
@@ -436,6 +461,73 @@ async function writeRunReport({
   return report
 }
 
+async function benchmarkProviderPlanSnapshot({ tokenlessHome, daemonUrl, profile, routedProviders }) {
+  const runtimeEntry = path.join(root, 'packages', 'cli', 'dist', 'src', 'index.js')
+  const policyEntry = path.join(root, 'packages', 'server', 'dist', 'src', 'providers', 'rate-limit-policy.js')
+  const [runtime, policy] = await Promise.all([
+    import(pathToFileURL(runtimeEntry).href),
+    import(pathToFileURL(policyEntry).href),
+  ])
+  const state = await runtime.getControlState({ homeDir: tokenlessHome, daemonUrl })
+  const selected = Array.isArray(state?.profiles)
+    ? state.profiles.find((candidate) => candidate?.slug === profile)
+    : null
+  if (!selected || !selected.lastObservedAuth || typeof selected.lastObservedAuth !== 'object') {
+    throw new Error(`The benchmark profile ${profile} has no provider plan observation state.`)
+  }
+  const providers = {}
+  for (const provider of [...routedProviders].sort()) {
+    const observation = selected.lastObservedAuth[provider]
+    const account = observation?.account
+    const tier = account?.tier
+    const checkedAt = typeof observation?.checkedAt === 'string'
+      && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u.test(observation.checkedAt)
+      ? observation.checkedAt
+      : null
+    const accessClass = typeof observation?.access === 'string' && /^[a-z_]{1,64}$/u.test(observation.access)
+      ? observation.access
+      : 'unknown'
+    const tierClass = ['signed_in_free', 'signed_in_paid', 'signed_in_unknown'].includes(tier?.class)
+      ? tier.class
+      : null
+    const projection = policy.providerCapacityPolicy.project({
+      provider,
+      profileId: profile,
+      accessClass,
+      tierLabel: safePlanLabel(tier?.label),
+      subscriptionLabel: safePlanLabel(account?.subscription),
+      requestJson: {},
+      history: [],
+      now: checkedAt ?? new Date().toISOString(),
+    })
+    const planId = typeof projection.subscription.planId === 'string'
+      && /^[a-z0-9][a-z0-9._-]{0,63}$/u.test(projection.subscription.planId)
+      ? projection.subscription.planId
+      : 'unknown'
+    const planMatch = ['label', 'access_class', 'unknown'].includes(projection.subscription.match)
+      ? projection.subscription.match
+      : 'unknown'
+    const observedLabel = planMatch === 'label'
+      ? safePlanLabel(projection.subscription.observedLabel)
+      : null
+    providers[provider] = {
+      checkedAt,
+      plan: { id: planId, match: planMatch, observedLabel },
+      tierClass,
+    }
+  }
+  return { providers }
+}
+
+function safePlanLabel(value) {
+  return typeof value === 'string'
+    && value.length >= 1
+    && value.length <= 160
+    && !/[\r\n\0]/u.test(value)
+    ? value
+    : null
+}
+
 function validateResolvedRun({
   official,
   jobConfig,
@@ -447,6 +539,8 @@ function validateResolvedRun({
   expectedTrials,
   runtimeArchive,
   proxyScript,
+  tokenEstimatorScript,
+  tokenEstimatorNode,
   tokenlessHome,
   daemonUrl,
   profile,
@@ -476,6 +570,8 @@ function validateResolvedRun({
     validateDeepSeekAgent(jobConfig, {
       runtime_archive: runtimeArchive,
       proxy_script: proxyScript,
+      token_estimator_script: tokenEstimatorScript,
+      token_estimator_node: tokenEstimatorNode,
       tokenless_home: tokenlessHome,
       daemon_url: daemonUrl,
       profile,
@@ -751,7 +847,7 @@ function validateUnmodifiedTrialConfig(config) {
   }
 }
 
-function deepIntegrationStats(events) {
+function deepIntegrationStats(events, trial) {
   const validTypes = new Set([
     'api.completion.request',
     'child.turn.started',
@@ -791,6 +887,10 @@ function deepIntegrationStats(events) {
   const parentRequests = events.filter((event) => event.type === 'api.completion.request')
   const childStarts = events.filter((event) => event.type === 'child.turn.started')
   const routing = events.filter((event) => event.type === 'provider.routing')
+  const estimatorRevisions = new Set(routing.map((event) => event.tokenEstimate.estimatorRevision))
+  if (estimatorRevisions.size !== 1) {
+    throw new Error('Deep integration token estimates must use one estimator revision per trial.')
+  }
   const forcedParents = parentRequests.filter((event) => event.forcedSubagent === true)
   if (forcedParents.length !== 1) {
     throw new Error('Deep integration requires exactly one successful forced parent subagent dispatch.')
@@ -866,6 +966,7 @@ function deepIntegrationStats(events) {
     : undefined
   const completeChains = parentCompleted ? 1 : 0
   return {
+    trial,
     parentCompletionRequests: parentRequests.length,
     forcedParentCompletionRequests: parentRequests.filter((event) => event.forcedSubagent === true).length,
     childTurnStarts: childStarts.length,
@@ -876,7 +977,9 @@ function deepIntegrationStats(events) {
     completedChildRouting: routing.filter((event) => event.scope === 'child' && event.outcome === 'completed').length,
     parentCompleted: events.filter((event) => event.type === 'dsh.parent.completed').length,
     completeChains,
+    tokenEstimatorRevision: [...estimatorRevisions][0],
     providerRouting: providerRoutingStats(events),
+    limitObservations: limitObservationEvents(events),
   }
 }
 
@@ -905,10 +1008,13 @@ function validateProviderRoutingEvent(event) {
     Object.keys(event).some((key) => ![
       'protocol', 'sequence', 'type', 'scope', 'mode', 'provider',
       'fallbackProviders', 'fallbackUsed', 'rateLimited', 'preferenceRequested',
-      'preferenceHonored', 'attempts', 'outcome',
+      'preferenceHonored', 'providerSubmitted', 'visibleProof', 'limitWindow',
+      'retryAfterSeconds', 'attempts', 'outcome', 'observedAt', 'tokenEstimate',
     ].includes(key))
     ||
     event.protocol !== revision.auditProtocol
+    || typeof event.observedAt !== 'string'
+    || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(event.observedAt)
     || (event.scope !== 'parent' && event.scope !== 'child')
     || (event.mode !== 'auto' && event.mode !== 'explicit')
     || typeof event.provider !== 'string'
@@ -924,22 +1030,119 @@ function validateProviderRoutingEvent(event) {
     )
     || typeof event.preferenceHonored !== 'boolean'
     || event.preferenceHonored && event.preferenceRequested === null
+    || typeof event.providerSubmitted !== 'boolean'
+    || event.visibleProof !== null && (
+      typeof event.visibleProof !== 'string'
+      || !/^[a-z0-9:_-]{1,160}$/u.test(event.visibleProof)
+    )
+    || event.limitWindow !== null && !['minute', 'hour', 'day', 'week', 'unknown'].includes(event.limitWindow)
+    || event.retryAfterSeconds !== null && (
+      !Number.isSafeInteger(event.retryAfterSeconds)
+      || event.retryAfterSeconds < 1
+      || event.retryAfterSeconds > 604_800
+    )
     || !Array.isArray(event.attempts)
     || event.attempts.length > 5
     || event.attempts.some((attempt) => (
       !attempt
       || typeof attempt !== 'object'
-      || Object.keys(attempt).some((key) => !['provider', 'outcome', 'reason'].includes(key))
+      || Object.keys(attempt).some((key) => ![
+        'provider', 'outcome', 'reason', 'observedAt', 'providerSubmitted',
+        'visibleProof', 'limitWindow', 'retryAfterSeconds',
+      ].includes(key))
       || typeof attempt.provider !== 'string'
       || !/^[a-z][a-z0-9-]{0,63}$/u.test(attempt.provider)
       || attempt.outcome !== 'fallback'
       || !['rate_limit', 'capacity', 'auth', 'unavailable'].includes(attempt.reason)
+      || typeof attempt.observedAt !== 'string'
+      || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(attempt.observedAt)
+      || typeof attempt.providerSubmitted !== 'boolean'
+      || attempt.visibleProof !== undefined && (
+        typeof attempt.visibleProof !== 'string'
+        || !/^[a-z0-9:_-]{1,160}$/u.test(attempt.visibleProof)
+      )
+      || attempt.limitWindow !== undefined && !['minute', 'hour', 'day', 'week', 'unknown'].includes(attempt.limitWindow)
+      || attempt.retryAfterSeconds !== undefined && (
+        !Number.isSafeInteger(attempt.retryAfterSeconds)
+        || attempt.retryAfterSeconds < 1
+        || attempt.retryAfterSeconds > 604_800
+      )
+      || (attempt.visibleProof !== undefined || attempt.limitWindow !== undefined || attempt.retryAfterSeconds !== undefined)
+        && !['rate_limit', 'capacity'].includes(attempt.reason)
+      || attempt.reason === 'rate_limit' && (attempt.visibleProof === undefined || attempt.limitWindow === undefined)
     ))
     || event.fallbackUsed !== (event.attempts.length > 0)
     || (event.outcome !== 'completed' && event.outcome !== 'failed')
     || event.outcome === 'completed' && event.rateLimited
+    || event.outcome === 'completed' && event.visibleProof !== null
+    || event.rateLimited && (event.visibleProof === null || event.limitWindow === null)
   ) {
     throw new Error('Provider routing audit event is invalid.')
+  }
+  validateTokenEstimate(event)
+}
+
+function validateTokenEstimate(event) {
+  const estimate = event.tokenEstimate
+  if (
+    !estimate
+    || typeof estimate !== 'object'
+    || !sameStringSet(Object.keys(estimate), [
+      'availability', 'basis', 'estimator', 'estimatorRevision',
+      'inputCharacters', 'inputTextSha256', 'outputCharacters',
+      'outputTextSha256', 'interactions', 'totalTokens',
+    ])
+    || estimate.availability !== 'estimated'
+    || ![
+      'normalized_openai_request_and_visible_assistant_text',
+      'provider_turn_prompt_attachments_and_visible_assistant_text',
+    ].includes(estimate.basis)
+    || estimate.estimator !== 'o200k_base'
+    || typeof estimate.estimatorRevision !== 'string'
+    || estimate.estimatorRevision.length < 1
+    || !Number.isSafeInteger(estimate.inputCharacters)
+    || estimate.inputCharacters < 0
+    || !/^[a-f0-9]{64}$/u.test(estimate.inputTextSha256)
+    || !Number.isSafeInteger(estimate.outputCharacters)
+    || estimate.outputCharacters < 0
+    || !/^[a-f0-9]{64}$/u.test(estimate.outputTextSha256)
+    || !Array.isArray(estimate.interactions)
+    || estimate.interactions.length !== event.attempts.length + 1
+    || !Number.isSafeInteger(estimate.totalTokens)
+    || estimate.totalTokens < 0
+  ) {
+    throw new Error('Provider token estimate evidence is invalid or unavailable.')
+  }
+  let totalTokens = 0
+  for (const [index, interaction] of estimate.interactions.entries()) {
+    const expected = index < event.attempts.length ? event.attempts[index] : event
+    if (
+      !interaction
+      || typeof interaction !== 'object'
+      || !sameStringSet(Object.keys(interaction), [
+        'provider', 'outcome', 'observedAt', 'providerSubmitted',
+        'inputTokens', 'outputTokens', 'totalTokens',
+      ])
+      || interaction.provider !== expected.provider
+      || interaction.outcome !== (index < event.attempts.length ? 'fallback' : event.outcome)
+      || interaction.observedAt !== expected.observedAt
+      || interaction.providerSubmitted !== expected.providerSubmitted
+      || !Number.isSafeInteger(interaction.inputTokens)
+      || interaction.inputTokens < 0
+      || !Number.isSafeInteger(interaction.outputTokens)
+      || interaction.outputTokens < 0
+      || !Number.isSafeInteger(interaction.totalTokens)
+      || interaction.totalTokens !== interaction.inputTokens + interaction.outputTokens
+      || !interaction.providerSubmitted && interaction.totalTokens !== 0
+      || index < event.attempts.length && interaction.outputTokens !== 0
+      || index === event.attempts.length && event.outcome === 'failed' && interaction.outputTokens !== 0
+    ) {
+      throw new Error('Provider interaction token estimate is invalid.')
+    }
+    totalTokens += interaction.totalTokens
+  }
+  if (totalTokens !== estimate.totalTokens) {
+    throw new Error('Provider interaction token estimate total is invalid.')
   }
 }
 
@@ -947,12 +1150,16 @@ function emptyProviderRoutingCounts() {
   return {
     routed: 0,
     attempted: 0,
+    submitted: 0,
     rateLimited: 0,
     fallbackOut: 0,
     completed: 0,
     failed: 0,
     preferenceRequested: 0,
     preferenceHonored: 0,
+    estimatedInputTokens: 0,
+    estimatedOutputTokens: 0,
+    estimatedTotalTokens: 0,
   }
 }
 
@@ -961,20 +1168,30 @@ function providerRoutingStats(events) {
   for (const event of events) {
     if (event.type !== 'provider.routing') continue
     const providers = scopes[event.scope]
+    const finalEstimate = event.tokenEstimate.interactions.at(-1)
     const current = providers[event.provider] ?? emptyProviderRoutingCounts()
     current.routed += 1
     current.attempted += 1
+    if (event.providerSubmitted) current.submitted += 1
     if (event.rateLimited) current.rateLimited += 1
     if (event.outcome === 'completed') current.completed += 1
     else current.failed += 1
+    current.estimatedInputTokens += finalEstimate.inputTokens
+    current.estimatedOutputTokens += finalEstimate.outputTokens
+    current.estimatedTotalTokens += finalEstimate.totalTokens
     providers[event.provider] = current
-    for (const attempt of event.attempts) {
+    for (const [index, attempt] of event.attempts.entries()) {
+      const tokenEstimate = event.tokenEstimate.interactions[index]
       const attempted = providers[attempt.provider] ?? emptyProviderRoutingCounts()
       attempted.routed += 1
       attempted.attempted += 1
+      if (attempt.providerSubmitted) attempted.submitted += 1
       attempted.fallbackOut += 1
       attempted.failed += 1
       if (attempt.reason === 'rate_limit') attempted.rateLimited += 1
+      attempted.estimatedInputTokens += tokenEstimate.inputTokens
+      attempted.estimatedOutputTokens += tokenEstimate.outputTokens
+      attempted.estimatedTotalTokens += tokenEstimate.totalTokens
       providers[attempt.provider] = attempted
     }
     if (event.preferenceRequested !== null) {
@@ -985,6 +1202,40 @@ function providerRoutingStats(events) {
     }
   }
   return scopes
+}
+
+function limitObservationEvents(events) {
+  const observed = []
+  for (const event of events) {
+    if (event.type !== 'provider.routing') continue
+    for (const [index, attempt] of event.attempts.entries()) {
+      if (attempt.reason !== 'rate_limit' && attempt.visibleProof === undefined) continue
+      observed.push({
+        scope: event.scope,
+        provider: attempt.provider,
+        observedAt: attempt.observedAt,
+        reason: attempt.reason,
+        providerSubmitted: attempt.providerSubmitted,
+        visibleProof: attempt.visibleProof ?? null,
+        limitWindow: attempt.limitWindow ?? null,
+        retryAfterSeconds: attempt.retryAfterSeconds ?? null,
+        estimatedTokens: event.tokenEstimate.interactions[index].totalTokens,
+      })
+    }
+    if (event.visibleProof === null) continue
+    observed.push({
+      scope: event.scope,
+      provider: event.provider,
+      observedAt: event.observedAt,
+      reason: event.rateLimited ? 'rate_limit' : 'capacity',
+      providerSubmitted: event.providerSubmitted,
+      visibleProof: event.visibleProof,
+      limitWindow: event.limitWindow,
+      retryAfterSeconds: event.retryAfterSeconds,
+      estimatedTokens: event.tokenEstimate.interactions.at(-1).totalTokens,
+    })
+  }
+  return observed
 }
 
 function aggregateProviderRouting(trials) {
@@ -998,12 +1249,41 @@ function aggregateProviderRouting(trials) {
       }
     }
   }
+  const limitEvents = trials.flatMap((trial) => trial.limitObservations.map((event) => ({
+    trial: trial.trial,
+    ...event,
+  }))).sort((left, right) => left.observedAt.localeCompare(right.observedAt) || left.trial.localeCompare(right.trial))
+  const estimated = Object.values(scopes).flatMap((scope) => Object.values(scope.providers))
+  const estimatorRevisions = new Set(trials.map((trial) => trial.tokenEstimatorRevision))
+  if (trials.length === 0) {
+    return {
+      protocol: revision.routingProtocol,
+      mode: 'not_applicable',
+      tokenUsage: { availability: 'not_applicable' },
+      limitObservations: { events: [], count: 0 },
+      scopes,
+    }
+  }
+  if (estimatorRevisions.size !== 1) {
+    throw new Error('Terminal-Bench token estimates must use one estimator revision for the run.')
+  }
   return {
     protocol: revision.routingProtocol,
     mode: 'auto',
     tokenUsage: {
-      availability: 'unavailable',
-      reason: 'browser_provider_turns_do_not_expose_token_usage',
+      availability: 'estimated',
+      estimator: 'o200k_base',
+      estimatorRevision: [...estimatorRevisions][0],
+      basis: 'serialized benchmark interaction input and visible assistant output; not provider billing usage',
+      interactions: estimated.reduce((sum, counts) => sum + counts.attempted, 0),
+      submittedInteractions: estimated.reduce((sum, counts) => sum + counts.submitted, 0),
+      inputTokens: estimated.reduce((sum, counts) => sum + counts.estimatedInputTokens, 0),
+      outputTokens: estimated.reduce((sum, counts) => sum + counts.estimatedOutputTokens, 0),
+      totalTokens: estimated.reduce((sum, counts) => sum + counts.estimatedTotalTokens, 0),
+    },
+    limitObservations: {
+      events: limitEvents,
+      count: limitEvents.length,
     },
     scopes,
   }

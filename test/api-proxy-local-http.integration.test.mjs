@@ -544,6 +544,7 @@ test('auto rate-limit fallback preserves one local job and reports source attrib
     const submitted = daemon.store.recordProviderSubmission(running.job_id)
     assert.notEqual(submitted.provider_submitted_at, null)
     const alternative = queued.request_json.fallback.alternatives[0]
+    const observedAt = new Date().toISOString()
     const fallbackRequest = {
       ...queued.request_json,
       provider: alternative.provider,
@@ -552,7 +553,15 @@ test('auto rate-limit fallback preserves one local job and reports source attrib
       fallback: null,
       routingObservation: {
         protocol: 'tokenless.provider-routing-observation.v1',
-        attempts: [{ provider: queued.provider, outcome: 'fallback', reason: 'rate_limit' }],
+        attempts: [{
+          provider: queued.provider,
+          outcome: 'fallback',
+          reason: 'rate_limit',
+          observedAt,
+          providerSubmitted: true,
+          visibleProof: 'visible-rate-limit-text:week',
+          limitWindow: 'week',
+        }],
       },
       actions: queued.request_json.actions.map((action) => ({ ...action, provider: alternative.provider })),
     }
@@ -581,6 +590,7 @@ test('auto rate-limit fallback preserves one local job and reports source attrib
     assert.equal(fallback.job_id, queued.job_id)
     assert.equal(fallback.provider, 'deepseek')
     assert.equal(fallback.provider_submitted_at, null)
+    daemon.store.recordProviderSubmission(fallback.job_id)
     daemon.store.completeJob(fallback.job_id, {
       result_json: {
         responses: [{
@@ -597,10 +607,17 @@ test('auto rate-limit fallback preserves one local job and reports source attrib
     assert.equal(response.headers.get('x-tokenless-route-provider'), 'deepseek')
     assert.equal(response.headers.get('x-tokenless-route-fallback-used'), '1')
     assert.equal(response.headers.get('x-tokenless-route-rate-limited'), '0')
+    assert.equal(response.headers.get('x-tokenless-route-provider-submitted'), '1')
+    assert.equal(response.headers.get('x-tokenless-route-visible-proof'), '')
+    assert.equal(response.headers.get('x-tokenless-route-limit-window'), '')
     assert.deepEqual(JSON.parse(response.headers.get('x-tokenless-route-attempts')), [{
       provider: 'chatgpt',
       outcome: 'fallback',
       reason: 'rate_limit',
+      observedAt,
+      providerSubmitted: true,
+      visibleProof: 'visible-rate-limit-text:week',
+      limitWindow: 'week',
     }])
     const body = await response.json()
     assert.equal(body.choices[0].message.content, 'fallback answer')

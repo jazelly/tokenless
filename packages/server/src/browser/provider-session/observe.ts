@@ -67,6 +67,7 @@ async function detectStructuredBlockers(
       message: string
       family?: string
       proof: string
+      limitWindow?: 'minute' | 'hour' | 'day' | 'week' | 'unknown'
       retryAfterSeconds?: number
     }
     const isVisibleElement = (element: Element | null): element is HTMLElement | SVGElement => {
@@ -96,6 +97,19 @@ async function detectStructuredBlockers(
       .join(' ')
     const text = visibleText().replace(/\s+/g, ' ').slice(0, 20_000)
     const lowerText = text.toLowerCase()
+    const rateLimitMatch = lowerText.match(/(?:rate limit|too many requests|try again later|(?:you(?:'ve| have)\s+)?(?:reached|hit)\s+(?:your\s+)?(?:(?:hourly|daily|weekly)\s+)?(?:usage|message|messages|request|requests)?\s*(?:cap|limit)|(?:hourly|daily|weekly)\s+(?:usage|message|messages|request|requests)?\s*(?:cap|limit)(?:\s+(?:has(?: been)?|is))?\s+reached)/i)
+    const rateLimitContext = rateLimitMatch?.index === undefined
+      ? ''
+      : lowerText.slice(Math.max(0, rateLimitMatch.index - 80), rateLimitMatch.index + rateLimitMatch[0].length + 160)
+    const limitWindow = /\b(?:weekly|week)\b/i.test(rateLimitContext)
+      ? 'week' as const
+      : /\b(?:daily|day)\b/i.test(rateLimitContext)
+        ? 'day' as const
+        : /\b(?:hourly|hour)\b/i.test(rateLimitContext)
+          ? 'hour' as const
+          : /\b(?:minute|minutes)\b/i.test(rateLimitContext)
+            ? 'minute' as const
+            : 'unknown' as const
     const retryDuration = lowerText.match(/(?:try again|reset(?:s|ting)?|available again)[^.!]{0,80}?\b(?:in|after)\s+(\d{1,4})\s*(seconds?|minutes?|hours?|days?)\b/i)
     const retryAfterSeconds = retryDuration
       ? Math.min(7 * 24 * 60 * 60, Number(retryDuration[1]) * (
@@ -156,8 +170,11 @@ async function detectStructuredBlockers(
     if (/(scheduled maintenance|under maintenance|service maintenance|maintenance in progress)/i.test(lowerText)) {
       raw.push({ kind: 'terminal', code: 'provider_maintenance', family: 'availability', message: 'The provider is visibly under maintenance.', proof: 'visible-provider-maintenance-text' })
     }
-    if (/(rate limit|too many requests|try again later|temporarily unavailable)/i.test(lowerText)) {
-      raw.push({ kind: 'terminal', code: 'provider_rate_limited', family: 'rate_limit', message: 'The provider is showing a visible rate limit or temporary capacity blocker.', proof: 'visible-rate-limit-text', ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }) })
+    if (/(?:temporarily|service) unavailable/i.test(lowerText)) {
+      raw.push({ kind: 'terminal', code: 'provider_temporarily_unavailable', family: 'availability', message: 'The provider is visibly temporarily unavailable.', proof: 'visible-provider-temporarily-unavailable-text' })
+    }
+    if (rateLimitMatch) {
+      raw.push({ kind: 'terminal', code: 'provider_rate_limited', family: 'rate_limit', message: 'The provider is showing a visible rate limit or temporary capacity blocker.', proof: `visible-rate-limit-text:${limitWindow}`, limitWindow, ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }) })
     }
     const composerVisible = composerSelectors.some(visibleWithAttribute)
     const visiblePlanLimitSurface = Array.from(document.body?.querySelectorAll('body, body *') ?? [])
@@ -173,7 +190,7 @@ async function detectStructuredBlockers(
       visiblePlanLimitSurface.closest('dialog, [role="dialog"], [role="alert"], [aria-modal="true"]') !== null
     )
     if (planLimitBlocksComposer) {
-      raw.push({ kind: 'terminal', code: 'provider_plan_limited', family: 'plan_limit', message: 'The provider is showing a visible plan or quota blocker.', proof: 'visible-plan-limit-text' })
+      raw.push({ kind: 'terminal', code: 'provider_plan_limited', family: 'plan_limit', message: 'The provider is showing a visible plan or quota blocker.', proof: 'visible-plan-limit-text', limitWindow: 'unknown' })
     }
     return raw
   }, provider.composerSelectors)
@@ -218,6 +235,7 @@ async function detectStructuredBlockers(
           ? 'The provider is showing a visible terminal account or capacity blocker.'
           : challenge?.message ?? 'A visible provider challenge or blocker is present.',
       visibleProof: `visible-selector:${reason}`,
+      ...(!requiresAuth && terminal ? { limitWindow: 'unknown' as const } : {}),
     }))
   }
   if (navigation.kind === 'trusted_sign_in') {
@@ -240,6 +258,7 @@ async function detectStructuredBlockers(
       family: raw.family as VisibleBlocker['family'],
       message: raw.message,
       visibleProof: raw.proof,
+      limitWindow: raw.limitWindow,
       retryAfterSeconds: raw.retryAfterSeconds,
     })),
     ...selectorBlockers,
@@ -261,6 +280,7 @@ function createBlocker(input: {
   message: string
   visibleProof: string
   family?: VisibleBlocker['family']
+  limitWindow?: VisibleBlocker['limitWindow']
   retryAfterSeconds?: number | undefined
 }): VisibleBlocker {
   const userResolvable = input.kind === 'challenge' || input.kind === 'auth'
@@ -274,6 +294,7 @@ function createBlocker(input: {
     provider: input.provider.id,
     url: sanitizedNavigationOrigin(input.provider, input.url),
     ...(input.family ? { family: input.family } : {}),
+    ...(input.limitWindow === undefined ? {} : { limitWindow: input.limitWindow }),
     ...(input.retryAfterSeconds === undefined ? {} : { retryAfterSeconds: input.retryAfterSeconds }),
   }
 }

@@ -99,6 +99,12 @@ export function classifyVisibleProviderBlocker(blocker: VisibleBlocker): Classif
     retryable: blocker.retryable,
     providerScoped,
     automaticFallbackEligible: eligible,
+    details: Object.freeze({
+      family: blocker.family ?? null,
+      visibleProof: blocker.visibleProof,
+      limitWindow: blocker.limitWindow ?? null,
+      retryAfterSeconds: blocker.retryAfterSeconds ?? null,
+    }),
   })
 }
 

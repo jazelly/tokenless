@@ -683,6 +683,7 @@ export type VisibleBlocker = {
   provider: ProviderId
   url: string
   family?: 'recaptcha' | 'cloudflare' | 'hcaptcha' | 'arkose' | 'provider_sign_in' | 'rate_limit' | 'plan_limit' | 'availability'
+  limitWindow?: 'minute' | 'hour' | 'day' | 'week' | 'unknown' | undefined
   retryAfterSeconds?: number | undefined
 }
 

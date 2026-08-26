@@ -1646,17 +1646,26 @@ function isPostSubmissionRateLimitFallback(input: {
     const candidate = jsonRecord(attempt)
     if (
       !candidate ||
-      Object.keys(candidate).some((key) => !['provider', 'outcome', 'reason'].includes(key)) ||
+      Object.keys(candidate).some((key) => ![
+        'provider', 'outcome', 'reason', 'observedAt', 'providerSubmitted', 'visibleProof', 'limitWindow', 'retryAfterSeconds',
+      ].includes(key)) ||
       typeof candidate.provider !== 'string' ||
       !/^[a-z][a-z0-9-]{0,63}$/u.test(candidate.provider) ||
       candidate.outcome !== 'fallback' ||
-      !['rate_limit', 'capacity', 'auth', 'unavailable'].includes(String(candidate.reason))
+      !['rate_limit', 'capacity', 'auth', 'unavailable'].includes(String(candidate.reason)) ||
+      typeof candidate.observedAt !== 'string' ||
+      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(candidate.observedAt) ||
+      typeof candidate.providerSubmitted !== 'boolean' ||
+      (candidate.visibleProof !== undefined && (typeof candidate.visibleProof !== 'string' || !/^[a-z0-9:_-]{1,160}$/u.test(candidate.visibleProof))) ||
+      (candidate.limitWindow !== undefined && !['minute', 'hour', 'day', 'week', 'unknown'].includes(String(candidate.limitWindow))) ||
+      (candidate.retryAfterSeconds !== undefined && (typeof candidate.retryAfterSeconds !== 'number' || !Number.isSafeInteger(candidate.retryAfterSeconds) || candidate.retryAfterSeconds < 1 || candidate.retryAfterSeconds > 604_800))
     ) return false
   }
   const lastAttempt = jsonRecord(observation.attempts.at(-1))
   return lastAttempt?.provider === input.job.provider &&
     lastAttempt.outcome === 'fallback' &&
-    lastAttempt.reason === 'rate_limit'
+    lastAttempt.reason === 'rate_limit' &&
+    lastAttempt.providerSubmitted === true
 }
 
 function jsonRecord(value: unknown): Record<string, unknown> | null {

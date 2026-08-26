@@ -971,6 +971,10 @@ function writeApiProxyRoutingHeaders(
   response.setHeader('X-Tokenless-Route-Attempts', JSON.stringify(routing.attempts.slice(0, 5)))
   response.setHeader('X-Tokenless-Route-Preference-Requested', routing.preferenceRequested ?? '')
   response.setHeader('X-Tokenless-Route-Preference-Honored', routing.preferenceHonored ? '1' : '0')
+  response.setHeader('X-Tokenless-Route-Provider-Submitted', routing.providerSubmitted ? '1' : '0')
+  response.setHeader('X-Tokenless-Route-Visible-Proof', routing.visibleProof ?? '')
+  response.setHeader('X-Tokenless-Route-Limit-Window', routing.limitWindow ?? '')
+  response.setHeader('X-Tokenless-Route-Retry-After-Seconds', routing.retryAfterSeconds === undefined ? '' : String(routing.retryAfterSeconds))
 }
 
 /**
