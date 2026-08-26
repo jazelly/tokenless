@@ -2,6 +2,6 @@
 "tokenless": patch
 ---
 
-Read completed Claude code-block responses, submit through its visible enabled send control even when a non-mutating actionability probe times out, retain native Enter only when that control is unavailable, apply the existing one-shot correction to schema-invalid tool arguments, and admit its real-provider-proven single-call strict tool and tool-history scope to `tokenless/auto` routing.
+Read completed Claude code-block responses, dismiss its observed transient `Not now` prompt, submit through its visible enabled send control even when a non-mutating actionability probe times out, retain native Enter only when no send control is present, route away safely when that control remains disabled, apply the existing one-shot correction to schema-invalid tool arguments, and admit its real-provider-proven single-call strict tool and tool-history scope to `tokenless/auto` routing.
 
-读取已完成的 Claude code-block response；即使非变更性 actionability 检查超时，仍通过可见且 enabled 的发送按钮提交，只在该控件不可用时保留 Claude 原生 Enter 路径；将现有的一次性 correction 用于 schema-invalid tool arguments；并将真实 provider 已验证的 single-call strict tool 与 tool-history scope 纳入 `tokenless/auto` routing。
+读取已完成的 Claude code-block response；关闭已观察到的短暂 `Not now` 弹窗；即使非变更性 actionability 检查超时，仍通过可见且 enabled 的发送按钮提交，只在完全没有发送控件时保留 Claude 原生 Enter 路径，并在控件仍 disabled 时安全路由到下一个 provider；将现有的一次性 correction 用于 schema-invalid tool arguments；并将真实 provider 已验证的 single-call strict tool 与 tool-history scope 纳入 `tokenless/auto` routing。

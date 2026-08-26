@@ -21,7 +21,7 @@ export async function inputDomPrompt(
   text: string,
   signal?: AbortSignal,
 ) {
-  await dismissZaiAnnouncement(page, provider)
+  await dismissProviderAnnouncement(page, provider)
   const timeoutMs = provider.interactionTimings.promptControlTimeoutMs
   const deadline = Date.now() + timeoutMs
   let composerObserved = false
@@ -36,6 +36,7 @@ export async function inputDomPrompt(
     if (!composer) break
     composerObserved = true
     if (await writePrompt(page, composer, text)) {
+      await dismissProviderAnnouncement(page, provider)
       return {
         visible: true as const,
         inputProof: 'prompt-text-visible',
@@ -68,7 +69,17 @@ export async function inputDomPrompt(
   )
 }
 
-async function dismissZaiAnnouncement(page: Page, provider: ProviderDomDefinition) {
+async function dismissProviderAnnouncement(page: Page, provider: ProviderDomDefinition) {
+  if (provider.id === 'claude') {
+    const notNow = page.locator('button')
+      .filter({ visible: true, hasText: /^\s*Not now\s*$/u })
+      .last()
+    if (!await notNow.isVisible({ timeout: 500 }).catch(() => false)) return
+    if (!await notNow.isEnabled({ timeout: 500 }).catch(() => false)) return
+    await notNow.click({ timeout: 5000 })
+    await notNow.waitFor({ state: 'hidden', timeout: 2000 })
+    return
+  }
   if (provider.id !== 'zai') return
   const announcement = page.locator('[role="dialog"]')
     .filter({ visible: true })
@@ -86,7 +97,10 @@ export async function submitDomPrompt(
 ) {
   const controlTimeoutMs = provider.interactionTimings.promptControlTimeoutMs
   const button = await waitForActionableSubmitControl(provider, page, signal)
-  const keyboardSubmitComposer = !button
+  const disabledClaudeSubmit = provider.id === 'claude' && !button
+    ? await firstVisibleLocator(page, provider.submitSelectors, 50)
+    : null
+  const keyboardSubmitComposer = !button && !disabledClaudeSubmit
     ? await claudeKeyboardSubmitComposer(provider, page)
     : null
   if (!button && !keyboardSubmitComposer) {

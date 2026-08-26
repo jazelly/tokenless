@@ -245,7 +245,7 @@ async function sanitizedSnapshot(page: Page, provider: ProviderDomDefinition): P
           ...(placeholder ? { placeholder } : {}),
           ...(text ? { text } : {}),
           disabled: element.hasAttribute('disabled') || element.getAttribute('aria-disabled') === 'true',
-          visible: !element.hasAttribute('hidden') && element.getAttribute('aria-hidden') !== 'true',
+          visible: visible(element),
         }
       })
     const escapeAttribute = (value: string) => value
