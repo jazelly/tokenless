@@ -32,6 +32,7 @@ const SAFE_PRE_SUBMIT_PROVIDER_CODES = new Set([
   'file_upload_processing_failed',
   'prompt_input_visibility_timeout',
   'prompt_input_failed',
+  'prompt_clear_failed',
   'workspace_native_stably_unavailable',
 ])
 

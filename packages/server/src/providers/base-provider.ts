@@ -8,7 +8,7 @@ import {
   inspectProviderWorkflowCapability,
   resolveDomProviderSession,
 } from './capabilities/session.js'
-import { inputDomPrompt, submitDomPrompt } from './capabilities/prompt.js'
+import { clearDomPrompt, inputDomPrompt, submitDomPrompt } from './capabilities/prompt.js'
 import {
   legacyDomResponsePreparationFromBaseline,
   observeDomResponseCompletion,
@@ -236,11 +236,7 @@ export abstract class BaseProvider<TId extends ProviderId = ProviderId> {
   }
 
   protected async clearPrompt(page: Page, context: ProviderExecutionContext): Promise<VisibleActionResult> {
-    await this.inputPrompt(page, '', context)
-    return {
-      visible: true as const,
-      inputProof: 'empty',
-    }
+    return await clearDomPrompt(this.definition, page, context.signal)
   }
 
   protected submitPrompt(page: Page, context: ProviderExecutionContext): Promise<VisibleActionResult> {

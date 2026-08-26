@@ -16,6 +16,19 @@ export type PromptAction =
   | typeof VISIBLE_ACTIONS.PROMPT_CLEAR
   | typeof VISIBLE_ACTIONS.PROMPT_SUBMIT
 
+export async function clearDomPrompt(
+  provider: ProviderDomDefinition,
+  page: Page,
+  signal?: AbortSignal,
+) {
+  await inputDomPrompt(provider, page, '', signal)
+  if (provider.id === 'claude') await clearClaudeDraftAttachments(provider, page, signal)
+  return {
+    visible: true as const,
+    inputProof: 'empty' as const,
+  }
+}
+
 export async function inputDomPrompt(
   provider: ProviderDomDefinition,
   page: Page,
@@ -89,6 +102,45 @@ async function dismissProviderAnnouncement(page: Page, provider: ProviderDomDefi
   if (await announcement.count() === 0) return
   await page.keyboard.press('Escape').catch(() => undefined)
   await announcement.waitFor({ state: 'hidden', timeout: 2_000 }).catch(() => undefined)
+}
+
+async function clearClaudeDraftAttachments(
+  provider: ProviderDomDefinition,
+  page: Page,
+  signal: AbortSignal | undefined,
+) {
+  const deadline = Date.now() + provider.interactionTimings.promptControlTimeoutMs
+  let attempt = 0
+  while (Date.now() <= deadline) {
+    assertNotAborted(signal)
+    const tiles = page.locator('[data-testid="file-thumbnail"]')
+      .filter({ visible: true })
+    const tileCount = await tiles.count()
+    if (tileCount === 0) return
+    const tile = tiles.first()
+    const remove = tile.locator('button[aria-label="Remove"]')
+      .filter({ visible: true })
+      .first()
+    if (await remove.isEnabled({ timeout: 50 }).catch(() => false)) {
+      await remove.click({ timeout: 5000 })
+      const removalDeadline = Math.min(deadline, Date.now() + 2000)
+      while (Date.now() <= removalDeadline && await tiles.count() >= tileCount) {
+        await waitForNextDomObservation(page, removalDeadline, attempt, signal)
+        attempt += 1
+      }
+      if (await tiles.count() >= tileCount) break
+      continue
+    }
+    if (Date.now() < deadline) {
+      await waitForNextDomObservation(page, deadline, attempt, signal)
+      attempt += 1
+    }
+  }
+  throw tokenlessError(
+    'prompt_clear_failed',
+    'The visible Claude draft attachments could not be removed.',
+    { retryable: true },
+  )
 }
 
 export async function submitDomPrompt(
@@ -271,6 +323,7 @@ async function promptSubmitDiagnostics(
           },
       visibleDialogs: Array.from(document.querySelectorAll('[role="dialog"], dialog[open], [aria-modal="true"]')).filter(isVisible).length,
       notNowVisible: Array.from(document.querySelectorAll('button')).some((candidate) => isVisible(candidate) && /^\s*Not now\s*$/u.test(candidate.textContent ?? '')),
+      visibleAttachmentTiles: Array.from(document.querySelectorAll('[data-testid="file-thumbnail"]')).filter(isVisible).length,
     }
   }, { composerSelectors: provider.composerSelectors, submitSelectors: provider.submitSelectors }).catch(() => null)
   const composerCharacters = composer

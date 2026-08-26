@@ -352,7 +352,13 @@ test('auto admits Claude only for its evidenced single-call structured-control s
     assert.equal(job.provider, 'claude')
     assert.equal(job.request_json.capabilityRoute.provider, 'claude')
     assert.equal(job.request_json.fallback, null)
-    assert.match(job.request_json.actions[0].payload.text, /tokenless\.openai-tools\/v1/u)
+    assert.deepEqual(job.request_json.actions.map((action) => action.action), [
+      'prompt.clear',
+      'prompt.input',
+      'prompt.submit',
+      'response.read',
+    ])
+    assert.match(promptInputText(job), /tokenless\.openai-tools\/v1/u)
 
     await daemon.store.cancelJob(job.job_id, 'focused Claude structured-control route test completed')
     const response = await pending
@@ -542,7 +548,7 @@ test('explicit auto applies portable call-id affinity and persists one real fall
     assert.equal(job.request_json.capabilityRoute.provider, 'chatgpt')
     assert.equal(job.request_json.fallback.alternatives[0].provider, 'deepseek')
     assert.equal(job.request_json.fallback.alternatives[0].capabilityRoute.provider, 'deepseek')
-    assert.match(job.request_json.actions[0].payload.text, new RegExp(callId))
+    assert.match(promptInputText(job), new RegExp(callId))
     assert.equal(Object.hasOwn(job, 'provider_attempts_json'), false)
 
     await daemon.store.cancelJob(job.job_id, 'focused pre-submit routing test completed')
@@ -1497,7 +1503,7 @@ test('api proxy keeps Chat Completions fresh and Responses continuation on the m
     const firstChatJob = await waitForQueuedApiProxyJob(daemon, 'api-proxy:')
     assert.match(firstChatJob.request_json.taskId, /^api-proxy:[0-9a-f-]{36}$/)
     const firstChatTarget = firstChatJob.request_json.target.url
-    assert.match(firstChatJob.request_json.actions[0].payload.text, /CHAT_FRESH_FIRST/)
+    assert.match(promptInputText(firstChatJob), /CHAT_FRESH_FIRST/)
     daemon.store.cancelJob(firstChatJob.job_id, 'focused API conversation semantics test completed')
     assert.equal((await firstChat).status, 502)
 
@@ -1512,8 +1518,8 @@ test('api proxy keeps Chat Completions fresh and Responses continuation on the m
     const secondChatJob = await waitForQueuedApiProxyJob(daemon, 'api-proxy:')
     assert.notEqual(secondChatJob.request_json.taskId, firstChatJob.request_json.taskId)
     assert.equal(secondChatJob.request_json.target.url, firstChatTarget)
-    assert.match(secondChatJob.request_json.actions[0].payload.text, /CHAT_FRESH_HISTORY/)
-    assert.match(secondChatJob.request_json.actions[0].payload.text, /CHAT_FRESH_CURRENT/)
+    assert.match(promptInputText(secondChatJob), /CHAT_FRESH_HISTORY/)
+    assert.match(promptInputText(secondChatJob), /CHAT_FRESH_CURRENT/)
     daemon.store.cancelJob(secondChatJob.job_id, 'focused API conversation semantics test completed')
     assert.equal((await secondChat).status, 502)
 
@@ -1523,7 +1529,7 @@ test('api proxy keeps Chat Completions fresh and Responses continuation on the m
     })
     const freshResponseJob = await waitForQueuedApiProxyJob(daemon, 'api-proxy:response:resp_')
     assert.match(freshResponseJob.request_json.taskId, /^api-proxy:response:resp_[a-f0-9]{32}$/)
-    assert.match(freshResponseJob.request_json.actions[0].payload.text, /RESPONSES_FRESH_INPUT/)
+    assert.match(promptInputText(freshResponseJob), /RESPONSES_FRESH_INPUT/)
     const freshResponseTarget = freshResponseJob.request_json.target.url
     daemon.store.cancelJob(freshResponseJob.job_id, 'focused API conversation semantics test completed')
     assert.equal((await freshResponse).status, 502)
@@ -1543,8 +1549,8 @@ test('api proxy keeps Chat Completions fresh and Responses continuation on the m
     })
     const mappingMissJob = await waitForQueuedApiProxyJob(daemon, 'api-proxy:response:resp_')
     assert.equal(mappingMissJob.request_json.target.url, freshResponseTarget)
-    assert.match(mappingMissJob.request_json.actions[0].payload.text, /RESPONSES_MAPPING_MISS_OLD/)
-    assert.match(mappingMissJob.request_json.actions[0].payload.text, /RESPONSES_MAPPING_MISS_CURRENT/)
+    assert.match(promptInputText(mappingMissJob), /RESPONSES_MAPPING_MISS_OLD/)
+    assert.match(promptInputText(mappingMissJob), /RESPONSES_MAPPING_MISS_CURRENT/)
     daemon.store.cancelJob(mappingMissJob.job_id, 'focused API conversation semantics test completed')
     assert.equal((await mappingMiss).status, 502)
 
@@ -1577,7 +1583,7 @@ test('api proxy keeps Chat Completions fresh and Responses continuation on the m
     })
     const largeContinuationJob = await waitForQueuedApiProxyJob(daemon, 'api-proxy:response:resp_')
     assert.equal(largeContinuationJob.request_json.target.url, 'https://chatgpt.com/c/api-proxy-large-conversation')
-    const largeContinuationPrompt = largeContinuationJob.request_json.actions[0].payload.text
+    const largeContinuationPrompt = promptInputText(largeContinuationJob)
     assert.match(largeContinuationPrompt, /RESPONSES_LARGE_CURRENT/)
     assert.doesNotMatch(largeContinuationPrompt, new RegExp(largeHistoryMarker))
     assert.ok(Buffer.byteLength(largeContinuationPrompt, 'utf8') < 1024 * 1024)
@@ -1624,7 +1630,7 @@ test('api proxy keeps Chat Completions fresh and Responses continuation on the m
     const continuationJob = await waitForQueuedApiProxyJob(daemon, 'api-proxy:response:resp_')
     assert.match(continuationJob.request_json.taskId, /^api-proxy:response:resp_[a-f0-9]{32}$/)
     assert.equal(continuationJob.request_json.target.url, 'https://chatgpt.com/c/api-proxy-root-conversation')
-    const continuationPrompt = continuationJob.request_json.actions[0].payload.text
+    const continuationPrompt = promptInputText(continuationJob)
     assert.match(continuationPrompt, /RESPONSES_CURRENT_TOOL_RESULT/)
     assert.doesNotMatch(continuationPrompt, /RESPONSES_OLD_CONTEXT/)
     assert.match(continuationPrompt, /function_catalog/)
@@ -1636,6 +1642,12 @@ test('api proxy keeps Chat Completions fresh and Responses continuation on the m
 async function enableApiProxy(homeDir, conversationMode = 'new-conversation') {
   const { writeTokenlessConfig } = await import(runtimeModule)
   await writeTokenlessConfig({ homeDir, apiProxy: { enabled: true, conversationMode } })
+}
+
+function promptInputText(job) {
+  const action = job.request_json.actions.find((candidate) => candidate.action === 'prompt.input')
+  assert.ok(action, 'managed API proxy job must contain prompt.input')
+  return action.payload.text
 }
 
 async function waitForQueuedApiProxyJob(daemon, taskPrefix) {

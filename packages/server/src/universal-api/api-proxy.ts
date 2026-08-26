@@ -518,6 +518,9 @@ export class ApiProxyAdapter {
         }),
         ...(currentTargetUrl ? { target: { kind: 'provider_home' as const, url: currentTargetUrl } } : {}),
         actions: [
+          ...(executionMode === 'browser' && conversationMode === 'new-conversation'
+            ? [createVisibleActionRequest({ provider: currentRequest.provider, action: VISIBLE_ACTIONS.PROMPT_CLEAR, payload: {} })]
+            : []),
           createVisibleActionRequest({
             provider: currentRequest.provider,
             action: VISIBLE_ACTIONS.PROMPT_INPUT,
