@@ -1,5 +1,6 @@
 import { VISIBLE_ACTIONS } from '../contracts.js'
 import { tokenlessError } from '../../browser/errors.js'
+import { observeProviderSession } from '../../browser/provider-session/observe.js'
 import {
   countVisibleLocators,
   firstEnabledLocator,
@@ -165,6 +166,7 @@ async function promptSubmitDiagnostics(
 ) {
   const button = await firstVisibleLocator(page, provider.submitSelectors, 50)
   const composer = await firstVisibleLocator(page, provider.composerSelectors, 50)
+  const session = await observeProviderSession(page, provider).catch(() => null)
   const documentState = await page.evaluate(() => ({
     visibility: document.visibilityState,
     focused: document.hasFocus(),
@@ -177,6 +179,50 @@ async function promptSubmitDiagnostics(
         dataDisabled: element.getAttribute('data-disabled'),
       })).catch(() => ({ visible: true, disabled: null, ariaDisabled: null, dataDisabled: null }))
     : { visible: false, disabled: null, ariaDisabled: null, dataDisabled: null }
+  const surface = await page.evaluate(({ composerSelectors, submitSelectors }) => {
+    const isVisible = (element: Element | null): element is HTMLElement => {
+      if (!(element instanceof HTMLElement)) return false
+      const style = window.getComputedStyle(element)
+      const rect = element.getBoundingClientRect()
+      return style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0 && rect.width > 0 && rect.height > 0
+    }
+    const submitControls = submitSelectors.flatMap((selector) => {
+      try {
+        return Array.from(document.querySelectorAll(selector))
+      } catch {
+        return []
+      }
+    }).filter(isVisible)
+    const visibleSubmitControls = [...new Set(submitControls)]
+    const visibleComposer = composerSelectors.flatMap((selector) => {
+      try {
+        return Array.from(document.querySelectorAll(selector))
+      } catch {
+        return []
+      }
+    }).find(isVisible) ?? null
+    const selection = window.getSelection()
+    const selectionInsideComposer = visibleComposer !== null && selection !== null && selection.rangeCount > 0
+      ? visibleComposer.contains(selection.anchorNode) && visibleComposer.contains(selection.focusNode)
+      : false
+    return {
+      submitControls: {
+        visible: visibleSubmitControls.length,
+        enabled: visibleSubmitControls.filter((control) => !control.hasAttribute('disabled') && control.getAttribute('aria-disabled') !== 'true').length,
+        disabled: visibleSubmitControls.filter((control) => control.hasAttribute('disabled') || control.getAttribute('aria-disabled') === 'true').length,
+      },
+      composer: visibleComposer === null
+        ? null
+        : {
+            editable: visibleComposer.getAttribute('contenteditable') === 'true' || visibleComposer instanceof HTMLInputElement || visibleComposer instanceof HTMLTextAreaElement,
+            ariaDisabled: visibleComposer.getAttribute('aria-disabled'),
+            active: visibleComposer === document.activeElement || visibleComposer.contains(document.activeElement),
+            selectionInside: selectionInsideComposer,
+          },
+      visibleDialogs: Array.from(document.querySelectorAll('[role="dialog"], dialog[open], [aria-modal="true"]')).filter(isVisible).length,
+      notNowVisible: Array.from(document.querySelectorAll('button')).some((candidate) => isVisible(candidate) && /^\s*Not now\s*$/u.test(candidate.textContent ?? '')),
+    }
+  }, { composerSelectors: provider.composerSelectors, submitSelectors: provider.submitSelectors }).catch(() => null)
   const composerCharacters = composer
     ? await composer.evaluate((element) => (
         element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement
@@ -190,6 +236,22 @@ async function promptSubmitDiagnostics(
     submit,
     composerVisible: composer !== null,
     composerCharacters,
+    surface,
+    session: session === null
+      ? null
+      : {
+          authentication: session.authentication,
+          access: session.access,
+          composerVisible: session.composerVisible,
+          guestContinueAvailable: session.guestContinueAvailable,
+          blockers: session.blockers.map((blocker) => ({
+            code: blocker.code,
+            family: blocker.family ?? null,
+            visibleProof: blocker.visibleProof,
+            limitWindow: blocker.limitWindow ?? null,
+            retryAfterSeconds: blocker.retryAfterSeconds ?? null,
+          })),
+        },
   }
 }
 
