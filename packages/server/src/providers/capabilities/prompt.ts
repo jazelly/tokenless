@@ -101,11 +101,14 @@ async function reloadClearedClaudeDraft(
       { retryable: true, cause: error },
     )
   }
-  const composer = await waitForVisibleLocator(
+  let composer = await waitForVisibleLocator(
     page,
     provider.composerSelectors,
     provider.interactionTimings.promptControlTimeoutMs,
   )
+  await page.waitForTimeout(2000)
+  assertNotAborted(signal)
+  composer = await firstVisibleLocator(page, provider.composerSelectors, 50)
   const visibleAttachmentCount = await page.locator('[data-testid="file-thumbnail"]')
     .filter({ visible: true })
     .count()
