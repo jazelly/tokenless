@@ -496,6 +496,7 @@ export class ApiProxyAdapter {
         ...(semanticPreference === null ? {} : { semanticPreference }),
         executionMode,
         capabilityRoute: currentCapabilityRoute,
+        pagePolicy: conversationMode === 'new-conversation' ? 'replace' : 'preserve',
         fallback: remainingRoutes.length === 0 ? null : {
           protocol: 'tokenless.provider-fallback.v1',
           mode: 'automatic',

@@ -538,6 +538,7 @@ test('explicit auto applies portable call-id affinity and persists one real fall
     assert.ok(job)
     assert.equal(job.provider, 'chatgpt')
     assert.equal(job.provider_submitted_at, null)
+    assert.equal(job.request_json.pagePolicy, 'replace')
     assert.equal(job.request_json.capabilityRoute.provider, 'chatgpt')
     assert.equal(job.request_json.fallback.alternatives[0].provider, 'deepseek')
     assert.equal(job.request_json.fallback.alternatives[0].capabilityRoute.provider, 'deepseek')
