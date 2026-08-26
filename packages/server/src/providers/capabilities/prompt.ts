@@ -538,6 +538,27 @@ async function composerIsVisiblyEmpty(locator: Locator) {
 
 async function writePrompt(page: Page, composer: Locator, text: string, preferKeyboardInput = false) {
   if (await composerHasExpectedText(composer, text)) return true
+  if (preferKeyboardInput && text.length > 0 && await composerIsVisiblyEmpty(composer)) {
+    try {
+      await composer.evaluate((element) => {
+        element.focus()
+        if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+          element.setSelectionRange(element.value.length, element.value.length)
+          return
+        }
+        const range = document.createRange()
+        range.selectNodeContents(element)
+        range.collapse(false)
+        const selection = window.getSelection()
+        selection?.removeAllRanges()
+        selection?.addRange(range)
+      })
+      await page.keyboard.insertText(text)
+      if (await composerHasExpectedText(composer, text)) return true
+    } catch {
+      if (await composerHasExpectedText(composer, text)) return true
+    }
+  }
   if (!preferKeyboardInput) {
     try {
       await composer.fill(text, { timeout: 2000 })
