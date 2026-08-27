@@ -4,14 +4,19 @@ import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import Ajv from 'ajv'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const benchmarkRoot = path.join(root, 'benchmarks', 'terminalbench')
 const revision = JSON.parse(await fs.readFile(path.join(benchmarkRoot, 'revision.json'), 'utf8'))
+const observationSchema = JSON.parse(await fs.readFile(path.join(benchmarkRoot, 'observation.schema.json'), 'utf8'))
+const observationValidator = new Ajv({ allErrors: true, strict: true }).compile(observationSchema)
 const SEMANTIC_MANIFEST_SCHEMA = 'tokenless.terminalbench-semantic-manifest.v1'
 const SEMANTIC_TASK_TYPE_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/u
 const SEMANTIC_COMPLEXITIES = new Set(['low', 'medium', 'high'])
 const JOB_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u
+const OBSERVATION_SCHEMA = 'tokenless.terminalbench-observation.v1'
+const OBSERVATION_EXECUTION_PATH = 'Harbor -> Docker DeepSeek Harness -> loopback HTTP -> Tokenless API -> tokenless/auto -> provider'
 const [command = 'help', ...argv] = process.argv.slice(2)
 
 try {
@@ -32,6 +37,8 @@ try {
     output({ ok: true, prepared: await prepare(argv) })
   } else if (command === 'oracle') {
     output({ ok: true, run: await runOracle(argv) })
+  } else if (command === 'observe') {
+    output({ ok: true, observation: await observeExistingJob(argv) })
   } else if (command === 'wiring' || command === 'sweep' || command === 'full') {
     output({ ok: true, run: await runDeepSeekLane(command, argv) })
   } else if (command === 'help' || command === '--help' || command === '-h') {
@@ -230,6 +237,7 @@ async function runOracle(args) {
     attemptsPerTask: 1,
     expectedTrials: 1,
   })
+  await writeRunObservation({ jobDir, report })
   if (result.code !== 0) throw new Error(`Harbor oracle exited ${result.code}; evidence is preserved at ${jobDir}.`)
   assertComplete(report, 1)
   return report
@@ -311,6 +319,7 @@ async function runDeepSeekLane(kind, args) {
     taskManifest: prepared.taskManifest,
     semanticManifest,
   })
+  await writeRunObservation({ jobDir, report, tokenlessHome: homeDir })
   if (result.code !== 0) throw new Error(`Harbor ${kind} run exited ${result.code}; evidence is preserved at ${jobDir}.`)
   assertComplete(report, expectedTrials)
   if (
@@ -489,6 +498,487 @@ async function writeRunReport({
   }
   await fs.writeFile(destination, `${JSON.stringify(report, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
   return report
+}
+
+async function observeExistingJob(args) {
+  const jobDir = await existingJobDirectory(args)
+  const report = await readJson(path.join(jobDir, 'tokenless-run.json'))
+  const jobConfig = await readJson(path.join(jobDir, 'config.json'))
+  const written = await writeRunObservation({ jobDir, report, jobConfig })
+  return {
+    schema: OBSERVATION_SCHEMA,
+    jobName: path.basename(jobDir),
+    path: path.relative(root, written.outputPath).split(path.sep).join('/'),
+  }
+}
+
+async function writeRunObservation({ jobDir, report, tokenlessHome = null, jobConfig = null }) {
+  const sourceConfig = jobConfig ?? await readJson(path.join(jobDir, 'config.json'))
+  const observation = await buildRunObservation({ jobDir, report, jobConfig: sourceConfig, tokenlessHome })
+  validateObservationArtifact(observation)
+  const observationsDirectory = path.join(benchmarkRoot, 'observations')
+  const jobName = path.basename(jobDir)
+  const outputDirectory = path.join(observationsDirectory, jobName)
+  await rejectSymlinkComponents(observationsDirectory, outputDirectory, 'observation output')
+  const outputPath = path.join(outputDirectory, 'run-observation.json')
+  await refuseExisting(outputPath)
+  await fs.mkdir(outputDirectory, { recursive: true })
+  await fs.writeFile(outputPath, `${JSON.stringify(observation, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
+  return { outputPath, observation }
+}
+
+async function buildRunObservation({ jobDir, report, jobConfig, tokenlessHome }) {
+  if (report?.schema !== 'tokenless.terminalbench-run.v1') {
+    throw new Error('The job tokenless-run.json does not use the pinned Terminal-Bench run schema.')
+  }
+  const official = await readJson(path.join(jobDir, 'result.json'))
+  const trialRecords = await readObservationTrials(jobDir)
+  const kind = inferRunKind(report, path.basename(jobDir))
+  const execution = await observationExecutionMode({
+    tokenlessHome,
+    jobConfig,
+    kind,
+  })
+  const stats = official?.stats
+  const rewards = trialRecords
+    .map(({ result }) => result?.verifier_result?.rewards?.reward)
+    .filter((reward) => typeof reward === 'number' && Number.isFinite(reward))
+  const completedTrials = observationCount(stats?.n_completed_trials, 'completed trials')
+  const erroredTrials = observationCount(stats?.n_errored_trials, 'errored trials')
+  const cancelledTrials = observationCount(stats?.n_cancelled_trials, 'cancelled trials')
+  const retries = observationCount(stats?.n_retries, 'retries')
+  const routing = projectObservationRouting(trialRecords, report)
+  const observation = {
+    schema: OBSERVATION_SCHEMA,
+    identity: {
+      jobName: path.basename(jobDir),
+      kind,
+      benchmark: observationString(report.benchmark, 'benchmark'),
+      dataset: observationString(report.dataset, 'dataset'),
+      datasetRef: observationSha256(report.datasetRef, 'dataset reference'),
+      harborVersion: observationString(report.harborVersion, 'Harbor version'),
+      deepseekHarnessRevision: observationNullableString(report.deepseekHarnessRevision),
+      tokenlessRevision: observationNullableString(report.tokenlessRevision),
+      model: observationNullableString(report.model),
+      routingMode: observationNullableString(report.routingMode),
+      profile: observationNullableString(report.profile),
+      taskCount: observationCount(report.taskCount, 'task count'),
+      attemptsPerTask: observationCount(report.attemptsPerTask, 'attempts per task'),
+      expectedTrials: observationCount(report.expectedTrials, 'expected trials'),
+      executionMode: execution.mode,
+      executionModeStatus: execution.status,
+      executionPath: OBSERVATION_EXECUTION_PATH,
+    },
+    timing: observationTiming(official, 'Harbor run'),
+    officialOutcome: {
+      completedTrials,
+      erroredTrials,
+      cancelledTrials,
+      retries,
+      rewards: {
+        count: rewards.length,
+        passed: rewards.filter((reward) => reward === 1).length,
+        failed: rewards.length - rewards.filter((reward) => reward === 1).length,
+        passRate: observationRate(rewards.filter((reward) => reward === 1).length, rewards.length),
+      },
+    },
+    trials: trialRecords.map(observationTrial),
+    routing,
+    evidence: await observationEvidence(jobDir, trialRecords),
+  }
+  return observation
+}
+
+async function readObservationTrials(jobDir) {
+  const entries = (await fs.readdir(jobDir, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory())
+    .sort((left, right) => left.name.localeCompare(right.name))
+  const records = []
+  for (const entry of entries) {
+    const directory = path.join(jobDir, entry.name)
+    const resultPath = path.join(directory, 'result.json')
+    if (!await exists(resultPath)) continue
+    const result = await readJson(resultPath)
+    if (typeof result.trial_name !== 'string' || typeof result.task_name !== 'string') {
+      throw new Error(`Trial result in ${entry.name} has no bounded task identity.`)
+    }
+    const auditPath = path.join(directory, 'agent', 'deep-integration.jsonl')
+    const events = await exists(auditPath) ? await readObservationAudit(auditPath) : []
+    if (events.length > 0) deepIntegrationStats(events, result.trial_name)
+    records.push({ directory, result, events, auditPath: events.length > 0 ? auditPath : null })
+  }
+  records.sort((left, right) => left.result.trial_name.localeCompare(right.result.trial_name))
+  return records
+}
+
+async function readObservationAudit(auditPath) {
+  const events = []
+  for (const line of (await fs.readFile(auditPath, 'utf8')).split(/\r?\n/u)) {
+    if (!line.trim()) continue
+    events.push(JSON.parse(line))
+  }
+  return events
+}
+
+function inferRunKind(report, jobName) {
+  if (report.agent === 'oracle') return 'oracle'
+  if (report.task !== null && report.task !== undefined) return 'wiring'
+  if (report.attemptsPerTask === 1 && report.expectedTrials === revision.taskCount) return 'sweep'
+  if (report.attemptsPerTask === revision.attemptsPerTask && report.expectedTrials === revision.taskCount * revision.attemptsPerTask) return 'full'
+  const match = /^tokenless-tb2-(oracle|wiring|sweep|full)-/u.exec(jobName)
+  return match?.[1] ?? 'unknown'
+}
+
+async function observationExecutionMode({ tokenlessHome, jobConfig, kind }) {
+  let selectedHome = tokenlessHome
+  if (selectedHome === null) {
+    const configuredHome = jobConfig?.agent?.kwargs?.tokenless_home
+    if (typeof configuredHome === 'string' && path.isAbsolute(configuredHome)) selectedHome = configuredHome
+  }
+  if (selectedHome === null) return { mode: null, status: 'unavailable' }
+  let config
+  try {
+    config = await readJson(path.join(selectedHome, 'config.json'))
+  } catch (error) {
+    if (tokenlessHome !== null) throw new Error('The new Tokenless API run cannot prove its selected home execution mode.')
+    return { mode: null, status: 'unavailable' }
+  }
+  const mode = config?.apiProxy?.executionMode
+  if (!['browser', 'direct'].includes(mode)) {
+    if (tokenlessHome !== null) throw new Error('The new Tokenless API run has no proven browser execution mode.')
+    return { mode: null, status: 'unavailable' }
+  }
+  if (tokenlessHome !== null && kind !== 'oracle' && mode !== 'browser') {
+    throw new Error('The DeepSeek Harness lane requires a proven browser Tokenless API execution mode.')
+  }
+  return { mode, status: 'proven' }
+}
+
+function observationTrial(record) {
+  const result = record.result
+  const reward = result?.verifier_result?.rewards?.reward
+  const exceptionType = result?.exception_info?.exception_type
+  if (exceptionType !== undefined && exceptionType !== null && typeof exceptionType !== 'string') {
+    throw new Error(`Trial ${result.trial_name} has an invalid exception type.`)
+  }
+  if (reward !== undefined && reward !== null && (typeof reward !== 'number' || !Number.isFinite(reward))) {
+    throw new Error(`Trial ${result.trial_name} has an invalid reward.`)
+  }
+  return {
+    trial: result.trial_name,
+    task: result.task_name,
+    ...observationTiming(result, 'trial'),
+    stages: {
+      environmentSetup: observationStage(result.environment_setup, `${result.trial_name} environment setup`),
+      agentSetup: observationStage(result.agent_setup, `${result.trial_name} agent setup`),
+      agentExecution: observationStage(result.agent_execution, `${result.trial_name} agent execution`),
+      verifier: observationStage(result.verifier, `${result.trial_name} verifier`),
+    },
+    reward: reward ?? null,
+    exceptionType: exceptionType ?? null,
+  }
+}
+
+function observationStage(stage, label) {
+  return stage === null || stage === undefined ? null : observationTiming(stage, label)
+}
+
+function observationTiming(record, label) {
+  const startedAt = observationTimestamp(record?.started_at, `${label} start`)
+  const finishedAt = observationTimestamp(record?.finished_at, `${label} finish`)
+  if ((startedAt === null) !== (finishedAt === null)) throw new Error(`${label} has only one timestamp.`)
+  if (startedAt === null) return { startedAt: null, finishedAt: null, durationMs: null }
+  const started = observationTimeValue(startedAt)
+  const finished = observationTimeValue(finishedAt)
+  const durationMs = Math.round(finished - started)
+  if (finished < started || !Number.isSafeInteger(durationMs) || durationMs < 0) throw new Error(`${label} has an invalid timestamp pair.`)
+  return { startedAt, finishedAt, durationMs }
+}
+
+function observationTimestamp(value, label) {
+  if (value === null || value === undefined) return null
+  if (
+    typeof value !== 'string'
+    || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:?\d{2})?$/u.test(value)
+    || !Number.isFinite(observationTimeValue(value))
+  ) throw new Error(`${label} is malformed.`)
+  return value
+}
+
+function observationTimeValue(value) {
+  return Date.parse(/(?:Z|[+-]\d{2}:?\d{2})$/u.test(value) ? value : `${value}Z`)
+}
+
+function projectObservationRouting(records, report) {
+  const events = records.flatMap((record) => record.events
+    .filter((event) => event.type === 'provider.routing')
+    .map((event) => projectObservationEvent(event, record)))
+    .sort((left, right) => left.trial.localeCompare(right.trial) || left.sequence - right.sequence)
+  const interactions = events.flatMap((event) => event.tokenEstimate.interactions.map((interaction, index) => ({
+    trial: event.trial,
+    task: event.task,
+    eventSequence: event.sequence,
+    scope: event.scope,
+    provider: interaction.provider,
+    outcome: interaction.outcome,
+    reason: index < event.attempts.length ? event.attempts[index].reason : null,
+    observedAt: interaction.observedAt,
+    providerSubmitted: interaction.providerSubmitted,
+    inputTokens: interaction.inputTokens,
+    outputTokens: interaction.outputTokens,
+    totalTokens: interaction.totalTokens,
+  })))
+  const limits = events.flatMap((event) => observationLimitEvents(event))
+  return {
+    protocol: observationString(report.providerRouting?.protocol ?? revision.routingProtocol, 'routing protocol'),
+    mode: observationNullableString(report.routingMode),
+    events,
+    interactions,
+    aggregates: observationRoutingAggregates(events, interactions),
+    scopes: observationRoutingScopes(events, interactions),
+    limitObservations: limits,
+  }
+}
+
+function projectObservationEvent(event, record) {
+  validateProviderRoutingEvent(event)
+  return {
+    trial: record.result.trial_name,
+    task: record.result.task_name,
+    sequence: event.sequence,
+    scope: event.scope,
+    mode: event.mode,
+    preferenceRequested: event.preferenceRequested,
+    preferenceHonored: event.preferenceHonored,
+    exclusions: event.exclusions,
+    fallbackProviders: event.fallbackProviders,
+    fallbackUsed: event.fallbackUsed,
+    provider: event.provider,
+    outcome: event.outcome,
+    providerSubmitted: event.providerSubmitted,
+    rateLimited: event.rateLimited,
+    visibleProof: event.visibleProof,
+    limitWindow: event.limitWindow,
+    retryAfterSeconds: event.retryAfterSeconds,
+    attempts: event.attempts.map((attempt) => ({
+      provider: attempt.provider,
+      outcome: attempt.outcome,
+      reason: attempt.reason,
+      observedAt: attempt.observedAt,
+      providerSubmitted: attempt.providerSubmitted,
+      visibleProof: attempt.visibleProof ?? null,
+      limitWindow: attempt.limitWindow ?? null,
+      retryAfterSeconds: attempt.retryAfterSeconds ?? null,
+    })),
+    observedAt: event.observedAt,
+    tokenEstimate: {
+      availability: event.tokenEstimate.availability,
+      basis: event.tokenEstimate.basis,
+      estimator: event.tokenEstimate.estimator,
+      estimatorRevision: event.tokenEstimate.estimatorRevision,
+      inputCharacters: event.tokenEstimate.inputCharacters,
+      inputTextSha256: event.tokenEstimate.inputTextSha256,
+      outputCharacters: event.tokenEstimate.outputCharacters,
+      outputTextSha256: event.tokenEstimate.outputTextSha256,
+      interactions: event.tokenEstimate.interactions,
+      totalTokens: event.tokenEstimate.totalTokens,
+    },
+  }
+}
+
+function observationLimitEvents(event) {
+  const limits = []
+  for (const [index, attempt] of event.attempts.entries()) {
+    if (attempt.reason !== 'rate_limit' && attempt.visibleProof === undefined) continue
+    const interaction = event.tokenEstimate.interactions[index]
+    limits.push({
+      trial: event.trial,
+      task: event.task,
+      eventSequence: event.sequence,
+      scope: event.scope,
+      provider: attempt.provider,
+      observedAt: attempt.observedAt,
+      reason: attempt.reason,
+      providerSubmitted: attempt.providerSubmitted,
+      visibleProof: attempt.visibleProof ?? null,
+      limitWindow: attempt.limitWindow ?? null,
+      retryAfterSeconds: attempt.retryAfterSeconds ?? null,
+      inputTokens: interaction.inputTokens,
+      outputTokens: interaction.outputTokens,
+      totalTokens: interaction.totalTokens,
+    })
+  }
+  if (event.visibleProof !== null) {
+    const interaction = event.tokenEstimate.interactions.at(-1)
+    limits.push({
+      trial: event.trial,
+      task: event.task,
+      eventSequence: event.sequence,
+      scope: event.scope,
+      provider: event.provider,
+      observedAt: event.observedAt,
+      reason: event.rateLimited ? 'rate_limit' : 'capacity',
+      providerSubmitted: event.providerSubmitted,
+      visibleProof: event.visibleProof,
+      limitWindow: event.limitWindow,
+      retryAfterSeconds: event.retryAfterSeconds,
+      inputTokens: interaction.inputTokens,
+      outputTokens: interaction.outputTokens,
+      totalTokens: interaction.totalTokens,
+    })
+  }
+  return limits
+}
+
+function observationRoutingAggregates(events, interactions) {
+  const submitted = interactions.filter((interaction) => interaction.providerSubmitted).length
+  const completed = interactions.filter((interaction) => interaction.outcome === 'completed').length
+  const failed = interactions.filter((interaction) => interaction.outcome !== 'completed').length
+  const fallbacks = interactions.filter((interaction) => interaction.outcome === 'fallback').length
+  const revisions = new Set(events.map((event) => event.tokenEstimate.estimatorRevision))
+  const bases = new Set(events.map((event) => event.tokenEstimate.basis))
+  if (revisions.size > 1 || bases.size > 1) throw new Error('Observation token estimates must use one estimator revision and basis.')
+  return {
+    interactions: interactions.length,
+    submittedInteractions: submitted,
+    submittedRate: observationRate(submitted, interactions.length),
+    completed,
+    completedRate: observationRate(completed, interactions.length),
+    failed,
+    failedRate: observationRate(failed, interactions.length),
+    fallbacks,
+    fallbackRate: observationRate(fallbacks, interactions.length),
+    inputTokens: interactions.reduce((sum, interaction) => sum + interaction.inputTokens, 0),
+    outputTokens: interactions.reduce((sum, interaction) => sum + interaction.outputTokens, 0),
+    totalTokens: interactions.reduce((sum, interaction) => sum + interaction.totalTokens, 0),
+    estimateStatus: events.length === 0 ? 'not_applicable' : 'estimated',
+    estimator: events[0]?.tokenEstimate.estimator ?? null,
+    estimatorRevision: events[0]?.tokenEstimate.estimatorRevision ?? null,
+    basis: events[0]?.tokenEstimate.basis ?? null,
+  }
+}
+
+function observationRoutingScopes(events, interactions) {
+  const scopes = { parent: { providers: {} }, child: { providers: {} } }
+  const getCounts = (scope, provider) => {
+    const providers = scopes[scope].providers
+    providers[provider] ??= emptyObservationProviderCounts()
+    return providers[provider]
+  }
+  for (const interaction of interactions) {
+    const counts = getCounts(interaction.scope, interaction.provider)
+    counts.interactions += 1
+    if (interaction.providerSubmitted) counts.submitted += 1
+    if (interaction.outcome === 'completed') counts.completed += 1
+    else counts.failed += 1
+    if (interaction.outcome === 'fallback') counts.fallbacks += 1
+    counts.inputTokens += interaction.inputTokens
+    counts.outputTokens += interaction.outputTokens
+    counts.totalTokens += interaction.totalTokens
+  }
+  for (const event of events) {
+    const finalCounts = getCounts(event.scope, event.provider)
+    if (event.rateLimited) finalCounts.rateLimited += 1
+    if (event.preferenceRequested !== null) {
+      const preferredCounts = getCounts(event.scope, event.preferenceRequested)
+      preferredCounts.preferenceRequested += 1
+      if (event.preferenceHonored) preferredCounts.preferenceHonored += 1
+    }
+    for (const attempt of event.attempts) {
+      if (attempt.reason === 'rate_limit') getCounts(event.scope, attempt.provider).rateLimited += 1
+    }
+  }
+  for (const scope of Object.values(scopes)) {
+    for (const counts of Object.values(scope.providers)) {
+      counts.submittedRate = observationRate(counts.submitted, counts.interactions)
+      counts.completedRate = observationRate(counts.completed, counts.interactions)
+      counts.failedRate = observationRate(counts.failed, counts.interactions)
+      counts.fallbackRate = observationRate(counts.fallbacks, counts.interactions)
+    }
+  }
+  return scopes
+}
+
+function emptyObservationProviderCounts() {
+  return {
+    interactions: 0,
+    submitted: 0,
+    submittedRate: null,
+    completed: 0,
+    completedRate: null,
+    failed: 0,
+    failedRate: null,
+    fallbacks: 0,
+    fallbackRate: null,
+    rateLimited: 0,
+    preferenceRequested: 0,
+    preferenceHonored: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+  }
+}
+
+async function observationEvidence(jobDir, records) {
+  const rootFiles = []
+  for (const name of ['result.json', 'config.json', 'tokenless-run.json']) {
+    rootFiles.push(await observationFileEvidence(jobDir, path.join(jobDir, name)))
+  }
+  const trials = []
+  for (const record of records) {
+    const files = [await observationFileEvidence(jobDir, path.join(record.directory, 'result.json'))]
+    if (record.auditPath !== null) files.push(await observationFileEvidence(jobDir, record.auditPath))
+    trials.push({ trial: record.result.trial_name, task: record.result.task_name, files })
+  }
+  return { root: rootFiles, trials }
+}
+
+async function observationFileEvidence(jobDir, filePath) {
+  const bytes = await fs.readFile(filePath)
+  return {
+    path: observationRelativePath(jobDir, filePath),
+    sha256: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
+    bytes: bytes.byteLength,
+    lineCount: bytes.length === 0 ? 0 : bytes.toString('utf8').split(/\r?\n/u).filter((line) => line.trim() !== '').length,
+  }
+}
+
+function observationRelativePath(jobDir, filePath) {
+  const relative = path.relative(jobDir, filePath)
+  if (relative === '' || path.isAbsolute(relative) || relative === '..' || relative.startsWith(`..${path.sep}`)) {
+    throw new Error('Observation evidence path is outside the job directory.')
+  }
+  return relative.split(path.sep).join('/')
+}
+
+function validateObservationArtifact(observation) {
+  if (!observationValidator(observation)) {
+    throw new Error(`Generated observation failed schema validation: ${observationValidator.errorsText(observationValidator.errors)}`)
+  }
+}
+
+function observationString(value, label) {
+  if (typeof value !== 'string' || value.length === 0) throw new Error(`Observation ${label} is missing.`)
+  return value
+}
+
+function observationNullableString(value) {
+  return value === null || value === undefined ? null : observationString(value, 'string field')
+}
+
+function observationSha256(value, label) {
+  const normalized = observationString(value, label)
+  if (!/^sha256:[a-f0-9]{64}$/u.test(normalized)) throw new Error(`Observation ${label} is invalid.`)
+  return normalized
+}
+
+function observationCount(value, label) {
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error(`Observation ${label} is invalid.`)
+  return value
+}
+
+function observationRate(numerator, denominator) {
+  return denominator === 0 ? null : numerator / denominator
 }
 
 function preRoutingException(trial, directory) {
@@ -1474,6 +1964,33 @@ async function jobsDirectory(args) {
   return jobsDirectory
 }
 
+async function existingJobDirectory(args) {
+  const resultsDirectory = path.resolve(benchmarkRoot, 'results')
+  const jobDir = path.resolve(requiredOption(args, '--job-dir'))
+  const relative = path.relative(resultsDirectory, jobDir)
+  if (
+    relative === ''
+    || relative === '..'
+    || relative.startsWith(`..${path.sep}`)
+    || path.isAbsolute(relative)
+  ) {
+    throw new Error(`--job-dir must be an existing direct or nested job directory within ${resultsDirectory}.`)
+  }
+  const components = relative.split(path.sep)
+  if (components.some((component) => !JOB_NAME_PATTERN.test(component))) {
+    throw new Error('--job-dir components must be safe basenames of up to 64 ASCII letters, digits, dot, underscore, or hyphen.')
+  }
+  await rejectSymlinkComponents(resultsDirectory, jobDir, '--job-dir')
+  let stat
+  try {
+    stat = await fs.stat(jobDir)
+  } catch {
+    throw new Error(`--job-dir does not exist: ${jobDir}.`)
+  }
+  if (!stat.isDirectory()) throw new Error(`--job-dir is not a directory: ${jobDir}.`)
+  return jobDir
+}
+
 function uniqueJobName(kind) {
   return `tokenless-tb2-${kind}-${new Date().toISOString().replace(/[-:.TZ]/g, '')}`
 }
@@ -1486,7 +2003,7 @@ function resolveJobName(args, kind) {
   return jobName
 }
 
-async function rejectSymlinkComponents(baseDirectory, targetDirectory) {
+async function rejectSymlinkComponents(baseDirectory, targetDirectory, optionName = '--jobs-dir') {
   const relative = path.relative(baseDirectory, targetDirectory)
   let current = baseDirectory
   const components = relative === '' ? [] : relative.split(path.sep)
@@ -1494,7 +2011,7 @@ async function rejectSymlinkComponents(baseDirectory, targetDirectory) {
     if (component !== '') current = path.join(current, component)
     try {
       if ((await fs.lstat(current)).isSymbolicLink()) {
-        throw new Error(`--jobs-dir cannot contain a symbolic link: ${current}.`)
+        throw new Error(`${optionName} cannot contain a symbolic link: ${current}.`)
       }
     } catch (error) {
       if (error?.code === 'ENOENT') return
@@ -1580,10 +2097,12 @@ function helpText() {
     `Commands:\n` +
     `  inspect\n` +
     `  prepare --dsh-checkout <path>\n` +
+    `  observe --job-dir <existing-results-job-dir>\n` +
     `  oracle [--task terminal-bench/<name>] [--jobs-dir <path>]\n` +
     `  wiring --home <path> --dsh-checkout <path> --profile <id> --semantic-manifest <path> [--task terminal-bench/<name>] [--jobs-dir <path>]\n` +
     `  sweep --home <path> --dsh-checkout <path> --profile <id> --semantic-manifest <path> [--jobs-dir <path>]\n` +
     `  full --home <path> --dsh-checkout <path> --profile <id> --semantic-manifest <path> [--jobs-dir <path>]\n\n` +
     `  Default jobs directory: benchmarks/terminalbench/results; explicit --jobs-dir must stay within it.\n` +
+    `  observe writes benchmarks/terminalbench/observations/<job-name>/run-observation.json and never overwrites evidence.\n` +
     `The sweep command is a fixed 89-task, k=1 phase gate; full is fixed to Harbor ${revision.harborVersion}, the 89-task Terminal-Bench 2.0 dataset, k=5, one concurrent trial, and zero Harbor retries.\n`
 }
