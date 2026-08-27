@@ -5,12 +5,13 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const benchmarkRoot = path.join(root, 'benchmarks', 'terminalbench')
 const revision = JSON.parse(await fs.readFile(path.join(benchmarkRoot, 'revision.json'), 'utf8'))
 const SEMANTIC_MANIFEST_SCHEMA = 'tokenless.terminalbench-semantic-manifest.v1'
 const SEMANTIC_TASK_TYPE_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/u
 const SEMANTIC_COMPLEXITIES = new Set(['low', 'medium', 'high'])
+const JOB_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u
 const [command = 'help', ...argv] = process.argv.slice(2)
 
 try {
@@ -202,9 +203,9 @@ async function packageArtifact(packageValue, directories) {
 }
 
 async function runOracle(args) {
-  const jobsDir = jobsDirectory(args)
+  const jobsDir = await jobsDirectory(args)
   const task = option(args, '--task') ?? revision.wiringTask
-  const jobName = option(args, '--job-name') ?? uniqueJobName('oracle')
+  const jobName = resolveJobName(args, 'oracle')
   const jobDir = path.join(jobsDir, jobName)
   await refuseExisting(jobDir)
   await fs.mkdir(jobsDir, { recursive: true })
@@ -235,6 +236,8 @@ async function runOracle(args) {
 }
 
 async function runDeepSeekLane(kind, args) {
+  const jobsDir = await jobsDirectory(args)
+  const jobName = resolveJobName(args, kind)
   const homeDir = path.resolve(requiredOption(args, '--home'))
   const profile = requiredOption(args, '--profile')
   const semanticManifest = await validateSemanticManifest(path.resolve(requiredOption(args, '--semantic-manifest')))
@@ -253,8 +256,6 @@ async function runDeepSeekLane(kind, args) {
 
   const prepared = await prepare(args)
   const daemon = await ensureHostDaemon(homeDir, option(args, '--daemon-url'))
-  const jobsDir = jobsDirectory(args)
-  const jobName = option(args, '--job-name') ?? uniqueJobName(kind)
   const jobDir = path.join(jobsDir, jobName)
   await refuseExisting(jobDir)
   await fs.mkdir(jobsDir, { recursive: true })
@@ -1458,12 +1459,48 @@ function datasetIdentity() {
   return `${revision.dataset}@${revision.datasetRef}`
 }
 
-function jobsDirectory(args) {
-  return path.resolve(option(args, '--jobs-dir') ?? path.join(benchmarkRoot, 'runs'))
+async function jobsDirectory(args) {
+  const resultsDirectory = path.resolve(benchmarkRoot, 'results')
+  const jobsDirectory = path.resolve(option(args, '--jobs-dir') ?? resultsDirectory)
+  const relative = path.relative(resultsDirectory, jobsDirectory)
+  if (
+    relative === '..'
+    || relative.startsWith(`..${path.sep}`)
+    || path.isAbsolute(relative)
+  ) {
+    throw new Error(`--jobs-dir must be within ${resultsDirectory}.`)
+  }
+  await rejectSymlinkComponents(resultsDirectory, jobsDirectory)
+  return jobsDirectory
 }
 
 function uniqueJobName(kind) {
   return `tokenless-tb2-${kind}-${new Date().toISOString().replace(/[-:.TZ]/g, '')}`
+}
+
+function resolveJobName(args, kind) {
+  const jobName = option(args, '--job-name') ?? uniqueJobName(kind)
+  if (!JOB_NAME_PATTERN.test(jobName)) {
+    throw new Error('--job-name must be one safe basename of up to 64 ASCII letters, digits, dot, underscore, or hyphen.')
+  }
+  return jobName
+}
+
+async function rejectSymlinkComponents(baseDirectory, targetDirectory) {
+  const relative = path.relative(baseDirectory, targetDirectory)
+  let current = baseDirectory
+  const components = relative === '' ? [] : relative.split(path.sep)
+  for (const component of ['', ...components]) {
+    if (component !== '') current = path.join(current, component)
+    try {
+      if ((await fs.lstat(current)).isSymbolicLink()) {
+        throw new Error(`--jobs-dir cannot contain a symbolic link: ${current}.`)
+      }
+    } catch (error) {
+      if (error?.code === 'ENOENT') return
+      throw error
+    }
+  }
 }
 
 async function refuseExisting(target) {
@@ -1544,8 +1581,9 @@ function helpText() {
     `  inspect\n` +
     `  prepare --dsh-checkout <path>\n` +
     `  oracle [--task terminal-bench/<name>] [--jobs-dir <path>]\n` +
-    `  wiring --home <path> --dsh-checkout <path> --profile <id> --semantic-manifest <path> [--task terminal-bench/<name>]\n` +
-    `  sweep --home <path> --dsh-checkout <path> --profile <id> --semantic-manifest <path>\n` +
-    `  full --home <path> --dsh-checkout <path> --profile <id> --semantic-manifest <path>\n\n` +
+    `  wiring --home <path> --dsh-checkout <path> --profile <id> --semantic-manifest <path> [--task terminal-bench/<name>] [--jobs-dir <path>]\n` +
+    `  sweep --home <path> --dsh-checkout <path> --profile <id> --semantic-manifest <path> [--jobs-dir <path>]\n` +
+    `  full --home <path> --dsh-checkout <path> --profile <id> --semantic-manifest <path> [--jobs-dir <path>]\n\n` +
+    `  Default jobs directory: benchmarks/terminalbench/results; explicit --jobs-dir must stay within it.\n` +
     `The sweep command is a fixed 89-task, k=1 phase gate; full is fixed to Harbor ${revision.harborVersion}, the 89-task Terminal-Bench 2.0 dataset, k=5, one concurrent trial, and zero Harbor retries.\n`
 }

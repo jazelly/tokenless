@@ -25,28 +25,31 @@ Deep integration is established only by a host-observed, ordered HTTP/process ch
 
 ```sh
 npm run benchmark:terminalbench -- inspect
-npm run benchmark:terminalbench -- oracle --jobs-dir <path>
+npm run benchmark:terminalbench -- oracle \
+  --jobs-dir benchmarks/terminalbench/results
 npm run benchmark:terminalbench -- sweep \
   --home <tokenless-api-home> \
   --dsh-checkout <deepseek-harness-checkout> \
   --profile web-ai \
-  --semantic-manifest <external-semantic-manifest.json> \
-  --jobs-dir <path>
+  --semantic-manifest benchmarks/terminalbench/observations/semantic-manifest-20260826-auto-v2.json \
+  --jobs-dir benchmarks/terminalbench/results
 npm run benchmark:terminalbench -- wiring \
   --home <tokenless-api-home> \
   --dsh-checkout <deepseek-harness-checkout> \
   --profile web-ai \
-  --semantic-manifest <external-semantic-manifest.json> \
-  --jobs-dir <path>
+  --semantic-manifest benchmarks/terminalbench/observations/semantic-manifest-20260826-auto-v2.json \
+  --jobs-dir benchmarks/terminalbench/results
 npm run benchmark:terminalbench -- full \
   --home <tokenless-api-home> \
   --dsh-checkout <deepseek-harness-checkout> \
   --profile web-ai \
-  --semantic-manifest <external-semantic-manifest.json> \
-  --jobs-dir <path>
+  --semantic-manifest benchmarks/terminalbench/observations/semantic-manifest-20260826-auto-v2.json \
+  --jobs-dir benchmarks/terminalbench/results
 ```
 
-`wiring` runs one unchanged official task with `k=1`. `sweep` runs all 89 unchanged official tasks once (`k=1`, one concurrent trial, zero Harbor retries) and is a phase gate: it is successful only when all 89 trials settle without infrastructure errors/cancellations/retries, have complete deep chains, and receive verifier reward `1`. `full` always runs all 89 tasks with `k=5`, one concurrent trial, and no Harbor retry. The committed task manifest pins every official task name to both its Harbor task ref and full instruction digest. All three DeepSeek Harness commands require an external semantic manifest whose 89 sorted entries match those instruction digests; entries contain only the full instruction digest, `preferredProvider`, bounded `taskType`, `complexity` (`low`/`medium`/`high`), and `truncated`, plus a deterministic whole-manifest digest. The DSH adapter identity stays fixed, while every parent and child model turn requests `tokenless/auto`; the manifest preference is advisory and can reorder providers only within the operation router's highest current eligibility tier. The benchmark profile disables DSH model-request retries and lets the Tokenless API deadline settle first, so a submitted turn is never replayed while its exact local job is still active. Each job writes a non-secret `tokenless-run.json` with the semantic manifest digest; the report keeps per-provider routing counts separate from official verifier rewards, discloses `deepIntegration.trialsWithCompleteChain`, and lists proven exceptions that occurred before provider routing under `preRoutingExceptions`. A DSH command failure is an agent outcome and proceeds to the official verifier instead of becoming an infrastructure exception; failed sweep evidence remains in its job directory and the command exits nonzero.
+The tracked harness, adapter, pinned manifests, and bilingual documentation live in `benchmarks/terminalbench`. Harbor jobs default to the ignored `benchmarks/terminalbench/results/`; an explicit `--jobs-dir` must stay in that directory or one of its subdirectories. The ignored `benchmarks/terminalbench/observations/` directory holds the local semantic manifest and bounded run observations, while `cache/` holds generated runtime artifacts. The legacy `runs/` directory is not an output location.
+
+`wiring` runs one unchanged official task with `k=1`. `sweep` runs all 89 unchanged official tasks once (`k=1`, one concurrent trial, zero Harbor retries) and is a phase gate: it is successful only when all 89 trials settle without infrastructure errors/cancellations/retries, have complete deep chains, and receive verifier reward `1`. `full` always runs all 89 tasks with `k=5`, one concurrent trial, and no Harbor retry. The committed task manifest pins every official task name to both its Harbor task ref and full instruction digest. The DeepSeek Harness commands require the semantic manifest at the local `observations/` path shown above (or another explicitly selected manifest) whose 89 sorted entries match those instruction digests; entries contain only the full instruction digest, `preferredProvider`, bounded `taskType`, `complexity` (`low`/`medium`/`high`), and `truncated`, plus a deterministic whole-manifest digest. The DSH adapter identity stays fixed, while every parent and child model turn requests `tokenless/auto`; the manifest preference is advisory and can reorder providers only within the operation router's highest current eligibility tier. The benchmark profile disables DSH model-request retries and lets the Tokenless API deadline settle first, so a submitted turn is never replayed while its exact local job is still active. Each job writes a non-secret `tokenless-run.json` with the semantic manifest digest; the report keeps per-provider routing counts separate from official verifier rewards, discloses `deepIntegration.trialsWithCompleteChain`, and lists proven exceptions that occurred before provider routing under `preRoutingExceptions`. A DSH command failure is an agent outcome and proceeds to the official verifier instead of becoming an infrastructure exception; failed sweep evidence remains in its job directory and the command exits nonzero.
 
 `deepIntegration` reports host-observed parent completion requests, child bootstrap/continuation starts, terminal provider routing, complete ordered chains, `successfulDshParents`, `failedDshParents`, and `unsettledParentCompletionRequests`. A successful route becomes terminal evidence after its complete response body has been relayed; a failed upstream response is recorded before relay so a client disconnect cannot erase its routing and token estimate. `providerRouting.scopes.parent.providers` and `providerRouting.scopes.child.providers` keep parent and child counters separate: `routed`, `attempted`, `submitted`, `rateLimited`, `fallbackOut`, `completed`, `failed`, `preferenceRequested`, `preferenceHonored`, and estimated input/output/total tokens. `fallbackOut` counts a source provider abandoned for a fallback and also counts as `failed=1`; a `rate_limit` attempt increments `rateLimited` only for that source provider. The final provider counters describe only its own terminal outcome. The `sweep` gate additionally requires one successful DSH parent completion and one terminal parent route for every trial; `wiring` and `full` retain these outcome fields for diagnosis without treating a verifier reward of `0` as a Harbor infrastructure error.
 

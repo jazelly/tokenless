@@ -6,7 +6,8 @@ packages/*/dist/
 *.tsbuildinfo
 /tokenless-beta
 /benchmarks/terminalbench/cache/
-/benchmarks/terminalbench/runs/
+/benchmarks/terminalbench/observations/
+/benchmarks/terminalbench/results/
 /benchmarks/__pycache__/
 /benchmarks/terminalbench/__pycache__/
 .DS_Store
