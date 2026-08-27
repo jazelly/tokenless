@@ -576,22 +576,139 @@ private struct MenuBarIcon: View {
     }
 }
 
+private enum MenuBarMetrics {
+    static let popoverWidth: CGFloat = 340
+    static let actionRowHeight: CGFloat = 34
+    static let actionIconSlot: CGFloat = 20
+    static let actionLabelSpacing: CGFloat = 10
+    static let actionHorizontalPadding: CGFloat = 10
+    static let dividerSpacing: CGFloat = 10
+}
+
+private struct MenuBarActionRow<Leading: View, Trailing: View>: View {
+    let title: String
+    let leading: Leading
+    let trailing: Trailing
+
+    init(
+        title: String,
+        @ViewBuilder leading: () -> Leading,
+        @ViewBuilder trailing: () -> Trailing
+    ) {
+        self.title = title
+        self.leading = leading()
+        self.trailing = trailing()
+    }
+
+    var body: some View {
+        HStack(spacing: MenuBarMetrics.actionLabelSpacing) {
+            leading
+                .frame(width: MenuBarMetrics.actionIconSlot, height: 20)
+            Text(title)
+                .font(.callout)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+            trailing
+        }
+        .frame(
+            maxWidth: .infinity,
+            minHeight: MenuBarMetrics.actionRowHeight,
+            maxHeight: MenuBarMetrics.actionRowHeight,
+            alignment: .leading
+        )
+        .padding(.horizontal, MenuBarMetrics.actionHorizontalPadding)
+    }
+}
+
+private extension MenuBarActionRow where Trailing == EmptyView {
+    init(title: String, @ViewBuilder leading: () -> Leading) {
+        self.init(title: title, leading: leading) {
+            EmptyView()
+        }
+    }
+}
+
+private struct MenuBarActionButtonStyle: ButtonStyle {
+    let isProminent: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        MenuBarActionButtonBody(
+            configuration: configuration,
+            isProminent: isProminent
+        )
+    }
+}
+
+private struct MenuBarActionButtonBody: View {
+    let configuration: ButtonStyle.Configuration
+    let isProminent: Bool
+
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var isHovered = false
+
+    var body: some View {
+        configuration.label
+            .frame(
+                maxWidth: .infinity,
+                minHeight: MenuBarMetrics.actionRowHeight,
+                maxHeight: MenuBarMetrics.actionRowHeight,
+                alignment: .leading
+            )
+            .foregroundStyle(isProminent ? Color.accentColor : Color.primary)
+            .background {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(backgroundColor)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .scaleEffect(configuration.isPressed ? 0.985 : 1)
+            .opacity(isEnabled ? 1 : 0.45)
+            .onHover { isHovered = $0 }
+            .animation(.easeOut(duration: 0.12), value: isHovered)
+            .animation(.easeOut(duration: 0.08), value: configuration.isPressed)
+    }
+
+    private var backgroundColor: Color {
+        if isProminent {
+            if configuration.isPressed {
+                return Color.accentColor.opacity(0.22)
+            }
+            if isHovered {
+                return Color.accentColor.opacity(0.16)
+            }
+            return Color.accentColor.opacity(0.10)
+        }
+
+        if configuration.isPressed {
+            return Color.primary.opacity(0.12)
+        }
+        if isHovered {
+            return Color.primary.opacity(0.07)
+        }
+        return .clear
+    }
+}
+
 private struct MenuBarView: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 0) {
             header
             feedback
-            Divider()
+            sectionDivider
             Button {
                 model.openDashboard()
             } label: {
-                Label(model.text(LocalizedText(
+                MenuBarActionRow(title: model.text(LocalizedText(
                     english: "Open Dashboard",
                     chinese: "打开 Dashboard"
-                )), systemImage: "rectangle.inset.filled.and.person.filled")
+                ))) {
+                    Image(systemName: "rectangle.inset.filled.and.person.filled")
+                        .font(.system(size: 15, weight: .medium))
+                }
             }
+            .buttonStyle(MenuBarActionButtonStyle(isProminent: true))
             .keyboardShortcut("d", modifiers: [.command])
             .accessibilityLabel(model.text(LocalizedText(
                 english: "Open Tokenless Dashboard",
@@ -599,25 +716,29 @@ private struct MenuBarView: View {
             )))
 
             recentConversations
-            Divider()
+            sectionDivider
             maintenance
-            Divider()
+            sectionDivider
             Button {
                 model.requestQuit()
             } label: {
-                Label(model.text(LocalizedText(
+                MenuBarActionRow(title: model.text(LocalizedText(
                     english: "Quit Tokenless",
                     chinese: "退出 Tokenless"
-                )), systemImage: "power")
+                ))) {
+                    Image(systemName: "power")
+                        .font(.system(size: 15, weight: .medium))
+                }
             }
+            .buttonStyle(MenuBarActionButtonStyle(isProminent: false))
             .keyboardShortcut("q", modifiers: [.command])
             .accessibilityLabel(model.text(LocalizedText(
                 english: "Quit Tokenless",
                 chinese: "退出 Tokenless"
             )))
         }
-        .padding(16)
-        .frame(width: 360)
+        .padding(14)
+        .frame(width: MenuBarMetrics.popoverWidth)
         .onAppear {
             model.refreshOnAppear()
         }
@@ -672,20 +793,29 @@ private struct MenuBarView: View {
                     .accessibilityAddTraits(.updatesFrequently)
                 }
             }
+            .padding(.bottom, 4)
             .accessibilityElement(children: .contain)
         }
     }
 
     private func feedbackRow(message: String, icon: String, color: Color) -> some View {
-        Label {
+        HStack(spacing: MenuBarMetrics.actionLabelSpacing) {
+            Image(systemName: icon)
+                .foregroundStyle(color)
+                .frame(width: MenuBarMetrics.actionIconSlot, height: 20)
             Text(message)
                 .font(.caption)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
-        } icon: {
-            Image(systemName: icon)
-                .foregroundStyle(color)
+            Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, MenuBarMetrics.actionHorizontalPadding)
+    }
+
+    private var sectionDivider: some View {
+        Divider()
+            .padding(.vertical, MenuBarMetrics.dividerSpacing)
     }
 
     private var header: some View {
@@ -710,7 +840,7 @@ private struct MenuBarView: View {
                 if model.activeJobCount > 0 {
                     Text(model.text(LocalizedText(
                         english: "\(model.activeJobCount) active job(s)",
-                        chinese: "\(model.activeJobCount) 个 active job"
+                        chinese: "\(model.activeJobCount) 个活跃任务"
                     )))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -731,7 +861,7 @@ private struct MenuBarView: View {
     private var recentConversations: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(model.text(LocalizedText(
-                english: "RECENT CONVERSATIONS",
+                english: "Recent Conversations",
                 chinese: "最近对话"
             )))
             .font(.caption2.weight(.semibold))
@@ -747,6 +877,7 @@ private struct MenuBarView: View {
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, MenuBarMetrics.actionHorizontalPadding)
                         .padding(.vertical, 8)
                     } else {
                         ForEach(model.conversations) { conversation in
@@ -770,26 +901,32 @@ private struct MenuBarView: View {
             Button {
                 model.openDashboard()
             } label: {
-                Text(model.text(LocalizedText(
+                MenuBarActionRow(title: model.text(LocalizedText(
                     english: "View All Conversations…",
                     chinese: "查看全部对话…"
-                )))
-                .font(.callout)
+                ))) {
+                    Image(systemName: "list.bullet.rectangle")
+                        .font(.system(size: 15, weight: .medium))
+                }
             }
-            .buttonStyle(.link)
+            .buttonStyle(MenuBarActionButtonStyle(isProminent: false))
         }
     }
 
     private var maintenance: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 2) {
             Button {
                 model.requestRestart()
             } label: {
-                Label(model.text(LocalizedText(
+                MenuBarActionRow(title: model.text(LocalizedText(
                     english: "Restart Tokenless",
                     chinese: "重启 Tokenless"
-                )), systemImage: "arrow.clockwise")
+                ))) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 15, weight: .medium))
+                }
             }
+            .buttonStyle(MenuBarActionButtonStyle(isProminent: false))
             .disabled(model.updateState.isBusy)
 
             updateButton
@@ -798,12 +935,20 @@ private struct MenuBarView: View {
                 get: { model.launchAtLogin },
                 set: { model.setLaunchAtLogin($0) }
             )) {
-                Label(model.text(LocalizedText(
+                MenuBarActionRow(title: model.text(LocalizedText(
                     english: "Start Tokenless at Login",
                     chinese: "登录时启动 Tokenless"
-                )), systemImage: "rectangle.portrait.and.arrow.forward")
+                ))) {
+                    Image(systemName: "rectangle.portrait.and.arrow.forward")
+                        .font(.system(size: 15, weight: .medium))
+                }
             }
-            .toggleStyle(.checkbox)
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .accessibilityLabel(model.text(LocalizedText(
+                english: "Start Tokenless at Login",
+                chinese: "登录时启动 Tokenless"
+            )))
         }
     }
 
@@ -814,43 +959,61 @@ private struct MenuBarView: View {
             Button {
                 model.upgrade()
             } label: {
-                Label(model.text(LocalizedText(
-                    english: "Upgrade to \(version ?? "latest")",
-                    chinese: "升级到 \(version ?? "latest")"
-                )), systemImage: "arrow.down.circle")
+                MenuBarActionRow(title: model.text(LocalizedText(
+                    english: version.map { "Upgrade to \($0)" } ?? "Upgrade to latest",
+                    chinese: version.map { "升级到 \($0)" } ?? "升级到最新版"
+                ))) {
+                    Image(systemName: "arrow.down.circle")
+                        .font(.system(size: 15, weight: .medium))
+                }
             }
+            .buttonStyle(MenuBarActionButtonStyle(isProminent: false))
         case .checking:
-            HStack(spacing: 7) {
-                ProgressView().controlSize(.small)
-                Text(model.text(LocalizedText(
-                    english: "Checking for Updates…",
-                    chinese: "正在检查更新…"
-                )))
-                .font(.callout)
+            MenuBarActionRow(title: model.text(LocalizedText(
+                english: "Checking for Updates…",
+                chinese: "正在检查更新…"
+            ))) {
+                ProgressView()
+                    .controlSize(.small)
             }
+            .accessibilityLabel(model.text(LocalizedText(
+                english: "Checking for Updates",
+                chinese: "正在检查更新"
+            )))
+            .accessibilityAddTraits(.updatesFrequently)
         case .upgrading:
-            HStack(spacing: 7) {
-                ProgressView().controlSize(.small)
-                Text(model.text(LocalizedText(
-                    english: "Upgrading…",
-                    chinese: "正在升级…"
-                )))
-                .font(.callout)
+            MenuBarActionRow(title: model.text(LocalizedText(
+                english: "Upgrading…",
+                chinese: "正在升级…"
+            ))) {
+                ProgressView()
+                    .controlSize(.small)
             }
+            .accessibilityLabel(model.text(LocalizedText(
+                english: "Upgrading",
+                chinese: "正在升级"
+            )))
+            .accessibilityAddTraits(.updatesFrequently)
         default:
             Button {
                 model.checkForUpdates()
             } label: {
-                Label(model.text(LocalizedText(
+                MenuBarActionRow(title: model.text(LocalizedText(
                     english: "Check for Updates…",
                     chinese: "检查更新…"
-                )), systemImage: "arrow.triangle.2.circlepath")
+                ))) {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 15, weight: .medium))
+                }
             }
+            .buttonStyle(MenuBarActionButtonStyle(isProminent: false))
         }
         if let updateMessage = model.updateMessage {
             Text(updateMessage)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+                .padding(.leading, MenuBarMetrics.actionIconSlot + MenuBarMetrics.actionLabelSpacing + MenuBarMetrics.actionHorizontalPadding)
+                .padding(.top, 2)
         }
     }
 
@@ -891,7 +1054,7 @@ private struct MenuBarView: View {
     private var confirmationMessage: String {
         model.text(LocalizedText(
             english: "There are active jobs. Stopping Tokenless may interrupt them.",
-            chinese: "当前有 active job。停止 Tokenless 可能会中断它们。"
+            chinese: "当前有活跃任务。停止 Tokenless 可能会中断这些任务。"
         ))
     }
 }
@@ -922,7 +1085,7 @@ private struct ConversationRow: View {
         }
         .contentShape(Rectangle())
         .padding(.vertical, 5)
-        .padding(.horizontal, 4)
+        .padding(.horizontal, 10)
     }
 
     private var statusColor: Color {
