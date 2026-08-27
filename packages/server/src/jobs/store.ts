@@ -1729,13 +1729,15 @@ function isPostSubmissionFallback(input: {
       typeof candidate.provider !== 'string' ||
       !/^[a-z][a-z0-9-]{0,63}$/u.test(candidate.provider) ||
       candidate.outcome !== 'fallback' ||
-      !['rate_limit', 'capacity', 'auth', 'unavailable'].includes(String(candidate.reason)) ||
+      !['rate_limit', 'capacity', 'auth', 'captcha', 'unreachable', 'unavailable'].includes(String(candidate.reason)) ||
       typeof candidate.observedAt !== 'string' ||
       !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(candidate.observedAt) ||
       typeof candidate.providerSubmitted !== 'boolean' ||
       (candidate.visibleProof !== undefined && (typeof candidate.visibleProof !== 'string' || !/^[a-z0-9:_-]{1,160}$/u.test(candidate.visibleProof))) ||
       (candidate.limitWindow !== undefined && !['minute', 'hour', 'day', 'week', 'unknown'].includes(String(candidate.limitWindow))) ||
-      (candidate.retryAfterSeconds !== undefined && (typeof candidate.retryAfterSeconds !== 'number' || !Number.isSafeInteger(candidate.retryAfterSeconds) || candidate.retryAfterSeconds < 1 || candidate.retryAfterSeconds > 604_800))
+      (candidate.retryAfterSeconds !== undefined && (typeof candidate.retryAfterSeconds !== 'number' || !Number.isSafeInteger(candidate.retryAfterSeconds) || candidate.retryAfterSeconds < 1 || candidate.retryAfterSeconds > 604_800)) ||
+      ((candidate.visibleProof !== undefined || candidate.limitWindow !== undefined || candidate.retryAfterSeconds !== undefined) && !['rate_limit', 'capacity', 'captcha', 'unreachable'].includes(String(candidate.reason))) ||
+      (candidate.reason === 'captcha' && candidate.visibleProof === undefined)
     ) return false
   }
   const lastAttempt = jsonRecord(observation.attempts.at(-1))

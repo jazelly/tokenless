@@ -71,7 +71,7 @@ vLLM 是开源 serving implementation，而不是 proprietary provider 的证据
 | Universal API 执行 caller tools | 永不执行。Caller 自己执行，并在下一次 request 发送 result。 |
 | Browser provider pages 暴露 native OpenAI/Anthropic tool control | 不作声明。当前 browser routes 使用 `prompt_json_envelope`，由 Tokenless 验证整个 result。 |
 | DeepSeek 与 ChatGPT browser routes | 当前 structured-control paths 有真实 prompt-emulated evidence；见 [auto-routing evidence](evidence/openai-auto-provider-routing-2026-08-15.md)。 |
-| Gemini browser prompt tool route | 不公开：真实 diagnostic 在 JSON 前输出 prose，未通过 strict public boundary；见 [prompt-framing evidence](evidence/openai-tool-prompt-framing-2026-08-15.md)。 |
+| Gemini browser prompt tool route | 只公布一次 strict call 与完整 tool history；multiple calls 与 JSON final control 仍排除。见[当前 Gemini evidence](evidence/openai-structured-control-gemini-2026-08-27.md)与[早期 prompt-framing evidence](evidence/openai-tool-prompt-framing-2026-08-15.md)。 |
 | Native provider route | 除官方 contract 外，还需要 exact endpoint/model live probe。仅文档不能把 Tokenless route 提升为 `native_*`。 |
 
 对于 auto routing，candidate 必须满足完整 request requirement set：tool choice、strict arguments、multiple-call semantics、history replay 与 structured final output。Provider public documentation 可以定义 capability，但只有脱敏的 exact live probe 才能让该 capability 进入 Tokenless routing。

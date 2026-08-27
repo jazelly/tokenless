@@ -163,6 +163,7 @@ const capabilityFamilyZh: Record<string, string> = {
 
 const stateEn: Record<string, string> = {
   guest: 'Guest access',
+  account_blocked: 'Account blocked',
   signed_in_free: 'Signed in · free plan',
   signed_in_paid: 'Signed in · paid plan',
   signed_in_unknown: 'Signed in · plan unknown',
@@ -194,6 +195,7 @@ const stateZh: Record<string, string> = {
   unavailable: '不可用',
   unknown: '未知',
   guest: '访客模式',
+  account_blocked: '账号受限',
   signed_in_free: '已登录 · 免费方案',
   signed_in_paid: '已登录 · 付费方案',
   signed_in_unknown: '已登录 · 方案未知',

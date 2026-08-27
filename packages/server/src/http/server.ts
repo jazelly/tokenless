@@ -27,7 +27,10 @@ import { JobStore, WebAiRequestNotFoundError, WebAiRequestRefConflictError, publ
 import { TokenlessApplicationServices } from '../application/services.js'
 import { TokenlessDashboardServer } from './dashboard/server.js'
 import { DashboardSessionManager } from './dashboard/session.js'
-import { PrivateProviderTurnV0Adapter } from './private/provider-turn/v0.js'
+import {
+  PrivateProviderTurnRoutingError,
+  PrivateProviderTurnV0Adapter,
+} from './private/provider-turn/v0.js'
 import {
   ApiProxyAdapter,
   ApiProxyError,
@@ -762,6 +765,9 @@ async function handlePrivateProviderTurnRequest(
 }
 
 function writePrivateProviderTurnError(response: ServerResponse, error: unknown) {
+  if (error instanceof PrivateProviderTurnRoutingError) {
+    writeApiProxyRoutingHeaders(response, error.routing, 'failed')
+  }
   const daemonError = toDaemonError(error)
   const requestRefConflict = error instanceof WebAiRequestRefConflictError
   const requestNotFound = error instanceof WebAiRequestNotFoundError
@@ -966,6 +972,7 @@ function writeApiProxyRoutingHeaders(
   response.setHeader('X-Tokenless-Route-Mode', routing.mode)
   response.setHeader('X-Tokenless-Route-Provider', routing.provider)
   response.setHeader('X-Tokenless-Route-Fallback-Providers', routing.fallbackProviders.join(','))
+  response.setHeader('X-Tokenless-Route-Exclusions', JSON.stringify(routing.exclusions.slice(0, 64)))
   response.setHeader('X-Tokenless-Route-Fallback-Used', routing.fallbackUsed ? '1' : '0')
   response.setHeader('X-Tokenless-Route-Rate-Limited', routing.rateLimited ? '1' : '0')
   response.setHeader('X-Tokenless-Route-Attempts', JSON.stringify(routing.attempts.slice(0, 5)))

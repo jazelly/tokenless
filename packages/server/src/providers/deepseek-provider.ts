@@ -14,6 +14,7 @@ import {
 } from './capabilities/deepseek-controls.js'
 import type { Page } from 'playwright-core'
 import { PROVIDER_NAVIGATION_CATALOG } from './provider-navigation-catalog.js'
+import type { AuthStatusResult } from '../browser/actions.js'
 
 const DEEPSEEK_SESSION_HYDRATION_TIMEOUT_MS = 10_000
 
@@ -96,7 +97,7 @@ export class DeepSeekProvider extends BaseProvider<'deepseek'> {
     })
   }
 
-  protected override async inspectAccount(page: Page, signal: AbortSignal | undefined) {
+  protected override async inspectAccount(page: Page, signal: AbortSignal | undefined): Promise<AuthStatusResult> {
     await waitForVisibleLocator(
       page,
       [
@@ -106,6 +107,14 @@ export class DeepSeekProvider extends BaseProvider<'deepseek'> {
       ],
       DEEPSEEK_SESSION_HYDRATION_TIMEOUT_MS,
     )
-    return await super.inspectAccount(page, signal)
+    const inspected = await super.inspectAccount(page, signal)
+    const suspension = (await this.inspectBlockers(page)).blockers
+      .find((blocker) => blocker.code === 'provider_account_suspended')
+    if (!suspension) return inspected
+    return {
+      state: 'authenticated',
+      access: 'account_blocked',
+      visibleProof: suspension.visibleProof,
+    }
   }
 }

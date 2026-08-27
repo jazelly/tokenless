@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto'
 
 import { readTokenlessConfig, type ApiProxyConversationMode, type ProviderBackend } from '../persistence/config.js'
-import { createManagedPlaywrightJobRequest } from '../browser/job-contract.js'
+import {
+  createManagedPlaywrightJobRequest,
+  type ManagedPlaywrightRoutingExclusion,
+} from '../browser/job-contract.js'
 import { VISIBLE_ACTIONS, createVisibleActionRequest } from '../browser/actions.js'
 import {
   isFreshProviderObservation,
@@ -18,6 +21,8 @@ import {
   type ApiProxyStructuredControlRoute,
   type ProviderId,
   type TaskCapabilityRoute,
+  type TaskCapabilityRouteCandidate,
+  type TaskCapabilityRouteEvaluation,
 } from '../providers/registry.js'
 import {
   type ApiResponseLedgerEntry,
@@ -82,7 +87,7 @@ export type ApiProxyDialect = 'openai' | 'anthropic'
 export type ApiProxyRoutingAttempt = {
   provider: string
   outcome: 'fallback'
-  reason: 'rate_limit' | 'capacity' | 'auth' | 'unavailable'
+  reason: 'rate_limit' | 'capacity' | 'auth' | 'captcha' | 'unreachable' | 'unavailable'
   observedAt: string
   providerSubmitted: boolean
   visibleProof?: string
@@ -90,11 +95,14 @@ export type ApiProxyRoutingAttempt = {
   retryAfterSeconds?: number
 }
 
+export type ApiProxyRoutingExclusion = ManagedPlaywrightRoutingExclusion
+
 /** Safe provider-routing metadata exposed to benchmark and API observers. */
 export type ApiProxyRouting = {
   mode: 'auto' | 'explicit'
   provider: string
   fallbackProviders: string[]
+  exclusions: ApiProxyRoutingExclusion[]
   fallbackUsed: boolean
   rateLimited: boolean
   attempts: ApiProxyRoutingAttempt[]
@@ -144,6 +152,11 @@ type ApiProxyRoute = Readonly<{
   provider: ProviderId
   capabilityRoute: TaskCapabilityRoute
   strategy?: ApiProxyStructuredControlRoute['strategy']
+}>
+
+type AutoRouteResolution = Readonly<{
+  routes: readonly ApiProxyRoute[]
+  exclusions: readonly ApiProxyRoutingExclusion[]
 }>
 
 type RawApiProxyCompletion = {
@@ -306,11 +319,13 @@ export class ApiProxyAdapter {
     if (!request.auto && !modeEnabledProviders.includes(request.provider)) {
       throw new ApiProxyError(503, 'model_not_available', `${executionMode === 'browser' ? 'Browser' : 'Direct'} mode is disabled for ${request.provider} in this profile.`, 'model')
     }
-    const autoRoutes: readonly ApiProxyRoute[] = request.auto
+    const autoResolution: AutoRouteResolution = request.auto
       ? request.toolProtocol
-        ? autoStructuredControlRoutes(request, profile, modeEnabledProviders)
-        : autoConversationRoutes(request.semanticPreference, profile, modeEnabledProviders)
-      : []
+        ? autoStructuredControlRoutes(request, profile, enabledProviders, modeEnabledProviders)
+        : autoConversationRoutes(request.semanticPreference, profile, enabledProviders, modeEnabledProviders)
+      : { routes: [], exclusions: [] }
+    const autoRoutes = autoResolution.routes
+    const autoExclusions = autoResolution.exclusions
     if (request.auto && autoRoutes.length === 0) {
       throw new ApiProxyError(
         503,
@@ -319,6 +334,7 @@ export class ApiProxyAdapter {
           ? 'No enabled provider with current profile access and real evidence can satisfy the structured-control request.'
           : 'No enabled provider with current profile access and conversation capability can satisfy the conversation request.',
         'model',
+        autoRouting(request, autoRoutes, autoExclusions),
       )
     }
     const selectedRoute = autoRoutes[0] ?? null
@@ -335,53 +351,66 @@ export class ApiProxyAdapter {
         const corrected = await this.completeG4f(selectedRequest, [...messages, { role: 'user', content: prompt }], signal)
         return directRawCompletion(selectedRequest, corrected, 'new-conversation')
       })
-      return withRouting(validated, request, selectedRequest, autoRoutes)
+      return withRouting(validated, request, selectedRequest, autoRoutes, autoExclusions)
     }
 
     const plan = responseContext
       ? responseConversationPlan(selectedRequest, responseContext, profile.slug, this.store, executionMode)
       : newConversationPlan(selectedRequest)
 
-    const completion = await this.completeManagedPrompt({
-      request: selectedRequest,
-      profileId: profile.slug,
-      taskId: plan.taskId,
-      promptText: plan.promptText,
-      targetUrl: plan.targetUrl,
-      conversationMode: plan.conversationMode,
-      executionMode,
-      providerBackend,
-      capabilityRoute: selectedRoute?.capabilityRoute ?? null,
-      fallbackRoutes: autoRoutes.slice(1),
-      structuredControlStrategy: structuredControlStrategy(selectedRequest, selectedRoute),
-      semanticPreference: request.semanticPreference,
-      signal,
-    })
-    const validated = await validatedCompletion(selectedRequest, completion, async (prompt) => {
-      const settledRoute = autoRoutes.find((route) => route.provider === completion.base.provider) ?? selectedRoute
-      const correctionRequest = { ...selectedRequest, provider: completion.base.provider }
-      const mapping = this.store.resolveProviderTaskConversation({
-        provider: correctionRequest.provider,
-        profile_id: profile.slug,
-        task_id: plan.taskId,
-      })
-      return await this.completeManagedPrompt({
-        request: correctionRequest,
+    try {
+      const completion = await this.completeManagedPrompt({
+        request: selectedRequest,
         profileId: profile.slug,
         taskId: plan.taskId,
-        promptText: prompt,
-        targetUrl: mapping?.canonical_url ?? plan.targetUrl,
+        promptText: plan.promptText,
+        targetUrl: plan.targetUrl,
         conversationMode: plan.conversationMode,
         executionMode,
         providerBackend,
-        capabilityRoute: settledRoute?.capabilityRoute ?? null,
-        fallbackRoutes: [],
-        structuredControlStrategy: structuredControlStrategy(correctionRequest, settledRoute),
-        semanticPreference: correctionRequest.semanticPreference,
+        capabilityRoute: selectedRoute?.capabilityRoute ?? null,
+        fallbackRoutes: autoRoutes.slice(1),
+        structuredControlStrategy: structuredControlStrategy(selectedRequest, selectedRoute),
+        semanticPreference: request.semanticPreference,
         signal,
       })
-    })
-    return withRouting(validated, request, selectedRequest, autoRoutes)
+      const validated = await validatedCompletion(selectedRequest, completion, async (prompt) => {
+        const settledRoute = autoRoutes.find((route) => route.provider === completion.base.provider) ?? selectedRoute
+        const correctionRequest = { ...selectedRequest, provider: completion.base.provider }
+        const mapping = this.store.resolveProviderTaskConversation({
+          provider: correctionRequest.provider,
+          profile_id: profile.slug,
+          task_id: plan.taskId,
+        })
+        return await this.completeManagedPrompt({
+          request: correctionRequest,
+          profileId: profile.slug,
+          taskId: plan.taskId,
+          promptText: prompt,
+          targetUrl: mapping?.canonical_url ?? plan.targetUrl,
+          conversationMode: plan.conversationMode,
+          executionMode,
+          providerBackend,
+          capabilityRoute: settledRoute?.capabilityRoute ?? null,
+          fallbackRoutes: [],
+          structuredControlStrategy: structuredControlStrategy(correctionRequest, settledRoute),
+          semanticPreference: correctionRequest.semanticPreference,
+          signal,
+        })
+      })
+      return withRouting(validated, request, selectedRequest, autoRoutes, autoExclusions)
+    } catch (error) {
+      if (request.auto && error instanceof ApiProxyError) {
+        throw new ApiProxyError(
+          error.status,
+          error.code,
+          error.message,
+          error.param,
+          autoRouting(request, autoRoutes, autoExclusions, error.routing),
+        )
+      }
+      throw error
+    }
   }
 
   private async completeG4f(
@@ -674,25 +703,41 @@ function withRouting(
   request: NormalizedRequest,
   selectedRequest: NormalizedRequest,
   routes: readonly ApiProxyRoute[],
+  exclusions: readonly ApiProxyRoutingExclusion[],
 ): ApiProxyCompletion {
   return {
     ...completion,
-    routing: {
-      mode: request.auto ? 'auto' : 'explicit',
+    routing: autoRouting(request, routes, exclusions, completion.routing, {
       provider: completion.provider,
-      fallbackProviders: request.auto ? routes.slice(1).map((route) => route.provider) : [],
       fallbackUsed: request.auto && (completion.provider !== selectedRequest.provider || (completion.routing?.attempts.length ?? 0) > 0),
-      rateLimited: completion.routing?.rateLimited ?? false,
-      attempts: completion.routing?.attempts ?? [],
-      preferenceRequested: request.auto ? request.semanticPreference : null,
-      preferenceHonored: request.auto
-        && request.semanticPreference !== null
-        && selectedRequest.provider === request.semanticPreference,
       providerSubmitted: completion.routing?.providerSubmitted ?? true,
-      ...(completion.routing?.visibleProof === undefined ? {} : { visibleProof: completion.routing.visibleProof }),
-      ...(completion.routing?.limitWindow === undefined ? {} : { limitWindow: completion.routing.limitWindow }),
-      ...(completion.routing?.retryAfterSeconds === undefined ? {} : { retryAfterSeconds: completion.routing.retryAfterSeconds }),
-    },
+    }),
+  }
+}
+
+function autoRouting(
+  request: NormalizedRequest,
+  routes: readonly ApiProxyRoute[],
+  exclusions: readonly ApiProxyRoutingExclusion[],
+  existing: ApiProxyRouting | null | undefined = null,
+  overrides: Partial<Pick<ApiProxyRouting, 'provider' | 'fallbackUsed' | 'providerSubmitted'>> = {},
+): ApiProxyRouting {
+  return {
+    mode: request.auto ? 'auto' : 'explicit',
+    provider: overrides.provider ?? existing?.provider ?? routes[0]?.provider ?? (request.auto ? 'auto' : request.provider),
+    fallbackProviders: existing?.fallbackProviders ?? (request.auto ? routes.slice(1).map((route) => route.provider) : []),
+    exclusions: [...exclusions],
+    fallbackUsed: overrides.fallbackUsed ?? existing?.fallbackUsed ?? false,
+    rateLimited: existing?.rateLimited ?? false,
+    attempts: existing?.attempts ?? [],
+    preferenceRequested: existing?.preferenceRequested ?? (request.auto ? request.semanticPreference : null),
+    preferenceHonored: existing?.preferenceHonored ?? (
+      request.auto && request.semanticPreference !== null && routes[0]?.provider === request.semanticPreference
+    ),
+    providerSubmitted: overrides.providerSubmitted ?? existing?.providerSubmitted ?? false,
+    ...(existing?.visibleProof === undefined ? {} : { visibleProof: existing.visibleProof }),
+    ...(existing?.limitWindow === undefined ? {} : { limitWindow: existing.limitWindow }),
+    ...(existing?.retryAfterSeconds === undefined ? {} : { retryAfterSeconds: existing.retryAfterSeconds }),
   }
 }
 
@@ -722,17 +767,31 @@ function autoStructuredControlRoutes(
   request: NormalizedRequest,
   profile: Awaited<ReturnType<ManagedProfileRegistry['resolveProfile']>>,
   enabledProviders: readonly string[],
-): readonly ApiProxyRoute[] {
+  modeEnabledProviders: readonly string[],
+): AutoRouteResolution {
+  const candidates = autoCapabilityCandidates(profile, modeEnabledProviders)
   const conversation = resolveTaskCapabilityRoutes({
     requirements: [TASK_CAPABILITIES.CONVERSATION_CHAT],
-    candidates: autoCapabilityCandidates(profile, enabledProviders),
+    candidates,
   })
-  if (!conversation.ok) return []
+  if (!conversation.ok) {
+    return {
+      routes: [],
+      exclusions: autoRouteExclusions({
+        enabledProviders,
+        modeEnabledProviders,
+        candidates,
+        evaluated: conversation.evaluated,
+        routedProviders: new Set(),
+        structuredControl: false,
+      }),
+    }
+  }
   const preferredConversationRoutes = prioritizeTaskCapabilityRoutes(
     conversation.routes,
     request.semanticPreference,
   )
-  return resolveApiProxyStructuredControlRoutes({
+  const structuredRoutes = resolveApiProxyStructuredControlRoutes({
     requirements: structuredControlRequirements(request),
     candidates: preferredConversationRoutes.map((capabilityRoute, preferenceRank) => ({
       provider: capabilityRoute.provider,
@@ -740,28 +799,110 @@ function autoStructuredControlRoutes(
       preferenceRank,
     })),
     affinityProvider: request.affinityProvider,
-  }).map((route) => ({
-    provider: route.provider,
-    capabilityRoute: route.capabilityRoute,
-    strategy: route.strategy,
-  }))
+  })
+  return {
+    routes: structuredRoutes.map((route) => ({
+      provider: route.provider,
+      capabilityRoute: route.capabilityRoute,
+      strategy: route.strategy,
+    })),
+    exclusions: autoRouteExclusions({
+      enabledProviders,
+      modeEnabledProviders,
+      candidates,
+      evaluated: conversation.evaluated,
+      routedProviders: new Set(structuredRoutes.map((route) => route.provider)),
+      structuredControl: true,
+    }),
+  }
 }
 
 function autoConversationRoutes(
   semanticPreference: string | null,
   profile: Awaited<ReturnType<ManagedProfileRegistry['resolveProfile']>>,
   enabledProviders: readonly string[],
-): readonly ApiProxyRoute[] {
+  modeEnabledProviders: readonly string[],
+): AutoRouteResolution {
+  const candidates = autoCapabilityCandidates(profile, modeEnabledProviders)
   const conversation = resolveTaskCapabilityRoutes({
     requirements: [TASK_CAPABILITIES.CONVERSATION_CHAT],
-    candidates: autoCapabilityCandidates(profile, enabledProviders),
+    candidates,
   })
-  if (!conversation.ok) return []
-  return prioritizeTaskCapabilityRoutes(conversation.routes, semanticPreference)
-    .map((capabilityRoute) => ({
-      provider: capabilityRoute.provider,
-      capabilityRoute,
-    }))
+  const routes = conversation.ok
+    ? prioritizeTaskCapabilityRoutes(conversation.routes, semanticPreference).map((capabilityRoute) => ({
+        provider: capabilityRoute.provider,
+        capabilityRoute,
+      }))
+    : []
+  return {
+    routes,
+    exclusions: autoRouteExclusions({
+      enabledProviders,
+      modeEnabledProviders,
+      candidates,
+      evaluated: conversation.evaluated,
+      routedProviders: new Set(routes.map((route) => route.provider)),
+      structuredControl: false,
+    }),
+  }
+}
+
+function autoRouteExclusions(options: {
+  enabledProviders: readonly string[]
+  modeEnabledProviders: readonly string[]
+  candidates: readonly TaskCapabilityRouteCandidate[]
+  evaluated: readonly TaskCapabilityRouteEvaluation[]
+  routedProviders: ReadonlySet<ProviderId>
+  structuredControl: boolean
+}): readonly ApiProxyRoutingExclusion[] {
+  const candidateByProvider = new Map(options.candidates.map((candidate) => [candidate.provider, candidate]))
+  const evaluatedByProvider = new Map(options.evaluated.map((candidate) => [candidate.provider, candidate]))
+  const exclusions = options.enabledProviders.flatMap((provider) => {
+    const instance = getProviderInstanceById(provider)
+    if (!instance || instance.descriptor.stage === 'disabled') {
+      return [routingExclusion(provider, 'runtime', 'provider_not_supported')]
+    }
+    if (!options.modeEnabledProviders.includes(provider)) {
+      return [routingExclusion(provider, 'runtime', 'provider_mode_disabled')]
+    }
+    const candidate = candidateByProvider.get(instance.id)
+    if (candidate?.runtimeEligibility === 'ineligible') {
+      return [routingExclusion(
+        instance.id,
+        'access',
+        boundedAccessExclusionReason(candidate.reason),
+      )]
+    }
+    const evaluation = evaluatedByProvider.get(instance.id)
+    if (!evaluation) return [routingExclusion(instance.id, 'runtime', 'provider_not_evaluated')]
+    if (options.routedProviders.has(instance.id)) return []
+    if (options.structuredControl && evaluation.compatible) {
+      return [routingExclusion(instance.id, 'capability', 'missing_structured_control_capability')]
+    }
+    return [routingExclusion(
+      instance.id,
+      'capability',
+      evaluation.missingCapabilities.length > 0
+        ? 'missing_conversation_capability'
+        : 'capability_route_unavailable',
+    )]
+  })
+  return Object.freeze(exclusions)
+}
+
+function routingExclusion(
+  provider: string,
+  category: ApiProxyRoutingExclusion['category'],
+  reason: ApiProxyRoutingExclusion['reason'],
+): ApiProxyRoutingExclusion {
+  return Object.freeze({ provider, category, reason })
+}
+
+function boundedAccessExclusionReason(reason: string | null | undefined): ApiProxyRoutingExclusion['reason'] {
+  if (reason === 'provider_access_unknown') return 'provider_access_unknown'
+  if (reason === 'provider_access_sign_in_required') return 'provider_access_sign_in_required'
+  if (reason === 'provider_access_account_blocked') return 'provider_access_account_blocked'
+  return 'provider_access_unavailable'
 }
 
 function autoCapabilityCandidates(
@@ -1514,7 +1655,8 @@ export function routingFromJob(job: Job, modeOverride?: ApiProxyRouting['mode'])
   if (typeof job.provider !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(job.provider)) return null
   const request = job.request_json
   const attempts = routingAttemptsFromRequest(request)
-  if (attempts === null) return null
+  const exclusions = routingExclusionsFromRequest(request)
+  if (attempts === null || exclusions === null) return null
   const rateLimited = job.status !== 'succeeded' && jobIsRateLimited(job)
   const limitEvidence = routeLimitEvidence(job)
   if (!request || typeof request !== 'object' || Array.isArray(request)) {
@@ -1522,6 +1664,7 @@ export function routingFromJob(job: Job, modeOverride?: ApiProxyRouting['mode'])
       mode: modeOverride ?? 'explicit',
       provider: job.provider,
       fallbackProviders: [],
+      exclusions,
       fallbackUsed: false,
       rateLimited,
       attempts,
@@ -1559,6 +1702,7 @@ export function routingFromJob(job: Job, modeOverride?: ApiProxyRouting['mode'])
     mode: modeOverride ?? (fallback !== undefined && fallback !== null || attempts.length > 0 ? 'auto' : 'explicit'),
     provider: job.provider,
     fallbackProviders,
+    exclusions,
     fallbackUsed: attempts.length > 0,
     rateLimited,
     attempts,
@@ -1623,7 +1767,7 @@ function routingAttemptsFromRequest(value: unknown): ApiProxyRoutingAttempt[] | 
   if (!observation || typeof observation !== 'object' || Array.isArray(observation)) return null
   const observationRecord = observation as Record<string, unknown>
   if (
-    Object.keys(observationRecord).some((key) => !['protocol', 'attempts'].includes(key))
+    Object.keys(observationRecord).some((key) => !['protocol', 'exclusions', 'attempts'].includes(key))
     || observationRecord.protocol !== 'tokenless.provider-routing-observation.v1'
   ) return null
   const attempts = observationRecord.attempts
@@ -1641,13 +1785,15 @@ function routingAttemptsFromRequest(value: unknown): ApiProxyRoutingAttempt[] | 
       typeof candidate.provider !== 'string'
       || !/^[a-z][a-z0-9-]{0,63}$/u.test(candidate.provider)
       || candidate.outcome !== 'fallback'
-      || !['rate_limit', 'capacity', 'auth', 'unavailable'].includes(String(candidate.reason))
+      || !['rate_limit', 'capacity', 'auth', 'captcha', 'unreachable', 'unavailable'].includes(String(candidate.reason))
       || typeof candidate.observedAt !== 'string'
       || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(candidate.observedAt)
       || typeof candidate.providerSubmitted !== 'boolean'
       || (candidate.visibleProof !== undefined && (typeof candidate.visibleProof !== 'string' || !/^[a-z0-9:_-]{1,160}$/u.test(candidate.visibleProof)))
       || (candidate.limitWindow !== undefined && !['minute', 'hour', 'day', 'week', 'unknown'].includes(String(candidate.limitWindow)))
       || (candidate.retryAfterSeconds !== undefined && (typeof candidate.retryAfterSeconds !== 'number' || !Number.isSafeInteger(candidate.retryAfterSeconds) || candidate.retryAfterSeconds < 1 || candidate.retryAfterSeconds > 604_800))
+      || ((candidate.visibleProof !== undefined || candidate.limitWindow !== undefined || candidate.retryAfterSeconds !== undefined) && !['rate_limit', 'capacity', 'captcha', 'unreachable'].includes(String(candidate.reason)))
+      || (candidate.reason === 'captcha' && candidate.visibleProof === undefined)
     ) return null
     parsed.push({
       provider: candidate.provider,
@@ -1660,6 +1806,54 @@ function routingAttemptsFromRequest(value: unknown): ApiProxyRoutingAttempt[] | 
         limitWindow: candidate.limitWindow as Exclude<ApiProxyRoutingAttempt['limitWindow'], undefined>,
       }),
       ...(candidate.retryAfterSeconds === undefined ? {} : { retryAfterSeconds: candidate.retryAfterSeconds as number }),
+    })
+  }
+  return parsed
+}
+
+function routingExclusionsFromRequest(value: unknown): ApiProxyRoutingExclusion[] | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return []
+  const request = value as Record<string, unknown>
+  if (!Object.hasOwn(request, 'routingObservation')) return []
+  const observation = request.routingObservation
+  if (!observation || typeof observation !== 'object' || Array.isArray(observation)) return null
+  const observationRecord = observation as Record<string, unknown>
+  if (
+    Object.keys(observationRecord).some((key) => !['protocol', 'exclusions', 'attempts'].includes(key))
+    || observationRecord.protocol !== 'tokenless.provider-routing-observation.v1'
+  ) return null
+  if (observationRecord.exclusions === undefined) return []
+  if (!Array.isArray(observationRecord.exclusions) || observationRecord.exclusions.length > 64) return null
+  const seen = new Set<string>()
+  const parsed: ApiProxyRoutingExclusion[] = []
+  for (const exclusion of observationRecord.exclusions) {
+    if (!exclusion || typeof exclusion !== 'object' || Array.isArray(exclusion)) return null
+    const candidate = exclusion as Record<string, unknown>
+    if (
+      Object.keys(candidate).length !== 3
+      || Object.keys(candidate).some((key) => !['provider', 'category', 'reason'].includes(key))
+      || typeof candidate.provider !== 'string'
+      || !/^[a-z][a-z0-9-]{0,63}$/u.test(candidate.provider)
+      || seen.has(candidate.provider)
+      || !['access', 'runtime', 'capability'].includes(String(candidate.category))
+      || ![
+        'provider_not_supported',
+        'provider_mode_disabled',
+        'provider_not_evaluated',
+        'provider_access_unknown',
+        'provider_access_sign_in_required',
+        'provider_access_account_blocked',
+        'provider_access_unavailable',
+        'missing_conversation_capability',
+        'missing_structured_control_capability',
+        'capability_route_unavailable',
+      ].includes(String(candidate.reason))
+    ) return null
+    seen.add(candidate.provider)
+    parsed.push({
+      provider: candidate.provider,
+      category: candidate.category as ApiProxyRoutingExclusion['category'],
+      reason: candidate.reason as ApiProxyRoutingExclusion['reason'],
     })
   }
   return parsed

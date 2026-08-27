@@ -953,6 +953,7 @@ function managedProviderAccess(
   if (
     value === 'guest' ||
     value === 'sign_in_required' ||
+    value === 'account_blocked' ||
     value === 'signed_in_free' ||
     value === 'signed_in_paid' ||
     value === 'signed_in_unknown' ||

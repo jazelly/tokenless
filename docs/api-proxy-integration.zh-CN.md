@@ -152,7 +152,7 @@ tokenless/<provider>
 - Browser execution，且不带 provider-local backend 或 auth options。Plain text 会通过具有当前可用 observed access 的 enabled provider 的 eligible `conversation.chat` route；function-tool 与 JSON request 还要经过窄 structured-control evidence matrix。
 - Candidate 必须在 selected profile 上启用，并满足该请求对应的 route requirements。
 - Tool requirements 会区分调用、strict schema、完整 tool history 与 multiple-call output。只有当前 `tool_choice` 可能返回多个调用时，`parallel_tool_calls: true` 才要求 multiple-call evidence；`none` 与精确 named choice 不要求。
-- DeepSeek 凭已验证的 multiple/strict/history 与 JSON control 纳入；ChatGPT 凭已验证的 single-call strict/history 与 JSON control 纳入。Claude 与 Grok 只凭已验证的 single-call strict/history control 纳入；multiple calls 与 JSON control 仍排除。Gemini tool control 因真实输出未通过 strict whole-response boundary 而排除。见 [auto routing](evidence/openai-auto-provider-routing-2026-08-15.md)、[Claude](evidence/openai-structured-control-claude-2026-08-26.md)与 [Grok](evidence/openai-structured-control-grok-2026-08-26.md) evidence。
+- DeepSeek 凭已验证的 multiple/strict/history 与 JSON control 纳入；ChatGPT 凭已验证的 single-call strict/history 与 JSON control 纳入。Claude、Gemini 与 Grok 只凭已验证的 single-call strict/history control 纳入；multiple calls 与 JSON control 仍排除。见 [auto routing](evidence/openai-auto-provider-routing-2026-08-15.md)、[Claude](evidence/openai-structured-control-claude-2026-08-26.md)、[Gemini](evidence/openai-structured-control-gemini-2026-08-27.md) 与 [Grok](evidence/openai-structured-control-grok-2026-08-26.md) evidence。
 - Direct execution、provider backend/auth options、opaque replay 或不完整 candidate set 都会在创建 job 前失败。
 
 Auto call 使用只编码 provider origin 的版本化 opaque public id。后续 full-history turn 会在重新检查 current eligibility 后优先该 provider；调用方影响 id 也无法绕过 filter。Responses `previous_response_id` 以相同方式使用现有 ledger provider——它是 portable affinity，不是 hard pin。
@@ -226,7 +226,7 @@ OpenAI 的 `tokenless/auto` 请求可以带一个 advisory 的 `tokenless.semant
 - `"required"`：必须返回至少一个已声明调用；`parallel_tool_calls: false` 会把调用数限制为一个。
 - `{"type":"function","function":{"name":"read_file"}}`：无论 parallel 设置为何，都必须且只能返回该已声明 function 的一个调用。
 
-Prompt-emulated tool support 取决于具体 strategy。Gemini 的 prompt-emulated tool selection 当前不作支持声明：三次真实 packaged-daemon submission 均未观察到 prompt-injection refusal，但每次都在 otherwise JSON-like answer 前添加 prose，因此在 strict whole-response boundary 失败。见[脱敏 framing evidence](evidence/openai-tool-prompt-framing-2026-08-15.md)。
+Prompt-emulated tool support 取决于具体 strategy。Gemini 早期 diagnostic 因在输出前加 prose 而未通过 strict whole-response boundary。当前真实 packaged-daemon run 已通过精确 named strict call 与完整 tool history，因此只公布这一 single-call scope；multiple calls 与 JSON final control 仍排除。见[当前 Gemini evidence](evidence/openai-structured-control-gemini-2026-08-27.md)与[早期 framing evidence](evidence/openai-tool-prompt-framing-2026-08-15.md)。
 
 使用 `strict: true` 时，parameters 根节点必须是 object。每个 object schema（包括可空的嵌套 object）都必须设置 `additionalProperties: false`，并在 `required` 中列出所有 property key；可选字段用 nullable type 表示。Tokenless 会在提交 provider 前拒绝不合规的 strict schema，并按声明 schema 校验返回 arguments。
 

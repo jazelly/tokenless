@@ -1546,6 +1546,9 @@ function safeFallbackRequest(
     ...(request.semanticPreference === undefined ? {} : { semanticPreference: request.semanticPreference }),
     routingObservation: {
       protocol: 'tokenless.provider-routing-observation.v1',
+      ...(request.routingObservation?.exclusions === undefined
+        ? {}
+        : { exclusions: request.routingObservation.exclusions }),
       attempts,
     },
     ...(request.pagePolicy === undefined ? {} : { pagePolicy: request.pagePolicy }),
@@ -1603,14 +1606,20 @@ function routingFailureReason(failure: ClassifiedProviderFailure) {
     details?.code,
   ].filter((value): value is string => typeof value === 'string')
     .map((value) => value.toLowerCase().replace(/-/gu, '_'))
-  if (values.some((value) => /(?:provider_sign_in|sign_in_required|authentication|auth|login)/u.test(value))) {
+  if (values.some((value) => /(?:provider_sign_in|provider_account_suspended|sign_in_required|authentication|auth|login)/u.test(value))) {
     return 'auth' as const
+  }
+  if (values.some((value) => /(?:captcha|recaptcha|hcaptcha|cloudflare|turnstile|arkose|funcaptcha)/u.test(value))) {
+    return 'captcha' as const
   }
   if (values.some((value) => /(?:rate_limit|rate_limited|too_many_requests|http_429)/u.test(value))) {
     return 'rate_limit' as const
   }
   if (values.some((value) => /(?:provider_plan_limited|provider_input_too_long|plan_limit|input_limit|capacity|quota)/u.test(value))) {
     return 'capacity' as const
+  }
+  if (values.some((value) => /(?:provider_dns_unavailable|provider_navigation_unavailable|provider_page_unavailable|network_unavailable|dns_resolution|unreachable)/u.test(value))) {
+    return 'unreachable' as const
   }
   return 'unavailable' as const
 }
@@ -1619,7 +1628,7 @@ function routingFailureEvidence(failure: ClassifiedProviderFailure) {
   const details = failure.details && typeof failure.details === 'object' && !Array.isArray(failure.details)
     ? failure.details as Record<string, unknown>
     : null
-  if (details?.family !== 'rate_limit' && details?.family !== 'plan_limit' && details?.family !== 'input_limit') return {}
+  if (!['rate_limit', 'plan_limit', 'input_limit', 'recaptcha', 'cloudflare', 'hcaptcha', 'arkose', 'availability'].includes(String(details?.family))) return {}
   const visibleProof = typeof details?.visibleProof === 'string' && /^[a-z0-9:_-]{1,160}$/u.test(details.visibleProof)
     ? details.visibleProof
     : undefined

@@ -371,12 +371,16 @@ async function writeRunReport({
     .filter(async (directory) => exists(path.join(directory, 'result.json')))
   const trialResults = []
   const deepTrials = []
+  const preRoutingExceptions = []
   for (const directory of trialDirectories) {
     if (!await exists(path.join(directory, 'result.json'))) continue
-    trialResults.push(await readJson(path.join(directory, 'result.json')))
+    const trialResult = await readJson(path.join(directory, 'result.json'))
+    trialResults.push(trialResult)
     const auditPath = path.join(directory, 'agent', 'deep-integration.jsonl')
     if (!await exists(auditPath)) {
-      if (kind !== 'oracle') throw new Error(`Missing deep-integration.jsonl for non-oracle trial ${directory}.`)
+      if (kind !== 'oracle') {
+        preRoutingExceptions.push(preRoutingException(trialResult, directory))
+      }
       continue
     }
     const auditEvents = []
@@ -388,8 +392,8 @@ async function writeRunReport({
     }
     deepTrials.push(deepIntegrationStats(auditEvents, path.basename(directory)))
   }
-  if (kind !== 'oracle' && deepTrials.length !== expectedTrials) {
-    throw new Error(`Expected deep-integration evidence for ${expectedTrials} non-oracle trials, found ${deepTrials.length}.`)
+  if (kind !== 'oracle' && deepTrials.length + preRoutingExceptions.length !== expectedTrials) {
+    throw new Error(`Expected observer or pre-routing exception evidence for ${expectedTrials} non-oracle trials, found ${deepTrials.length + preRoutingExceptions.length}.`)
   }
   const taskManifestIdentity = await validateTaskManifest(taskManifest)
   validateResolvedRun({
@@ -397,6 +401,7 @@ async function writeRunReport({
     jobConfig,
     trialResults,
     deepTrials,
+    preRoutingExceptions,
     kind,
     task,
     attemptsPerTask,
@@ -414,6 +419,7 @@ async function writeRunReport({
   })
   const rewards = trialResults
     .map((trial) => trial?.verifier_result?.rewards?.reward)
+    .filter((reward) => typeof reward === 'number' && Number.isFinite(reward))
   const [tokenlessRevision, tokenlessDirty] = await Promise.all([
     capture('git', ['rev-parse', 'HEAD'], { cwd: root }),
     capture('git', ['status', '--porcelain'], { cwd: root }),
@@ -459,6 +465,10 @@ async function writeRunReport({
     tokenlessRevision: tokenlessRevision.trim(),
     tokenlessWorktreeDirty: tokenlessDirty.trim().length > 0,
     deepIntegration: aggregateDeepIntegration(deepTrials),
+    preRoutingExceptions: {
+      count: preRoutingExceptions.length,
+      trials: preRoutingExceptions,
+    },
     providerRouting: {
       ...providerRouting,
       accountPlans,
@@ -478,6 +488,35 @@ async function writeRunReport({
   }
   await fs.writeFile(destination, `${JSON.stringify(report, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
   return report
+}
+
+function preRoutingException(trial, directory) {
+  const exception = trial?.exception_info
+  const stage = trial?.agent_execution === null
+    ? 'before_agent_execution'
+    : exception?.exception_type === 'ValueError'
+      && exception?.exception_message === 'The Harbor instruction is not one of the pinned Terminal-Bench 2.0 task instructions.'
+      ? 'instruction_validation'
+      : null
+  if (
+    !exception
+    || typeof exception !== 'object'
+    || Array.isArray(exception)
+    || stage === null
+    || typeof trial?.trial_name !== 'string'
+    || typeof trial?.task_name !== 'string'
+    || typeof exception.exception_type !== 'string'
+    || typeof exception.occurred_at !== 'string'
+  ) {
+    throw new Error(`Missing deep-integration.jsonl without a proven pre-routing exception for non-oracle trial ${directory}.`)
+  }
+  return {
+    trial: trial.trial_name,
+    task: trial.task_name,
+    stage,
+    exceptionType: exception.exception_type,
+    occurredAt: exception.occurred_at,
+  }
 }
 
 async function benchmarkProviderPlanSnapshot({ tokenlessHome, daemonUrl, profile, routedProviders }) {
@@ -552,6 +591,7 @@ function validateResolvedRun({
   jobConfig,
   trialResults,
   deepTrials,
+  preRoutingExceptions,
   kind,
   task,
   attemptsPerTask,
@@ -571,6 +611,10 @@ function validateResolvedRun({
     throw new Error(`Harbor resolved ${String(official.n_total_trials)} total trials and wrote ${trialResults.length}; expected ${expectedTrials}.`)
   }
   validateHarborStats(official.stats, expectedTrials)
+  const exceptionTrials = trialResults.filter((trial) => trial?.exception_info != null)
+  if (exceptionTrials.length !== official.stats.n_errored_trials) {
+    throw new Error('Harbor errored trial count does not match the official trial exception records.')
+  }
   if (!Number.isSafeInteger(jobConfig.n_concurrent_trials) || jobConfig.n_concurrent_trials !== 1) {
     throw new Error('Harbor resolved concurrency must be exactly one trial.')
   }
@@ -583,11 +627,8 @@ function validateResolvedRun({
     throw new Error(`Harbor resolved max retries=${String(resolvedMaxRetries)}; expected zero.`)
   }
   if (kind !== 'oracle') {
-    if (deepTrials.length !== expectedTrials) {
-      throw new Error(`Every non-oracle trial must have one deep-integration audit record; found ${deepTrials.length} for ${expectedTrials} trials.`)
-    }
-    if (kind === 'sweep' && deepTrials.some((trial) => trial.completeChains !== 1)) {
-      throw new Error('Every Terminal-Bench sweep trial must have exactly one complete host-observed deep-integration chain.')
+    if (deepTrials.length + preRoutingExceptions.length !== expectedTrials) {
+      throw new Error(`Every non-oracle trial must have observer evidence or a proven pre-routing exception; found ${deepTrials.length + preRoutingExceptions.length} for ${expectedTrials} trials.`)
     }
     validateDeepSeekAgent(jobConfig, {
       runtime_archive: runtimeArchive,
@@ -640,7 +681,8 @@ function validateResolvedRun({
     if (typeof trial.trial_name !== 'string' || trialNames.has(trial.trial_name)) {
       throw new Error('Harbor trial names must be present and unique.')
     }
-    if (typeof trial?.verifier_result?.rewards?.reward !== 'number' || !Number.isFinite(trial.verifier_result.rewards.reward)) {
+    const reward = trial?.verifier_result?.rewards?.reward
+    if ((typeof reward !== 'number' || !Number.isFinite(reward)) && trial?.exception_info == null) {
       throw new Error(`Harbor trial ${String(trial.trial_name)} is missing its verifier reward.`)
     }
     trialNames.add(trial.trial_name)
@@ -797,12 +839,11 @@ function validateHarborStats(stats, expectedTrials) {
   }
   if (
     stats.n_completed_trials !== expectedTrials
-    || stats.n_errored_trials !== 0
+    || stats.n_errored_trials > expectedTrials
     || stats.n_cancelled_trials !== 0
     || stats.n_running_trials !== 0
     || stats.n_pending_trials !== 0
     || stats.n_retries !== 0
-    || stats.n_completed_trials + stats.n_errored_trials + stats.n_cancelled_trials !== expectedTrials
   ) {
     throw new Error('Harbor result stats are not a settled, zero-retry result for the resolved trial count.')
   }
@@ -1047,6 +1088,7 @@ function aggregateDeepIntegration(trials) {
   ]
   return {
     protocol: revision.auditProtocol,
+    observedTrials: trials.length,
     trialsWithCompleteChain: trials.filter((trial) => trial.completeChains > 0).length,
     ...Object.fromEntries(fields.map((field) => [field, trials.reduce((sum, trial) => sum + trial[field], 0)])),
   }
@@ -1058,7 +1100,7 @@ function validateProviderRoutingEvent(event) {
       'protocol', 'sequence', 'type', 'scope', 'mode', 'provider',
       'fallbackProviders', 'fallbackUsed', 'rateLimited', 'preferenceRequested',
       'preferenceHonored', 'providerSubmitted', 'visibleProof', 'limitWindow',
-      'retryAfterSeconds', 'attempts', 'outcome', 'observedAt', 'tokenEstimate',
+      'retryAfterSeconds', 'exclusions', 'attempts', 'outcome', 'observedAt', 'tokenEstimate',
     ].includes(key))
     ||
     event.protocol !== revision.auditProtocol
@@ -1071,6 +1113,28 @@ function validateProviderRoutingEvent(event) {
     || !Array.isArray(event.fallbackProviders)
     || event.fallbackProviders.length > 5
     || event.fallbackProviders.some((provider) => typeof provider !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/u.test(provider))
+    || !Array.isArray(event.exclusions)
+    || event.exclusions.length > 64
+    || event.exclusions.some((exclusion) => (
+      !exclusion
+      || typeof exclusion !== 'object'
+      || !sameStringSet(Object.keys(exclusion), ['provider', 'category', 'reason'])
+      || typeof exclusion.provider !== 'string'
+      || !/^[a-z][a-z0-9-]{0,63}$/u.test(exclusion.provider)
+      || !['access', 'runtime', 'capability'].includes(exclusion.category)
+      || ![
+        'provider_not_supported',
+        'provider_mode_disabled',
+        'provider_not_evaluated',
+        'provider_access_unknown',
+        'provider_access_sign_in_required',
+        'provider_access_account_blocked',
+        'provider_access_unavailable',
+        'missing_conversation_capability',
+        'missing_structured_control_capability',
+        'capability_route_unavailable',
+      ].includes(exclusion.reason)
+    ))
     || typeof event.fallbackUsed !== 'boolean'
     || typeof event.rateLimited !== 'boolean'
     || event.preferenceRequested !== null && (
@@ -1102,7 +1166,7 @@ function validateProviderRoutingEvent(event) {
       || typeof attempt.provider !== 'string'
       || !/^[a-z][a-z0-9-]{0,63}$/u.test(attempt.provider)
       || attempt.outcome !== 'fallback'
-      || !['rate_limit', 'capacity', 'auth', 'unavailable'].includes(attempt.reason)
+      || !['rate_limit', 'capacity', 'auth', 'captcha', 'unreachable', 'unavailable'].includes(attempt.reason)
       || typeof attempt.observedAt !== 'string'
       || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(attempt.observedAt)
       || typeof attempt.providerSubmitted !== 'boolean'
@@ -1117,7 +1181,8 @@ function validateProviderRoutingEvent(event) {
         || attempt.retryAfterSeconds > 604_800
       )
       || (attempt.visibleProof !== undefined || attempt.limitWindow !== undefined || attempt.retryAfterSeconds !== undefined)
-        && !['rate_limit', 'capacity'].includes(attempt.reason)
+        && !['rate_limit', 'capacity', 'captcha', 'unreachable'].includes(attempt.reason)
+      || attempt.reason === 'captcha' && attempt.visibleProof === undefined
       || attempt.reason === 'rate_limit' && (attempt.visibleProof === undefined || attempt.limitWindow === undefined)
     ))
     || event.fallbackUsed !== (event.attempts.length > 0)

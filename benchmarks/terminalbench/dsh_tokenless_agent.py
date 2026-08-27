@@ -32,7 +32,7 @@ DATASET_REF = "sha256:c6fc2e2382c1dbae99b2d5ecd2f4f4a60c3c01e0d84642d69b4afd92e9
 TASK_COUNT = 89
 TASK_MANIFEST_SCHEMA = "tokenless.terminalbench-task-manifest.v1"
 SEMANTIC_MANIFEST_SCHEMA = "tokenless.terminalbench-semantic-manifest.v1"
-INSTRUCTION_DIGEST = "sha256:5b6a2e01c29b8f215daa2e430f75d2a12c3c4ffc627d8cf4ebc1b38cd0d353ea"
+INSTRUCTION_DIGEST = "sha256:ff25b9442ef81d016d49300aef76c33f1b289fcd544bb0308b25f85bf343fce9"
 TASK_REF_DIGEST = "sha256:82cddb9ea94d792455d3e32b3c8a60ed73003714ed01785ec3b1ec5c580bccba"
 CHANNEL_PROTOCOL = "tokenless.terminalbench-channel.v1"
 AUDIT_PROTOCOL = "tokenless.terminalbench-deep-audit.v4"
@@ -833,6 +833,9 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             or any(PROVIDER_ID_PATTERN.fullmatch(value) is None for value in fallback_providers)
         ):
             return None
+        exclusions_header = upstream.getheader("X-Tokenless-Route-Exclusions")
+        if exclusions_header is None:
+            return None
         fallback_used = upstream.getheader("X-Tokenless-Route-Fallback-Used")
         rate_limited = upstream.getheader("X-Tokenless-Route-Rate-Limited")
         preference_requested_header = upstream.getheader(
@@ -863,6 +866,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         )
         try:
             attempts_value = json.loads(attempts_header)
+            exclusions_value = json.loads(exclusions_header)
         except (UnicodeDecodeError, json.JSONDecodeError):
             return None
         if (
@@ -873,6 +877,30 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             or visible_proof_header is None
             or limit_window_header is None
             or retry_after_header is None
+            or not isinstance(exclusions_value, list)
+            or len(exclusions_value) > 64
+            or any(
+                not isinstance(exclusion, dict)
+                or set(exclusion) != {"provider", "category", "reason"}
+                or not isinstance(exclusion.get("provider"), str)
+                or PROVIDER_ID_PATTERN.fullmatch(exclusion["provider"]) is None
+                or not isinstance(exclusion.get("category"), str)
+                or exclusion.get("category") not in {"access", "runtime", "capability"}
+                or not isinstance(exclusion.get("reason"), str)
+                or exclusion.get("reason") not in {
+                    "provider_not_supported",
+                    "provider_mode_disabled",
+                    "provider_not_evaluated",
+                    "provider_access_unknown",
+                    "provider_access_sign_in_required",
+                    "provider_access_account_blocked",
+                    "provider_access_unavailable",
+                    "missing_conversation_capability",
+                    "missing_structured_control_capability",
+                    "capability_route_unavailable",
+                }
+                for exclusion in exclusions_value
+            )
             or (
                 visible_proof_header != ""
                 and re.fullmatch(r"[a-z0-9:_-]{1,160}", visible_proof_header)
@@ -936,6 +964,8 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
                     "rate_limit",
                     "capacity",
                     "auth",
+                    "captcha",
+                    "unreachable",
                     "unavailable",
                 }
                 or (
@@ -968,8 +998,10 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
                             "retryAfterSeconds",
                         }
                     )
-                    and attempt.get("reason") not in {"rate_limit", "capacity"}
+                    and attempt.get("reason") not in {"rate_limit", "capacity", "captcha", "unreachable"}
                 )
+                or attempt.get("reason") == "captcha"
+                and "visibleProof" not in attempt
             ):
                 return None
             attempts.append(dict(attempt))
@@ -977,6 +1009,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             "mode": mode,
             "provider": provider,
             "fallbackProviders": fallback_providers,
+            "exclusions": exclusions_value,
             "fallbackUsed": fallback_used == "1",
             "rateLimited": rate_limited == "1",
             "preferenceRequested": preference_requested,

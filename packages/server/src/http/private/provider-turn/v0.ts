@@ -2,7 +2,10 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import type { IncomingMessage } from 'node:http'
 
 import { deriveTaskId, readTokenlessConfig } from '../../../persistence/config.js'
-import { createManagedPlaywrightJobRequest } from '../../../browser/job-contract.js'
+import {
+  createManagedPlaywrightJobRequest,
+  type ManagedPlaywrightRoutingExclusion,
+} from '../../../browser/job-contract.js'
 import { VISIBLE_ACTIONS, createVisibleActionRequest } from '../../../browser/actions.js'
 import { isFreshProviderObservation, ManagedProfileRegistry } from '../../../browser/profiles/registry.js'
 import {
@@ -21,7 +24,7 @@ import {
   registerEphemeralProviderJob,
   stageEphemeralProviderAttachment,
 } from '../../../runtime/ephemeral-provider-payloads.js'
-import { invalidInput } from '../../../errors.js'
+import { DaemonError, invalidInput } from '../../../errors.js'
 import {
   WebAiRequestRefConflictError,
   WebAiRequestNotFoundError,
@@ -53,11 +56,22 @@ type StartTurnRequest = {
   continuation?: { text: string; attachments: readonly [{ kind: 'tool_result'; name: string; attachmentRef: string; mediaType: 'text/markdown'; byteLength: number; sha256: string }, ...Array<{ kind: 'skill'; name: string; attachmentRef: string; mediaType: 'text/markdown'; byteLength: number; sha256: string }>] }
 }
 type TurnState = Record<string, unknown>
+type AutoCapabilityResolution = Readonly<{
+  routes: readonly TaskCapabilityRoute[]
+  exclusions: readonly ManagedPlaywrightRoutingExclusion[]
+}>
 type RequestCancellationIdentity = {
   turnRef: string
   conversationRef: string
 }
 type RequestCancellationTurn = RequestCancellationIdentity & { lifecycle: 'cancelled' }
+
+export class PrivateProviderTurnRoutingError extends DaemonError {
+  constructor(readonly routing: ApiProxyRouting) {
+    super('invalid_input', 'invalid input: web ai auto has no current eligible provider with chat and upload evidence')
+    this.name = 'PrivateProviderTurnRoutingError'
+  }
+}
 
 export class PrivateProviderTurnV0Adapter {
   private readonly profiles: ManagedProfileRegistry
@@ -186,9 +200,10 @@ export class PrivateProviderTurnV0Adapter {
     if (hasEphemeralProviderBundle(attachment.bundle_id) !== ephemeral) {
       throw invalidInput('web ai request payload lifetime does not match its attachments')
     }
-    const autoRoutes = binding.provider === AUTO_PROVIDER
+    const autoResolution = binding.provider === AUTO_PROVIDER
       ? await this.autoCapabilityRoutes(binding.profile_id, request.semanticPreference ?? null)
       : null
+    const autoRoutes = autoResolution?.routes ?? null
     const provider = autoRoutes?.[0]?.provider ?? binding.provider
     const route = autoRoutes?.[0]
     let capabilityRoute: TaskCapabilityRoute
@@ -214,6 +229,13 @@ export class PrivateProviderTurnV0Adapter {
       browserVisibility: 'auto',
       userHandoff: false,
       ...(request.semanticPreference === undefined ? {} : { semanticPreference: request.semanticPreference }),
+      ...(autoResolution === null ? {} : {
+        routingObservation: {
+          protocol: 'tokenless.provider-routing-observation.v1',
+          exclusions: autoResolution.exclusions,
+          attempts: [],
+        },
+      }),
       actions: [
         createVisibleActionRequest({
           provider,
@@ -281,9 +303,10 @@ export class PrivateProviderTurnV0Adapter {
     const routeDecision = resolveTaskCapabilityRoute({ requirements: REQUIRED_CAPABILITIES, candidates: [{ provider, runtimeEligibility: 'unchecked' }] })
     if (!routeDecision.ok) throw invalidInput('web ai provider does not have a static chat and upload route')
     const route = routeDecision.route
-    const fallbackRoutes = binding.provider === AUTO_PROVIDER
-      ? (await this.autoCapabilityRoutes(binding.profile_id, null, true)).filter((candidate) => candidate.provider !== provider)
-      : []
+    const autoResolution = binding.provider === AUTO_PROVIDER
+      ? await this.autoCapabilityRoutes(binding.profile_id, null, true)
+      : null
+    const fallbackRoutes = autoResolution?.routes.filter((candidate) => candidate.provider !== provider) ?? []
     const turnRef = opaqueRef('turn')
     const requestJson = createManagedPlaywrightJobRequest({
       provider,
@@ -292,6 +315,13 @@ export class PrivateProviderTurnV0Adapter {
       pageRef: request.conversation.conversationRef,
       capabilityRoute: route,
       fallback: fallbackRoutes.length === 0 ? null : automaticFallbackPlan([route, ...fallbackRoutes]),
+      ...(autoResolution === null ? {} : {
+        routingObservation: {
+          protocol: 'tokenless.provider-routing-observation.v1',
+          exclusions: autoResolution.exclusions,
+          attempts: [],
+        },
+      }),
       browserVisibility: 'auto',
       userHandoff: false,
       actions: [
@@ -395,14 +425,21 @@ export class PrivateProviderTurnV0Adapter {
     }
   }
 
-  private async autoCapabilityRoutes(profileId: string, semanticPreference: string | null, allowEmpty = false): Promise<readonly TaskCapabilityRoute[]> {
+  private async autoCapabilityRoutes(
+    profileId: string,
+    semanticPreference: string | null,
+    allowEmpty = false,
+  ): Promise<AutoCapabilityResolution> {
     const [profiles, config] = await Promise.all([this.profiles.listProfiles(), readTokenlessConfig(this.store.homeDir)])
     const profile = profiles.find((candidate) => candidate.slug === profileId)
     const configured = profile ? config.profiles[profile.slug] : undefined
     if (!profile || !configured) throw invalidInput('web ai provider/profile is not configured')
-    const candidates = configured.enabledProviders.flatMap((provider, preferenceRank) => {
+    const modeEnabledProviders = configured.enabledProviders.filter((provider) => (
+      configured.providerModes[provider]?.includes('browser')
+    ))
+    const candidates = modeEnabledProviders.flatMap((provider, preferenceRank) => {
       const instance = getProviderInstanceById(provider)
-      if (!instance || instance.descriptor.stage === 'disabled' || !configured.providerModes[instance.id]?.includes('browser')) return []
+      if (!instance || instance.descriptor.stage === 'disabled') return []
       const observed = profile.lastObservedAuth[instance.id]
       const access = observed?.access ?? (observed?.auth === 'authenticated' ? 'signed_in_unknown' : 'unknown')
       const usable = access === 'guest' || access.startsWith('signed_in_')
@@ -419,11 +456,49 @@ export class PrivateProviderTurnV0Adapter {
       }]
     })
     const resolved = resolveTaskCapabilityRoutes({ requirements: REQUIRED_CAPABILITIES, candidates })
-    if (!resolved.ok || resolved.routes.length === 0) {
-      if (allowEmpty) return []
-      throw invalidInput('web ai auto has no current eligible provider with chat and upload evidence')
+    const routes = resolved.ok
+      ? prioritizeTaskCapabilityRoutes(resolved.routes, semanticPreference)
+      : []
+    const candidateByProvider = new Map(candidates.map((candidate) => [candidate.provider, candidate]))
+    const evaluatedByProvider = new Map(resolved.evaluated.map((candidate) => [candidate.provider, candidate]))
+    const routedProviders = new Set(routes.map((route) => route.provider))
+    const exclusions = configured.enabledProviders.flatMap((provider): ManagedPlaywrightRoutingExclusion[] => {
+      const instance = getProviderInstanceById(provider)
+      if (!instance || instance.descriptor.stage === 'disabled') {
+        return [{ provider, category: 'runtime', reason: 'provider_not_supported' }]
+      }
+      if (!modeEnabledProviders.includes(instance.id)) {
+        return [{ provider: instance.id, category: 'runtime', reason: 'provider_mode_disabled' }]
+      }
+      const candidate = candidateByProvider.get(instance.id)
+      if (candidate?.runtimeEligibility === 'ineligible') {
+        return [{
+          provider: instance.id,
+          category: 'access',
+          reason: privateAccessExclusionReason(candidate.reason),
+        }]
+      }
+      if (!evaluatedByProvider.has(instance.id)) {
+        return [{ provider: instance.id, category: 'runtime', reason: 'provider_not_evaluated' }]
+      }
+      if (routedProviders.has(instance.id)) return []
+      return [{ provider: instance.id, category: 'capability', reason: 'capability_route_unavailable' }]
+    })
+    if (routes.length === 0 && !allowEmpty) {
+      throw new PrivateProviderTurnRoutingError({
+        mode: 'auto',
+        provider: 'auto',
+        fallbackProviders: [],
+        exclusions,
+        fallbackUsed: false,
+        rateLimited: false,
+        attempts: [],
+        preferenceRequested: semanticPreference,
+        preferenceHonored: false,
+        providerSubmitted: false,
+      })
     }
-    return prioritizeTaskCapabilityRoutes(resolved.routes, semanticPreference)
+    return { routes, exclusions }
   }
 
   private bindingDocument(binding: WebAiBinding) {
@@ -469,6 +544,13 @@ export class PrivateProviderTurnV0Adapter {
   private cancellationProjection(turn: WebAiTurn): RequestCancellationTurn {
     return { turnRef: turn.turn_ref, conversationRef: turn.conversation_ref, lifecycle: 'cancelled' }
   }
+}
+
+function privateAccessExclusionReason(reason: string | null): ManagedPlaywrightRoutingExclusion['reason'] {
+  if (reason === 'provider_access_unknown') return reason
+  if (reason === 'provider_access_sign_in_required') return reason
+  if (reason === 'provider_access_account_blocked') return reason
+  return 'provider_access_unavailable'
 }
 
 function strictObject(value: unknown, keys: readonly string[], optionalKeys: readonly string[] = []) {

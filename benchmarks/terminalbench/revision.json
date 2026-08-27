@@ -7,7 +7,7 @@
   "taskCount": 89,
   "attemptsPerTask": 5,
   "taskManifest": "benchmarks/terminalbench/terminal-bench-2-manifest.json",
-  "instructionDigest": "sha256:5b6a2e01c29b8f215daa2e430f75d2a12c3c4ffc627d8cf4ebc1b38cd0d353ea",
+  "instructionDigest": "sha256:ff25b9442ef81d016d49300aef76c33f1b289fcd544bb0308b25f85bf343fce9",
   "taskRefDigest": "sha256:82cddb9ea94d792455d3e32b3c8a60ed73003714ed01785ec3b1ec5c580bccba",
   "retryLimit": 0,
   "deepseekHarnessRevision": "47f943859bef60e4160492346772ded9b24f765a",
@@ -18,5 +18,5 @@
   "wiringTask": "terminal-bench/openssl-selfsigned-cert",
   "protocol": "tokenless.terminalbench-channel.v1",
   "auditProtocol": "tokenless.terminalbench-deep-audit.v4",
-  "routingProtocol": "tokenless.terminalbench-routing.v3"
+  "routingProtocol": "tokenless.terminalbench-routing.v4"
 }

@@ -297,7 +297,7 @@ test('auto accepts plain browser requests and keeps structured routing narrow', 
       model: 'tokenless/auto',
       messages: [{ role: 'user', content: 'Read package.json.' }],
       tools: [functionTool('read_file')],
-      parallel_tool_calls: false,
+      parallel_tool_calls: true,
     })
     assert.equal(unsupported.status, 503)
     assert.equal(unsupported.body.error.code, 'auto_route_unavailable')
@@ -364,6 +364,103 @@ test('auto admits Claude only for its evidenced single-call structured-control s
     const response = await pending
     assert.equal(response.status, 502)
     assert.equal(response.headers.get('x-tokenless-route-provider'), 'claude')
+  })
+})
+
+test('auto exposes bounded exclusions while selecting Gemini and on a no-route error', async () => {
+  await withDaemon(async (daemon) => {
+    const { ManagedProfileRegistry } = await import(profileRegistryModule)
+    const registry = new ManagedProfileRegistry(daemon.homeDir)
+    await registry.addProfile({ slug: 'structured-auto', setDefault: true })
+    await registry.updateProviderStatus('structured-auto', {
+      provider: 'deepseek',
+      auth: 'authenticated',
+      access: 'account_blocked',
+      checkedAt: new Date().toISOString(),
+    })
+    await registry.updateProviderStatus('structured-auto', {
+      provider: 'gemini',
+      auth: 'unauthenticated',
+      access: 'guest',
+      checkedAt: new Date().toISOString(),
+    })
+    await registry.updateProviderStatus('structured-auto', {
+      provider: 'perplexity',
+      auth: 'authenticated',
+      access: 'signed_in_free',
+      checkedAt: new Date().toISOString(),
+    })
+    const { writeTokenlessConfig } = await import(runtimeModule)
+    const profile = {
+      roleLabel: '',
+      enabledProviders: ['deepseek', 'gemini', 'perplexity'],
+      browserVisibility: 'headed',
+      proxy: null,
+    }
+    await writeTokenlessConfig({
+      homeDir: daemon.homeDir,
+      apiProxy: { enabled: true, conversationMode: 'new-conversation', executionMode: 'browser' },
+      profiles: { 'structured-auto': profile },
+    })
+
+    const selected = fetch(`${daemon.origin}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${daemon.token}`,
+      },
+      body: JSON.stringify({
+        model: 'tokenless/auto',
+        messages: [{ role: 'user', content: 'Read package.json.' }],
+        tools: [functionTool('read_file')],
+        tool_choice: { type: 'function', function: { name: 'read_file' } },
+        parallel_tool_calls: false,
+        tokenless: { execution_mode: 'browser' },
+      }),
+    })
+    const selectedJob = await waitForQueuedApiProxyJob(daemon, 'api-proxy:')
+    assert.equal(selectedJob.provider, 'gemini')
+    assert.equal(selectedJob.request_json.capabilityRoute.provider, 'gemini')
+    assert.equal(selectedJob.request_json.fallback, null)
+    await daemon.store.cancelJob(selectedJob.job_id, 'focused auto exclusion test completed')
+    const selectedResponse = await selected
+    assert.equal(selectedResponse.status, 502)
+    assert.equal(selectedResponse.headers.get('x-tokenless-route-provider'), 'gemini')
+    assert.deepEqual(JSON.parse(selectedResponse.headers.get('x-tokenless-route-exclusions')), [
+      { provider: 'deepseek', category: 'access', reason: 'provider_access_account_blocked' },
+      { provider: 'perplexity', category: 'capability', reason: 'missing_structured_control_capability' },
+    ])
+    assert.deepEqual(JSON.parse(selectedResponse.headers.get('x-tokenless-route-attempts')), [])
+
+    await writeTokenlessConfig({
+      homeDir: daemon.homeDir,
+      profiles: {
+        'structured-auto': { ...profile, enabledProviders: ['deepseek', 'perplexity'] },
+      },
+    })
+    const noRoute = await fetch(`${daemon.origin}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${daemon.token}`,
+      },
+      body: JSON.stringify({
+        model: 'tokenless/auto',
+        messages: [{ role: 'user', content: 'Read package.json.' }],
+        tools: [functionTool('read_file')],
+        tool_choice: { type: 'function', function: { name: 'read_file' } },
+        parallel_tool_calls: false,
+        tokenless: { execution_mode: 'browser' },
+      }),
+    })
+    assert.equal(noRoute.status, 503)
+    assert.equal((await noRoute.json()).error.code, 'auto_route_unavailable')
+    assert.equal(noRoute.headers.get('x-tokenless-route-provider'), 'auto')
+    assert.deepEqual(JSON.parse(noRoute.headers.get('x-tokenless-route-exclusions')), [
+      { provider: 'deepseek', category: 'access', reason: 'provider_access_account_blocked' },
+      { provider: 'perplexity', category: 'capability', reason: 'missing_structured_control_capability' },
+    ])
+    assert.deepEqual(JSON.parse(noRoute.headers.get('x-tokenless-route-attempts')), [])
   })
 })
 
@@ -682,6 +779,100 @@ test('auto rate-limit fallback preserves one local job and reports source attrib
     }])
     const body = await response.json()
     assert.equal(body.choices[0].message.content, 'fallback answer')
+  })
+})
+
+test('auto fallback observer preserves captcha and unreachable attempt reasons', async () => {
+  await withDaemon(async (daemon) => {
+    const { ManagedProfileRegistry } = await import(profileRegistryModule)
+    const registry = new ManagedProfileRegistry(daemon.homeDir)
+    await registry.addProfile({ slug: 'web-ai', setDefault: true })
+    for (const provider of ['deepseek', 'chatgpt']) {
+      await registry.updateProviderStatus('web-ai', {
+        provider,
+        auth: 'authenticated',
+        access: 'signed_in_free',
+        checkedAt: new Date().toISOString(),
+      })
+    }
+    const { writeTokenlessConfig } = await import(runtimeModule)
+    await writeTokenlessConfig({
+      homeDir: daemon.homeDir,
+      apiProxy: { enabled: true, conversationMode: 'new-conversation', executionMode: 'browser' },
+      profiles: {
+        'web-ai': {
+          roleLabel: '',
+          enabledProviders: ['deepseek', 'chatgpt'],
+          browserVisibility: 'headed',
+          proxy: null,
+        },
+      },
+    })
+
+    for (const [reason, visibleProof, blockerCode] of [
+      ['captcha', 'visible-recaptcha-challenge', 'visible_recaptcha'],
+      ['unreachable', undefined, 'provider_dns_unavailable'],
+    ]) {
+      const pending = fetch(`${daemon.origin}/v1/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${daemon.token}`,
+        },
+        body: JSON.stringify({
+          model: 'tokenless/auto',
+          messages: [{ role: 'user', content: `ROUTING_${reason.toUpperCase()}` }],
+          tokenless: { execution_mode: 'browser' },
+        }),
+      })
+      const queued = await waitForQueuedApiProxyJob(daemon, 'api-proxy:')
+      const running = daemon.store.takeNextJob({}, 'web-ai')
+      assert.ok(running)
+      const alternative = queued.request_json.fallback.alternatives[0]
+      assert.ok(alternative)
+      const attempt = {
+        provider: queued.provider,
+        outcome: 'fallback',
+        reason,
+        observedAt: new Date().toISOString(),
+        providerSubmitted: false,
+        ...(visibleProof === undefined ? {} : { visibleProof }),
+      }
+      const fallbackRequest = {
+        ...queued.request_json,
+        provider: alternative.provider,
+        target: alternative.target,
+        capabilityRoute: alternative.capabilityRoute,
+        fallback: null,
+        routingObservation: {
+          protocol: 'tokenless.provider-routing-observation.v1',
+          attempts: [attempt],
+        },
+        actions: queued.request_json.actions.map((action) => ({ ...action, provider: alternative.provider })),
+      }
+      const fallback = daemon.store.fallbackJob({
+        job_id: running.job_id,
+        provider: alternative.provider,
+        request_json: fallbackRequest,
+        blocker_json: { failure: { code: blockerCode, providerScoped: true } },
+      })
+      assert.equal(fallback.provider, alternative.provider)
+      daemon.store.recordProviderSubmission(fallback.job_id)
+      daemon.store.completeJob(fallback.job_id, {
+        result_json: {
+          responses: [{
+            action: 'response.read',
+            ok: true,
+            result: { text: `${reason} fallback answer`, citations: [] },
+          }],
+        },
+      })
+      const response = await pending
+      assert.equal(response.status, 200)
+      assert.deepEqual(JSON.parse(response.headers.get('x-tokenless-route-attempts')), [attempt])
+      assert.equal(response.headers.get('x-tokenless-route-fallback-used'), '1')
+      assert.equal(response.headers.get('x-tokenless-route-provider-submitted'), '1')
+    }
   })
 })
 

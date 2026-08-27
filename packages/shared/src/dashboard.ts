@@ -26,6 +26,7 @@ export type DashboardJobStatus =
 export type DashboardProviderAccess =
   | 'guest'
   | 'sign_in_required'
+  | 'account_blocked'
   | 'signed_in_free'
   | 'signed_in_paid'
   | 'signed_in_unknown'

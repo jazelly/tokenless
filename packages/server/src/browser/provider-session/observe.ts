@@ -15,19 +15,22 @@ export async function observeProviderSession(
     detectStructuredBlockers(page, provider),
   ])
   const authentication = authenticatedControlVisible
+    || blockers.some((blocker) => blocker.code === 'provider_account_suspended')
     ? 'authenticated' as const
     : loginVisible
       ? 'unauthenticated' as const
       : 'unknown' as const
-  const access = authentication === 'unauthenticated'
-    ? provider.access.guest === 'supported' && composerVisible
-      ? 'guest' as const
-      : 'sign_in_required' as const
-    : authentication === 'authenticated'
-      ? 'signed_in_unknown' as const
-      : provider.access.guest === 'supported' && composerVisible
+  const access = blockers.some((blocker) => blocker.code === 'provider_account_suspended')
+    ? 'account_blocked' as const
+    : authentication === 'unauthenticated'
+      ? provider.access.guest === 'supported' && composerVisible
         ? 'guest' as const
-        : 'unknown' as const
+        : 'sign_in_required' as const
+      : authentication === 'authenticated'
+        ? 'signed_in_unknown' as const
+        : provider.access.guest === 'supported' && composerVisible
+          ? 'guest' as const
+          : 'unknown' as const
 
   return {
     provider: provider.id,
@@ -166,6 +169,9 @@ async function detectStructuredBlockers(
     }
     if (/(not available in (?:your|this) (?:country|region|location)|unsupported region|region is not supported)/i.test(lowerText)) {
       raw.push({ kind: 'terminal', code: 'provider_region_unavailable', family: 'availability', message: 'The provider is visibly unavailable in the current region.', proof: 'visible-region-unavailable-text' })
+    }
+    if (/\baccount\s+has\s+been\s+suspended\s+until\b/i.test(lowerText)) {
+      raw.push({ kind: 'terminal', code: 'provider_account_suspended', family: 'availability', message: 'The provider account is visibly suspended and cannot accept requests.', proof: 'visible-account-suspension-text' })
     }
     if (/(scheduled maintenance|under maintenance|service maintenance|maintenance in progress)/i.test(lowerText)) {
       raw.push({ kind: 'terminal', code: 'provider_maintenance', family: 'availability', message: 'The provider is visibly under maintenance.', proof: 'visible-provider-maintenance-text' })

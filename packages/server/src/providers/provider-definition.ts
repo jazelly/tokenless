@@ -32,6 +32,7 @@ export type ProviderSubscriptionSupport = 'supported' | 'unsupported'
 export type ProviderAccessClass =
   | 'guest'
   | 'sign_in_required'
+  | 'account_blocked'
   | 'signed_in_free'
   | 'signed_in_paid'
   | 'signed_in_unknown'

@@ -24,6 +24,7 @@ const PROVIDER_AUTH_STATES = new Set(['authenticated', 'unauthenticated', 'unkno
 const PROVIDER_ACCESS_CLASSES = new Set([
   'guest',
   'sign_in_required',
+  'account_blocked',
   'signed_in_free',
   'signed_in_paid',
   'signed_in_unknown',

@@ -77,6 +77,16 @@ const API_PROXY_STRUCTURED_CONTROL = Object.freeze([
     evidence: ['openai-structured-control-claude-2026-08-26'],
   }),
   declaration({
+    provider: 'gemini',
+    tools: true,
+    multipleCalls: false,
+    strictTools: true,
+    toolHistory: true,
+    jsonObject: false,
+    jsonSchema: false,
+    evidence: ['openai-structured-control-gemini-2026-08-27'],
+  }),
+  declaration({
     provider: 'grok',
     tools: true,
     multipleCalls: false,

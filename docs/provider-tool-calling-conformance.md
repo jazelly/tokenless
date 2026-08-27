@@ -71,7 +71,7 @@ The current real-provider rate sample is recorded separately in [Structured-Cont
 | Universal API executes caller tools | Never. The caller owns execution and sends the result on the next request. |
 | Browser provider pages expose native OpenAI/Anthropic tool control | Not claimed. The current browser routes use `prompt_json_envelope` and Tokenless validates the whole result. |
 | DeepSeek and ChatGPT browser routes | Real prompt-emulated evidence exists for the current structured-control paths; see [auto-routing evidence](evidence/openai-auto-provider-routing-2026-08-15.md). |
-| Gemini browser prompt tool route | Not advertised: the real diagnostic produced prose before JSON and failed the strict public boundary; see [prompt-framing evidence](evidence/openai-tool-prompt-framing-2026-08-15.md). |
+| Gemini browser prompt tool route | Advertised only for one strict call with complete tool history; multiple calls and JSON final control remain excluded. See [current Gemini evidence](evidence/openai-structured-control-gemini-2026-08-27.md) and [earlier prompt-framing evidence](evidence/openai-tool-prompt-framing-2026-08-15.md). |
 | Native provider route | Requires an exact endpoint/model live probe in addition to the official contract. Documentation alone never promotes a Tokenless route to `native_*`. |
 
 For auto routing, a candidate must satisfy the entire request requirement set: tool choice, strict arguments, multiple-call semantics, history replay, and structured final output. A provider's public documentation can define a capability, but only a redacted exact live probe can make that capability eligible for Tokenless routing.

@@ -179,12 +179,24 @@ test('auto bootstrap preference reorders eligible providers while continuation k
           checkedAt: new Date().toISOString(),
         })
       }
+      await registry.updateProviderStatus(profile.slug, {
+        provider: 'deepseek',
+        auth: 'authenticated',
+        access: 'account_blocked',
+        checkedAt: new Date().toISOString(),
+      })
+      await registry.updateProviderStatus(profile.slug, {
+        provider: 'perplexity',
+        auth: 'authenticated',
+        access: 'signed_in_free',
+        checkedAt: new Date().toISOString(),
+      })
       await writeTokenlessConfig({
         homeDir,
         profiles: {
           [profile.slug]: {
             roleLabel: '',
-            enabledProviders: ['grok', 'chatgpt'],
+            enabledProviders: ['grok', 'chatgpt', 'deepseek', 'perplexity', 'blackbox'],
             browserVisibility: 'headed',
             proxy: null,
           },
@@ -205,6 +217,23 @@ test('auto bootstrap preference reorders eligible providers while continuation k
       assert.equal(firstJob.provider, 'chatgpt')
       assert.equal(firstJob.request_json.semanticPreference, 'chatgpt')
       assert.equal(firstJob.request_json.fallback.alternatives[0].provider, 'grok')
+      const expectedExclusions = [
+        { provider: 'deepseek', category: 'access', reason: 'provider_access_account_blocked' },
+        { provider: 'perplexity', category: 'capability', reason: 'capability_route_unavailable' },
+        { provider: 'blackbox', category: 'runtime', reason: 'provider_mode_disabled' },
+      ]
+      assert.deepEqual(firstJob.request_json.routingObservation, {
+        protocol: 'tokenless.provider-routing-observation.v1',
+        exclusions: expectedExclusions,
+        attempts: [],
+      })
+      const routed = await fetch(`${daemon.origin}/v1/private/provider-turn/turns/${encodeURIComponent(first.turnRef)}`, {
+        headers: { authorization: `Bearer ${token}` },
+      })
+      assert.equal(routed.status, 200)
+      assert.equal(routed.headers.get('x-tokenless-route-mode'), 'auto')
+      assert.equal(routed.headers.get('x-tokenless-route-provider'), 'chatgpt')
+      assert.deepEqual(JSON.parse(routed.headers.get('x-tokenless-route-exclusions')), expectedExclusions)
 
       const running = daemon.store.takeNextJob({ job_id_prefix: firstJob.job_id }, firstJob.profile_id)
       assert.ok(running)
@@ -274,6 +303,69 @@ test('auto bootstrap preference reorders eligible providers while continuation k
         ...requestFor(explicitBinding, explicitAttachment, '3'),
         semanticPreference: 'grok',
       }), 400, 'invalid_input')
+    } finally {
+      await daemon.close()
+    }
+  })
+})
+
+test('auto bootstrap no-route error exposes bounded provider exclusions', async () => {
+  await withHome(async (homeDir) => {
+    const daemon = await startControlPlane(homeDir)
+    try {
+      const { ManagedProfileRegistry } = await import(profileRegistry)
+      const { writeTokenlessConfig } = await import(daemonConfig)
+      const registry = new ManagedProfileRegistry(homeDir)
+      const profile = await registry.addProfile({ slug: 'auto-no-route', setDefault: true })
+      await registry.updateProviderStatus(profile.slug, {
+        provider: 'deepseek',
+        auth: 'authenticated',
+        access: 'account_blocked',
+        checkedAt: new Date().toISOString(),
+      })
+      await registry.updateProviderStatus(profile.slug, {
+        provider: 'perplexity',
+        auth: 'authenticated',
+        access: 'signed_in_free',
+        checkedAt: new Date().toISOString(),
+      })
+      await writeTokenlessConfig({
+        homeDir,
+        profiles: {
+          [profile.slug]: {
+            roleLabel: '',
+            enabledProviders: ['deepseek', 'perplexity', 'blackbox'],
+            browserVisibility: 'headed',
+            proxy: null,
+          },
+        },
+      })
+      const token = fs.readFileSync(path.join(homeDir, 'daemon.token'), 'utf8').trim()
+      const client = createLocalHttpClient({ baseUrl: daemon.origin, token })
+      const binding = await client.bind('auto', profile.slug)
+      const attachment = await client.stage(binding.providerBindingRef, new TextEncoder().encode('# system\n'))
+      const response = await fetch(`${daemon.origin}/v1/private/provider-turn/bindings/${encodeURIComponent(binding.providerBindingRef)}/turns`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify(requestFor(binding, attachment, '7')),
+      })
+      assert.equal(response.status, 400)
+      assert.equal(response.headers.get('x-tokenless-route-outcome'), 'failed')
+      assert.equal(response.headers.get('x-tokenless-route-mode'), 'auto')
+      assert.equal(response.headers.get('x-tokenless-route-provider'), 'auto')
+      assert.equal(response.headers.get('x-tokenless-route-provider-submitted'), '0')
+      assert.deepEqual(JSON.parse(response.headers.get('x-tokenless-route-exclusions')), [
+        { provider: 'deepseek', category: 'access', reason: 'provider_access_account_blocked' },
+        { provider: 'perplexity', category: 'capability', reason: 'capability_route_unavailable' },
+        { provider: 'blackbox', category: 'runtime', reason: 'provider_mode_disabled' },
+      ])
+      assert.deepEqual(await response.json(), {
+        error: {
+          code: 'invalid_input',
+          message: 'The local Web AI request was rejected.',
+          retryable: false,
+        },
+      })
     } finally {
       await daemon.close()
     }
