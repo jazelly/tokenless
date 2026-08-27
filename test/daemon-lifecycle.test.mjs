@@ -390,6 +390,44 @@ test('doctor reports a saved but unusable browser executable path as incomplete 
   }
 })
 
+test('doctor resolves an unbound native profile through the configured browser', () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-doctor-native-profile-')))
+  fs.writeFileSync(path.join(homeDir, 'config.json'), `${JSON.stringify({
+    protocol: 'tokenless.config.v1',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    defaultProfile: 'default',
+    profiles: {
+      default: {
+        roleLabel: '',
+        enabledProviders: ['chatgpt'],
+        providerModes: {},
+        browserVisibility: 'headed',
+        proxy: null,
+      },
+    },
+    browser: 'chrome',
+    browserExecutablePath: process.execPath,
+    browserVisibility: 'headed',
+    daemonUrl: null,
+    language: 'en',
+    outputSavings: { enabled: false },
+    g4f: { enabled: false },
+  }, null, 2)}\n`, { mode: 0o600 })
+  try {
+    const result = runCli(['doctor', '--home', homeDir, '--daemon-url', 'http://127.0.0.1:9', '--json'])
+    assert.equal(result.status, 1)
+    const payload = JSON.parse(result.stdout)
+    assert.equal(payload.checks.managedProfile.ok, true, result.stdout)
+    assert.equal(payload.checks.profileRuntime.code, payload.checks.browser.code, result.stdout)
+    assert.equal(
+      payload.checks.configuration.issues.some((issue) => issue.code === 'profile_runtime_binding_required'),
+      false,
+    )
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
 test('daemon stop is idempotent when no daemon is listening', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-daemon-stop-not-running-')))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
@@ -669,11 +707,14 @@ async function stopPid(pid) {
   } catch {
     return
   }
-  for (let index = 0; index < 50; index += 1) {
+  for (let index = 0; index < 100; index += 1) {
     try {
       process.kill(pid, 0)
       await new Promise((resolve) => setTimeout(resolve, 50))
     } catch {
+      if (process.platform === 'win32') {
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
       return
     }
   }

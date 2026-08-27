@@ -79,7 +79,7 @@ export class G4fRuntimeManager {
     for (const filename of ['service.py', 'pyproject.toml', 'uv.lock', 'NOTICE.md']) {
       await fs.copyFile(path.join(this.sourceDirectory, filename), path.join(this.runtimeDirectory, filename))
     }
-    await runProcess('uv', [
+    await runProcess(await resolveUvExecutable(), [
       'sync',
       '--frozen',
       '--no-dev',
@@ -134,6 +134,7 @@ export class G4fRuntimeManager {
         PYTHONUNBUFFERED: '1',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
     })
     child.stdout.resume()
     child.stderr.resume()
@@ -168,6 +169,44 @@ export class G4fRuntimeManager {
 
   private metadataPath() {
     return path.join(this.runtimeDirectory, 'runtime.json')
+  }
+}
+
+async function resolveUvExecutable() {
+  if (process.platform !== 'win32') return 'uv'
+  const pathEntries = (process.env.PATH ?? '')
+    .split(path.delimiter)
+    .map((entry) => entry.trim().replace(/^"|"$/g, ''))
+    .filter(Boolean)
+  for (const entry of pathEntries) {
+    const candidate = path.join(entry, 'uv.exe')
+    if (await isFile(candidate)) return candidate
+  }
+
+  const configuredRoot = process.env.PYENV_ROOT || process.env.PYENV_HOME || process.env.PYENV
+  const shimRoot = pathEntries
+    .filter((entry) => path.basename(entry).toLowerCase() === 'shims')
+    .map((entry) => path.dirname(entry))
+    .find((entry) => path.basename(entry).toLowerCase() === 'pyenv-win')
+  const pyenvRoot = configuredRoot?.trim() || shimRoot
+  if (pyenvRoot) {
+    const selectedVersion = process.env.PYENV_VERSION?.trim() || await fs
+      .readFile(path.join(pyenvRoot, 'version'), 'utf8')
+      .then((value) => value.split(/\r?\n/, 1)[0]?.trim() ?? '')
+      .catch(() => '')
+    if (selectedVersion) {
+      const candidate = path.join(pyenvRoot, 'versions', selectedVersion, 'Scripts', 'uv.exe')
+      if (await isFile(candidate)) return candidate
+    }
+  }
+  return 'uv'
+}
+
+async function isFile(candidate: string) {
+  try {
+    return (await fs.stat(candidate)).isFile()
+  } catch {
+    return false
   }
 }
 
@@ -217,7 +256,11 @@ async function availableLoopbackPort() {
 
 async function runProcess(command: string, args: readonly string[], { cwd }: { cwd: string }) {
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(command, args, { cwd, stdio: ['ignore', 'ignore', 'pipe'] })
+    const child = spawn(command, args, {
+      cwd,
+      stdio: ['ignore', 'ignore', 'pipe'],
+      windowsHide: true,
+    })
     let stderr = ''
     child.stderr.on('data', (chunk: Buffer) => {
       if (stderr.length < 8_192) stderr += chunk.toString('utf8')

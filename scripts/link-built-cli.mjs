@@ -25,9 +25,20 @@ try {
 fs.symlinkSync(target, linkPath, 'file')
 console.log(`Created development launcher / 已创建开发启动入口: tokenless-beta -> ${target}`)
 
+// Invoke npm through its JavaScript entrypoint on Windows. Node cannot execute
+// npm.cmd with execFileSync(), and resolving the extensionless shim fails with
+// ENOENT. Running the entrypoint also keeps argument handling shell-free.
+const npmCliPath = process.env.npm_execpath || (
+  process.platform === 'win32'
+    ? path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')
+    : null
+)
+const npmCommand = npmCliPath ? process.execPath : 'npm'
+const npmArgs = npmCliPath ? [npmCliPath, 'link'] : ['link']
+
 // With npm 11, running `npm link` from the package directory creates the
 // global link; passing `--global` is rejected for this form.
-execFileSync('npm', ['link'], {
+execFileSync(npmCommand, npmArgs, {
   cwd: path.join(repositoryRoot, 'packages', 'cli'),
   stdio: 'inherit',
 })
