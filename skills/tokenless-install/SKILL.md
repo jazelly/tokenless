@@ -1,11 +1,55 @@
 ---
 name: tokenless-install
-description: Install, upgrade, repair, and verify Tokenless, its agent skills, and local Playwright runtime. Use only when the user explicitly asks for installation, upgrade, repair, browser sign-in handoff, a failed doctor check, or an installation integrity check.
+description: Install, upgrade, repair, and verify Tokenless, including source-linked development installs, the macOS menu bar app, agent skills, and local runtimes. Use only when the user explicitly asks for installation, upgrade, repair, browser sign-in handoff, a failed doctor check, or an installation integrity check.
 ---
 
 # Tokenless installation and maintenance
 
 Use this workflow only for the maintenance task the user explicitly requested; it is not a prerequisite for every provider job. Execute the documented noninteractive maintenance and verification commands yourself. Managed-profile initialization and import are user-run workflows outside the agent session: never initiate either one or traverse providers on the user's behalf. Report status, manual actions, and final results in the user's preferred language, inferred from the conversation.
+
+## Choose the maintenance path
+
+- For a normal published-package install or upgrade, use the canonical `tokenless upgrade --json` workflow below.
+- When the user explicitly makes a repository checkout the canonical local installation, use **Source checkout refresh**. Do not run `tokenless upgrade`: it replaces the requested development link with the published package.
+- Do not infer permission to discard a dirty worktree, replace profiles, reset `~/.tokenless`, or change provider membership from a request to refresh code.
+
+## Source checkout refresh
+
+Use the repository's own instructions, source, and scripts. Do not invoke the runtime Tokenless delegation skill while maintaining its repository.
+
+1. Inspect the worktree, branch, remotes, linked CLI, running daemon, dashboard listener, and installed menu app. Fetch the remote and compare both SHAs before claiming the branch is current. Fast-forward the user-selected canonical branch only when the worktree is clean; otherwise preserve the changes and stop for direction.
+2. Read `package.json` for the required Node.js and package-manager versions. Reinstall the lockfile exactly, then use the repository scripts:
+
+   ```bash
+   npm ci
+   npm run install:macos-menu
+   ```
+
+   `install:macos-menu` builds all workspaces and the dashboard, npm-links the built CLI globally, builds the macOS app, replaces `~/Applications/Tokenless.app`, and launches it. Do not compose a parallel build or copy recipe unless the script itself fails.
+3. If the direct-provider setup requires `uv`, check `command -v uv` before setup. When it is absent, report that prerequisite and install it with the platform package manager only when that host-level installation is within the user's requested setup scope. Rerun the same setup command after installation; do not disable the direct runtime merely to make setup green.
+4. Preserve the user's existing browser, profile, provider, language, API-proxy, and output-savings choices. Run `tokenless setup` only when the user requested setup or configuration reconciliation, using explicit noninteractive flags derived from those persisted choices. Browser remote-debugging approval, authentication, CAPTCHA, and consent remain user actions.
+5. Prove local ownership after the build:
+
+   - the global `tokenless` symlink resolves into the requested checkout;
+   - the active daemon process command resolves into that checkout, not the app's embedded fallback or a published package;
+   - the daemon readiness response and dashboard snapshot report the built version;
+   - the dashboard route returns HTTP 200;
+   - the installed menu app is running and passes `codesign --verify --deep --strict`;
+   - the installed app's embedded CLI hash matches the checkout build; and
+   - the worktree remains clean and the local/remote canonical branch SHAs match.
+
+   To make the linked CLI own daemon startup, quit the menu app, stop the daemon through the linked CLI, start it through `tokenless menubar status --json`, then reopen the menu app. This distinguishes a healthy development daemon from a matching embedded fallback.
+6. If the user explicitly wants instant repository skill updates, create the requested global skill symlink only after setup or skill reconciliation, because those workflows may replace it. Preserve the previous global directory as a timestamped backup and verify both `readlink` and the resolved target. Do not link unrelated skills implicitly.
+
+### Persisted-state incompatibility
+
+Treat a current daemon rejecting old state as a migration problem, not as evidence that the browser or source build is broken.
+
+- Never delete the complete Tokenless home, profile registry, or database as a generic repair.
+- Stop the daemon and make timestamped backups of the exact config or database before changing it.
+- For rejected legacy config fields, preserve the old file and regenerate current-schema configuration through the current CLI using the user's existing choices. Do not copy obsolete fields into the new schema.
+- For a SQLite constraint or schema mismatch such as `NOT NULL constraint failed: jobs.claim_token`, inspect the live schema, row compatibility, foreign keys, and current source schema. Prefer a shipped migration. If none exists and the user authorized repair, apply only the narrow compatible migration, preserve valid history, then run `PRAGMA foreign_key_check` and `PRAGMA integrity_check` before restarting.
+- Rerun the original failed boundary. Report setup as incomplete when provider readiness still awaits a user-controlled browser approval, even if the CLI, daemon, dashboard, menu app, and direct runtime are healthy.
 
 ## Install
 
