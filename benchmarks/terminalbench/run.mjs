@@ -17,6 +17,7 @@ const SEMANTIC_COMPLEXITIES = new Set(['low', 'medium', 'high'])
 const JOB_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u
 const OBSERVATION_SCHEMA = 'tokenless.terminalbench-observation.v1'
 const OBSERVATION_EXECUTION_PATH = 'Harbor -> Docker DeepSeek Harness -> loopback HTTP -> Tokenless API -> tokenless/auto -> provider'
+const ORACLE_OBSERVATION_EXECUTION_PATH = 'Harbor -> Oracle agent'
 const [command = 'help', ...argv] = process.argv.slice(2)
 
 try {
@@ -316,10 +317,11 @@ async function runDeepSeekLane(kind, args) {
     tokenEstimatorNode: process.execPath,
     tokenlessHome: homeDir,
     daemonUrl: daemon.url,
+    executionMode: daemon.executionMode,
     taskManifest: prepared.taskManifest,
     semanticManifest,
   })
-  await writeRunObservation({ jobDir, report, tokenlessHome: homeDir })
+  await writeRunObservation({ jobDir, report })
   if (result.code !== 0) throw new Error(`Harbor ${kind} run exited ${result.code}; evidence is preserved at ${jobDir}.`)
   assertComplete(report, expectedTrials)
   if (
@@ -349,10 +351,14 @@ async function ensureHostDaemon(homeDir, explicitDaemonUrl) {
   const runtimeEntry = path.join(root, 'packages', 'cli', 'dist', 'src', 'index.js')
   const runtime = await import(pathToFileURL(runtimeEntry).href)
   const config = await runtime.readTokenlessConfig(homeDir)
-  return await runtime.ensureDaemonReady({
+  if (config?.apiProxy?.executionMode !== 'browser') {
+    throw new Error('The DeepSeek Harness lane requires browser execution mode in the selected Tokenless API home.')
+  }
+  const daemon = await runtime.ensureDaemonReady({
     homeDir,
     daemonUrl: runtime.daemonUrl(explicitDaemonUrl ?? config.daemonUrl ?? undefined),
   })
+  return { ...daemon, executionMode: config.apiProxy.executionMode }
 }
 
 async function writeRunReport({
@@ -370,6 +376,7 @@ async function writeRunReport({
   daemonUrl,
   taskManifest,
   semanticManifest = null,
+  executionMode = null,
 }) {
   const destination = path.join(jobDir, 'tokenless-run.json')
   await refuseExisting(destination)
@@ -470,6 +477,7 @@ async function writeRunReport({
     agent: kind === 'oracle' ? 'oracle' : 'deepseek-harness-tokenless-deep',
     model: kind === 'oracle' ? null : revision.model,
     routingMode: kind === 'oracle' ? null : 'auto',
+    executionMode,
     profile,
     deepseekHarnessRevision: revision.deepseekHarnessRevision,
     tokenlessRevision: tokenlessRevision.trim(),
@@ -503,8 +511,7 @@ async function writeRunReport({
 async function observeExistingJob(args) {
   const jobDir = await existingJobDirectory(args)
   const report = await readJson(path.join(jobDir, 'tokenless-run.json'))
-  const jobConfig = await readJson(path.join(jobDir, 'config.json'))
-  const written = await writeRunObservation({ jobDir, report, jobConfig })
+  const written = await writeRunObservation({ jobDir, report })
   return {
     schema: OBSERVATION_SCHEMA,
     jobName: path.basename(jobDir),
@@ -512,9 +519,8 @@ async function observeExistingJob(args) {
   }
 }
 
-async function writeRunObservation({ jobDir, report, tokenlessHome = null, jobConfig = null }) {
-  const sourceConfig = jobConfig ?? await readJson(path.join(jobDir, 'config.json'))
-  const observation = await buildRunObservation({ jobDir, report, jobConfig: sourceConfig, tokenlessHome })
+async function writeRunObservation({ jobDir, report }) {
+  const observation = await buildRunObservation({ jobDir, report })
   validateObservationArtifact(observation)
   const observationsDirectory = path.join(benchmarkRoot, 'observations')
   const jobName = path.basename(jobDir)
@@ -527,18 +533,15 @@ async function writeRunObservation({ jobDir, report, tokenlessHome = null, jobCo
   return { outputPath, observation }
 }
 
-async function buildRunObservation({ jobDir, report, jobConfig, tokenlessHome }) {
+async function buildRunObservation({ jobDir, report }) {
   if (report?.schema !== 'tokenless.terminalbench-run.v1') {
     throw new Error('The job tokenless-run.json does not use the pinned Terminal-Bench run schema.')
   }
   const official = await readJson(path.join(jobDir, 'result.json'))
   const trialRecords = await readObservationTrials(jobDir)
   const kind = inferRunKind(report, path.basename(jobDir))
-  const execution = await observationExecutionMode({
-    tokenlessHome,
-    jobConfig,
-    kind,
-  })
+  validateObservationRunIdentity(report, trialRecords, kind)
+  const execution = observationExecutionMode(report, kind)
   const stats = official?.stats
   const rewards = trialRecords
     .map(({ result }) => result?.verifier_result?.rewards?.reward)
@@ -567,7 +570,7 @@ async function buildRunObservation({ jobDir, report, jobConfig, tokenlessHome })
       expectedTrials: observationCount(report.expectedTrials, 'expected trials'),
       executionMode: execution.mode,
       executionModeStatus: execution.status,
-      executionPath: OBSERVATION_EXECUTION_PATH,
+      executionPath: kind === 'oracle' ? ORACLE_OBSERVATION_EXECUTION_PATH : OBSERVATION_EXECUTION_PATH,
     },
     timing: observationTiming(official, 'Harbor run'),
     officialOutcome: {
@@ -604,7 +607,13 @@ async function readObservationTrials(jobDir) {
     }
     const auditPath = path.join(directory, 'agent', 'deep-integration.jsonl')
     const events = await exists(auditPath) ? await readObservationAudit(auditPath) : []
-    if (events.length > 0) deepIntegrationStats(events, result.trial_name)
+    if (events.length > 0) {
+      try {
+        deepIntegrationStats(events, result.trial_name)
+      } catch (error) {
+        throw new Error(`Invalid deep-integration evidence for ${result.trial_name}: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
     records.push({ directory, result, events, auditPath: events.length > 0 ? auditPath : null })
   }
   records.sort((left, right) => left.result.trial_name.localeCompare(right.result.trial_name))
@@ -629,29 +638,49 @@ function inferRunKind(report, jobName) {
   return match?.[1] ?? 'unknown'
 }
 
-async function observationExecutionMode({ tokenlessHome, jobConfig, kind }) {
-  let selectedHome = tokenlessHome
-  if (selectedHome === null) {
-    const configuredHome = jobConfig?.agent?.kwargs?.tokenless_home
-    if (typeof configuredHome === 'string' && path.isAbsolute(configuredHome)) selectedHome = configuredHome
+function validateObservationRunIdentity(report, records, kind) {
+  if (kind === 'unknown') throw new Error('The result is not a recognized Terminal-Bench Harness run.')
+  if (records.length !== report.expectedTrials) {
+    throw new Error(`Observation found ${records.length} trials; expected ${String(report.expectedTrials)}.`)
   }
-  if (selectedHome === null) return { mode: null, status: 'unavailable' }
-  let config
-  try {
-    config = await readJson(path.join(selectedHome, 'config.json'))
-  } catch (error) {
-    if (tokenlessHome !== null) throw new Error('The new Tokenless API run cannot prove its selected home execution mode.')
+  if (kind === 'oracle') {
+    if (report.agent !== 'oracle') throw new Error('The oracle observation has an invalid agent identity.')
+    return
+  }
+  if (
+    report.agent !== 'deepseek-harness-tokenless-deep'
+    || report.model !== revision.model
+    || report.routingMode !== 'auto'
+    || typeof report.profile !== 'string'
+    || !/^[a-z0-9][a-z0-9._-]{0,63}$/u.test(report.profile)
+    || report.deepIntegration?.protocol !== revision.auditProtocol
+    || report.providerRouting?.protocol !== revision.routingProtocol
+    || report.executionMode !== undefined && report.executionMode !== 'browser'
+  ) {
+    throw new Error('The result does not prove the pinned provider-neutral DeepSeek Harness lane identity.')
+  }
+  const exceptionTrials = new Set(
+    Array.isArray(report.preRoutingExceptions?.trials)
+      ? report.preRoutingExceptions.trials.map((exception) => exception?.trial)
+      : [],
+  )
+  if (
+    exceptionTrials.size !== report.preRoutingExceptions?.count
+    || records.some((record) => record.events.length === 0 && !exceptionTrials.has(record.result.trial_name))
+    || records.some((record) => record.events.length > 0 && exceptionTrials.has(record.result.trial_name))
+  ) {
+    throw new Error('Every non-oracle observation trial requires a valid audit or a proven pre-routing exception.')
+  }
+}
+
+function observationExecutionMode(report, kind) {
+  if (kind === 'oracle' || report.executionMode === undefined) {
     return { mode: null, status: 'unavailable' }
   }
-  const mode = config?.apiProxy?.executionMode
-  if (!['browser', 'direct'].includes(mode)) {
-    if (tokenlessHome !== null) throw new Error('The new Tokenless API run has no proven browser execution mode.')
-    return { mode: null, status: 'unavailable' }
+  if (report.executionMode !== 'browser') {
+    throw new Error('The DeepSeek Harness observation does not prove browser execution mode.')
   }
-  if (tokenlessHome !== null && kind !== 'oracle' && mode !== 'browser') {
-    throw new Error('The DeepSeek Harness lane requires a proven browser Tokenless API execution mode.')
-  }
-  return { mode, status: 'proven' }
+  return { mode: report.executionMode, status: 'proven' }
 }
 
 function observationTrial(record) {
@@ -835,9 +864,12 @@ function observationRoutingAggregates(events, interactions) {
   const completed = interactions.filter((interaction) => interaction.outcome === 'completed').length
   const failed = interactions.filter((interaction) => interaction.outcome !== 'completed').length
   const fallbacks = interactions.filter((interaction) => interaction.outcome === 'fallback').length
+  const estimators = new Set(events.map((event) => event.tokenEstimate.estimator))
   const revisions = new Set(events.map((event) => event.tokenEstimate.estimatorRevision))
   const bases = new Set(events.map((event) => event.tokenEstimate.basis))
-  if (revisions.size > 1 || bases.size > 1) throw new Error('Observation token estimates must use one estimator revision and basis.')
+  if (estimators.size > 1 || revisions.size > 1) {
+    throw new Error('Observation token estimates must use one estimator and revision.')
+  }
   return {
     interactions: interactions.length,
     submittedInteractions: submitted,
@@ -854,7 +886,7 @@ function observationRoutingAggregates(events, interactions) {
     estimateStatus: events.length === 0 ? 'not_applicable' : 'estimated',
     estimator: events[0]?.tokenEstimate.estimator ?? null,
     estimatorRevision: events[0]?.tokenEstimate.estimatorRevision ?? null,
-    basis: events[0]?.tokenEstimate.basis ?? null,
+    bases: [...bases].sort(),
   }
 }
 
@@ -1682,7 +1714,7 @@ function validateProviderRoutingEvent(event) {
     || event.outcome === 'completed' && event.visibleProof !== null
     || event.rateLimited && (event.visibleProof === null || event.limitWindow === null)
   ) {
-    throw new Error('Provider routing audit event is invalid.')
+    throw new Error(`Provider routing audit event is invalid at sequence ${String(event.sequence)}.`)
   }
   validateTokenEstimate(event)
 }

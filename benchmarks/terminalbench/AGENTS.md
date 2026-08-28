@@ -20,6 +20,8 @@ Use real Harbor, Tokenless API, and provider boundaries for benchmark evidence. 
 
 Do not claim a benchmark score from an interrupted, infrastructure-blocked, or incomplete run. Keep the official Harbor verifier result separate from routing observations, and retain failed-run evidence for diagnosis.
 
+Generate `observations/<job-name>/run-observation.json` only through the harness collector and validate it against the tracked `observation.schema.json`. The observation must remain a deterministic metadata-only projection of the matching result and audit files, include their relative paths and SHA-256 digests, and never rely on an AI-authored summary. Keep official rewards, routing outcomes, timing, token estimates, and their limitations explicit and separate.
+
 ## Reproduction
 
 Before a real run, use `npm run benchmark:terminalbench -- inspect` and `npm run benchmark:terminalbench -- help` to verify the pinned contract and paths. Use the canonical `benchmarks/terminalbench/results` output and the local semantic manifest under `benchmarks/terminalbench/observations` when the run requires one. Do not start provider or Harbor work merely to exercise a parser.

@@ -25,6 +25,8 @@ runner 不修改官方 task instruction、timeout、resources、environment 或 
 
 ```sh
 npm run benchmark:terminalbench -- inspect
+npm run benchmark:terminalbench -- observe \
+  --job-dir benchmarks/terminalbench/results/<job-name>
 npm run benchmark:terminalbench -- oracle \
   --jobs-dir benchmarks/terminalbench/results
 npm run benchmark:terminalbench -- sweep \
@@ -48,6 +50,10 @@ npm run benchmark:terminalbench -- full \
 ```
 
 仓库中受 Git 跟踪的 harness、adapter、固定 manifests 和双语文档都位于 `benchmarks/terminalbench`。Harbor job 默认写入 Git ignored 的 `benchmarks/terminalbench/results/`；显式 `--jobs-dir` 只能是该目录或其子目录。Git ignored 的 `benchmarks/terminalbench/observations/` 保存本地 semantic manifest 与有界 run observations，`cache/` 保存生成的 runtime artifacts；旧的 `runs/` 不再作为输出目录。
+
+每个能够生成 `tokenless-run.json` 的 settled run，也会生成 `observations/<job-name>/run-observation.json`。Runner 会依据 `observation.schema.json` 构造并校验这个 Git ignored artifact；`observe` 会把同一个确定性 collector 用于已有的兼容 result job，并且绝不覆盖 evidence。
+
+Observation 会把 official verifier outcome 与 routing outcome 分开。它记录实际 profile 与由 run 固定的 execution mode、Harbor run/trial/stage timing、每个有序 provider interaction 与 fallback reason、submission/failure rate、可见 limit evidence、估算 token usage、response 字符数与 hash，以及源 result/audit 文件的 SHA-256 对应关系。新的 DeepSeek Harness run 会把 `executionMode` 固定到 `tokenless-run.json`；旧 report 如果没有该字段，就会记录为 `unavailable`，而不会把今天的 configuration 错误归因给过去的 run。采集完全由代码完成且只保存 metadata：v4 不能证明逐 provider latency，token 数值只是估算而不是 provider billing usage，并且绝不保存 prompt 或 response body。
 
 `wiring` 以 `k=1` 运行一道未改写的官方 task。`sweep` 会对全部 89 个未改写官方 task 各运行一次（`k=1`、单并发、零 Harbor retry），并作为 phase gate：只有 89 个 trial 全部 settle、没有 infrastructure error/cancellation/retry、每条 deep chain 完整且 verifier reward 全部为 `1` 时才算成功。`full` 固定运行全部 89 tasks、`k=5`、单并发、零 Harbor retry。仓库提交的 task manifest 会把每个官方 task name 同时绑定到 Harbor task ref 和完整 instruction digest。DeepSeek Harness 命令要求使用上面本地 `observations/` 路径中的 semantic manifest（或另一个显式选择的 manifest），且必须有 89 个按顺序排列、与这些 instruction digest 完全匹配的 entry；每个 entry 只能包含完整 instruction digest、`preferredProvider`、有界 `taskType`、`complexity`（`low`/`medium`/`high`）和 `truncated`，并带确定性的 whole-manifest digest。DSH adapter identity 保持固定，但 parent 和 child 的每次 model turn 都请求 `tokenless/auto`；manifest preference 只是 advisory，只能在 operation router 当前最高 eligibility tier 内重排 provider。benchmark profile 禁用 DSH model-request retry，并让 Tokenless API deadline 先完成终态处理，因此 submitted turn 的 exact local job 仍在运行时绝不会被 replay。每个 job 都写入不含 secret 的 `tokenless-run.json` 并记录 semantic manifest digest；正式报告把各 provider routing counts 与 official verifier rewards 分开，公开 `deepIntegration.trialsWithCompleteChain`，并在 `preRoutingExceptions` 中列出经确认发生在 provider routing 之前的异常。DSH command failure 属于 agent outcome，会进入 official verifier，而不会被误归类为 infrastructure exception；sweep 失败时保留 job evidence 且命令返回 nonzero。
 

@@ -61,7 +61,12 @@
         "expectedTrials": { "$ref": "#/definitions/count" },
         "executionMode": { "enum": ["browser", "direct", null] },
         "executionModeStatus": { "enum": ["proven", "unavailable"] },
-        "executionPath": { "const": "Harbor -> Docker DeepSeek Harness -> loopback HTTP -> Tokenless API -> tokenless/auto -> provider" }
+        "executionPath": {
+          "enum": [
+            "Harbor -> Docker DeepSeek Harness -> loopback HTTP -> Tokenless API -> tokenless/auto -> provider",
+            "Harbor -> Oracle agent"
+          ]
+        }
       }
     },
     "officialOutcome": {
@@ -277,7 +282,7 @@
     "routingAggregates": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["interactions", "submittedInteractions", "submittedRate", "completed", "completedRate", "failed", "failedRate", "fallbacks", "fallbackRate", "inputTokens", "outputTokens", "totalTokens", "estimateStatus", "estimator", "estimatorRevision", "basis"],
+      "required": ["interactions", "submittedInteractions", "submittedRate", "completed", "completedRate", "failed", "failedRate", "fallbacks", "fallbackRate", "inputTokens", "outputTokens", "totalTokens", "estimateStatus", "estimator", "estimatorRevision", "bases"],
       "properties": {
         "interactions": { "$ref": "#/definitions/count" },
         "submittedInteractions": { "$ref": "#/definitions/count" },
@@ -294,7 +299,16 @@
         "estimateStatus": { "enum": ["estimated", "not_applicable"] },
         "estimator": { "$ref": "#/definitions/nullableString" },
         "estimatorRevision": { "$ref": "#/definitions/nullableString" },
-        "basis": { "$ref": "#/definitions/nullableString" }
+        "bases": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "normalized_openai_request_and_visible_assistant_text",
+              "provider_turn_prompt_attachments_and_visible_assistant_text"
+            ]
+          }
+        }
       }
     },
     "routing": {
