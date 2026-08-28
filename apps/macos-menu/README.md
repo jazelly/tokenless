@@ -9,16 +9,19 @@ The local macOS menu bar app provides a native SwiftUI surface for the Tokenless
 
 ## Local build and install
 
-On an Apple Silicon Mac with the repository dependencies installed, run:
+On an Apple Silicon Mac with the repository dependencies installed, run this for a first install or an upgrade:
 
 ```bash
-npm run build:macos-menu
 npm run install:macos-menu
 ```
 
 `build:macos-menu` first builds the CLI and then creates `dist/macos/Tokenless.app` and `dist/macos/Tokenless.zip`. It targets macOS 13 or newer and contains its own arm64 Node runtime, CLI, daemon, and production Node dependencies. It does not use the installing machine's Node, nvm, Homebrew, or a global `tokenless` command.
 
-The installer replaces `~/Applications/Tokenless.app` and launches it. The menu app invokes the embedded runtime with the user's default `~/.tokenless` home; it does not create or require a `menubar-binding.json` file. Existing binding files are ignored.
+`npm run install:macos-menu` rebuilds the bundle, copies it to a sibling staging path, validates the app directory, menu executable, embedded Node runtime, and embedded CLI, then replaces `~/Applications/Tokenless.app`. If an installed menu app is running, the installer finds only that exact executable path, sends `SIGTERM`, and waits briefly for it to exit; it does not stop the Tokenless daemon. The old app is kept at a sibling backup path until the new bundle passes validation and LaunchServices accepts the launch. If staging, replacement, validation, or launch acceptance fails, the old bundle is restored and relaunched when it was running before the upgrade.
+
+On a first install there is no old bundle to restore. A successful run removes this command's staging and backup paths and leaves only `~/Applications/Tokenless.app`. LaunchServices accepting `open -a` confirms that macOS accepted the launch request; it cannot detect a crash that happens after that point, so the installer does not claim post-launch crash rollback.
+
+The menu app invokes the embedded runtime with the user's default `~/.tokenless` home; it does not create or require a `menubar-binding.json` file. Existing binding files are ignored.
 
 The bundle identifier is the local-only `local.tokenless.api.menubar`. The app is an agent application (`LSUIElement=true`), so it appears in the menu bar without a Dock icon.
 
