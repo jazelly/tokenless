@@ -567,9 +567,7 @@ export class ApiProxyAdapter {
       await this.wake()
       const routingMode = currentRequest.auto ? 'auto' : 'explicit'
       const remainingRequestMs = Math.max(1, requestDeadline - Date.now())
-      const attemptTimeoutMs = currentRequest.auto && remainingRoutes.length > 0
-        ? Math.max(1, Math.floor(remainingRequestMs / (remainingRoutes.length + 1)))
-        : remainingRequestMs
+      const attemptTimeoutMs = remainingRequestMs
       let settled: Job
       try {
         settled = await this.awaitTerminalJob(

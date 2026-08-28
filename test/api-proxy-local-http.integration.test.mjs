@@ -1159,6 +1159,56 @@ test('api proxy accepts every single-call tool choice and recursive strict schem
   })
 })
 
+test('api proxy keeps only tools visible for the current tool choice', async () => {
+  await withDaemon(async (daemon) => {
+    const { ManagedProfileRegistry } = await import(profileRegistryModule)
+    const registry = new ManagedProfileRegistry(daemon.homeDir)
+    await registry.addProfile({ slug: 'web-ai', setDefault: true })
+    await registry.updateProviderStatus('web-ai', {
+      provider: 'chatgpt',
+      auth: 'authenticated',
+      access: 'signed_in_free',
+      checkedAt: new Date().toISOString(),
+    })
+    const { writeTokenlessConfig } = await import(runtimeModule)
+    await writeTokenlessConfig({
+      homeDir: daemon.homeDir,
+      apiProxy: { enabled: true, conversationMode: 'new-conversation', executionMode: 'browser' },
+      profiles: {
+        'web-ai': {
+          roleLabel: '',
+          enabledProviders: ['chatgpt'],
+          browserVisibility: 'headed',
+          proxy: null,
+        },
+      },
+    })
+
+    const tools = [functionTool('read_file'), functionTool('search_files')]
+    for (const [toolChoice, expectedNames] of [
+      ['none', []],
+      [{ type: 'function', function: { name: 'read_file' } }, ['read_file']],
+    ]) {
+      const pending = call(daemon, 'POST', '/v1/chat/completions', {
+        model: 'tokenless/chatgpt',
+        messages: [{ role: 'user', content: 'Choose the requested tool.' }],
+        tools,
+        tool_choice: toolChoice,
+        parallel_tool_calls: false,
+      })
+      const job = await waitForQueuedApiProxyJob(daemon, 'api-proxy:')
+      const prompt = promptInputText(job)
+      const marker = 'JSON request:\n'
+      const markerIndex = prompt.lastIndexOf(marker)
+      assert.ok(markerIndex >= 0)
+      const request = JSON.parse(prompt.slice(markerIndex + marker.length))
+      assert.deepEqual(request.function_catalog.map((tool) => tool.function.name), expectedNames)
+      daemon.store.cancelJob(job.job_id, 'focused visible tool catalog test completed')
+      assert.equal((await pending).status, 502)
+    }
+  })
+})
+
 test('api proxy accepts text and structured final formats with or without complete tool history before profile readiness', async () => {
   await withDaemon(async (daemon) => {
     await enableApiProxy(daemon.homeDir)

@@ -245,10 +245,12 @@ export function compileOpenAiToolPrompt(
     }
     return message
   })
-  const catalog = tools.map(({ name, description, parameters, strict }) => ({
-    type: 'function',
-    function: { name, ...(description === undefined ? {} : { description }), parameters, strict },
-  }))
+  const catalog = tools
+    .filter(({ name }) => choice.mode !== 'none' && (choice.mode !== 'named' || name === choice.name))
+    .map(({ name, description, parameters, strict }) => ({
+      type: 'function',
+      function: { name, ...(description === undefined ? {} : { description }), parameters, strict },
+    }))
   const request = {
     protocol: OPENAI_TOOL_PROTOCOL,
     nonce,
@@ -307,10 +309,12 @@ export function compileOpenAiToolCorrectionPrompt(
   parallelToolCalls: boolean,
   responseFormat: OpenAiResponseFormat,
 ) {
-  const catalog = tools.map(({ name, description, parameters, strict }) => ({
-    type: 'function',
-    function: { name, ...(description === undefined ? {} : { description }), parameters, strict },
-  }))
+  const catalog = tools
+    .filter(({ name }) => choice.mode !== 'none' && (choice.mode !== 'named' || name === choice.name))
+    .map(({ name, description, parameters, strict }) => ({
+      type: 'function',
+      function: { name, ...(description === undefined ? {} : { description }), parameters, strict },
+    }))
   const correctionInput = JSON.stringify({
     protocol: OPENAI_TOOL_PROTOCOL,
     nonce,

@@ -35,10 +35,11 @@ SEMANTIC_MANIFEST_SCHEMA = "tokenless.terminalbench-semantic-manifest.v1"
 INSTRUCTION_DIGEST = "sha256:ff25b9442ef81d016d49300aef76c33f1b289fcd544bb0308b25f85bf343fce9"
 TASK_REF_DIGEST = "sha256:82cddb9ea94d792455d3e32b3c8a60ed73003714ed01785ec3b1ec5c580bccba"
 CHANNEL_PROTOCOL = "tokenless.terminalbench-channel.v1"
-AUDIT_PROTOCOL = "tokenless.terminalbench-deep-audit.v4"
+AUDIT_PROTOCOL = "tokenless.terminalbench-deep-audit.v5"
 PROXY_PORT = 18765
 MAX_BRIDGE_BODY_BYTES = 8 * 1024 * 1024
 PROVIDER_ID_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
+TOOL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 SEMANTIC_TASK_TYPE_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 SEMANTIC_COMPLEXITIES = {"low", "medium", "high"}
 PROVIDER_REF_PATTERN = re.compile(r"^provider:[a-f0-9]{32}$")
@@ -185,6 +186,44 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
                 }
             )
             return len(self._audit_events), ordinal
+
+    def record_parent_completion_choice(
+        self, sequence: int, request_value: dict[str, Any]
+    ) -> None:
+        tools = request_value.get("tools")
+        if not isinstance(tools, list) or len(tools) > 128:
+            raise ValueError("DSH parent tool catalog is invalid")
+        choice = request_value.get("tool_choice", "auto")
+        selected_tool = None
+        if isinstance(choice, str) and choice in {"auto", "none", "required"}:
+            choice_mode = choice
+        elif isinstance(choice, dict):
+            function = choice.get("function")
+            name = function.get("name") if isinstance(function, dict) else None
+            if (
+                choice.get("type") != "function"
+                or not isinstance(name, str)
+                or TOOL_NAME_PATTERN.fullmatch(name) is None
+            ):
+                raise ValueError("DSH parent tool choice is invalid")
+            choice_mode = "named"
+            selected_tool = name
+        else:
+            raise ValueError("DSH parent tool choice is invalid")
+        with self._audit_lock:
+            event = self._audit_events[sequence - 1]
+            if (
+                event.get("sequence") != sequence
+                or event.get("type") != "api.completion.request"
+            ):
+                raise RuntimeError("parent completion audit reference is invalid")
+            event.update(
+                {
+                    "choiceMode": choice_mode,
+                    "selectedTool": selected_tool,
+                    "catalogCount": len(tools),
+                }
+            )
 
     def mark_parent_completion_forced(self, sequence: int) -> None:
         with self._audit_lock:
@@ -1263,7 +1302,15 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
                     and tool["function"].get("name") == "read"
                     for tool in tools
                 )
-                if isinstance(request_value, dict) and has_subagent:
+                has_bash = isinstance(tools, list) and any(
+                    isinstance(tool, dict)
+                    and isinstance(tool.get("function"), dict)
+                    and tool["function"].get("name") == "bash"
+                    for tool in tools
+                )
+                if isinstance(request_value, dict):
+                    if parent_ordinal is None:
+                        raise ValueError("DSH parent completion ordinal is unavailable")
                     request_value["parallel_tool_calls"] = False
                     if parent_ordinal == 1:
                         if not has_read:
@@ -1281,13 +1328,28 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
                             "type": "function",
                             "function": {"name": "read"},
                         }
-                    else:
+                    elif parent_ordinal == 2:
+                        if not has_subagent:
+                            raise ValueError("DSH parent subagent tool is unavailable")
                         subagent_claimed = self.server.claim_subagent_dispatch()  # type: ignore[attr-defined]
-                        if subagent_claimed:
-                            request_value["tool_choice"] = {
-                                "type": "function",
-                                "function": {"name": "subagent"},
-                            }
+                        if not subagent_claimed:
+                            raise ValueError("DSH parent subagent dispatch claim is unavailable")
+                        request_value["tool_choice"] = {
+                            "type": "function",
+                            "function": {"name": "subagent"},
+                        }
+                    elif parent_ordinal == 3:
+                        if not has_bash:
+                            raise ValueError("DSH parent bash tool is unavailable")
+                        request_value["tool_choice"] = {
+                            "type": "function",
+                            "function": {"name": "bash"},
+                        }
+                    else:
+                        request_value["tool_choice"] = "none"
+                    self.server.record_parent_completion_choice(  # type: ignore[attr-defined]
+                        parent_event_sequence, request_value
+                    )
                     body = json.dumps(
                         request_value, separators=(",", ":")
                     ).encode("utf-8")

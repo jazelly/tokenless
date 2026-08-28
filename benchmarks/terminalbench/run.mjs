@@ -1450,13 +1450,36 @@ function deepIntegrationStats(events, trial) {
     }
     if (event.type === 'api.completion.request') {
       if (
-        Object.keys(event).some((key) => !['protocol', 'sequence', 'type', 'ordinal', 'forcedSubagent'].includes(key))
+        Object.keys(event).some((key) => ![
+          'protocol', 'sequence', 'type', 'ordinal', 'forcedSubagent',
+          'choiceMode', 'selectedTool', 'catalogCount',
+        ].includes(key))
         || event.ordinal !== nextParentOrdinal
         || !Number.isSafeInteger(event.ordinal)
         || event.ordinal < 1
         || event.forcedSubagent !== true && event.forcedSubagent !== false
+        || !['auto', 'none', 'required', 'named'].includes(event.choiceMode)
+        || !Number.isSafeInteger(event.catalogCount)
+        || event.catalogCount < 0
+        || event.catalogCount > 128
+        || event.choiceMode === 'named'
+          && (typeof event.selectedTool !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/u.test(event.selectedTool))
+        || event.choiceMode !== 'named' && event.selectedTool !== null
       ) {
         throw new Error('Host parent completion evidence is invalid.')
+      }
+      const expectedChoice = event.ordinal === 1
+        ? { choiceMode: 'named', selectedTool: 'read' }
+        : event.ordinal === 2
+          ? { choiceMode: 'named', selectedTool: 'subagent' }
+          : event.ordinal === 3
+            ? { choiceMode: 'named', selectedTool: 'bash' }
+            : { choiceMode: 'none', selectedTool: null }
+      if (
+        event.choiceMode !== expectedChoice.choiceMode
+        || event.selectedTool !== expectedChoice.selectedTool
+      ) {
+        throw new Error(`Host parent completion choice does not match ordinal ${event.ordinal}.`)
       }
       nextParentOrdinal += 1
     } else if (event.type === 'child.turn.started') {
