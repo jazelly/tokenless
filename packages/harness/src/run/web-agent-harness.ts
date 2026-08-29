@@ -23,6 +23,10 @@ import {
 } from '../contracts.js'
 import { canonicalJson } from '../internal/filesystem.js'
 import { validateJsonSchemaValue } from '../internal/json-schema.js'
+import {
+  malformedBenchmarkEvidenceActionBatch,
+  syntheticReissueReasonCode,
+} from '../internal/model-response.js'
 type HarnessCall = {
   id: string
   tool: string
@@ -76,8 +80,15 @@ type HarnessRunRecord = {
 export function openWebAgentHarness(input: {
   providerClient: ProviderTurnClient
   toolRegistry: HarnessToolRegistry
+  onCorrectiveResponse?: ((event: { turn: number; reasonCode: string }) => void) | undefined
+  finalEvidenceGate?: ((event: { turn: number }) => boolean) | undefined
 }): WebAgentHarness {
-  return new InMemoryWebAgentHarness(input.providerClient, input.toolRegistry)
+  return new InMemoryWebAgentHarness(
+    input.providerClient,
+    input.toolRegistry,
+    input.onCorrectiveResponse,
+    input.finalEvidenceGate,
+  )
 }
 
 class InMemoryWebAgentHarness implements WebAgentHarness {
@@ -86,6 +97,8 @@ class InMemoryWebAgentHarness implements WebAgentHarness {
   constructor(
     private readonly provider: ProviderTurnClient,
     private readonly tools: HarnessToolRegistry,
+    private readonly onCorrectiveResponse?: ((event: { turn: number; reasonCode: string }) => void) | undefined,
+    private readonly finalEvidenceGate?: ((event: { turn: number }) => boolean) | undefined,
   ) {}
 
   async start(input: AgentRunSpec): Promise<AgentRunView> {
@@ -211,7 +224,10 @@ class InMemoryWebAgentHarness implements WebAgentHarness {
     }
   }
 
-  close() { this.runs.clear() }
+  async close() {
+    this.runs.clear()
+    await this.tools.close?.()
+  }
 
   private async cancelProvider(record: HarnessRunRecord) {
     const operation = record.pendingProviderOperation
@@ -297,7 +313,47 @@ class InMemoryWebAgentHarness implements WebAgentHarness {
     const response = providerTurn.modelResponse
     if (!response) throw new HarnessSkillError('harness_provider_response_missing', 'Provider turn succeeded without a validated Harness response.')
     assertModelResponseIdentity(record, response)
+
+    const acceptActionBatch = (batch: HarnessActionBatch) => {
+      const batchId = sha256({ runId: record.runId, turn: record.turn, nonce: record.nonce, batch })
+      const reasonCode = syntheticReissueReasonCode(batch)
+      const storedCalls = batch.calls.map((call) => harnessCall(record, batchId, call, this.tools))
+      const storedBatch: HarnessActionBatch = {
+        ...batch,
+        calls: batch.calls.map((call, index) => ({ ...call, arguments: storedCalls[index]!.arguments })),
+      }
+      const storedProviderTurn = record.spec.toolBinding
+        ? redactProviderActionTurn(providerTurn, storedBatch)
+        : { ...providerTurn, modelResponse: storedBatch }
+      const resolved = resolveKnownDependencyFailures(storedCalls)
+      const calls = resolved.calls
+      const callResults = resolved.callResults
+      const needs = batch.needs.map((need) => ({ id: need.id, prompt: need.prompt, inputSchema: need.inputSchema }))
+      const status = needs.length > 0
+        ? 'waiting_for_input'
+        : calls.some((call) => call.approval === 'pending' && !hasFailedDependencyInResults(call, callResults))
+          ? 'waiting_for_approval'
+          : 'running'
+      const next = this.update(record.runId, (current) => ({
+        ...current,
+        providerTurn: storedProviderTurn,
+        batch: storedBatch,
+        batchId,
+        calls,
+        needs,
+        callResults,
+        needResults: [],
+        status,
+        phase: status === 'running' ? 'executing_batch' : 'waiting_intervention',
+      }))
+      if (reasonCode !== null) this.onCorrectiveResponse?.({ turn: record.turn, reasonCode })
+      return next
+    }
+
     if (response.kind === 'final') {
+      if (this.finalEvidenceGate && !this.finalEvidenceGate({ turn: record.turn })) {
+        return acceptActionBatch(malformedBenchmarkEvidenceActionBatch(record.runId, record.turn, record.nonce))
+      }
       const storedFinal = this.tools.redactFinal?.(response, { runId: record.runId, turn: record.turn }) ?? response
       const storedProviderTurn = storedFinal === response
         ? providerTurn
@@ -310,36 +366,7 @@ class InMemoryWebAgentHarness implements WebAgentHarness {
         final: storedFinal,
       }))
     }
-    const batchId = sha256({ runId: record.runId, turn: record.turn, nonce: record.nonce, batch: response })
-    const storedCalls = response.calls.map((call) => harnessCall(record, batchId, call, this.tools))
-    const storedBatch: HarnessActionBatch = {
-      ...response,
-      calls: response.calls.map((call, index) => ({ ...call, arguments: storedCalls[index]!.arguments })),
-    }
-    const storedProviderTurn = record.spec.toolBinding
-      ? redactProviderActionTurn(providerTurn, storedBatch)
-      : { ...providerTurn, modelResponse: storedBatch }
-    const resolved = resolveKnownDependencyFailures(storedCalls)
-    const calls = resolved.calls
-    const callResults = resolved.callResults
-    const needs = response.needs.map((need) => ({ id: need.id, prompt: need.prompt, inputSchema: need.inputSchema }))
-    const status = needs.length > 0
-      ? 'waiting_for_input'
-      : calls.some((call) => call.approval === 'pending' && !hasFailedDependencyInResults(call, callResults))
-        ? 'waiting_for_approval'
-        : 'running'
-    return this.update(record.runId, (current) => ({
-      ...current,
-      providerTurn: storedProviderTurn,
-      batch: storedBatch,
-      batchId,
-      calls,
-      needs,
-      callResults,
-      needResults: [],
-      status,
-      phase: status === 'running' ? 'executing_batch' : 'waiting_intervention',
-    }))
+    return acceptActionBatch(response)
   }
 
   private async executeAndContinue(record: HarnessRunRecord): Promise<HarnessRunRecord> {
@@ -624,7 +651,7 @@ function harnessCall(
     callId: call.id,
     argumentsDigest,
   }) ?? call.arguments
-  const requiresApproval = entry.approval === 'always' || !entry.readOnly
+  const requiresApproval = entry.approval === 'always' || (!entry.readOnly && !isTrustedWorkspaceExecution(entry))
   return {
     id: call.id,
     tool: call.tool,
@@ -634,6 +661,15 @@ function harnessCall(
     approval: requiresApproval ? 'pending' : 'not_required',
     status: 'pending',
   }
+}
+
+function isTrustedWorkspaceExecution(entry: HarnessToolCatalogEntry) {
+  return entry.source === 'local'
+    && entry.server === 'tokenless-workspace'
+    && entry.serverToolName === 'exec'
+    && entry.name === 'workspace.exec'
+    && entry.readOnly === false
+    && entry.approval === 'allow_trusted'
 }
 
 function resolveKnownDependencyFailures(calls: readonly HarnessCall[]) {
@@ -757,7 +793,7 @@ function validateSpec(input: AgentRunSpec): AgentRunSpec {
   if (typeof input.profileId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(input.profileId)) throw new HarnessSkillError('harness_spec_invalid', 'Agent run profileId is invalid.')
   if (typeof input.taskPrompt !== 'string' || input.taskPrompt.trim() === '' || Buffer.byteLength(input.taskPrompt, 'utf8') > 64 * 1024) throw new HarnessSkillError('harness_spec_invalid', 'Agent run taskPrompt is invalid.')
   if (typeof input.stagingRoot !== 'string' || input.stagingRoot.trim() === '' || input.stagingRoot.includes('\0')) throw new HarnessSkillError('harness_spec_invalid', 'Agent run stagingRoot is invalid.')
-  if (!Number.isSafeInteger(input.maxTurns ?? 8) || (input.maxTurns ?? 8) < 1 || (input.maxTurns ?? 8) > 32) throw new HarnessSkillError('harness_spec_invalid', 'Agent run maxTurns must be 1-32.')
+  if (!Number.isSafeInteger(input.maxTurns ?? 8) || (input.maxTurns ?? 8) < 1 || (input.maxTurns ?? 8) > 64) throw new HarnessSkillError('harness_spec_invalid', 'Agent run maxTurns must be 1-64.')
   const selectedSkills = sanitizeSelectedSkills(input.selectedSkills)
   const finalOutput = sanitizeFinalOutput(input.finalOutput)
   const limits = sanitizeLimits(input.limits)

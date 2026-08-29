@@ -32,6 +32,11 @@ import {
 import type { G4fServiceClient } from '../providers/direct/g4f/client.js'
 import { ProviderProtocolRouter } from '../providers/direct/protocol-router.js'
 import {
+  hydrateEphemeralProviderJob,
+  registerEphemeralProviderJob,
+  releaseEphemeralProviderPayload,
+} from '../runtime/ephemeral-provider-payloads.js'
+import {
   compileOpenAiToolCorrectionPrompt,
   compileOpenAiToolPrompt,
   normalizeOpenAiMessages,
@@ -83,6 +88,8 @@ const JOB_POLL_INTERVAL_MS = 250
 const DEFAULT_JOB_TIMEOUT_MS = 10 * 60_000
 
 export type ApiProxyDialect = 'openai' | 'anthropic'
+
+export type ApiProxyPayloadLifetime = 'ephemeral'
 
 export type ApiProxyRoutingAttempt = {
   provider: string
@@ -211,14 +218,19 @@ export class ApiProxyAdapter {
     return (await readTokenlessConfig(this.store.homeDir)).apiProxy.enabled
   }
 
-  async complete(dialect: ApiProxyDialect, body: unknown, signal?: AbortSignal): Promise<ApiProxyCompletion> {
+  async complete(
+    dialect: ApiProxyDialect,
+    body: unknown,
+    signal?: AbortSignal,
+    payloadLifetime?: ApiProxyPayloadLifetime,
+  ): Promise<ApiProxyCompletion> {
     const config = await readTokenlessConfig(this.store.homeDir)
     if (!config.apiProxy.enabled) throw apiProxyDisabled()
     const request = dialect === 'openai' ? normalizeOpenAiRequest(body) : normalizeAnthropicRequest(body)
     if (request.auto && dialect !== 'openai') {
       throw new ApiProxyError(400, 'auto_dialect_unsupported', 'tokenless/auto is available only on OpenAI Chat Completions and Responses.', 'model')
     }
-    return await this.completeRequest(config, request, signal)
+    return await this.completeRequest(config, request, signal, undefined, payloadLifetime)
   }
 
   async stream(dialect: ApiProxyDialect, body: unknown, signal?: AbortSignal): Promise<Response | null> {
@@ -294,6 +306,7 @@ export class ApiProxyAdapter {
     request: NormalizedRequest,
     signal?: AbortSignal,
     responseContext?: ResponseContinuationContext,
+    payloadLifetime?: ApiProxyPayloadLifetime,
   ): Promise<ApiProxyCompletion> {
     // Request-level validation first: an unknown provider is the caller's
     // mistake and must be rejected the same way whether or not this
@@ -371,9 +384,10 @@ export class ApiProxyAdapter {
         capabilityRoute: selectedRoute?.capabilityRoute ?? null,
         fallbackRoutes: autoRoutes.slice(1),
         structuredControlStrategy: structuredControlStrategy(selectedRequest, selectedRoute),
-        semanticPreference: request.semanticPreference,
-        signal,
-      })
+          semanticPreference: request.semanticPreference,
+          signal,
+          payloadLifetime,
+        })
       const validated = await validatedCompletion(selectedRequest, completion, async (prompt) => {
         const settledRoute = autoRoutes.find((route) => route.provider === completion.base.provider) ?? selectedRoute
         const correctionRequest = { ...selectedRequest, provider: completion.base.provider }
@@ -396,6 +410,7 @@ export class ApiProxyAdapter {
           structuredControlStrategy: structuredControlStrategy(correctionRequest, settledRoute),
           semanticPreference: correctionRequest.semanticPreference,
           signal,
+          payloadLifetime,
         })
       })
       return withRouting(validated, request, selectedRequest, autoRoutes, autoExclusions)
@@ -494,6 +509,7 @@ export class ApiProxyAdapter {
     structuredControlStrategy: initialStructuredControlStrategy,
     semanticPreference,
     signal,
+    payloadLifetime,
   }: {
     request: NormalizedRequest
     profileId: string
@@ -508,6 +524,7 @@ export class ApiProxyAdapter {
     structuredControlStrategy: string | null
     semanticPreference: string | null
     signal: AbortSignal | undefined
+    payloadLifetime: ApiProxyPayloadLifetime | undefined
   }): Promise<RawApiProxyCompletion> {
     let currentRequest = request
     let currentCapabilityRoute = capabilityRoute
@@ -515,6 +532,7 @@ export class ApiProxyAdapter {
     let currentStructuredControlStrategy = initialStructuredControlStrategy
     let remainingRoutes = [...fallbackRoutes.slice(0, 5)]
     let carriedAttempts: ApiProxyRoutingAttempt[] = []
+    let immediateCapacityReplayUsed = false
     const requestDeadline = Date.now() + this.timeoutMs
     for (;;) {
       const requestJson = createManagedPlaywrightJobRequest({
@@ -559,12 +577,24 @@ export class ApiProxyAdapter {
           createVisibleActionRequest({ provider: currentRequest.provider, action: VISIBLE_ACTIONS.RESPONSE_READ, payload: {} }),
         ],
       })
-      const job = this.store.createJob({
-        provider: currentRequest.provider,
-        request_json: requestJson,
-        profile_id: profileId,
-      })
-      await this.wake()
+      const ephemeralJobId = payloadLifetime === 'ephemeral' ? randomUUID() : null
+      const persistedRequest = ephemeralJobId === null
+        ? requestJson
+        : registerEphemeralProviderJob(ephemeralJobId, requestJson)
+      let job: Job
+      try {
+        job = this.store.createJob({
+          provider: currentRequest.provider,
+          request_json: persistedRequest,
+          profile_id: profileId,
+          ...(ephemeralJobId === null ? {} : { job_id: ephemeralJobId }),
+        })
+      } catch (error) {
+        if (ephemeralJobId !== null) releaseEphemeralProviderPayload(ephemeralJobId)
+        throw error
+      }
+      try {
+        await this.wake()
       const routingMode = currentRequest.auto ? 'auto' : 'explicit'
       const remainingRequestMs = Math.max(1, requestDeadline - Date.now())
       const attemptTimeoutMs = remainingRequestMs
@@ -614,8 +644,47 @@ export class ApiProxyAdapter {
         remainingRoutes = eligibleRoutes.slice(1)
         continue
       }
-      const result = visibleResponse(settled.result_json)
-      if (settled.status !== 'succeeded' || !result) throw apiProxyJobFailure(settled, routingMode)
+      const visibleJob = payloadLifetime === undefined
+        ? settled
+        : hydrateEphemeralProviderJob(settled)
+      const result = visibleResponse(visibleJob.result_json)
+      if (settled.status !== 'succeeded' || !result) {
+        const observedAttempts = routingAttemptsFromRequest(settled.request_json)
+        const settledRouting = routingFromJob(settled, routingMode)
+        const canReplayCapacityFailure = settled.status === 'failed'
+          && jobErrorCode(settled) === 'provider_capacity_unavailable'
+          && currentRequest.auto
+          && conversationMode === 'new-conversation'
+          && !immediateCapacityReplayUsed
+          && settled.provider_submitted_at === null
+          && observedAttempts !== null
+          && settledRouting?.fallbackProviders.length === 0
+          && observedAttempts.length < 5
+          && observedAttempts.every((attempt) => !attempt.providerSubmitted)
+          && !observedAttempts.some((attempt) => attempt.provider === settled.provider)
+          && Date.now() < requestDeadline
+        if (canReplayCapacityFailure) {
+          carriedAttempts = [
+            ...observedAttempts,
+            {
+              provider: settled.provider,
+              outcome: 'fallback',
+              reason: 'capacity',
+              observedAt: new Date().toISOString(),
+              providerSubmitted: false,
+              ...routeLimitEvidence(settled),
+            },
+          ]
+          immediateCapacityReplayUsed = true
+          currentRequest = request
+          currentCapabilityRoute = capabilityRoute
+          currentTargetUrl = targetUrl
+          currentStructuredControlStrategy = initialStructuredControlStrategy
+          remainingRoutes = []
+          continue
+        }
+        throw apiProxyJobFailure(settled, routingMode)
+      }
       const routing = routingFromJob(settled, routingMode)
       return {
         text: result.text,
@@ -629,6 +698,9 @@ export class ApiProxyAdapter {
           structuredControlStrategy: currentStructuredControlStrategy,
           ...(routing ? { routing } : {}),
         },
+      }
+      } finally {
+        if (ephemeralJobId !== null) releaseEphemeralProviderPayload(ephemeralJobId)
       }
     }
   }
@@ -1876,6 +1948,12 @@ function describeJson(value: unknown) {
   const record = value as { code?: unknown; message?: unknown; reason?: unknown }
   const parts = [record.code, record.reason, record.message].filter((part): part is string => typeof part === 'string')
   return parts.length > 0 ? parts.join(': ') : null
+}
+
+function jobErrorCode(job: Job) {
+  if (!job.error_json || typeof job.error_json !== 'object' || Array.isArray(job.error_json)) return null
+  const code = (job.error_json as { code?: unknown }).code
+  return typeof code === 'string' ? code : null
 }
 
 function visibleResponse(value: unknown): { text: string; citations: { url: string; title?: string }[] } | null {

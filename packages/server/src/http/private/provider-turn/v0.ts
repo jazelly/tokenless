@@ -21,7 +21,9 @@ import {
   dropEphemeralProviderBundle,
   hasEphemeralProviderBundle,
   hydrateEphemeralProviderJob,
+  isRedactedEphemeralProviderResult,
   registerEphemeralProviderJob,
+  releaseEphemeralProviderPayload,
   stageEphemeralProviderAttachment,
 } from '../../../runtime/ephemeral-provider-payloads.js'
 import { DaemonError, invalidInput } from '../../../errors.js'
@@ -236,6 +238,7 @@ export class PrivateProviderTurnV0Adapter {
           attempts: [],
         },
       }),
+      pagePolicy: 'replace',
       actions: [
         createVisibleActionRequest({
           provider,
@@ -274,7 +277,7 @@ export class PrivateProviderTurnV0Adapter {
     const previous = this.store.getLatestWebAiTurnForConversation(request.conversation.conversationRef)
     if (!previous || previous.binding_ref !== binding.binding_ref) throw invalidInput('web ai continuation conversation was not found')
     const previousJob = hydrateEphemeralProviderJob(this.store.getJob(previous.job_id))
-    if (previousJob.status !== 'succeeded' || !successfulResult(previousJob.result_json)) throw invalidInput('web ai continuation source turn has not succeeded')
+    if (previousJob.status !== 'succeeded' || (!successfulResult(previousJob.result_json) && !isRedactedEphemeralProviderResult(previousJob.result_json))) throw invalidInput('web ai continuation source turn has not succeeded')
     const previousRequest = previousJob.request_json as { taskId?: unknown }
     if (typeof previousRequest.taskId !== 'string') throw invalidInput('web ai continuation task identity is unavailable')
     const previousProvider = previousJob.provider
@@ -362,7 +365,9 @@ export class PrivateProviderTurnV0Adapter {
     const routing = binding
       ? routingFromJob(job, binding.provider === AUTO_PROVIDER ? 'auto' : 'explicit')
       : null
-    return { turn: this.project(turn, job), outcome, routing }
+    const projected = this.project(turn, job)
+    if (['succeeded', 'failed', 'canceled'].includes(job.status)) releaseEphemeralProviderPayload(job.job_id)
+    return { turn: projected, outcome, routing }
   }
 
   async cancel(turnRef: string) {
@@ -377,7 +382,9 @@ export class PrivateProviderTurnV0Adapter {
         await removeStagedVisibleAttachmentBundle({ homeDir: this.store.homeDir, bundleId: attachment.bundle_id }).catch(() => undefined)
       }
     }
-    return this.project(turn, this.store.getJob(turn.job_id))
+    const projected = this.project(turn, this.store.getJob(turn.job_id))
+    releaseEphemeralProviderPayload(turn.job_id)
+    return projected
   }
 
   /** Cancels an existing request turn by its protocol correlation reference. */
@@ -392,6 +399,7 @@ export class PrivateProviderTurnV0Adapter {
         await removeStagedVisibleAttachmentBundle({ homeDir: this.store.homeDir, bundleId: attachment.bundle_id }).catch(() => undefined)
       }
     }
+    releaseEphemeralProviderPayload(turn.job_id)
     return { kind: 'turn' as const, turn: this.cancellationProjection(turn) }
   }
 
@@ -582,7 +590,7 @@ function parseStartTurnRequest(value: unknown): StartTurnRequest {
   }
   if (request.conversation.mode === 'continue') return parseContinueTurnRequest(request)
   if (Object.keys(request.conversation).length !== 1 ||
-    !isPlainRecord(request.bootstrap) || Object.keys(request.bootstrap).length !== 2 || typeof request.bootstrap.text !== 'string' || request.bootstrap.text.length === 0 || Array.from(request.bootstrap.text).length > 4000 || Buffer.byteLength(request.bootstrap.text, 'utf8') > 8192 || !Array.isArray(request.bootstrap.attachments) || request.bootstrap.attachments.length < 1 || request.bootstrap.attachments.length > 33) {
+    !isPlainRecord(request.bootstrap) || Object.keys(request.bootstrap).length !== 2 || typeof request.bootstrap.text !== 'string' || request.bootstrap.text.length === 0 || Array.from(request.bootstrap.text).length > 8192 || Buffer.byteLength(request.bootstrap.text, 'utf8') > 8192 || !Array.isArray(request.bootstrap.attachments) || request.bootstrap.attachments.length < 1 || request.bootstrap.attachments.length > 33) {
     throw new Error('start_turn_request is invalid')
   }
   const refs = new Set<string>()

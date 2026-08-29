@@ -42,6 +42,7 @@ import {
   openAiCompletionBody,
   openAiResponseStreamFrames,
   openAiStreamFrames,
+  type ApiProxyPayloadLifetime,
   type ApiProxyDialect,
   type ApiProxyRouting,
 } from '../universal-api/api-proxy.js'
@@ -917,6 +918,7 @@ async function handleApiProxyRequest(
       writeJson(response, 200, result.body)
       return
     }
+    const payloadLifetime = apiProxyPayloadLifetime(request)
     if (body.stream === true) {
       const upstream = await apiProxy.stream(dialect, body, requestLifetime.signal)
       if (upstream) {
@@ -924,7 +926,7 @@ async function handleApiProxyRequest(
         return
       }
     }
-    const completion = await apiProxy.complete(dialect, body, requestLifetime.signal)
+    const completion = await apiProxy.complete(dialect, body, requestLifetime.signal, payloadLifetime)
     writeApiProxyRoutingHeaders(response, completion.routing)
     if (body.stream === true) {
       writeApiProxyStream(response, dialect === 'openai'
@@ -940,6 +942,17 @@ async function handleApiProxyRequest(
   } finally {
     requestLifetime.dispose()
   }
+}
+
+function apiProxyPayloadLifetime(request: IncomingMessage): ApiProxyPayloadLifetime | undefined {
+  const value = request.headers['x-tokenless-payload-lifetime']
+  if (value === undefined) return undefined
+  if (typeof value === 'string' && value === 'ephemeral') return 'ephemeral'
+  throw new ApiProxyError(
+    400,
+    'invalid_request_error',
+    'X-Tokenless-Payload-Lifetime must be absent or exactly "ephemeral".',
+  )
 }
 
 function writeApiProxyError(response: ServerResponse, dialect: ApiProxyDialect, error: unknown) {

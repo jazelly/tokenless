@@ -11,10 +11,20 @@ from urllib.parse import urlsplit
 
 
 MAX_BODY_BYTES = 8 * 1024 * 1024
+MAX_BASH_OUTCOME_BODY_BYTES = 1024
+MAX_SUBAGENT_BASH_BODY_BYTES = 32 * 1024
+MAX_CHILD_HARNESS_FAILURE_BODY_BYTES = 1024
+MAX_HARNESS_CORRECTIVE_BODY_BYTES = 1024
+MAX_WORKSPACE_EXEC_BODY_BYTES = 2 * 1024
 ALLOWED_COMPLETION_PATHS = {
     "/v1/chat/completions",
     "/v1/openai/chat/completions",
 }
+ALLOWED_BASH_OUTCOME_PATH = "/v1/private/benchmark/bash-outcome"
+ALLOWED_SUBAGENT_BASH_PATH = "/v1/private/benchmark/subagent-bash"
+ALLOWED_CHILD_HARNESS_FAILURE_PATH = "/v1/private/benchmark/child-harness-failure"
+ALLOWED_HARNESS_CORRECTIVE_PATH = "/v1/private/benchmark/harness-corrective"
+ALLOWED_WORKSPACE_EXEC_PATH = "/v1/private/benchmark/workspace-exec"
 ALLOWED_PROVIDER_TURN_PREFIX = "/v1/private/provider-turn/"
 
 
@@ -67,9 +77,15 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         self._forward()
 
     def _forward(self) -> None:
-        path = urlsplit(self.path).path
+        parsed_path = urlsplit(self.path)
+        path = parsed_path.path
         if (
             path not in ALLOWED_COMPLETION_PATHS
+            and path != ALLOWED_BASH_OUTCOME_PATH
+            and path != ALLOWED_SUBAGENT_BASH_PATH
+            and path != ALLOWED_CHILD_HARNESS_FAILURE_PATH
+            and path != ALLOWED_HARNESS_CORRECTIVE_PATH
+            and path != ALLOWED_WORKSPACE_EXEC_PATH
             and not path.startswith(ALLOWED_PROVIDER_TURN_PREFIX)
         ):
             self.send_error(404)
@@ -86,6 +102,41 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         if length < 0 or length > MAX_BODY_BYTES:
             self.send_error(413)
             return
+        if path == ALLOWED_BASH_OUTCOME_PATH:
+            if self.command != "POST" or parsed_path.query or parsed_path.fragment:
+                self.send_error(405 if self.command != "POST" else 404)
+                return
+            if length > MAX_BASH_OUTCOME_BODY_BYTES:
+                self.send_error(413)
+                return
+        if path == ALLOWED_SUBAGENT_BASH_PATH:
+            if self.command != "POST" or parsed_path.query or parsed_path.fragment:
+                self.send_error(405 if self.command != "POST" else 404)
+                return
+            if length > MAX_SUBAGENT_BASH_BODY_BYTES:
+                self.send_error(413)
+                return
+        if path == ALLOWED_CHILD_HARNESS_FAILURE_PATH:
+            if self.command != "POST" or parsed_path.query or parsed_path.fragment:
+                self.send_error(405 if self.command != "POST" else 404)
+                return
+            if length > MAX_CHILD_HARNESS_FAILURE_BODY_BYTES:
+                self.send_error(413)
+                return
+        if path == ALLOWED_HARNESS_CORRECTIVE_PATH:
+            if self.command != "POST" or parsed_path.query or parsed_path.fragment:
+                self.send_error(405 if self.command != "POST" else 404)
+                return
+            if length > MAX_HARNESS_CORRECTIVE_BODY_BYTES:
+                self.send_error(413)
+                return
+        if path == ALLOWED_WORKSPACE_EXEC_PATH:
+            if self.command != "POST" or parsed_path.query or parsed_path.fragment:
+                self.send_error(405 if self.command != "POST" else 404)
+                return
+            if length > MAX_WORKSPACE_EXEC_BODY_BYTES:
+                self.send_error(413)
+                return
         body = self.rfile.read(length) if length else None
         headers = {
             "Authorization": f"Bearer {self.server.channel_token}",  # type: ignore[attr-defined]
@@ -100,6 +151,8 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             value = self.headers.get(name)
             if value is not None:
                 headers[name] = value
+        if self.command == "POST" and path in ALLOWED_COMPLETION_PATHS:
+            headers["X-Tokenless-Payload-Lifetime"] = "ephemeral"
         connection = http.client.HTTPConnection(
             self.server.target_host,  # type: ignore[attr-defined]
             self.server.target_port,  # type: ignore[attr-defined]

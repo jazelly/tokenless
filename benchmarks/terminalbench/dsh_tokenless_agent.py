@@ -35,11 +35,102 @@ SEMANTIC_MANIFEST_SCHEMA = "tokenless.terminalbench-semantic-manifest.v1"
 INSTRUCTION_DIGEST = "sha256:ff25b9442ef81d016d49300aef76c33f1b289fcd544bb0308b25f85bf343fce9"
 TASK_REF_DIGEST = "sha256:82cddb9ea94d792455d3e32b3c8a60ed73003714ed01785ec3b1ec5c580bccba"
 CHANNEL_PROTOCOL = "tokenless.terminalbench-channel.v1"
-AUDIT_PROTOCOL = "tokenless.terminalbench-deep-audit.v5"
+AUDIT_PROTOCOL = "tokenless.terminalbench-deep-audit.v36"
 PROXY_PORT = 18765
 MAX_BRIDGE_BODY_BYTES = 8 * 1024 * 1024
+MAX_BASH_OUTCOME_BODY_BYTES = 1024
+MAX_BASH_OUTCOMES = 16
+MAX_SUBAGENT_BASH_BODY_BYTES = 32 * 1024
+MAX_CHILD_HARNESS_FAILURE_BODY_BYTES = 1024
+MAX_HARNESS_CORRECTIVE_BODY_BYTES = 1024
+MAX_SUBAGENT_BASH_COMMAND_CHARS = 10000
+MAX_SUBAGENT_BASH_OUTCOMES = 1
+MAX_WORKSPACE_EXEC_BODY_BYTES = 2 * 1024
+MAX_WORKSPACE_EXEC_EVENTS = 256
+MAX_WORKSPACE_EXEC_COMMAND_CHARS = 32 * 1024
+MAX_WORKSPACE_EXEC_TIMEOUT_MS = 120_000
+MAX_WORKSPACE_EXEC_OUTPUT_CHARS = 64 * 1024
+MAX_HARNESS_CORRECTIVE_EVENTS = 64
+WORKSPACE_EXEC_PURPOSES = frozenset({"inspect", "implement", "verify"})
 PROVIDER_ID_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 TOOL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+CALL_ID_PATTERN = re.compile(r"^[^\x00-\x1f\x7f]{1,256}$")
+CHILD_DISCOVERY_FAILURE_CODES = frozenset(
+    {
+        "harness_workspace_invalid",
+        "harness_tool_duplicate",
+        "mcp_config_invalid",
+        "mcp_server_unavailable",
+        "mcp_tool_discovery_failed",
+        "mcp_tool_duplicate",
+        "mcp_tool_name_invalid",
+    }
+)
+CHILD_PROVIDER_SUBMIT_FAILURE_CODES = frozenset(
+    {
+        "harness_provider_intent_missing",
+        "harness_provider_request_invalid",
+        "harness_provider_dispatch_failed",
+        "harness_provider_http_error",
+        "harness_provider_identity_mismatch",
+        "harness_provider_capabilities_unsupported",
+        "harness_bootstrap_message_too_large",
+        "harness_context_source_changed",
+        "harness_attachment_stage_mismatch",
+        "system_prompt_too_large",
+        "invalid_input",
+        "local_http_error",
+        "control_auth_missing",
+        "control_auth_rejected",
+        "daemon_starting",
+        "web_ai_request_ref_conflict",
+        "web_ai_request_not_found",
+    }
+)
+CHILD_HARNESS_FAILURE_CODE_PATTERN = re.compile(r"^harness_[a-z0-9_]{1,100}$")
+SYNTHETIC_REISSUE_REASON_CODES = frozenset(
+    {
+        "harness_response_framing_invalid",
+        "harness_response_correlation_invalid",
+        "harness_protocol_invalid",
+        "harness_response_json_invalid",
+        "harness_response_schema_invalid",
+        "harness_action_batch_json_repair_forbidden",
+        "harness_response_kind_invalid",
+        "harness_skill_load_invalid",
+        "harness_action_batch_empty",
+        "harness_final_invalid",
+        "harness_final_output_invalid",
+        "harness_tool_call_invalid",
+        "harness_need_invalid",
+        "harness_dependency_invalid",
+        "harness_dependency_cycle",
+        "harness_json_schema_validation_failed",
+        "harness_benchmark_evidence_insufficient",
+    }
+)
+
+
+def failure_code_matches_reason(reason: str, failure_code: Any) -> bool:
+    if failure_code is not None and not isinstance(failure_code, str):
+        return False
+    if reason in {
+        "parent_events_missing",
+        "parent_user_task_invalid",
+        "child_pre_turn_exit",
+        "child_spawn_failed",
+        "child_outcome_missing",
+        "child_history_invalid",
+        "child_command_ready",
+    }:
+        return failure_code is None
+    if reason == "child_discovery_failed":
+        return failure_code in CHILD_DISCOVERY_FAILURE_CODES
+    if reason == "child_provider_submit_failed":
+        return failure_code in CHILD_PROVIDER_SUBMIT_FAILURE_CODES
+    if reason == "child_harness_failed":
+        return failure_code is None or CHILD_HARNESS_FAILURE_CODE_PATTERN.fullmatch(failure_code) is not None
+    return False
 SEMANTIC_TASK_TYPE_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 SEMANTIC_COMPLEXITIES = {"low", "medium", "high"}
 PROVIDER_REF_PATTERN = re.compile(r"^provider:[a-f0-9]{32}$")
@@ -62,6 +153,12 @@ ALLOWED_COMPLETION_PATHS = {
     "/v1/chat/completions",
     "/v1/openai/chat/completions",
 }
+ALLOWED_BASH_OUTCOME_PATH = "/v1/private/benchmark/bash-outcome"
+ALLOWED_SUBAGENT_BASH_PATH = "/v1/private/benchmark/subagent-bash"
+ALLOWED_CHILD_HARNESS_FAILURE_PATH = "/v1/private/benchmark/child-harness-failure"
+ALLOWED_HARNESS_CORRECTIVE_PATH = "/v1/private/benchmark/harness-corrective"
+ALLOWED_WORKSPACE_EXEC_PATH = "/v1/private/benchmark/workspace-exec"
+LOCAL_FINAL_TEXT = "Completed the requested workspace changes and verification."
 ALLOWED_PROVIDER_TURN_PREFIX = "/v1/private/provider-turn/"
 PROVIDER_BINDINGS_PATH = "/v1/private/provider-turn/bindings"
 PROVIDER_BINDING_ROUTE = re.compile(
@@ -144,6 +241,12 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         self._child_turn_input_text: dict[str, str] = {}
         self._subagent_dispatch_lock = threading.Lock()
         self._subagent_dispatch_state = "available"
+        self._bash_outcome_lock = threading.Lock()
+        self._bash_outcomes: dict[str, bool] = {}
+        self._subagent_bash_lock = threading.Lock()
+        self._subagent_bash: dict[str, tuple[str | None, str | None, str | None]] = {}
+        self._workspace_exec_events = 0
+        self._harness_corrective_turns: set[int] = set()
 
     def claim_subagent_dispatch(self) -> bool:
         with self._subagent_dispatch_lock:
@@ -157,6 +260,216 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             if self._subagent_dispatch_state != "claimed":
                 raise RuntimeError("subagent dispatch claim is unavailable")
             self._subagent_dispatch_state = "dispatched" if succeeded else "available"
+
+    def record_bash_outcome(self, body: bytes | None) -> None:
+        value = self._json_object(body)
+        if (
+            set(value) != {"callId", "success"}
+            or not isinstance(value.get("callId"), str)
+            or CALL_ID_PATTERN.fullmatch(value["callId"]) is None
+            or not isinstance(value.get("success"), bool)
+        ):
+            raise ValueError("benchmark bash outcome is invalid")
+        call_id = value["callId"]
+        call_id_sha256 = "sha256:" + hashlib.sha256(call_id.encode("utf-8")).hexdigest()
+        with self._audit_lock:
+            matches = [
+                event for event in self._audit_events
+                if event.get("type") == "parent.local_bash"
+                and event.get("outcome") == "ready"
+                and event.get("callIdSha256") == call_id_sha256
+            ]
+            if len(matches) != 1 or matches[0].get("executionOutcome") is not None:
+                raise ValueError("benchmark bash outcome has no unique unsettled local bash evidence")
+            with self._bash_outcome_lock:
+                if len(self._bash_outcomes) >= MAX_BASH_OUTCOMES:
+                    raise ValueError("benchmark bash outcome capacity is exhausted")
+                if call_id in self._bash_outcomes:
+                    raise ValueError("benchmark bash outcome was already recorded")
+                matches[0]["executionOutcome"] = "succeeded" if value["success"] else "failed"
+                self._bash_outcomes[call_id] = value["success"]
+
+    def consume_bash_outcome(self, call_id: str) -> bool | None:
+        with self._bash_outcome_lock:
+            return self._bash_outcomes.pop(call_id, None)
+
+    def record_subagent_bash(self, body: bytes | None) -> None:
+        value = self._json_object(body)
+        if (
+            not isinstance(value.get("callId"), str)
+            or CALL_ID_PATTERN.fullmatch(value["callId"]) is None
+        ):
+            raise ValueError("benchmark subagent bash call id is invalid")
+        call_id = value["callId"]
+        failure_reason = None
+        failure_code = None
+        if set(value) == {"callId", "command"}:
+            command = value.get("command")
+            if (
+                not isinstance(command, str)
+                or not 1 <= len(command) <= MAX_SUBAGENT_BASH_COMMAND_CHARS
+                or command.strip() == ""
+            ):
+                raise ValueError("benchmark subagent bash command is invalid")
+        elif (
+            set(value) == {"callId", "failed", "reason", "failureCode"}
+            and value.get("failed") is True
+            and isinstance(value.get("reason"), str)
+            and value["reason"] in {
+                "parent_events_missing",
+                "parent_user_task_invalid",
+                "child_pre_turn_exit",
+                "child_spawn_failed",
+                "child_discovery_failed",
+                "child_provider_submit_failed",
+                "child_harness_failed",
+            }
+        ):
+            command = None
+            failure_reason = value["reason"]
+            failure_code = value["failureCode"]
+            if not failure_code_matches_reason(failure_reason, failure_code):
+                raise ValueError("benchmark subagent bash failure code is invalid")
+        else:
+            raise ValueError("benchmark subagent bash outcome is invalid")
+        with self._subagent_bash_lock:
+            if len(self._subagent_bash) >= MAX_SUBAGENT_BASH_OUTCOMES:
+                raise ValueError("benchmark subagent bash outcome capacity is exhausted")
+            if call_id in self._subagent_bash:
+                raise ValueError("benchmark subagent bash outcome was already recorded")
+            self._subagent_bash[call_id] = (command, failure_reason, failure_code)
+
+    def record_child_harness_failure(self, body: bytes | None) -> None:
+        value = self._json_object(body)
+        reason = value.get("reason")
+        failure_code = value.get("failureCode")
+        if (
+            set(value) != {"reason", "failureCode"}
+            or not isinstance(reason, str)
+            or reason not in {
+                "parent_events_missing",
+                "parent_user_task_invalid",
+                "child_pre_turn_exit",
+                "child_spawn_failed",
+                "child_discovery_failed",
+                "child_provider_submit_failed",
+                "child_harness_failed",
+            }
+            or not failure_code_matches_reason(reason, failure_code)
+        ):
+            raise ValueError("benchmark child Harness failure is invalid")
+        with self._audit_lock:
+            if any(event.get("type") == "child.harness.failed" for event in self._audit_events):
+                raise ValueError("benchmark child Harness failure was already recorded")
+            self._audit_events.append(
+                {
+                    "protocol": AUDIT_PROTOCOL,
+                    "sequence": len(self._audit_events) + 1,
+                    "type": "child.harness.failed",
+                    "callIdSha256": None,
+                    "reason": reason,
+                    "failureCode": failure_code,
+                }
+            )
+
+    def consume_subagent_bash(
+        self, call_id: str
+    ) -> tuple[bool, str | None, str | None, str | None]:
+        with self._subagent_bash_lock:
+            if call_id not in self._subagent_bash:
+                return False, None, None, None
+            command, failure_reason, failure_code = self._subagent_bash.pop(call_id)
+            return True, command, failure_reason, failure_code
+
+    def record_workspace_exec(self, body: bytes | None) -> None:
+        value = self._json_object(body)
+        hash_pattern = re.compile(r"^sha256:[a-f0-9]{64}$")
+        if (
+            set(value)
+            != {
+                "callIdSha256",
+                "purpose",
+                "commandCharacters",
+                "commandSha256",
+                "timeoutMs",
+                "outcome",
+                "exitCode",
+                "signal",
+                "timedOut",
+            }
+            or value.get("callIdSha256") is not None
+            and (
+                not isinstance(value.get("callIdSha256"), str)
+                or hash_pattern.fullmatch(value["callIdSha256"]) is None
+            )
+            or value.get("purpose") not in WORKSPACE_EXEC_PURPOSES
+            or not isinstance(value.get("commandCharacters"), int)
+            or isinstance(value.get("commandCharacters"), bool)
+            or not 1 <= value["commandCharacters"] <= MAX_WORKSPACE_EXEC_COMMAND_CHARS
+            or not isinstance(value.get("commandSha256"), str)
+            or hash_pattern.fullmatch(value["commandSha256"]) is None
+            or not isinstance(value.get("timeoutMs"), int)
+            or isinstance(value.get("timeoutMs"), bool)
+            or not 1_000 <= value["timeoutMs"] <= MAX_WORKSPACE_EXEC_TIMEOUT_MS
+            or value.get("outcome") not in {"succeeded", "failed"}
+            or value.get("exitCode") is not None
+            and (
+                not isinstance(value.get("exitCode"), int)
+                or isinstance(value.get("exitCode"), bool)
+                or not -1 <= value["exitCode"] <= 255
+            )
+            or value.get("signal") is not None
+            and (
+                not isinstance(value.get("signal"), str)
+                or re.fullmatch(r"[A-Z][A-Z0-9_]{0,15}", value["signal"]) is None
+            )
+            or value.get("timedOut") is not None
+            and not isinstance(value.get("timedOut"), bool)
+        ):
+            raise ValueError("benchmark workspace execution observation is invalid")
+        with self._audit_lock:
+            if self._workspace_exec_events >= MAX_WORKSPACE_EXEC_EVENTS:
+                raise ValueError("benchmark workspace execution observation capacity is exhausted")
+            self._workspace_exec_events += 1
+            self._audit_events.append(
+                {
+                    "protocol": AUDIT_PROTOCOL,
+                    "sequence": len(self._audit_events) + 1,
+                    "type": "child.workspace_exec",
+                    "scope": "child",
+                    **value,
+                }
+            )
+
+    def record_harness_corrective(self, body: bytes | None) -> None:
+        value = self._json_object(body)
+        turn = value.get("turn")
+        reason_code = value.get("reasonCode")
+        if (
+            set(value) != {"turn", "reasonCode"}
+            or not isinstance(turn, int)
+            or isinstance(turn, bool)
+            or not 1 <= turn <= 64
+            or not isinstance(reason_code, str)
+            or reason_code not in SYNTHETIC_REISSUE_REASON_CODES
+        ):
+            raise ValueError("benchmark Harness corrective observation is invalid")
+        with self._audit_lock:
+            if len(self._harness_corrective_turns) >= MAX_HARNESS_CORRECTIVE_EVENTS:
+                raise ValueError("benchmark Harness corrective observation capacity is exhausted")
+            if turn in self._harness_corrective_turns:
+                raise ValueError("benchmark Harness corrective observation was already recorded for this turn")
+            self._harness_corrective_turns.add(turn)
+            self._audit_events.append(
+                {
+                    "protocol": AUDIT_PROTOCOL,
+                    "sequence": len(self._audit_events) + 1,
+                    "type": "child.harness.corrective",
+                    "scope": "child",
+                    "turn": turn,
+                    "reasonCode": reason_code,
+                }
+            )
 
     def record_event(self, value: dict[str, Any]) -> None:
         with self._audit_lock:
@@ -224,6 +537,145 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
                     "catalogCount": len(tools),
                 }
             )
+
+    @staticmethod
+    def previous_bash_call_id(request_value: dict[str, Any]) -> str | None:
+        messages = request_value.get("messages")
+        if not isinstance(messages, list) or len(messages) < 2:
+            return None
+        assistant, tool = messages[-2:]
+        if (
+            not isinstance(assistant, dict)
+            or not {"role", "content", "tool_calls"}.issubset(assistant)
+            or any(key not in {"role", "content", "tool_calls", "reasoning_content"} for key in assistant)
+            or assistant.get("role") != "assistant"
+            or assistant.get("content") != ""
+            or not isinstance(assistant.get("tool_calls"), list)
+            or len(assistant["tool_calls"]) != 1
+            or not isinstance(tool, dict)
+            or set(tool) != {"role", "tool_call_id", "content"}
+            or tool.get("role") != "tool"
+            or not isinstance(tool.get("tool_call_id"), str)
+            or not isinstance(tool.get("content"), str)
+        ):
+            return None
+        call = assistant["tool_calls"][0]
+        if (
+            not isinstance(call, dict)
+            or set(call) != {"id", "type", "function"}
+            or call.get("type") != "function"
+            or not isinstance(call.get("id"), str)
+            or CALL_ID_PATTERN.fullmatch(call["id"]) is None
+            or not isinstance(call.get("function"), dict)
+            or set(call["function"]) != {"name", "arguments"}
+            or call["function"].get("name") != "bash"
+            or not isinstance(call["function"].get("arguments"), str)
+            or tool["tool_call_id"] != call["id"]
+        ):
+            return None
+        return call["id"]
+
+    @staticmethod
+    def previous_subagent_call_id(request_value: dict[str, Any]) -> str | None:
+        messages = request_value.get("messages")
+        if not isinstance(messages, list) or len(messages) < 2:
+            return None
+        assistant, tool = messages[-2:]
+        if (
+            not isinstance(assistant, dict)
+            or not {"role", "content", "tool_calls"}.issubset(assistant)
+            or any(key not in {"role", "content", "tool_calls", "reasoning_content"} for key in assistant)
+            or assistant.get("role") != "assistant"
+            or assistant.get("content") != ""
+            or not isinstance(assistant.get("tool_calls"), list)
+            or len(assistant["tool_calls"]) != 1
+            or not isinstance(tool, dict)
+            or set(tool) != {"role", "tool_call_id", "content"}
+            or tool.get("role") != "tool"
+            or not isinstance(tool.get("tool_call_id"), str)
+            or not isinstance(tool.get("content"), str)
+        ):
+            return None
+        call = assistant["tool_calls"][0]
+        if (
+            not isinstance(call, dict)
+            or set(call) != {"id", "type", "function"}
+            or call.get("type") != "function"
+            or not isinstance(call.get("id"), str)
+            or CALL_ID_PATTERN.fullmatch(call["id"]) is None
+            or not isinstance(call.get("function"), dict)
+            or set(call["function"]) != {"name", "arguments"}
+            or call["function"].get("name") != "subagent"
+            or not isinstance(call["function"].get("arguments"), str)
+            or tool["tool_call_id"] != call["id"]
+        ):
+            return None
+        return call["id"]
+
+    def record_local_final(self, call_id: str) -> None:
+        self.record_event(
+            {
+                "type": "parent.local_final",
+                "ordinal": 3,
+                "outcome": "completed",
+                "callIdSha256": "sha256:" + hashlib.sha256(call_id.encode("utf-8")).hexdigest(),
+            }
+        )
+
+    def record_local_bash(
+        self,
+        call_id: str | None,
+        command: str | None,
+        outcome: str,
+        reason: str,
+        failure_code: str | None,
+    ) -> None:
+        if outcome not in {"ready", "failed"}:
+            raise ValueError("local bash outcome is invalid")
+        if reason not in {
+            "child_command_ready",
+            "child_outcome_missing",
+            "child_history_invalid",
+            "parent_events_missing",
+            "parent_user_task_invalid",
+            "child_pre_turn_exit",
+            "child_spawn_failed",
+            "child_discovery_failed",
+            "child_provider_submit_failed",
+            "child_harness_failed",
+        }:
+            raise ValueError("local bash reason is invalid")
+        if not failure_code_matches_reason(reason, failure_code):
+            raise ValueError("local bash failure code is invalid")
+        if outcome == "ready" and (
+            call_id is None
+            or command is None
+            or reason != "child_command_ready"
+        ):
+            raise ValueError("local bash ready evidence is invalid")
+        if outcome == "failed" and command is not None:
+            raise ValueError("local bash failure must not retain command text")
+        self.record_event(
+            {
+                "type": "parent.local_bash",
+                "ordinal": 2,
+                "outcome": outcome,
+                "executionOutcome": None,
+                "reason": reason,
+                "failureCode": failure_code,
+                "callIdSha256": (
+                    "sha256:" + hashlib.sha256(call_id.encode("utf-8")).hexdigest()
+                    if call_id is not None
+                    else None
+                ),
+                "commandCharacters": len(command) if command is not None else 0,
+                "commandSha256": (
+                    "sha256:" + hashlib.sha256(command.encode("utf-8")).hexdigest()
+                    if command is not None
+                    else None
+                ),
+            }
+        )
 
     def mark_parent_completion_forced(self, sequence: int) -> None:
         with self._audit_lock:
@@ -1240,9 +1692,15 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
         self._forward()
 
     def _forward(self) -> None:
-        path = urlsplit(self.path).path
+        parsed_path = urlsplit(self.path)
+        path = parsed_path.path
         if (
             path not in ALLOWED_COMPLETION_PATHS
+            and path != ALLOWED_BASH_OUTCOME_PATH
+            and path != ALLOWED_SUBAGENT_BASH_PATH
+            and path != ALLOWED_CHILD_HARNESS_FAILURE_PATH
+            and path != ALLOWED_HARNESS_CORRECTIVE_PATH
+            and path != ALLOWED_WORKSPACE_EXEC_PATH
             and not path.startswith(ALLOWED_PROVIDER_TURN_PREFIX)
         ):
             self.send_error(404)
@@ -1259,7 +1717,50 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
         if length < 0 or length > MAX_BRIDGE_BODY_BYTES:
             self.send_error(413)
             return
+        if path == ALLOWED_BASH_OUTCOME_PATH and length > MAX_BASH_OUTCOME_BODY_BYTES:
+            self.send_error(413)
+            return
+        if path == ALLOWED_SUBAGENT_BASH_PATH and length > MAX_SUBAGENT_BASH_BODY_BYTES:
+            self.send_error(413)
+            return
+        if path == ALLOWED_CHILD_HARNESS_FAILURE_PATH and length > MAX_CHILD_HARNESS_FAILURE_BODY_BYTES:
+            self.send_error(413)
+            return
+        if path == ALLOWED_HARNESS_CORRECTIVE_PATH and length > MAX_HARNESS_CORRECTIVE_BODY_BYTES:
+            self.send_error(413)
+            return
+        if path == ALLOWED_WORKSPACE_EXEC_PATH and length > MAX_WORKSPACE_EXEC_BODY_BYTES:
+            self.send_error(413)
+            return
         body = self.rfile.read(length) if length else None
+        if path in {
+            ALLOWED_BASH_OUTCOME_PATH,
+            ALLOWED_SUBAGENT_BASH_PATH,
+            ALLOWED_CHILD_HARNESS_FAILURE_PATH,
+            ALLOWED_HARNESS_CORRECTIVE_PATH,
+            ALLOWED_WORKSPACE_EXEC_PATH,
+        }:
+            if self.command != "POST" or parsed_path.query or parsed_path.fragment:
+                self.send_error(405 if self.command != "POST" else 404)
+                return
+            try:
+                if path == ALLOWED_BASH_OUTCOME_PATH:
+                    self.server.record_bash_outcome(body)  # type: ignore[attr-defined]
+                elif path == ALLOWED_SUBAGENT_BASH_PATH:
+                    self.server.record_subagent_bash(body)  # type: ignore[attr-defined]
+                elif path == ALLOWED_CHILD_HARNESS_FAILURE_PATH:
+                    self.server.record_child_harness_failure(body)  # type: ignore[attr-defined]
+                elif path == ALLOWED_HARNESS_CORRECTIVE_PATH:
+                    self.server.record_harness_corrective(body)  # type: ignore[attr-defined]
+                else:
+                    self.server.record_workspace_exec(body)  # type: ignore[attr-defined]
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+                self.send_error(400)
+                return
+            self.send_response(204)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         provider_operation = None
         provider_control_lock = None
         if path.startswith(ALLOWED_PROVIDER_TURN_PREFIX):
@@ -1284,6 +1785,13 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
         subagent_claim_settled = False
         parent_event_sequence = None
         parent_ordinal = None
+        local_final = False
+        local_final_call_id = None
+        local_bash = False
+        local_bash_call_id = None
+        local_bash_command = None
+        local_bash_failure_reason = None
+        local_bash_failure_code = None
         if path in ALLOWED_COMPLETION_PATHS and self.command == "POST":
             parent_event_sequence, parent_ordinal = self.server.record_parent_completion_request()  # type: ignore[attr-defined]
             try:
@@ -1296,39 +1804,11 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
                     and tool["function"].get("name") == "subagent"
                     for tool in tools
                 )
-                has_read = isinstance(tools, list) and any(
-                    isinstance(tool, dict)
-                    and isinstance(tool.get("function"), dict)
-                    and tool["function"].get("name") == "read"
-                    for tool in tools
-                )
-                has_bash = isinstance(tools, list) and any(
-                    isinstance(tool, dict)
-                    and isinstance(tool.get("function"), dict)
-                    and tool["function"].get("name") == "bash"
-                    for tool in tools
-                )
                 if isinstance(request_value, dict):
                     if parent_ordinal is None:
                         raise ValueError("DSH parent completion ordinal is unavailable")
                     request_value["parallel_tool_calls"] = False
                     if parent_ordinal == 1:
-                        if not has_read:
-                            raise ValueError("DSH parent read-only inspection tool is unavailable")
-                        request_value["tools"] = [
-                            tool
-                            for tool in tools
-                            if not (
-                                isinstance(tool, dict)
-                                and isinstance(tool.get("function"), dict)
-                                and tool["function"].get("name") == "subagent"
-                            )
-                        ]
-                        request_value["tool_choice"] = {
-                            "type": "function",
-                            "function": {"name": "read"},
-                        }
-                    elif parent_ordinal == 2:
                         if not has_subagent:
                             raise ValueError("DSH parent subagent tool is unavailable")
                         subagent_claimed = self.server.claim_subagent_dispatch()  # type: ignore[attr-defined]
@@ -1338,18 +1818,70 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
                             "type": "function",
                             "function": {"name": "subagent"},
                         }
-                    elif parent_ordinal == 3:
-                        if not has_bash:
+                    elif parent_ordinal == 2:
+                        if not isinstance(tools, list) or len(tools) > 128:
+                            raise ValueError("DSH parent tool catalog is invalid")
+                        bash_tool = next(
+                            (
+                                tool
+                                for tool in tools
+                                if isinstance(tool, dict)
+                                and tool.get("type") == "function"
+                                and isinstance(tool.get("function"), dict)
+                                and tool["function"].get("name") == "bash"
+                            ),
+                            None,
+                        )
+                        if not isinstance(bash_tool, dict):
                             raise ValueError("DSH parent bash tool is unavailable")
                         request_value["tool_choice"] = {
                             "type": "function",
                             "function": {"name": "bash"},
                         }
+                    elif parent_ordinal in {3, 4}:
+                        request_value["tool_choice"] = "auto"
                     else:
                         request_value["tool_choice"] = "none"
                     self.server.record_parent_completion_choice(  # type: ignore[attr-defined]
                         parent_event_sequence, request_value
                     )
+                    if parent_ordinal == 2:
+                        subagent_call_id = self.server.previous_subagent_call_id(request_value)  # type: ignore[attr-defined]
+                        if subagent_call_id is None:
+                            local_bash_failure_reason = "child_history_invalid"
+                        else:
+                            outcome_present, command, failure_reason, failure_code = self.server.consume_subagent_bash(  # type: ignore[attr-defined]
+                                subagent_call_id
+                            )
+                            if not outcome_present:
+                                local_bash_call_id = subagent_call_id
+                                local_bash_failure_reason = "child_outcome_missing"
+                            elif command is None:
+                                local_bash_call_id = subagent_call_id
+                                local_bash_failure_reason = failure_reason or "child_spawn_failed"
+                                local_bash_failure_code = failure_code if failure_reason else None
+                            elif (
+                                request_value.get("stream") is not True
+                                or self.headers.get("Accept", "").strip().lower()
+                                != "text/event-stream"
+                            ):
+                                local_bash_call_id = subagent_call_id
+                                local_bash_failure_reason = "child_history_invalid"
+                            else:
+                                local_bash = True
+                                local_bash_call_id = subagent_call_id
+                                local_bash_command = command
+                    elif parent_ordinal == 3:
+                        call_id = self.server.previous_bash_call_id(request_value)  # type: ignore[attr-defined]
+                        if call_id is not None:
+                            successful_bash = self.server.consume_bash_outcome(call_id) is True  # type: ignore[attr-defined]
+                            local_final = (
+                                successful_bash
+                                and request_value.get("stream") is True
+                                and self.headers.get("Accept", "").strip().lower() == "text/event-stream"
+                            )
+                            if local_final:
+                                local_final_call_id = call_id
                     body = json.dumps(
                         request_value, separators=(",", ":")
                     ).encode("utf-8")
@@ -1358,6 +1890,55 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
                 if provider_control_lock is not None:
                     provider_control_lock.release()
                 return
+        if local_bash_failure_reason is not None:
+            self.server.record_local_bash(  # type: ignore[attr-defined]
+                local_bash_call_id,
+                None,
+                "failed",
+                local_bash_failure_reason,
+                local_bash_failure_code,
+            )
+            self.send_error(502)
+            if provider_control_lock is not None:
+                provider_control_lock.release()
+            return
+        if local_bash:
+            if local_bash_call_id is None or local_bash_command is None:
+                raise RuntimeError("local bash call identity or command is unavailable")
+            local_bash_event_call_id = self._local_bash_call_id(local_bash_call_id)
+            response_body = self._local_bash_response(local_bash_command, local_bash_call_id)
+            self.server.record_local_bash(  # type: ignore[attr-defined]
+                local_bash_event_call_id,
+                local_bash_command,
+                "ready",
+                "child_command_ready",
+                None,
+            )
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "close")
+            self.send_header("Content-Length", str(len(response_body)))
+            self.end_headers()
+            self.wfile.write(response_body)
+            self.wfile.flush()
+            self.close_connection = True
+            return
+        if local_final:
+            if local_final_call_id is None:
+                raise RuntimeError("local final call identity is unavailable")
+            response_body = self._local_final_response()
+            self.server.record_local_final(local_final_call_id)  # type: ignore[attr-defined]
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "close")
+            self.send_header("Content-Length", str(len(response_body)))
+            self.end_headers()
+            self.wfile.write(response_body)
+            self.wfile.flush()
+            self.close_connection = True
+            return
         headers = {
             "Authorization": f"Bearer {self.server.control_token}",  # type: ignore[attr-defined]
             "Accept": self.headers.get("Accept", "application/json"),
@@ -1514,6 +2095,77 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
         if len(body) > MAX_BRIDGE_BODY_BYTES:
             raise ValueError("provider control response is too large")
         return body
+
+    @staticmethod
+    def _local_bash_call_id(parent_call_id: str) -> str:
+        return "tokenless-local-bash-" + hashlib.sha256(
+            parent_call_id.encode("utf-8")
+        ).hexdigest()[:32]
+
+    @classmethod
+    def _local_bash_response(cls, command: str, parent_call_id: str) -> bytes:
+        local_call_id = cls._local_bash_call_id(parent_call_id)
+        arguments = json.dumps(
+            {
+                "command": command,
+                "description": "Execute the delegated workspace command",
+            },
+            separators=(",", ":"),
+        )
+        chunk = {
+            "id": "tokenless-local-bash",
+            "object": "chat.completion.chunk",
+            "created": 0,
+            "model": "tokenless/auto",
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": local_call_id,
+                        "type": "function",
+                        "function": {"name": "bash", "arguments": arguments},
+                    }],
+                },
+                "finish_reason": "tool_calls",
+            }],
+        }
+        return (
+            f"data: {json.dumps(chunk, separators=(',', ':'))}\n\n".encode("utf-8")
+            + b"data: [DONE]\n\n"
+        )
+
+    @staticmethod
+    def _local_final_response() -> bytes:
+        chunks = [
+            {
+                "id": "tokenless-local-final",
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": "tokenless/auto",
+                "choices": [{
+                    "index": 0,
+                    "delta": {"role": "assistant", "content": LOCAL_FINAL_TEXT},
+                    "finish_reason": None,
+                }],
+            },
+            {
+                "id": "tokenless-local-final",
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": "tokenless/auto",
+                "choices": [{
+                    "index": 0,
+                    "delta": {},
+                    "finish_reason": "stop",
+                }],
+            },
+        ]
+        return b"".join(
+            f"data: {json.dumps(chunk, separators=(',', ':'))}\n\n".encode("utf-8")
+            for chunk in chunks
+        ) + b"data: [DONE]\n\n"
 
     def _authorized(self) -> bool:
         value = self.headers.get("Authorization", "")
@@ -1811,12 +2463,18 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
                 "- id: system-prompt",
                 "  config:",
                 "    persona: >-",
-                "      You are a coding agent powered by the {{model}} model. Your working directory is {{cwd}}. Start each user task with exactly one read tool call to inspect the most relevant workspace file without changing it. Then call subagent exactly once with a self-contained request to inspect the current workspace with its tools and return concrete task-relevant analysis. Wait for that result and use it only as input. Then use your own tools to complete the requested workspace changes and verify the observable result. Batch independent permitted changes into one edit or terminal command and verify them together. When a task has a finite set of allowed changes and a local verifier, use one terminal script to search the allowed candidates, run the verifier, and keep a passing workspace state; do not alternate one candidate edit and one verifier call across model turns. Before the first candidate, the script itself must set one monotonic deadline and one total verifier counter. It must increment that counter for every verifier execution, including any final verification, stop cleanly at the deadline or at 64 total executions, track the best candidate using a numeric verifier-derived result, and preserve that best candidate. Never enumerate a power set, never use a loop whose upper bound is the full candidate count, and never launch a second search. If the bounded search does not pass, perform one final verification only when that same counter and deadline still permit it, then continue with the preserved best candidate. Keep any temporary search machinery outside protected workspace files and apply only task-permitted workspace changes. Never stop at analysis, instructions for the user, or a claim of success without executing the task. Do not delegate more than once.",
+                "      You are a coding agent powered by the {{model}} model. Your working directory is {{cwd}}. Start each user task by calling subagent exactly once with a self-contained request to inspect the current workspace with its tools and return concrete task-relevant analysis. Wait for that result and use it only as input. Then use your own tools to complete the requested workspace changes and verify the observable result. Batch independent permitted changes into one edit or terminal command and verify them together. When a task has a finite set of allowed changes and a local verifier, use one terminal script to search the allowed candidates, run the verifier, and keep a passing workspace state; do not alternate one candidate edit and one verifier call across model turns. Before the first candidate, the script itself must set one monotonic deadline and one total verifier counter. It must increment that counter for every verifier execution, including any final verification, stop cleanly at the deadline or at 64 total executions, track the best candidate using a numeric verifier-derived result, and preserve that best candidate. Never enumerate a power set, never use a loop whose upper bound is the full candidate count, and never launch a second search. If the bounded search does not pass, perform one final verification only when that same counter and deadline still permit it, then continue with the preserved best candidate. Keep any temporary search machinery outside protected workspace files and apply only task-permitted workspace changes. Never stop at analysis, instructions for the user, or a claim of success without executing the task. Do not delegate more than once.",
                 "      When task mutations are constrained by a machine-readable allowlist or mapping, first copy and preserve the original, parse that allowlist, construct every candidate exclusively from its permitted transformations, validate the entire candidate against the original and allowlist before any metric or verifier, and never use model-inferred equivalents. Use only validated task-permitted candidates as the best and final candidate.",
-                "      The final verification must run the complete task-provided verifier or test suite within the same deadline and counter, not merely a proxy metric. If it exposes a constraint violation, restore or correct from a validated candidate within the remaining budget; never launch a second search.",
+                "      The official benchmark verifier runs in a separate post-agent phase and is unavailable during this run; never access, mount, infer, or leak hidden verifier contents. Before finalizing, run every publicly visible task-provided test plus the strongest public task-relevant end-to-end behavior; if an observed public check fails, use its actual output to correct the implementation and rerun it. Syntax/load checks, existence checks, and exit code 0 alone never establish completion.",
+                "      Immediately after the subagent result, the first mutation-capable bash call must create every required artifact and combine any conditional installation with the first representative verification. Do not use that call only to list, inspect, check existence or versions, or install dependencies; do not split preparation from artifact creation across model turns. After that required build and verification, use a later bash call only when observed output requires correction or complete verification; otherwise finalize immediately.",
+                "      If a tool result proves that a required target file is missing, the next mutation-capable bash call must create it; do not rerun the failed command, only list the directory, or perform another existence check. Dependency installation and version checks are preparation, not completion. Before finalizing, use a remaining call only if any required artifact is still missing or required verification is incomplete; if the first parent bash created and verified every required artifact, finalize immediately.",
+                "      Treat the task's stated representation and units for public inputs as authoritative; do not silently reinterpret them. After creating the implementation, use the task-provided representative or example inputs to check the observable numerical or functional result and correct it before finalizing.",
+                "- id: spill-policy",
+                "  config:",
+                "    maxInlineBytes: 8192",
                 "- id: bash-sandbox",
                 "  config:",
-                "    timeoutMs: 120000",
+                "    timeoutMs: 600000",
                 "- id: llm-deepseek",
                 "  config:",
                 "    apiKeyEnv: DEEPSEEK_API_KEY",
@@ -1848,7 +2506,7 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
                 "        tokenlessHome: /tmp/tokenless-harness-home",
                 "        provider: auto",
                 f"        profile: {json.dumps(self.profile)}",
-                "        timeoutMs: 600000",
+                "        timeoutMs: 1500000",
                 "        disposeGraceMs: 3000",
                 "- id: tool-subagent",
                 "  config:",
@@ -1935,6 +2593,8 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
                             f"http://127.0.0.1:{PROXY_PORT}"
                         ),
                         "TOKENLESS_BENCHMARK_CHANNEL_TOKEN": channel_token,
+                        "TOKENLESS_BENCHMARK_TASK_TYPE": semantic["taskType"],
+                        "TOKENLESS_BENCHMARK_COMPLEXITY": semantic["complexity"],
                         "NO_COLOR": "1",
                     },
                     cwd=environment.task_env_config.workdir,
@@ -2037,6 +2697,19 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
         routing_events = [
             event for event in events if event.get("type") == "provider.routing"
         ]
+        workspace_exec_events = [
+            event for event in events if event.get("type") == "child.workspace_exec"
+        ]
+        workspace_exec_purposes = {
+            purpose: sum(event.get("purpose") == purpose for event in workspace_exec_events)
+            for purpose in sorted(WORKSPACE_EXEC_PURPOSES)
+        }
+        child_harness_failures = [
+            event for event in events if event.get("type") == "child.harness.failed"
+        ]
+        child_corrective_events = [
+            event for event in events if event.get("type") == "child.harness.corrective"
+        ]
         summary = {
             "protocol": CHANNEL_PROTOCOL,
             "auditProtocol": AUDIT_PROTOCOL,
@@ -2059,6 +2732,10 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
                     event.get("mode") == "continuation" for event in child_turns
                 ),
                 "providerRoutingEvents": len(routing_events),
+                "workspaceExecEvents": len(workspace_exec_events),
+                "workspaceExecPurposes": workspace_exec_purposes,
+                "childHarnessFailureEvents": len(child_harness_failures),
+                "childCorrectiveEvents": len(child_corrective_events),
             },
         }
         self.logs_dir.mkdir(parents=True, exist_ok=True)

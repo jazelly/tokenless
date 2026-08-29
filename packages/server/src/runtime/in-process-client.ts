@@ -7,11 +7,12 @@ import {
   dropEphemeralProviderBundle,
   hydrateEphemeralProviderJob,
   redactEphemeralProviderResult,
+  replaceEphemeralProviderJobRequest,
 } from './ephemeral-provider-payloads.js'
 
 export function createInProcessDaemonClient(store: JobStore): ManagedDaemonClient {
   return {
-    getJob: (options) => inProcessDaemonRequest(options.signal, () => publicView(store.getJob(options.jobId))),
+    getJob: (options) => inProcessDaemonRequest(options.signal, () => jobView(store.getJob(options.jobId))),
     takeNextJob: (options) => inProcessDaemonRequest(options.signal, () => {
       const job = store.takeNextJob(
         {
@@ -39,15 +40,23 @@ export function createInProcessDaemonClient(store: JobStore): ManagedDaemonClien
     markJobRunning: (options) => inProcessDaemonRequest(options.signal, () => publicView(
       store.markRunning(options.jobId),
     )),
-    fallbackJob: (options) => inProcessDaemonRequest(options.signal, () => publicView(store.fallbackJob({
-      job_id: options.jobId,
-      provider: options.provider,
-      request_json: options.request,
-      blocker_json: options.blocker,
-      ...(options.postSubmissionFallbackProof === undefined
-        ? {}
-        : { postSubmissionFallbackProof: options.postSubmissionFallbackProof }),
-    }))),
+    fallbackJob: (options) => inProcessDaemonRequest(options.signal, () => {
+      const replacement = replaceEphemeralProviderJobRequest(options.jobId, options.request)
+      try {
+        return jobView(store.fallbackJob({
+          job_id: options.jobId,
+          provider: options.provider,
+          request_json: replacement?.request_json ?? options.request,
+          blocker_json: options.blocker,
+          ...(options.postSubmissionFallbackProof === undefined
+            ? {}
+            : { postSubmissionFallbackProof: options.postSubmissionFallbackProof }),
+        }))
+      } catch (error) {
+        replacement?.restore()
+        throw error
+      }
+    }),
     completeJob: (options) => inProcessDaemonRequest(options.signal, () => {
       const hasResult = options.result !== undefined && options.result !== null
       const hasError = options.error !== undefined && options.error !== null

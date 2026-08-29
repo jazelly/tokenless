@@ -18,7 +18,7 @@ import {
   startHarnessLocalHttpBootstrap,
 } from './bootstrap.js'
 
-export function createLocalHttpProviderTurnClient(options: { baseUrl: string; token: string }): ProviderTurnClient {
+export function createLocalHttpProviderTurnClient(options: { baseUrl: string; token: string; benchmarkCommandFinalOutput?: boolean }): ProviderTurnClient {
   return {
     async start(request) {
       if (request.continuation) throw new HarnessSkillError('harness_provider_request_invalid', 'Provider start cannot contain a continuation.')
@@ -61,6 +61,7 @@ export function createLocalHttpProviderTurnClient(options: { baseUrl: string; to
           nonce: request.nonce,
           resultText: JSON.stringify(continuation.result),
           skillLoads: continuation.skillLoads,
+          ...(options.benchmarkCommandFinalOutput === true ? { benchmarkCommandFinalOutput: true } : {}),
           ...(request.payloadLifetime === undefined ? {} : { payloadLifetime: request.payloadLifetime }),
         })
         return project(request, started.turnState, started.resultSha256, continuation)
@@ -74,6 +75,7 @@ export function createLocalHttpProviderTurnClient(options: { baseUrl: string; to
         const completed = await dispatch(() => completeHarnessLocalHttpBootstrap({
           baseUrl: options.baseUrl, token: options.token, turnRef: request.turnRef,
           runId: request.runId, stagingRoot: request.stagingRoot, nonce: request.nonce,
+          turnState: raw,
         }))
         return { ...project(request, completed.turnState, undefined, request), modelResponse: completed.response }
       }
@@ -82,7 +84,7 @@ export function createLocalHttpProviderTurnClient(options: { baseUrl: string; to
       const completed = await dispatch(() => completeHarnessLocalHttpContinuation({
         baseUrl: options.baseUrl, token: options.token, turnRef: request.turnRef,
         runId: request.runId, stagingRoot: request.stagingRoot, turn: request.turn,
-        nonce: request.nonce, resultSha256,
+        nonce: request.nonce, resultSha256, turnState: raw,
       }))
       return { ...project(request, completed.turnState, resultSha256, request), modelResponse: completed.response }
     },

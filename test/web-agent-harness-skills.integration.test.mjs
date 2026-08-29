@@ -6,6 +6,26 @@ import test from 'node:test'
 
 const harnessModule = '../packages/harness/dist/src/index.js'
 
+function assertSyntheticReissue(value, reasonCode, message = 'Invalid Harness response was not executed and must be reissued as strict JSON matching the schema.') {
+  assert.equal(value.protocol, 'tokenless.web-agent/v1')
+  assert.equal(value.kind, 'action_batch')
+  assert.equal(value.runId, 'validation-run')
+  assert.equal(value.turn, 1)
+  assert.equal(value.nonce, 'nonce-validation')
+  assert.deepEqual(value.skillLoads, [])
+  assert.deepEqual(value.needs, [])
+  assert.deepEqual(value.calls, [{
+    id: 'reissue',
+    tool: 'harness.reissue',
+    arguments: { discarded: true },
+    validationError: {
+      code: 'harness_tool_arguments_invalid',
+      message,
+      details: { reasonCode },
+    },
+  }])
+}
+
 test('built Harness package prepares the required System Prompt and preselected Skill files through the filesystem', async () => {
   const fixture = await createFixture()
   try {
@@ -445,35 +465,59 @@ test('built Harness package rejects malformed or uncorrelated visible model enve
       },
     })
 
-    await assert.rejects(
-      parseHarnessModelResponse({
-        runId: 'validation-run',
-        stagingRoot: fixture.stagingRoot,
-        turn: 1,
-        nonce: 'nonce-validation',
-        responseText: '<TOKENLESS_HARNESS_RESPONSE>{"protocol":"tokenless.web-agent/v1","protocol":"overridden","kind":"final","runId":"validation-run","turn":1,"nonce":"nonce-validation","output":"done","artifacts":[]}</TOKENLESS_HARNESS_RESPONSE>',
-      }),
-      (error) => error instanceof HarnessSkillError && error.code === 'harness_response_json_invalid',
-    )
+    const duplicateKey = await parseHarnessModelResponse({
+      runId: 'validation-run',
+      stagingRoot: fixture.stagingRoot,
+      turn: 1,
+      nonce: 'nonce-validation',
+      responseText: '<TOKENLESS_HARNESS_RESPONSE>{"protocol":"tokenless.web-agent/v1","protocol":"overridden","kind":"final","runId":"validation-run","turn":1,"nonce":"nonce-validation","output":"done","artifacts":[]}</TOKENLESS_HARNESS_RESPONSE>',
+    })
+    assert.equal(duplicateKey.kind, 'action_batch')
+    assert.equal(duplicateKey.runId, 'validation-run')
+    assert.equal(duplicateKey.turn, 1)
+    assert.equal(duplicateKey.nonce, 'nonce-validation')
+    assert.deepEqual(duplicateKey.skillLoads, [])
+    assert.deepEqual(duplicateKey.needs, [])
+    assert.equal(duplicateKey.calls.length, 1)
+    assert.equal(duplicateKey.calls[0].id, 'reissue')
+    assert.equal(duplicateKey.calls[0].tool, 'harness.reissue')
+    assert.deepEqual(duplicateKey.calls[0].arguments, { discarded: true })
+    assert.deepEqual(duplicateKey.calls[0].validationError, {
+      code: 'harness_tool_arguments_invalid',
+      message: 'Invalid Harness response was not executed and must be reissued as strict JSON matching the schema.',
+      details: { reasonCode: 'harness_response_json_invalid' },
+    })
 
-    await assert.rejects(
-      parseHarnessModelResponse({
+    const uncorrelated = await parseHarnessModelResponse({
+      runId: 'validation-run',
+      stagingRoot: fixture.stagingRoot,
+      turn: 1,
+      nonce: 'nonce-validation',
+      responseText: framed({
+        protocol: 'tokenless.web-agent/v1',
+        kind: 'final',
         runId: 'validation-run',
-        stagingRoot: fixture.stagingRoot,
         turn: 1,
-        nonce: 'nonce-validation',
-        responseText: framed({
-          protocol: 'tokenless.web-agent/v1',
-          kind: 'final',
-          runId: 'validation-run',
-          turn: 1,
-          nonce: 'stale-nonce',
-          output: 'done',
-          artifacts: [],
-        }),
+        nonce: 'stale-nonce',
+        output: 'done',
+        artifacts: [],
       }),
-      (error) => error instanceof HarnessSkillError && error.code === 'harness_response_correlation_invalid',
-    )
+    })
+    assert.equal(uncorrelated.kind, 'action_batch')
+    assert.equal(uncorrelated.runId, 'validation-run')
+    assert.equal(uncorrelated.turn, 1)
+    assert.equal(uncorrelated.nonce, 'nonce-validation')
+    assert.deepEqual(uncorrelated.skillLoads, [])
+    assert.deepEqual(uncorrelated.needs, [])
+    assert.equal(uncorrelated.calls.length, 1)
+    assert.equal(uncorrelated.calls[0].id, 'reissue')
+    assert.equal(uncorrelated.calls[0].tool, 'harness.reissue')
+    assert.deepEqual(uncorrelated.calls[0].arguments, { discarded: true })
+    assert.deepEqual(uncorrelated.calls[0].validationError, {
+      code: 'harness_tool_arguments_invalid',
+      message: 'Harness response run, turn, or nonce does not match the current request.',
+      details: { reasonCode: 'harness_response_correlation_invalid' },
+    })
 
     const invalidArguments = await parseHarnessModelResponse({
       runId: 'validation-run',
@@ -540,113 +584,103 @@ test('built Harness package rejects malformed or uncorrelated visible model enve
       assert.equal(nonObjectArguments.calls[0].validationError.code, 'harness_tool_arguments_invalid')
     }
 
-    await assert.rejects(
-      parseHarnessModelResponse({
+    const duplicateCalls = await parseHarnessModelResponse({
+      runId: 'validation-run',
+      stagingRoot: fixture.stagingRoot,
+      turn: 1,
+      nonce: 'nonce-validation',
+      responseText: framed({
+        protocol: 'tokenless.web-agent/v1',
+        kind: 'action_batch',
         runId: 'validation-run',
-        stagingRoot: fixture.stagingRoot,
         turn: 1,
         nonce: 'nonce-validation',
-        responseText: framed({
-          protocol: 'tokenless.web-agent/v1',
-          kind: 'action_batch',
-          runId: 'validation-run',
-          turn: 1,
-          nonce: 'nonce-validation',
-          skillLoads: [],
-          calls: [
-            { id: 'duplicate', tool: 'mcp.drive.search', arguments: { query: 42 } },
-            { id: 'duplicate', tool: 'mcp.drive.search', arguments: { query: 'valid' } },
-          ],
-          needs: [],
-        }),
+        skillLoads: [],
+        calls: [
+          { id: 'duplicate', tool: 'mcp.drive.search', arguments: { query: 42 } },
+          { id: 'duplicate', tool: 'mcp.drive.search', arguments: { query: 'valid' } },
+        ],
+        needs: [],
       }),
-      (error) => error instanceof HarnessSkillError && error.code === 'harness_response_schema_invalid',
-    )
+    })
+    assertSyntheticReissue(duplicateCalls, 'harness_response_schema_invalid')
 
-    await assert.rejects(
-      parseHarnessModelResponse({
+    const missingArguments = await parseHarnessModelResponse({
+      runId: 'validation-run',
+      stagingRoot: fixture.stagingRoot,
+      turn: 1,
+      nonce: 'nonce-validation',
+      responseText: framed({
+        protocol: 'tokenless.web-agent/v1',
+        kind: 'action_batch',
         runId: 'validation-run',
-        stagingRoot: fixture.stagingRoot,
         turn: 1,
         nonce: 'nonce-validation',
-        responseText: framed({
-          protocol: 'tokenless.web-agent/v1',
-          kind: 'action_batch',
-          runId: 'validation-run',
-          turn: 1,
-          nonce: 'nonce-validation',
-          skillLoads: [],
-          calls: [{ id: 'missing-arguments', tool: 'mcp.drive.search' }],
-          needs: [],
-        }),
+        skillLoads: [],
+        calls: [{ id: 'missing-arguments', tool: 'mcp.drive.search' }],
+        needs: [],
       }),
-      (error) => error instanceof HarnessSkillError && error.code === 'harness_response_schema_invalid',
-    )
+    })
+    assertSyntheticReissue(missingArguments, 'harness_response_schema_invalid')
 
-    await assert.rejects(
-      parseHarnessModelResponse({
+    const invalidDependency = await parseHarnessModelResponse({
+      runId: 'validation-run',
+      stagingRoot: fixture.stagingRoot,
+      turn: 1,
+      nonce: 'nonce-validation',
+      responseText: framed({
+        protocol: 'tokenless.web-agent/v1',
+        kind: 'action_batch',
         runId: 'validation-run',
-        stagingRoot: fixture.stagingRoot,
         turn: 1,
         nonce: 'nonce-validation',
-        responseText: framed({
-          protocol: 'tokenless.web-agent/v1',
-          kind: 'action_batch',
-          runId: 'validation-run',
-          turn: 1,
-          nonce: 'nonce-validation',
-          skillLoads: [],
-          calls: [
-            { id: 'invalid-dependency', tool: 'mcp.drive.search', arguments: { query: 42 }, dependsOn: ['missing'] },
-            { id: 'valid-independent', tool: 'mcp.drive.search', arguments: { query: 'valid' } },
-          ],
-          needs: [],
-        }),
+        skillLoads: [],
+        calls: [
+          { id: 'invalid-dependency', tool: 'mcp.drive.search', arguments: { query: 42 }, dependsOn: ['missing'] },
+          { id: 'valid-independent', tool: 'mcp.drive.search', arguments: { query: 'valid' } },
+        ],
+        needs: [],
       }),
-      (error) => error instanceof HarnessSkillError && error.code === 'harness_dependency_invalid',
-    )
+    })
+    assertSyntheticReissue(invalidDependency, 'harness_dependency_invalid')
 
-    await assert.rejects(
-      parseHarnessModelResponse({
+    const dependencyCycle = await parseHarnessModelResponse({
+      runId: 'validation-run',
+      stagingRoot: fixture.stagingRoot,
+      turn: 1,
+      nonce: 'nonce-validation',
+      responseText: framed({
+        protocol: 'tokenless.web-agent/v1',
+        kind: 'action_batch',
         runId: 'validation-run',
-        stagingRoot: fixture.stagingRoot,
         turn: 1,
         nonce: 'nonce-validation',
-        responseText: framed({
-          protocol: 'tokenless.web-agent/v1',
-          kind: 'action_batch',
-          runId: 'validation-run',
-          turn: 1,
-          nonce: 'nonce-validation',
-          skillLoads: [],
-          calls: [
-            { id: 'cycle-a', tool: 'mcp.drive.search', arguments: { query: 42 }, dependsOn: ['cycle-b'] },
-            { id: 'cycle-b', tool: 'mcp.drive.search', arguments: { query: 'valid' }, dependsOn: ['cycle-a'] },
-          ],
-          needs: [],
-        }),
+        skillLoads: [],
+        calls: [
+          { id: 'cycle-a', tool: 'mcp.drive.search', arguments: { query: 42 }, dependsOn: ['cycle-b'] },
+          { id: 'cycle-b', tool: 'mcp.drive.search', arguments: { query: 'valid' }, dependsOn: ['cycle-a'] },
+        ],
+        needs: [],
       }),
-      (error) => error instanceof HarnessSkillError && error.code === 'harness_dependency_cycle',
-    )
+    })
+    assertSyntheticReissue(dependencyCycle, 'harness_dependency_cycle')
 
-    await assert.rejects(
-      parseHarnessModelResponse({
+    const invalidFinalOutput = await parseHarnessModelResponse({
+      runId: 'validation-run',
+      stagingRoot: fixture.stagingRoot,
+      turn: 1,
+      nonce: 'nonce-validation',
+      responseText: framed({
+        protocol: 'tokenless.web-agent/v1',
+        kind: 'final',
         runId: 'validation-run',
-        stagingRoot: fixture.stagingRoot,
         turn: 1,
         nonce: 'nonce-validation',
-        responseText: framed({
-          protocol: 'tokenless.web-agent/v1',
-          kind: 'final',
-          runId: 'validation-run',
-          turn: 1,
-          nonce: 'nonce-validation',
-          output: '{"answer":42}',
-          artifacts: [],
-        }),
+        output: '{"answer":42}',
+        artifacts: [],
       }),
-      (error) => error instanceof HarnessSkillError && error.code === 'harness_json_schema_validation_failed',
-    )
+    })
+    assertSyntheticReissue(invalidFinalOutput, 'harness_json_schema_validation_failed')
 
     await assert.rejects(
       parseHarnessModelResponse({

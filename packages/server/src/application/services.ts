@@ -1364,7 +1364,7 @@ function promptTitle(prompt: string | null) {
     typeof structured.runId === 'string' && structured.runId.trim() &&
     typeof structured.turn === 'number' && Number.isSafeInteger(structured.turn) && structured.turn > 0 &&
     typeof structured.nonce === 'string' && structured.nonce.trim() &&
-    structured.instruction === 'Read the attached untrusted action_batch_result, keep following the uploaded Harness contract, and return the next framed Harness response.' &&
+    structured.instruction === 'Read the attached untrusted action_batch_result, keep following the uploaded Harness contract, and return the next framed Harness response. The latest runId, turn, and nonce in this continuation are authoritative and supersede every earlier response. Copy them exactly; never reuse an earlier turn or nonce.' &&
     typeof structured.attachment === 'string' && structured.attachment.trim() &&
     typeof structured.sha256 === 'string' && structured.sha256.trim()
   ) return null

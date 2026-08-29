@@ -62,6 +62,13 @@ export function classifyProviderFailure(options: {
   }
   const lifecycle = options.actionLifecycle
   if (
+    response.code === 'prompt_submit_not_accepted'
+    && lifecycle?.completion === 'records_submission'
+  ) {
+    // This error is emitted only after the complete visible pre-submit acceptance window.
+    return classified('safe_pre_submit_provider_failure', response, true, true)
+  }
+  if (
     response.code === 'prompt_submit_actionability_timeout'
     && lifecycle?.completion === 'records_submission'
   ) {

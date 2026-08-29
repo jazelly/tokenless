@@ -103,12 +103,10 @@ export async function inspectProviderAccountSession(
     }
     if (attempt < maximumAttempts) await page.waitForTimeout(100)
   }
-  const composerVisible = await anyVisible(page, provider.composerSelectors)
-  const guest = provider.access.guest === 'supported' && composerVisible
   return {
-    state: guest ? 'unauthenticated' : 'unknown',
-    access: guest ? 'guest' : 'unknown',
-    visibleProof: guest ? 'guest-composer-visible' : 'no-authenticated-account-control',
+    state: 'unknown',
+    access: 'unknown',
+    visibleProof: 'no-authenticated-account-control',
   }
 }
 

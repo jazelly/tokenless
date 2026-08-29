@@ -20,6 +20,7 @@ const MAX_JSON_DEPTH = 48
 const MAX_JSON_PROPERTIES = 10_000
 const TOOL_NAME = /^[A-Za-z0-9_-]{1,64}$/
 const TOOL_CALL_ID = /^[A-Za-z0-9_-]{1,128}$/
+const MAX_SEMANTIC_QUOTE_REPAIRS = 8
 
 export type OpenAiFunctionTool = {
   name: string
@@ -359,14 +360,63 @@ export function parseOpenAiToolResponse(
   if (typeof responseText !== 'string' || Buffer.byteLength(responseText, 'utf8') > MAX_RESPONSE_BYTES) {
     fail(`provider response exceeds the ${MAX_RESPONSE_BYTES}-byte tool protocol limit`)
   }
-  const source = unwrapRawResponseFence(trimJsonWhitespace(responseText))
+  let source = unwrapRawResponseFence(trimJsonWhitespace(responseText))
   let parsed: unknown
   try {
     parsed = parseStrictJson(source)
   } catch (error) {
     const message = error instanceof Error ? error.message : 'provider response contains invalid strict JSON'
     const correctionKind = correlatedSerializationKind(source, nonce, message)
-    throw new OpenAiToolResponseProtocolError(message, correctionKind !== null, correctionKind ?? undefined)
+    if (message === 'JSON strings cannot contain unescaped control characters') {
+      source = escapeUnescapedJsonStringControls(source)
+      try {
+        parsed = parseStrictJson(source)
+      } catch (repairError) {
+        const repairMessage = repairError instanceof Error ? repairError.message : 'provider response contains invalid strict JSON'
+        const repairKind = correlatedSerializationKind(source, nonce, repairMessage)
+        if (
+          repairMessage === 'JSON object entries must be separated by commas'
+          && repairKind === 'tool_calls'
+        ) {
+          const semanticSource = escapeUnexpectedJsonStringQuotes(source)
+          if (semanticSource !== null) {
+            try {
+              source = semanticSource
+              parsed = parseStrictJson(source)
+            } catch (semanticError) {
+              const semanticMessage = semanticError instanceof Error ? semanticError.message : 'provider response contains invalid strict JSON'
+              const semanticKind = correlatedSerializationKind(source, nonce, semanticMessage)
+              throw new OpenAiToolResponseProtocolError(semanticMessage, semanticKind !== null, semanticKind ?? undefined)
+            }
+          } else {
+            throw new OpenAiToolResponseProtocolError(repairMessage, repairKind !== null, repairKind ?? undefined)
+          }
+        }
+        if (parsed === undefined) {
+          throw new OpenAiToolResponseProtocolError(repairMessage, repairKind !== null, repairKind ?? undefined)
+        }
+      }
+    } else if (
+      message === 'JSON object entries must be separated by commas'
+      && correctionKind === 'tool_calls'
+    ) {
+      const semanticSource = escapeUnexpectedJsonStringQuotes(source)
+      if (semanticSource !== null) {
+        try {
+          source = semanticSource
+          parsed = parseStrictJson(source)
+        } catch (semanticError) {
+          const semanticMessage = semanticError instanceof Error ? semanticError.message : 'provider response contains invalid strict JSON'
+          const semanticKind = correlatedSerializationKind(source, nonce, semanticMessage)
+          throw new OpenAiToolResponseProtocolError(semanticMessage, semanticKind !== null, semanticKind ?? undefined)
+        }
+      }
+      if (parsed === undefined) {
+        throw new OpenAiToolResponseProtocolError(message, correctionKind !== null, correctionKind ?? undefined)
+      }
+    } else {
+      throw new OpenAiToolResponseProtocolError(message, correctionKind !== null, correctionKind ?? undefined)
+    }
   }
   const envelope = record(parsed, 'provider response envelope')
   if (envelope.protocol !== OPENAI_TOOL_PROTOCOL || envelope.nonce !== nonce) {
@@ -654,31 +704,192 @@ function record(value: unknown, label: string): Record<string, unknown> {
   return value as Record<string, unknown>
 }
 
-function countOccurrences(value: string, needle: string) {
-  return value.split(needle).length - 1
-}
-
 function trimJsonWhitespace(value: string) {
   return value.replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, '')
 }
 
 function unwrapRawResponseFence(trimmed: string) {
-  const fenceCount = countOccurrences(trimmed, '```')
-  if (fenceCount === 0) return trimmed
-  if (fenceCount !== 2) fail('provider response contains multiple or incomplete code fences')
-  const fenced = /(?:^|\r?\n)```(?:json|text)?\r?\n([\s\S]*?)\r?\n```(?=$|\r?\n)/.exec(trimmed)
-  if (!fenced) fail('provider response must use exactly one complete json or text code fence')
-  return trimJsonWhitespace(fenced[1]!)
+  const lines = trimmed.split(/\r?\n/u)
+  const fenceLines = lines.flatMap((line, index) => (
+    /^```[^`]*$/u.test(line) ? [{ line, index }] : []
+  ))
+  if (fenceLines.length === 0) return trimmed
+  if (
+    fenceLines.length !== 2
+    || !/^```(?:json|text)?$/u.test(fenceLines[0]!.line)
+    || fenceLines[1]!.line !== '```'
+  ) {
+    fail('provider response contains multiple or incomplete code fences')
+  }
+  return trimJsonWhitespace(lines.slice(fenceLines[0]!.index + 1, fenceLines[1]!.index).join('\n'))
 }
 
 function correlatedSerializationKind(source: string, nonce: string, message: string): OpenAiToolProtocolResult['kind'] | null {
   if (message.includes('duplicate key')) return null
-  const prefix = `{"protocol":"${OPENAI_TOOL_PROTOCOL}","nonce":${JSON.stringify(nonce)},"kind":"`
-  if (!source.startsWith(prefix)) return null
-  const remainder = source.slice(prefix.length)
-  if (remainder.startsWith('final"')) return 'final'
-  if (remainder.startsWith('tool_calls"')) return 'tool_calls'
+  const scanned = scanTopLevelKeys(source)
+  if (!scanned) return null
+  const contentKey = scanned.keys.find((entry) => entry.name === 'content')?.index
+  if (contentKey === undefined) return null
+
+  try {
+    const header = record(parseStrictJson(`${source.slice(0, contentKey)}"content":null}`), 'provider response header')
+    requireExactKeys(header, ['protocol', 'nonce', 'kind', 'content'], 'provider response header')
+    if (header.protocol !== OPENAI_TOOL_PROTOCOL || header.nonce !== nonce) return null
+    if (header.kind !== 'final' && header.kind !== 'tool_calls') return null
+    const expectedKeys = header.kind === 'final'
+      ? ['protocol', 'nonce', 'kind', 'content']
+      : ['protocol', 'nonce', 'kind', 'content', 'calls']
+    if (!expectedKeys || scanned.keys.length !== expectedKeys.length || !expectedKeys.every((key) => scanned.keys.some((entry) => entry.name === key))) {
+      return null
+    }
+    return header.kind
+  } catch {
+    return null
+  }
   return null
+}
+
+function scanTopLevelKeys(source: string) {
+  const stack: ('object' | 'array')[] = []
+  const keys: { name: string; index: number }[] = []
+  let rootClosed = false
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index]!
+    if (isJsonWhitespace(character)) continue
+    if (rootClosed) return null
+    if (character === '"') {
+      const start = index
+      let end = index + 1
+      while (end < source.length) {
+        const stringCharacter = source[end]!
+        if (stringCharacter === '\\') {
+          end += 1
+          if (end >= source.length) return null
+          if (source[end] === 'u') {
+            if (end + 4 >= source.length || !/^[0-9a-fA-F]{4}$/u.test(source.slice(end + 1, end + 5))) return null
+            end += 5
+          } else if (!'"\\/bfnrt'.includes(source[end]!)) {
+            return null
+          } else {
+            end += 1
+          }
+          continue
+        }
+        if (stringCharacter === '"') break
+        if (stringCharacter.charCodeAt(0) <= 0x1f) return null
+        end += 1
+      }
+      if (source[end] !== '"') return null
+      const previous = previousJsonToken(source, start - 1)
+      const next = nextJsonToken(source, end + 1)
+      if (stack.length === 1 && stack[0] === 'object' && next === ':' && previous !== '{' && previous !== ',') return null
+      if (stack.length === 1 && stack[0] === 'object' && (previous === '{' || previous === ',') && next === ':') {
+        let name: unknown
+        try {
+          name = JSON.parse(source.slice(start, end + 1))
+        } catch {
+          return null
+        }
+        if (typeof name !== 'string' || keys.some((entry) => entry.name === name)) return null
+        keys.push({ name, index: start })
+      }
+      index = end
+      continue
+    }
+    if (character === '{' || character === '[') {
+      if (stack.length === 0 && character !== '{') return null
+      stack.push(character === '{' ? 'object' : 'array')
+    } else if (character === '}' || character === ']') {
+      const expected = character === '}' ? 'object' : 'array'
+      if (stack.pop() !== expected) return null
+      if (stack.length === 0) rootClosed = true
+    }
+  }
+  if (!rootClosed || stack.length !== 0) return null
+  return { keys }
+}
+
+function previousJsonToken(source: string, start: number) {
+  let index = start
+  while (index >= 0 && isJsonWhitespace(source[index]!)) index -= 1
+  return source[index]
+}
+
+function nextJsonToken(source: string, start: number) {
+  let index = start
+  while (index < source.length && isJsonWhitespace(source[index]!)) index += 1
+  return source[index]
+}
+
+function isJsonWhitespace(character: string | undefined) {
+  return character === ' ' || character === '\t' || character === '\r' || character === '\n'
+}
+
+function escapeUnescapedJsonStringControls(value: string) {
+  let inString = false
+  let escaped = false
+  let escapedValue = ''
+  for (const character of value) {
+    if (inString) {
+      if (escaped) {
+        escapedValue += character
+        escaped = false
+      } else if (character === '\\') {
+        escapedValue += character
+        escaped = true
+      } else if (character === '"') {
+        escapedValue += character
+        inString = false
+      } else if (character.charCodeAt(0) <= 0x1f) {
+        escapedValue += `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`
+      } else {
+        escapedValue += character
+      }
+    } else {
+      escapedValue += character
+      if (character === '"') inString = true
+    }
+  }
+  return escapedValue
+}
+
+function escapeUnexpectedJsonStringQuotes(value: string): string | null {
+  let inString = false
+  let escaped = false
+  let repairs = 0
+  let repairedValue = ''
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index]!
+    if (!inString) {
+      repairedValue += character
+      if (character === '"') inString = true
+      continue
+    }
+    if (escaped) {
+      repairedValue += character
+      escaped = false
+      continue
+    }
+    if (character === '\\') {
+      repairedValue += character
+      escaped = true
+      continue
+    }
+    if (character === '"') {
+      const next = nextJsonToken(value, index + 1)
+      if (next === undefined || next === ',' || next === '}' || next === ']' || next === ':') {
+        repairedValue += character
+        inString = false
+      } else {
+        repairs += 1
+        if (repairs > MAX_SEMANTIC_QUOTE_REPAIRS) return null
+        repairedValue += '\\u0022'
+      }
+      continue
+    }
+    repairedValue += character
+  }
+  return repairs === 0 ? null : repairedValue
 }
 
 function fail(message: string): never {

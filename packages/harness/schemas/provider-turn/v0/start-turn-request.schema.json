@@ -24,7 +24,12 @@
       ]
     },
     "bootstrap": { "$ref": "#/$defs/message" },
-    "continuation": { "$ref": "#/$defs/message" }
+    "continuation": {
+      "allOf": [
+        { "$ref": "#/$defs/message" },
+        { "type": "object", "properties": { "text": { "type": "string", "maxLength": 4000 } } }
+      ]
+    }
   },
   "$defs": {
     "message": {
@@ -32,7 +37,7 @@
       "additionalProperties": false,
       "required": ["text", "attachments"],
       "properties": {
-        "text": { "type": "string", "minLength": 1, "maxLength": 4000, "x-tokenless-internal-maxUtf8Bytes": 8192 },
+        "text": { "type": "string", "minLength": 1, "maxLength": 8192, "x-tokenless-internal-maxUtf8Bytes": 8192 },
         "attachments": {
           "type": "array",
           "minItems": 1,

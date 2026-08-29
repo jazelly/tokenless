@@ -14,6 +14,59 @@ const observationValidator = new Ajv({ allErrors: true, strict: true }).compile(
 const SEMANTIC_MANIFEST_SCHEMA = 'tokenless.terminalbench-semantic-manifest.v1'
 const SEMANTIC_TASK_TYPE_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/u
 const SEMANTIC_COMPLEXITIES = new Set(['low', 'medium', 'high'])
+const CHILD_DISCOVERY_FAILURE_CODES = new Set([
+  'harness_workspace_invalid',
+  'harness_tool_duplicate',
+  'mcp_config_invalid',
+  'mcp_server_unavailable',
+  'mcp_tool_discovery_failed',
+  'mcp_tool_duplicate',
+  'mcp_tool_name_invalid',
+])
+const CHILD_PROVIDER_SUBMIT_FAILURE_CODES = new Set([
+  'harness_provider_intent_missing',
+  'harness_provider_request_invalid',
+  'harness_provider_dispatch_failed',
+  'harness_provider_http_error',
+  'harness_provider_identity_mismatch',
+  'harness_provider_capabilities_unsupported',
+  'harness_bootstrap_message_too_large',
+  'harness_context_source_changed',
+  'harness_attachment_stage_mismatch',
+  'system_prompt_too_large',
+  'invalid_input',
+  'local_http_error',
+  'control_auth_missing',
+  'control_auth_rejected',
+  'daemon_starting',
+  'web_ai_request_ref_conflict',
+  'web_ai_request_not_found',
+])
+const CHILD_HARNESS_FAILURE_CODE_PATTERN = /^harness_[a-z0-9_]{1,100}$/u
+const SYNTHETIC_REISSUE_REASON_CODES = new Set([
+  'harness_response_framing_invalid',
+  'harness_response_correlation_invalid',
+  'harness_protocol_invalid',
+  'harness_response_json_invalid',
+  'harness_response_schema_invalid',
+  'harness_action_batch_json_repair_forbidden',
+  'harness_response_kind_invalid',
+  'harness_skill_load_invalid',
+  'harness_action_batch_empty',
+  'harness_final_invalid',
+  'harness_final_output_invalid',
+  'harness_tool_call_invalid',
+  'harness_need_invalid',
+  'harness_dependency_invalid',
+  'harness_dependency_cycle',
+  'harness_json_schema_validation_failed',
+  'harness_benchmark_evidence_insufficient',
+])
+const CODELESS_LOCAL_BASH_REASONS = new Set([
+  'child_command_ready', 'child_outcome_missing', 'child_history_invalid',
+  'parent_events_missing', 'parent_user_task_invalid',
+  'child_pre_turn_exit', 'child_spawn_failed',
+])
 const JOB_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u
 const OBSERVATION_SCHEMA = 'tokenless.terminalbench-observation.v1'
 const OBSERVATION_EXECUTION_PATH = 'Harbor -> Docker DeepSeek Harness -> loopback HTTP -> Tokenless API -> tokenless/auto -> provider'
@@ -337,9 +390,12 @@ async function runDeepSeekLane(kind, args) {
       || report.deepIntegration.failedDshParents !== 0
       || report.deepIntegration.unsettledParentCompletionRequests !== 0
       || report.deepIntegration.forcedParentCompletionRequests !== expectedTrials
+      || report.deepIntegration.successfulLocalParentBashes !== expectedTrials
+      || report.deepIntegration.failedLocalParentBashes !== 0
+      || report.deepIntegration.localParentFinals !== expectedTrials
     )
   ) {
-    throw new Error(`The Terminal-Bench sweep phase gate requires one successful DSH parent completion, one forced subagent request, and one terminal parent routing event per trial; evidence is preserved at ${jobDir}.`)
+    throw new Error(`The Terminal-Bench sweep phase gate requires one successful DSH parent completion, one forced subagent request, one successful local child-command handoff, and one local final per trial; evidence is preserved at ${jobDir}.`)
   }
   if (kind === 'sweep' && report.rewards.passed !== expectedTrials) {
     throw new Error(`The Terminal-Bench sweep phase gate requires verifier reward 1 for all ${expectedTrials} trials; evidence is preserved at ${jobDir}.`)
@@ -624,7 +680,11 @@ async function readObservationAudit(auditPath) {
   const events = []
   for (const line of (await fs.readFile(auditPath, 'utf8')).split(/\r?\n/u)) {
     if (!line.trim()) continue
-    events.push(JSON.parse(line))
+    const event = JSON.parse(line)
+    if (event.protocol !== revision.auditProtocol) {
+      throw new Error(`Unexpected deep-integration audit protocol in ${auditPath}.`)
+    }
+    events.push(event)
   }
   return events
 }
@@ -1433,11 +1493,26 @@ function validateUnmodifiedTrialConfig(config) {
   }
 }
 
+function failureCodeMatchesReason(reason, failureCode) {
+  if (failureCode !== null && typeof failureCode !== 'string') return false
+  if (failureCode === null) {
+    return CODELESS_LOCAL_BASH_REASONS.has(reason) || reason === 'child_harness_failed'
+  }
+  if (reason === 'child_discovery_failed') return CHILD_DISCOVERY_FAILURE_CODES.has(failureCode)
+  if (reason === 'child_provider_submit_failed') return CHILD_PROVIDER_SUBMIT_FAILURE_CODES.has(failureCode)
+  return reason === 'child_harness_failed' && CHILD_HARNESS_FAILURE_CODE_PATTERN.test(failureCode)
+}
+
 function deepIntegrationStats(events, trial) {
   const validTypes = new Set([
     'api.completion.request',
     'child.turn.started',
     'provider.routing',
+    'child.workspace_exec',
+    'child.harness.failed',
+    'child.harness.corrective',
+    'parent.local_bash',
+    'parent.local_final',
     'dsh.parent.completed',
   ])
   if (events.length === 0) {
@@ -1469,11 +1544,11 @@ function deepIntegrationStats(events, trial) {
         throw new Error('Host parent completion evidence is invalid.')
       }
       const expectedChoice = event.ordinal === 1
-        ? { choiceMode: 'named', selectedTool: 'read' }
+        ? { choiceMode: 'named', selectedTool: 'subagent' }
         : event.ordinal === 2
-          ? { choiceMode: 'named', selectedTool: 'subagent' }
-          : event.ordinal === 3
-            ? { choiceMode: 'named', selectedTool: 'bash' }
+          ? { choiceMode: 'named', selectedTool: 'bash' }
+          : event.ordinal === 3 || event.ordinal === 4
+            ? { choiceMode: 'auto', selectedTool: null }
             : { choiceMode: 'none', selectedTool: null }
       if (
         event.choiceMode !== expectedChoice.choiceMode
@@ -1491,6 +1566,117 @@ function deepIntegrationStats(events, trial) {
       }
     } else if (event.type === 'provider.routing') {
       validateProviderRoutingEvent(event)
+    } else if (event.type === 'child.workspace_exec') {
+      const hashPattern = /^sha256:[a-f0-9]{64}$/u
+      if (
+        Object.keys(event).some((key) => ![
+          'protocol', 'sequence', 'type', 'scope', 'callIdSha256',
+          'purpose',
+          'commandCharacters', 'commandSha256', 'timeoutMs', 'outcome',
+          'exitCode', 'signal', 'timedOut',
+        ].includes(key))
+        || event.scope !== 'child'
+        || !['inspect', 'implement', 'verify'].includes(event.purpose)
+        || event.callIdSha256 !== null
+          && (typeof event.callIdSha256 !== 'string' || !hashPattern.test(event.callIdSha256))
+        || !Number.isSafeInteger(event.commandCharacters)
+        || event.commandCharacters < 1
+        || event.commandCharacters > 32768
+        || typeof event.commandSha256 !== 'string'
+        || !hashPattern.test(event.commandSha256)
+        || !Number.isSafeInteger(event.timeoutMs)
+        || event.timeoutMs < 1000
+        || event.timeoutMs > 120000
+        || !['succeeded', 'failed'].includes(event.outcome)
+        || event.exitCode !== null
+          && (!Number.isSafeInteger(event.exitCode) || event.exitCode < -1 || event.exitCode > 255)
+        || event.signal !== null
+          && (typeof event.signal !== 'string' || !/^[A-Z][A-Z0-9_]{0,15}$/u.test(event.signal))
+        || (event.timedOut !== null && typeof event.timedOut !== 'boolean')
+      ) {
+        throw new Error('Child workspace execution audit event is invalid.')
+      }
+    } else if (event.type === 'child.harness.failed') {
+      if (
+        Object.keys(event).some((key) => ![
+          'protocol', 'sequence', 'type', 'callIdSha256', 'reason', 'failureCode',
+        ].includes(key))
+        || event.callIdSha256 !== null
+        || ![
+          'parent_events_missing', 'parent_user_task_invalid', 'child_pre_turn_exit',
+          'child_spawn_failed', 'child_discovery_failed', 'child_provider_submit_failed',
+          'child_harness_failed',
+        ].includes(event.reason)
+        || !failureCodeMatchesReason(event.reason, event.failureCode)
+      ) {
+        throw new Error('Child Harness failure audit event is invalid.')
+      }
+    } else if (event.type === 'child.harness.corrective') {
+      if (
+        Object.keys(event).some((key) => ![
+          'protocol', 'sequence', 'type', 'scope', 'turn', 'reasonCode',
+        ].includes(key))
+        || event.protocol !== revision.auditProtocol
+        || event.scope !== 'child'
+        || !Number.isSafeInteger(event.turn)
+        || event.turn < 1
+        || event.turn > 64
+        || typeof event.reasonCode !== 'string'
+        || !SYNTHETIC_REISSUE_REASON_CODES.has(event.reasonCode)
+      ) {
+        throw new Error('Child Harness corrective audit event is invalid.')
+      }
+    } else if (event.type === 'parent.local_bash') {
+      const hashPattern = /^sha256:[a-f0-9]{64}$/u
+      const ready = event.outcome === 'ready'
+      if (
+        Object.keys(event).some((key) => ![
+          'protocol', 'sequence', 'type', 'ordinal', 'outcome', 'reason',
+          'failureCode', 'executionOutcome', 'callIdSha256', 'commandCharacters', 'commandSha256',
+        ].includes(key))
+        || event.ordinal !== 2
+        || !['ready', 'failed'].includes(event.outcome)
+        || ![
+          'child_command_ready', 'child_outcome_missing', 'child_history_invalid',
+          'parent_events_missing', 'parent_user_task_invalid',
+          'child_pre_turn_exit', 'child_spawn_failed',
+          'child_discovery_failed', 'child_provider_submit_failed', 'child_harness_failed',
+        ].includes(event.reason)
+        || !failureCodeMatchesReason(event.reason, event.failureCode)
+        || ![null, 'succeeded', 'failed'].includes(event.executionOutcome)
+        || !Number.isSafeInteger(event.commandCharacters)
+        || (ready && (
+          event.reason !== 'child_command_ready'
+          || typeof event.callIdSha256 !== 'string'
+          || !hashPattern.test(event.callIdSha256)
+          || event.commandCharacters < 1
+          || event.commandCharacters > 10000
+          || typeof event.commandSha256 !== 'string'
+          || !hashPattern.test(event.commandSha256)
+        ))
+        || (!ready && (
+          event.reason === 'child_command_ready'
+          || event.executionOutcome !== null
+          || event.commandCharacters !== 0
+          || event.commandSha256 !== null
+          || event.callIdSha256 !== null
+            && (typeof event.callIdSha256 !== 'string' || !hashPattern.test(event.callIdSha256))
+        ))
+      ) {
+        throw new Error('Host local parent bash evidence is invalid.')
+      }
+    } else if (event.type === 'parent.local_final') {
+      if (
+        Object.keys(event).some((key) => ![
+          'protocol', 'sequence', 'type', 'ordinal', 'outcome', 'callIdSha256',
+        ].includes(key))
+        || event.ordinal !== 3
+        || event.outcome !== 'completed'
+        || typeof event.callIdSha256 !== 'string'
+        || !/^sha256:[a-f0-9]{64}$/u.test(event.callIdSha256)
+      ) {
+        throw new Error('Host local parent completion evidence is invalid.')
+      }
     } else if (event.type === 'dsh.parent.completed') {
       if (
         Object.keys(event).some((key) => !['protocol', 'sequence', 'type', 'outcome'].includes(key))
@@ -1504,27 +1690,65 @@ function deepIntegrationStats(events, trial) {
   const parentRequests = events.filter((event) => event.type === 'api.completion.request')
   const childStarts = events.filter((event) => event.type === 'child.turn.started')
   const routing = events.filter((event) => event.type === 'provider.routing')
+  const workspaceExecEvents = events.filter((event) => event.type === 'child.workspace_exec')
+  const childHarnessFailures = events.filter((event) => event.type === 'child.harness.failed')
+  const childCorrectiveEvents = events.filter((event) => event.type === 'child.harness.corrective')
+  const correctiveTurns = new Set()
+  for (const event of childCorrectiveEvents) {
+    const childStart = childStarts[event.turn - 1]
+    if (correctiveTurns.has(event.turn) || !childStart || event.sequence <= childStart.sequence) {
+      throw new Error('Deep integration corrective evidence is not paired with a unique child turn.')
+    }
+    correctiveTurns.add(event.turn)
+  }
+  if (
+    childHarnessFailures.length > 1
+    || new Set(childHarnessFailures.map((event) => event.callIdSha256)).size !== childHarnessFailures.length
+  ) {
+    throw new Error('Deep integration audit contains duplicate child Harness failure evidence.')
+  }
+  const localBashes = events.filter((event) => event.type === 'parent.local_bash')
+  const localFinals = events.filter((event) => event.type === 'parent.local_final')
+  if (localBashes.length > 1) {
+    throw new Error('Deep integration audit contains multiple local parent bash settlements.')
+  }
+  const localBash = localBashes[0]
+  if (localBash) {
+    const request = parentRequests.find((event) => event.ordinal === localBash.ordinal)
+    const nextRequest = parentRequests.find((event) => event.ordinal === localBash.ordinal + 1)
+    if (
+      !request
+      || localBash.sequence <= request.sequence
+      || nextRequest && localBash.sequence >= nextRequest.sequence
+    ) {
+      throw new Error('Local parent bash evidence is not paired with its completion request.')
+    }
+  }
+  if (localFinals.length > 1) {
+    throw new Error('Deep integration audit contains multiple local parent completions.')
+  }
+  const localFinal = localFinals[0]
+  if (localFinal) {
+    const request = parentRequests.find((event) => event.ordinal === localFinal.ordinal)
+    const nextRequest = parentRequests.find((event) => event.ordinal === localFinal.ordinal + 1)
+    if (
+      !request
+      || localFinal.sequence <= request.sequence
+      || nextRequest && localFinal.sequence >= nextRequest.sequence
+    ) {
+      throw new Error('Local parent completion is not paired with its completion request.')
+    }
+  }
   const estimatorRevisions = new Set(routing.map((event) => event.tokenEstimate.estimatorRevision))
   if (estimatorRevisions.size > 1) {
     throw new Error('Deep integration token estimates must use one estimator revision per trial.')
   }
   const forcedParents = parentRequests.filter((event) => event.forcedSubagent === true)
   const firstForcedParent = forcedParents[0]
-  const initialParentRequest = firstForcedParent?.ordinal === 2
-    ? parentRequests.find((event) => event.ordinal === 1 && event.forcedSubagent === false)
-    : undefined
-  const initialParentRoute = initialParentRequest && firstForcedParent
-    ? routing.find((event) => (
-      event.scope === 'parent'
-      && event.outcome === 'completed'
-      && event.sequence > initialParentRequest.sequence
-      && event.sequence < firstForcedParent.sequence
-    ))
-    : undefined
   const nextParentRequestAfterForced = firstForcedParent
     ? parentRequests.find((event) => event.sequence > firstForcedParent.sequence)
     : undefined
-  const firstParentRoute = firstForcedParent && initialParentRoute
+  const firstParentRoute = firstForcedParent
     ? routing.find((event) => (
       event.scope === 'parent'
       && event.outcome === 'completed'
@@ -1533,6 +1757,13 @@ function deepIntegrationStats(events, trial) {
     ))
     : undefined
   const childWindowEnd = nextParentRequestAfterForced?.sequence ?? Number.POSITIVE_INFINITY
+  const childRouteWindowEnd = nextParentRequestAfterForced
+    ? parentRequests.find((event) => event.sequence > nextParentRequestAfterForced.sequence)?.sequence ?? childWindowEnd
+    : childWindowEnd
+  const successfulParentCompletion = events.find((event) => (
+    event.type === 'dsh.parent.completed'
+    && event.outcome === 'succeeded'
+  ))
   const delegatedChildStarts = firstParentRoute
     ? childStarts.filter((event) => (
       event.sequence > firstParentRoute.sequence
@@ -1542,16 +1773,21 @@ function deepIntegrationStats(events, trial) {
   const childModesValid = delegatedChildStarts.length >= 2
     && delegatedChildStarts[0]?.mode === 'bootstrap'
     && delegatedChildStarts.slice(1).every((event) => event.mode === 'continuation')
+  const childRoutes = routing.filter((event) => event.scope === 'child')
   const completedChildRoutes = childModesValid
+    && childRoutes.length === delegatedChildStarts.length
     ? delegatedChildStarts.map((start, index) => {
       const nextStart = delegatedChildStarts[index + 1]
-      const end = nextStart?.sequence ?? childWindowEnd
-      return routing.find((event) => (
-        event.scope === 'child'
-        && event.outcome === 'completed'
+      const candidates = childRoutes.filter((event) => (
+        event.outcome === 'completed'
         && event.sequence > start.sequence
-        && event.sequence < end
+        && (nextStart
+          ? event.sequence < nextStart.sequence
+          : event.sequence < childRouteWindowEnd
+            || successfulParentCompletion !== undefined
+              && event.sequence > successfulParentCompletion.sequence)
       ))
+      return candidates.length === 1 ? candidates[0] : undefined
     })
     : []
   const allChildRoutesComplete = completedChildRoutes.length === delegatedChildStarts.length
@@ -1559,38 +1795,44 @@ function deepIntegrationStats(events, trial) {
   const finalChildRoute = allChildRoutesComplete
     ? completedChildRoutes[completedChildRoutes.length - 1]
     : undefined
-  const laterParentRequest = finalChildRoute
-    && nextParentRequestAfterForced
-    && nextParentRequestAfterForced.sequence > finalChildRoute.sequence
-    ? nextParentRequestAfterForced
-    : undefined
-  const nextParentRequestAfterLater = laterParentRequest
-    ? parentRequests.find((event) => event.sequence > laterParentRequest.sequence)
-    : undefined
-  const laterParentRoute = laterParentRequest
-    ? routing.find((event) => (
-      event.scope === 'parent'
-      && event.outcome === 'completed'
-      && event.sequence > laterParentRequest.sequence
-      && (nextParentRequestAfterLater === undefined || event.sequence < nextParentRequestAfterLater.sequence)
+  const terminalParentRequest = finalChildRoute
+    && localBash?.executionOutcome === 'succeeded'
+    ? parentRequests.find((event) => (
+      event.ordinal === localBash.ordinal + 1
+      && event.sequence > localBash.sequence
     ))
     : undefined
-  const parentCompleted = laterParentRoute
+  const terminalLocalFinal = terminalParentRequest && localFinal
+    && localFinal.sequence > terminalParentRequest.sequence
+    ? localFinal
+    : undefined
+  const parentCompleted = terminalLocalFinal
     ? events.find((event) => (
       event.type === 'dsh.parent.completed'
-      && event.sequence > laterParentRoute.sequence
+      && event.outcome === 'succeeded'
+      && event.sequence > terminalLocalFinal.sequence
     ))
     : undefined
-  const completeChains = parentCompleted ? 1 : 0
+  const finalChildRouteOrderValid = Boolean(
+    finalChildRoute
+    && terminalParentRequest
+    && parentCompleted
+    && (
+      finalChildRoute.sequence < terminalParentRequest.sequence
+      || finalChildRoute.sequence > parentCompleted.sequence
+    )
+  )
+  const completeChains = parentCompleted && finalChildRouteOrderValid ? 1 : 0
   const terminalParentRoutes = routing.filter((event) => (
     event.scope === 'parent'
     && (event.outcome === 'completed' || event.outcome === 'failed')
   ))
+  const terminalParentSettlements = [...terminalParentRoutes, ...localBashes, ...localFinals]
   const unsettledParentCompletionRequests = parentRequests.reduce((count, request, index) => {
     const nextRequest = parentRequests[index + 1]
-    const settled = terminalParentRoutes.some((route) => (
-      route.sequence > request.sequence
-      && (nextRequest === undefined || route.sequence < nextRequest.sequence)
+    const settled = terminalParentSettlements.some((event) => (
+      event.sequence > request.sequence
+      && (nextRequest === undefined || event.sequence < nextRequest.sequence)
     ))
     return count + (settled ? 0 : 1)
   }, 0)
@@ -1603,8 +1845,29 @@ function deepIntegrationStats(events, trial) {
     childBootstrapTurns: childStarts.filter((event) => event.mode === 'bootstrap').length,
     childContinuationTurns: childStarts.filter((event) => event.mode === 'continuation').length,
     providerRoutingEvents: routing.length,
+    workspaceExecEvents: workspaceExecEvents.length,
+    workspaceExecPurposes: Object.fromEntries(
+      ['inspect', 'implement', 'verify'].map((purpose) => [
+        purpose,
+        workspaceExecEvents.filter((event) => event.purpose === purpose).length,
+      ]),
+    ),
+    childHarnessFailureEvents: childHarnessFailures.length,
+    childCorrectiveEvents: childCorrectiveEvents.length,
+    childCorrectiveReasonCodes: Object.fromEntries(
+      [...new Set(childCorrectiveEvents.map((event) => event.reasonCode))]
+        .sort()
+        .map((reasonCode) => [
+          reasonCode,
+          childCorrectiveEvents.filter((event) => event.reasonCode === reasonCode).length,
+        ]),
+    ),
     completedParentRouting: routing.filter((event) => event.scope === 'parent' && event.outcome === 'completed').length,
     completedChildRouting: routing.filter((event) => event.scope === 'child' && event.outcome === 'completed').length,
+    localParentBashes: localBashes.length,
+    successfulLocalParentBashes: localBashes.filter((event) => event.executionOutcome === 'succeeded').length,
+    failedLocalParentBashes: localBashes.filter((event) => event.outcome === 'failed' || event.executionOutcome === 'failed').length,
+    localParentFinals: localFinals.length,
     parentCompleted: dshParentCompletions.length,
     successfulDshParents: dshParentCompletions.filter((event) => event.outcome === 'succeeded').length,
     failedDshParents: dshParentCompletions.filter((event) => event.outcome === 'failed').length,
@@ -1624,8 +1887,15 @@ function aggregateDeepIntegration(trials) {
     'childBootstrapTurns',
     'childContinuationTurns',
     'providerRoutingEvents',
+    'workspaceExecEvents',
+    'childHarnessFailureEvents',
+    'childCorrectiveEvents',
     'completedParentRouting',
     'completedChildRouting',
+    'localParentBashes',
+    'successfulLocalParentBashes',
+    'failedLocalParentBashes',
+    'localParentFinals',
     'parentCompleted',
     'successfulDshParents',
     'failedDshParents',
@@ -1636,6 +1906,20 @@ function aggregateDeepIntegration(trials) {
     protocol: revision.auditProtocol,
     observedTrials: trials.length,
     trialsWithCompleteChain: trials.filter((trial) => trial.completeChains > 0).length,
+    workspaceExecPurposes: Object.fromEntries(
+      ['inspect', 'implement', 'verify'].map((purpose) => [
+        purpose,
+        trials.reduce((sum, trial) => sum + (trial.workspaceExecPurposes?.[purpose] ?? 0), 0),
+      ]),
+    ),
+    childCorrectiveReasonCodes: Object.fromEntries(
+      [...new Set(trials.flatMap((trial) => Object.keys(trial.childCorrectiveReasonCodes ?? {})))]
+        .sort()
+        .map((reasonCode) => [
+          reasonCode,
+          trials.reduce((sum, trial) => sum + (trial.childCorrectiveReasonCodes?.[reasonCode] ?? 0), 0),
+        ]),
+    ),
     ...Object.fromEntries(fields.map((field) => [field, trials.reduce((sum, trial) => sum + trial[field], 0)])),
   }
 }

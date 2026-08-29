@@ -2896,9 +2896,32 @@ async function runBenchmarkHarnessDelegation({ homeDir, args }: { homeDir: strin
   const workspaceRoot = requiredWorkspaceRoot(args.workspaceRoot)
   const taskPrompt = await agentTaskPrompt(args)
   const channel = benchmarkHarnessChannel()
+  const providerClient = createLocalHttpProviderTurnClient({ baseUrl: channel.baseUrl, token: channel.token, benchmarkCommandFinalOutput: true })
+  const protocol = 'tokenless.harness.delegation.v1'
+  const emit = (event: Record<string, unknown>) => process.stdout.write(`${JSON.stringify({ protocol, ...event })}\n`)
+  let successfulImplementExecs = 0
+  let successfulVerifyExecs = 0
   const harness = openWebAgentHarness({
-    providerClient: createLocalHttpProviderTurnClient({ baseUrl: channel.baseUrl, token: channel.token }),
-    toolRegistry: createAgentToolRegistry(),
+    providerClient: {
+      ...providerClient,
+      start: (request) => providerClient.start({ ...request, payloadLifetime: 'ephemeral' }),
+      continue: (request) => providerClient.continue({ ...request, payloadLifetime: 'ephemeral' }),
+    },
+    toolRegistry: createAgentToolRegistry({
+      enableWorkspaceExec: true,
+      requireWorkspaceExecPurpose: true,
+      onWorkspaceExec: (summary) => {
+        if (summary.outcome === 'succeeded' && summary.purpose === 'implement') successfulImplementExecs += 1
+        if (summary.outcome === 'succeeded' && summary.purpose === 'verify') successfulVerifyExecs += 1
+        if (args.adapterStream === true) emit({ type: 'workspace.exec', ...summary })
+      },
+    }),
+    onCorrectiveResponse: args.adapterStream === true
+      ? ({ turn, reasonCode }) => { emit({ type: 'harness.corrective', turn, reasonCode }) }
+      : undefined,
+    finalEvidenceGate: channel.taskType === 'coding'
+      ? () => successfulImplementExecs >= 1 && successfulVerifyExecs >= 1
+      : undefined,
   })
   const started = await harness.start({
     provider,
@@ -2906,16 +2929,43 @@ async function runBenchmarkHarnessDelegation({ homeDir, args }: { homeDir: strin
     taskPrompt,
     workspaceRoot,
     stagingRoot: path.join(homeDir, 'harness-staging'),
-    ...(args.maxTurns === undefined ? {} : { maxTurns: strictPositiveInteger(args.maxTurns, '--max-turns') }),
+    finalOutput: {
+      kind: 'json_schema',
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          command: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 10000,
+            pattern: '[\\s\\S]*\\S[\\s\\S]*',
+          },
+        },
+        required: ['command'],
+      },
+    },
+    maxTurns: args.maxTurns === undefined ? 64 : strictPositiveInteger(args.maxTurns, '--max-turns'),
   })
-  const protocol = 'tokenless.harness.delegation.v1'
-  const emit = (event: Record<string, unknown>) => process.stdout.write(`${JSON.stringify({ protocol, ...event })}\n`)
   if (args.adapterStream === true) emit({ type: 'started', runId: started.runId })
   let view = started
   const timeoutMs = args.timeoutMs === undefined ? 600_000 : strictPositiveInteger(args.timeoutMs, '--timeout-ms')
   const deadline = Date.now() + timeoutMs
+  let interrupted = false
+  let closePromise: Promise<void> | undefined
+  const onSignal = () => {
+    if (interrupted) return
+    interrupted = true
+    closePromise = harness.close()
+  }
+  process.once('SIGINT', onSignal)
+  process.once('SIGTERM', onSignal)
   try {
     while (!['succeeded', 'failed', 'cancelled'].includes(view.status)) {
+      if (interrupted) {
+        await closePromise
+        break
+      }
       if (Date.now() >= deadline) {
         view = await harness.cancel(view.runId)
         break
@@ -2924,16 +2974,25 @@ async function runBenchmarkHarnessDelegation({ homeDir, args }: { homeDir: strin
         throw new Error(`Tokenless Harness benchmark delegation stopped for unsupported intervention: ${view.status}`)
       }
       await new Promise((resolve) => setTimeout(resolve, 100))
-      const next = await harness.read(view.runId)
+      let next: Awaited<ReturnType<typeof harness.read>>
+      try {
+        next = await harness.read(view.runId)
+      } catch (error) {
+        if (!interrupted) throw error
+        await closePromise
+        break
+      }
       if (!next) throw new Error('Tokenless Harness benchmark delegation disappeared before settlement.')
       view = next
     }
     if (args.adapterStream === true) emit({ type: 'settled', run: view })
-    else printPayload({ ok: view.status === 'succeeded', ...view, compactOutput: view.final?.output ?? view.error?.message }, args)
+    else printPayload({ ok: !interrupted && view.status === 'succeeded', ...view, compactOutput: view.final?.output ?? view.error?.message }, args)
   } finally {
-    harness.close()
+    process.off('SIGINT', onSignal)
+    process.off('SIGTERM', onSignal)
+    await (closePromise ?? harness.close())
   }
-  if (view.status !== 'succeeded') process.exitCode = 1
+  if (interrupted || view.status !== 'succeeded') process.exitCode = 1
 }
 
 function benchmarkHarnessChannelConfigured() {
@@ -2943,15 +3002,21 @@ function benchmarkHarnessChannelConfigured() {
 function benchmarkHarnessChannel() {
   const baseUrl = process.env.TOKENLESS_BENCHMARK_LOCAL_HTTP_BASE_URL
   const token = process.env.TOKENLESS_BENCHMARK_CHANNEL_TOKEN
+  const taskType = process.env.TOKENLESS_BENCHMARK_TASK_TYPE
+  const complexity = process.env.TOKENLESS_BENCHMARK_COMPLEXITY
   if (typeof baseUrl !== 'string' || typeof token !== 'string') {
     throw new Error('Tokenless Harness benchmark channel requires both TOKENLESS_BENCHMARK_LOCAL_HTTP_BASE_URL and TOKENLESS_BENCHMARK_CHANNEL_TOKEN.')
+  }
+  if (typeof taskType !== 'string' || !/^[a-z][a-z0-9_-]{0,31}$/.test(taskType)
+    || typeof complexity !== 'string' || !['low', 'medium', 'high'].includes(complexity)) {
+    throw new Error('Tokenless Harness benchmark channel requires valid TOKENLESS_BENCHMARK_TASK_TYPE and TOKENLESS_BENCHMARK_COMPLEXITY.')
   }
   const parsed = new URL(baseUrl)
   if (parsed.protocol !== 'http:' || parsed.hostname !== '127.0.0.1' || parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) {
     throw new Error('Tokenless Harness benchmark channel must use a loopback HTTP origin.')
   }
   if (!/^[A-Za-z0-9_-]{32,256}$/.test(token)) throw new Error('Tokenless Harness benchmark channel token is invalid.')
-  return { baseUrl: parsed.origin, token }
+  return { baseUrl: parsed.origin, token, taskType, complexity }
 }
 
 async function agentTaskPrompt(args: CliArgs) {

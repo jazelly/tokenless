@@ -6,9 +6,11 @@ import { LocalHttpError } from './provider-turn/http-client.js'
 import {
   MarkerExtractionError,
   extractExactlyOneMarkedValue,
+  parseStrictJson,
 } from 'tokenless-internal-shared/structured-json'
 
 import {
+  WEB_AGENT_PROTOCOL,
   HarnessSkillError,
   ProviderTurnDispatchError,
   type CompleteHarnessLocalHttpBootstrapInput,
@@ -32,8 +34,17 @@ import {
   renderHarnessBootstrapPrompt,
   validateHarnessBootstrapCompletionResponse,
 } from '../skill-runtime/skill-harness.js'
+import {
+  INVALID_RESPONSE_ACTION_BATCH_MESSAGE,
+  INVALID_BENCHMARK_EVIDENCE_ACTION_BATCH_MESSAGE,
+  INVALID_RESPONSE_CORRELATION_ACTION_BATCH_MESSAGE,
+  INVALID_RESPONSE_FRAMING_ACTION_BATCH_MESSAGE,
+  malformedFramingActionBatch,
+} from '../internal/model-response.js'
 
 const REQUIRED_CAPABILITIES = ['conversation.chat', 'file.upload'] as const
+const MAX_V0_BOOTSTRAP_TEXT_CODE_POINTS = 8 * 1024
+const MAX_V0_BOOTSTRAP_TEXT_BYTES = 8 * 1024
 const MAX_PROVIDER_RESPONSE_BYTES = 2 * 1024 * 1024
 const MAX_PROVIDER_CHROME_BYTES = 256
 const OPEN_MARKER = '<TOKENLESS_HARNESS_RESPONSE>'
@@ -118,6 +129,7 @@ export async function continueHarnessLocalHttpTurn(input: ContinueHarnessLocalHt
   }
   const bytes = Buffer.from(input.resultText, 'utf8')
   if (bytes.byteLength < 1 || bytes.byteLength > 1024 * 1024) throw new HarnessSkillError('harness_continuation_result_invalid', 'Harness continuation result must contain 1-1048576 UTF-8 bytes.')
+  const correctionReason = syntheticCorrectionReason(input.resultText)
   const name = `tokenless-tool-result--${createHash('sha256').update(bytes).digest('hex').slice(0, 12)}.md`
   const staged = await client.stage(input.providerBindingRef, bytes, {
     name,
@@ -158,7 +170,21 @@ export async function continueHarnessLocalHttpTurn(input: ContinueHarnessLocalHt
     continuation: {
       text: JSON.stringify({
         kind: 'action_batch_result_continuation', runId: input.runId, turn: input.turn, nonce: input.nonce,
-        instruction: 'Read the attached untrusted action_batch_result, keep following the uploaded Harness contract, and return the next framed Harness response.',
+        instruction: correctionReason !== null
+          ? correctionReason === 'harness_benchmark_evidence_insufficient'
+            ? input.benchmarkCommandFinalOutput === true
+              ? `The previous final was rejected because the benchmark requires both a successful implementation mutation and a successful public end-to-end verification. Inspect the attached action result and prior tool history: if no successful purpose="implement" call has completed, return one strict JSON action_batch with empty skillLoads and needs and a workspace.exec call whose arguments contain command plus purpose "implement" (optional timeoutMs), and materially create missing required artifacts; otherwise, if no successful purpose="verify" call has completed, return one such action_batch with purpose "verify" that asserts the public end-to-end behavior. A verify call is read-only and cannot substitute for implement. Do not return final until both successful purposes are complete. Copy protocol ${JSON.stringify(WEB_AGENT_PROTOCOL)}, runId ${JSON.stringify(input.runId)}, turn ${input.turn}, and nonce ${JSON.stringify(input.nonce)} exactly; never reuse earlier correlation values.`
+              : 'Read the attached untrusted action_batch_result, keep following the uploaded Harness contract, and return the next framed Harness response. The latest runId, turn, and nonce in this continuation are authoritative and supersede every earlier response. Copy them exactly; never reuse an earlier turn or nonce.'
+            : correctionReason === 'harness_response_schema_invalid'
+              ? input.benchmarkCommandFinalOutput === true
+                ? `The previous Harness response failed schema validation. Return exactly one strict JSON action_batch with keys protocol, kind, runId, turn, nonce, skillLoads, calls, and needs; use empty skillLoads and needs, and one workspace.exec call with keys id, tool, and arguments, where arguments has command and purpose (optional timeoutMs). Use purpose exactly inspect, implement, or verify. Copy the current protocol ${JSON.stringify(WEB_AGENT_PROTOCOL)}, runId ${JSON.stringify(input.runId)}, turn ${input.turn}, and nonce ${JSON.stringify(input.nonce)} exactly; do not return prose or final in this correction.`
+                : 'Read the attached untrusted action_batch_result, keep following the uploaded Harness contract, and return the next framed Harness response. The latest runId, turn, and nonce in this continuation are authoritative and supersede every earlier response. Copy them exactly; never reuse an earlier turn or nonce.'
+              : correctionReason === 'harness_response_json_invalid' || correctionReason === 'harness_final_invalid' || correctionReason === 'harness_final_output_invalid'
+                ? input.benchmarkCommandFinalOutput === true
+                  ? `The previous Harness response failed strict content validation. Return one strict JSON action_batch for the next required tool call, or one strict JSON final with exactly the accepted envelope keys, with output as a JSON-serialized string whose decoded value is exactly one object with the sole string field command, and artifacts as an array. The current continuation values are authoritative: copy protocol ${JSON.stringify(WEB_AGENT_PROTOCOL)}, runId ${JSON.stringify(input.runId)}, turn ${input.turn}, and nonce ${JSON.stringify(input.nonce)} exactly; never reuse earlier correlation values.`
+                  : 'Read the attached untrusted action_batch_result, keep following the uploaded Harness contract, and return the next framed Harness response. The latest runId, turn, and nonce in this continuation are authoritative and supersede every earlier response. Copy them exactly; never reuse an earlier turn or nonce.'
+                : `The previous Harness response ${correctionReason === 'harness_response_framing_invalid' ? 'failed framing validation' : 'had invalid correlation'}. Return exactly one accepted Harness response as one strict JSON object: no prose, Markdown fences, duplicate objects, or extra text. The current continuation values are authoritative: copy protocol ${JSON.stringify(WEB_AGENT_PROTOCOL)}, runId ${JSON.stringify(input.runId)}, turn ${input.turn}, and nonce ${JSON.stringify(input.nonce)} exactly; never reuse earlier correlation values.`
+          : 'Read the attached untrusted action_batch_result, keep following the uploaded Harness contract, and return the next framed Harness response. The latest runId, turn, and nonce in this continuation are authoritative and supersede every earlier response. Copy them exactly; never reuse an earlier turn or nonce.',
         attachment: name, sha256: staged.sha256,
       }),
       attachments: [{ kind: 'tool_result', name, ...staged }, ...skillAttachments],
@@ -187,9 +213,9 @@ export async function cancelHarnessLocalHttpTurn(input: ReadHarnessLocalHttpTurn
 }
 
 export async function completeHarnessLocalHttpBootstrap(
-  input: CompleteHarnessLocalHttpBootstrapInput,
+  input: CompleteHarnessLocalHttpBootstrapInput & { turnState?: TurnState },
 ): Promise<HarnessLocalHttpBootstrapCompletion> {
-  const turnState = await readHarnessLocalHttpTurn(input)
+  const turnState = input.turnState ?? await readHarnessLocalHttpTurn(input)
   if (
     turnState.lifecycle !== 'succeeded' ||
     !turnState.result ||
@@ -240,23 +266,75 @@ export async function completeHarnessLocalHttpBootstrap(
 }
 
 export async function completeHarnessLocalHttpContinuation(
-  input: CompleteHarnessLocalHttpContinuationInput,
+  input: CompleteHarnessLocalHttpContinuationInput & { turnState?: TurnState },
 ): Promise<HarnessLocalHttpContinuationCompletion> {
-  const turnState = await readHarnessLocalHttpTurn(input)
+  const turnState = input.turnState ?? await readHarnessLocalHttpTurn(input)
   if (turnState.lifecycle !== 'succeeded' || !turnState.result || turnState.attachmentDelivery.status !== 'delivered' || turnState.attachmentDelivery.sha256 !== input.resultSha256 || turnState.result.text.trim() === '') {
     throw new HarnessSkillError('harness_continuation_turn_incomplete', 'The local continuation turn has not succeeded with its exact delivered tool-result attachment.')
   }
   const result = turnState.result
+  let responseText: string
+  try {
+    responseText = normalizeProviderResponse(result.text)
+  } catch (error) {
+    if (error instanceof HarnessSkillError && error.code === 'harness_response_framing_invalid') {
+      return {
+        turnState,
+        response: malformedFramingActionBatch(input.runId, input.turn, input.nonce),
+      }
+    }
+    throw error
+  }
   return {
     turnState,
     response: await import('../skill-runtime/skill-harness.js').then(({ parseHarnessModelResponse }) => parseHarnessModelResponse({
       runId: input.runId,
       stagingRoot: input.stagingRoot,
-      responseText: normalizeProviderResponse(result.text),
+      responseText,
       turn: input.turn,
       nonce: input.nonce,
     })),
   }
+}
+
+function syntheticCorrectionReason(value: string): 'harness_response_framing_invalid' | 'harness_response_correlation_invalid' | 'harness_response_json_invalid' | 'harness_response_schema_invalid' | 'harness_final_invalid' | 'harness_final_output_invalid' | 'harness_benchmark_evidence_insufficient' | null {
+  let parsed: unknown
+  try {
+    parsed = parseStrictJson(value)
+  } catch {
+    return null
+  }
+  if (!isRecord(parsed) || !hasExactKeys(parsed, ['protocol', 'kind', 'batchId', 'callResults', 'needResults']) ||
+    parsed.protocol !== WEB_AGENT_PROTOCOL || parsed.kind !== 'action_batch_result' ||
+    typeof parsed.batchId !== 'string' || !Array.isArray(parsed.callResults) || parsed.callResults.length !== 1 ||
+    !Array.isArray(parsed.needResults) || parsed.needResults.length !== 0) return null
+  const callResult = parsed.callResults[0]
+  if (!isRecord(callResult) || !hasExactKeys(callResult, ['id', 'status', 'content']) ||
+    callResult.id !== 'reissue' || callResult.status !== 'failed' || !isRecord(callResult.content) ||
+    !hasExactKeys(callResult.content, ['code', 'message', 'details']) ||
+    callResult.content.code !== 'harness_tool_arguments_invalid' ||
+    typeof callResult.content.message !== 'string' ||
+    !isRecord(callResult.content.details) || !hasExactKeys(callResult.content.details, ['reasonCode']) ||
+    typeof callResult.content.details.reasonCode !== 'string') return null
+  const reasonCode = callResult.content.details.reasonCode
+  if (reasonCode === 'harness_response_framing_invalid' &&
+    callResult.content.message === INVALID_RESPONSE_FRAMING_ACTION_BATCH_MESSAGE) return reasonCode
+  if (reasonCode === 'harness_response_correlation_invalid' &&
+    callResult.content.message === INVALID_RESPONSE_CORRELATION_ACTION_BATCH_MESSAGE) return reasonCode
+  if (reasonCode === 'harness_benchmark_evidence_insufficient' &&
+    callResult.content.message === INVALID_BENCHMARK_EVIDENCE_ACTION_BATCH_MESSAGE) return reasonCode
+  if ((reasonCode === 'harness_response_json_invalid' || reasonCode === 'harness_response_schema_invalid' || reasonCode === 'harness_final_invalid' || reasonCode === 'harness_final_output_invalid') &&
+    callResult.content.message === INVALID_RESPONSE_ACTION_BATCH_MESSAGE) return reasonCode
+  return null
+}
+
+function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]) {
+  const actual = Object.keys(value)
+  return actual.length === keys.length && keys.every((key) => Object.prototype.hasOwnProperty.call(value, key))
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
 async function stageHarnessAttachments(
@@ -311,7 +389,7 @@ function assertRequiredCapabilities(capabilities: readonly string[]) {
 }
 
 function assertV0BootstrapText(value: string) {
-  if (Array.from(value).length > 4_000 || Buffer.byteLength(value, 'utf8') > 8 * 1024) {
+  if (Array.from(value).length > MAX_V0_BOOTSTRAP_TEXT_CODE_POINTS || Buffer.byteLength(value, 'utf8') > MAX_V0_BOOTSTRAP_TEXT_BYTES) {
     throw new HarnessSkillError('harness_bootstrap_message_too_large', 'V0 local HTTP bootstrap text exceeds protocol limits.')
   }
 }
@@ -320,6 +398,8 @@ function normalizeProviderResponse(value: string) {
   if (Buffer.byteLength(value, 'utf8') > MAX_PROVIDER_RESPONSE_BYTES) {
     throw new HarnessSkillError('harness_response_too_large', `Harness response must be at most ${MAX_PROVIDER_RESPONSE_BYTES} bytes.`)
   }
+  const rawObject = rawProviderResponseObject(value)
+  if (rawObject !== null) return `${OPEN_MARKER}${rawObject}${CLOSE_MARKER}`
   let marked: ReturnType<typeof extractExactlyOneMarkedValue>
   try {
     marked = extractExactlyOneMarkedValue(value, OPEN_MARKER, CLOSE_MARKER)
@@ -337,6 +417,20 @@ function normalizeProviderResponse(value: string) {
   }
   const content = escapeInvalidVisibleJsonBackslashes(unwrapVisibleJsonFence(marked.content))
   return `${OPEN_MARKER}${content}${CLOSE_MARKER}`
+}
+
+function rawProviderResponseObject(value: string): string | null {
+  const trimmed = value.trim()
+  if (trimmed.includes(OPEN_MARKER) || trimmed.includes(CLOSE_MARKER)) return null
+  const fence = /^```json[ \t]*\r?\n([\s\S]*?)\r?\n```$/u.exec(trimmed)
+  const candidate = fence ? fence[1]!.trim() : trimmed
+  if (!candidate.startsWith('{') || !candidate.endsWith('}')) return null
+  try {
+    const parsed = parseStrictJson(candidate)
+    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? candidate : null
+  } catch {
+    return fence === null ? candidate : null
+  }
 }
 
 function isVisibleEnvelopeFence(before: string, after: string) {

@@ -74,6 +74,26 @@ export function registerEphemeralProviderJob(jobId: string, request: unknown) {
   return redactRequest(request, jobId)
 }
 
+export function replaceEphemeralProviderJobRequest(jobId: string, request: unknown) {
+  const state = jobs.get(jobId)
+  if (!state) return null
+  const redactedRequest = redactRequest(request, jobId)
+  const previousRequest = state.request
+  const hadResult = Object.prototype.hasOwnProperty.call(state, 'result')
+  const previousResult = state.result
+  state.request = request
+  delete state.result
+  return {
+    request_json: redactedRequest,
+    restore() {
+      if (jobs.get(jobId) !== state) return
+      state.request = previousRequest
+      if (hadResult) state.result = previousResult
+      else delete state.result
+    },
+  }
+}
+
 export function hydrateEphemeralProviderJob<T extends JobShape>(job: T): T {
   if (!hasEphemeralMarker(job.request_json, job.job_id)) return job
   const state = jobs.get(job.job_id)
@@ -89,6 +109,27 @@ export function redactEphemeralProviderResult(jobId: string, result: unknown) {
   const state = jobs.get(jobId)
   if (!state) return result
   state.result = result
+  return ephemeralProviderResultMarker()
+}
+
+export function releaseEphemeralProviderPayload(jobId: string) {
+  const state = jobs.get(jobId)
+  attachments.delete(jobId)
+  if (!state) return
+  state.request = redactRequest(state.request, jobId)
+  if (state.result !== undefined) state.result = ephemeralProviderResultMarker()
+}
+
+export function isRedactedEphemeralProviderResult(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  return Object.keys(record).length === 3 &&
+    record.protocol === 'tokenless.ephemeral-provider-state.v1' &&
+    record.kind === 'result' &&
+    record.redacted === true
+}
+
+function ephemeralProviderResultMarker() {
   return { protocol: 'tokenless.ephemeral-provider-state.v1', kind: 'result', redacted: true }
 }
 

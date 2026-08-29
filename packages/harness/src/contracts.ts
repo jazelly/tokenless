@@ -84,6 +84,7 @@ export type ContinueHarnessLocalHttpTurnInput = {
   resultText: string
   skillLoads?: readonly string[] | undefined
   payloadLifetime?: 'ephemeral' | undefined
+  benchmarkCommandFinalOutput?: boolean | undefined
 }
 
 export type HarnessLocalHttpContinuationStart = {
@@ -438,7 +439,7 @@ export type HarnessToolCatalogEntry = HarnessToolDescriptor & {
   server: string
   serverToolName: string
   readOnly: boolean
-  approval: 'allow_read_only' | 'always'
+  approval: 'allow_read_only' | 'allow_trusted' | 'always'
 }
 
 export type HarnessToolExecution =
@@ -485,6 +486,7 @@ export type HarnessToolRegistry = {
   restoreResult?(entry: HarnessToolCatalogEntry, value: JsonValue, context: HarnessToolExecutionContext): JsonValue
   prepareProviderRequest?(request: ProviderTurnRequest, context: HarnessToolProviderContext): ProviderTurnRequest
   redactFinal?(value: HarnessFinalResponse, context: HarnessToolProviderContext): HarnessFinalResponse
+  close?(): Promise<void> | void
 }
 
 export type AgentRunStatus =
@@ -534,7 +536,7 @@ export type WebAgentHarness = {
   read(runId: string): Promise<AgentRunView | null>
   resume(runId: string, intervention: AgentRunIntervention): Promise<AgentRunView>
   cancel(runId: string): Promise<AgentRunView>
-  close(): void
+  close(): Promise<void>
 }
 
 export class HarnessSkillError extends Error {
