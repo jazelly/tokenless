@@ -40,6 +40,8 @@ tokenless agents install codex
 
 Codex hooks 不会替换 native subagent execution。Codex workflow 需要显式委托 Tokenless Harness-owned child 时，请使用 `tokenless agent delegate --workspace-root "$PWD" ...`。
 
+使用 internal Codex sub-agent 不会隐藏 Codex UI delegation messages；Tokenless 不能控制 Codex UI，也不能控制 native `spawn_agent` 的行为。只有在用户明确要求 separate tasks，或明确需要 independently visible progress 时，sidebar-visible 的 worker/reviewer 工作才使用 separate Codex tasks；主 task 读取 status 并给出简短 synthesis。不要重复粘贴长 child report：报告只包含 child name、status、at most one blocker 和 coordinator decision。
+
 ## DeepSeek Harness Subagent 集成
 
 ```bash

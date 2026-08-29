@@ -65,6 +65,12 @@ test('built CLI installs, preserves, reports, and uninstalls the Codex integrati
     assert.match(guidance, /^# Existing guidance/m)
     assert.equal(count(guidance, '<!-- tokenless-codex-guidance v1 -->'), 1)
     assert.match(guidance, /Do not .*start Codex through Tokenless/)
+    assert.match(guidance, /Internal sub-agent use does not hide Codex UI delegation messages/)
+    assert.match(guidance, /Tokenless cannot control Codex UI or native `spawn_agent` behavior/)
+    assert.match(guidance, /Do not repeat long child reports in the coordinator response/)
+    assert.match(guidance, /child name, status, at most one blocker, and the coordinator decision/)
+    assert.match(guidance, /separate Codex tasks for sidebar-visible worker\/reviewer work only when the user explicitly requests separate tasks or independently visible progress/)
+    assert.match(guidance, /main task reads statuses and gives a short synthesis/)
 
     const hooks = JSON.parse(fs.readFileSync(path.join(fixture.codexHome, 'hooks.json'), 'utf8'))
     assert.equal(hooks.description, 'Existing user hooks.')

@@ -38,6 +38,8 @@ Use `tokenless agents status codex --json`, `tokenless agents inspect codex --ch
 
 Codex hooks do not replace native subagent execution. Use `tokenless agent delegate --workspace-root "$PWD" ...` when a Codex workflow explicitly delegates a Tokenless Harness-owned child.
 
+Internal Codex sub-agent use does not hide Codex UI delegation messages, and Tokenless cannot control Codex UI or native `spawn_agent` behavior. Use separate Codex tasks for sidebar-visible worker/reviewer work only when the user explicitly requests separate tasks or independently visible progress; the main task reads statuses and gives a short synthesis. Do not repeat long child reports: report only the child name, status, at most one blocker, and the coordinator decision.
+
 ## DeepSeek Harness Subagent Integration
 
 ```bash

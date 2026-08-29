@@ -194,6 +194,8 @@ tokenless agents uninstall codex
 
 `status` 会报告准确的 instruction/hook paths，并验证当前 guidance body 与 hook command；它不会创建 Harness state。过期或被修改的 definition 会显示为未安装，再次运行 `install` 即可修复。`inspect` 从独立的 Harness 数据库读取一个精确 chat，包括 local project、turns、invocations、稳定的 provider task identity，以及 provider Project/conversation bindings。Ledger 只保存 prompt hash，不保存原始 prompts、transcripts、assistant messages、credentials 或 browser state。`uninstall` 会从两个全局 instruction filenames 中移除 Tokenless guidance，并且只移除 Tokenless hook groups；已经保留的 Harness history 不会删除。
 
+已安装的 guidance 会区分 internal sub-agent 与 separate Codex task。使用 internal sub-agent 不会隐藏 Codex UI delegation messages；Tokenless 不能控制 Codex UI，也不能控制 native `spawn_agent` 的行为。只有在用户明确要求 separate tasks，或明确需要 independently visible progress 时，sidebar-visible 的 worker/reviewer 工作才使用 separate Codex tasks；主 task 读取 status 并给出简短 synthesis。不要重复粘贴长 child report：报告只包含 child name、status、at most one blocker 和 coordinator decision。
+
 主要选项：
 
 - `--codex-home <dir>` 显式选择 Codex state root，而不是使用 `CODEX_HOME` 或 `~/.codex`。

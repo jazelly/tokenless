@@ -64,6 +64,12 @@ tokenless agent delegate \
 
 Codex 当前属于这一类。它的 [native spawn handler](https://github.com/openai/codex/blob/main/codex-rs/core/src/tools/handlers/multi_agents/spawn.rs) 负责创建 subagent；[SubagentStart hook input](https://github.com/openai/codex/blob/main/codex-rs/hooks/schema/generated/subagent-start.command.input.schema.json) 是观测 context，不是 executor replacement。因此 Tokenless 为 Codex 如实提供显式 delegation，不声称 native `spawn_agent` 已被替换。
 
+## Codex task 的可见性与报告
+
+使用 internal Codex sub-agent 不会隐藏 Codex UI delegation messages。Tokenless 不能控制 Codex UI，也不能控制 native `spawn_agent` 的行为。
+
+只有在用户明确要求 separate tasks，或明确需要 independently visible progress 时，sidebar-visible 的 worker/reviewer 工作才使用 separate Codex tasks。主 task 读取这些 task 的 status 并给出简短 synthesis，不重复粘贴长 child report；报告只包含 child name、status、at most one blocker 和 coordinator decision。
+
 ## Ownership
 
 | Path | Agent Loop owner | Tool executor | Provider access |

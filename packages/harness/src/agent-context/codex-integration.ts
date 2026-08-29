@@ -571,6 +571,9 @@ function guidanceBlock() {
     '- Do not invent or manually copy Codex chat, turn, session, project, or conversation identifiers. Installed lifecycle hooks bind them to each Tokenless invocation.',
     '- For later delegation in the same Codex chat, keep the hook-provided Tokenless task identity so the Harness can continue the same provider conversation.',
     '- Share only user-authorized prompts and files. Never send hidden reasoning, credentials, browser state, secrets, or unrelated project content.',
+    '- Internal sub-agent use does not hide Codex UI delegation messages; Tokenless cannot control Codex UI or native `spawn_agent` behavior.',
+    '- Do not repeat long child reports in the coordinator response. Report only the child name, status, at most one blocker, and the coordinator decision.',
+    '- Use separate Codex tasks for sidebar-visible worker/reviewer work only when the user explicitly requests separate tasks or independently visible progress. The main task reads statuses and gives a short synthesis.',
     GUIDANCE_END,
   ].join('\n')
 }
