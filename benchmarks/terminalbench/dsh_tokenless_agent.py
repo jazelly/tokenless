@@ -35,7 +35,7 @@ SEMANTIC_MANIFEST_SCHEMA = "tokenless.terminalbench-semantic-manifest.v1"
 INSTRUCTION_DIGEST = "sha256:ff25b9442ef81d016d49300aef76c33f1b289fcd544bb0308b25f85bf343fce9"
 TASK_REF_DIGEST = "sha256:82cddb9ea94d792455d3e32b3c8a60ed73003714ed01785ec3b1ec5c580bccba"
 CHANNEL_PROTOCOL = "tokenless.terminalbench-channel.v1"
-AUDIT_PROTOCOL = "tokenless.terminalbench-deep-audit.v36"
+AUDIT_PROTOCOL = "tokenless.terminalbench-deep-audit.v37"
 PROXY_PORT = 18765
 MAX_BRIDGE_BODY_BYTES = 8 * 1024 * 1024
 MAX_BASH_OUTCOME_BODY_BYTES = 1024
@@ -88,6 +88,7 @@ CHILD_PROVIDER_SUBMIT_FAILURE_CODES = frozenset(
     }
 )
 CHILD_HARNESS_FAILURE_CODE_PATTERN = re.compile(r"^harness_[a-z0-9_]{1,100}$")
+PROVIDER_FAILURE_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,127}$")
 SYNTHETIC_REISSUE_REASON_CODES = frozenset(
     {
         "harness_response_framing_invalid",
@@ -1347,6 +1348,9 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         retry_after_header = upstream.getheader(
             "X-Tokenless-Route-Retry-After-Seconds"
         )
+        failure_code_header = upstream.getheader(
+            "X-Tokenless-Route-Failure-Code"
+        )
         attempts_header = upstream.getheader("X-Tokenless-Route-Attempts")
         if attempts_header is None or preference_requested_header is None:
             return None
@@ -1368,6 +1372,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             or visible_proof_header is None
             or limit_window_header is None
             or retry_after_header is None
+            or failure_code_header is None
             or not isinstance(exclusions_value, list)
             or len(exclusions_value) > 64
             or any(
@@ -1405,6 +1410,11 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
                     not retry_after_header.isdigit()
                     or not 1 <= int(retry_after_header) <= 604_800
                 )
+            )
+            or (
+                failure_code_header != ""
+                and PROVIDER_FAILURE_CODE_PATTERN.fullmatch(failure_code_header)
+                is None
             )
             or (
                 preference_requested is not None
@@ -1511,6 +1521,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             "retryAfterSeconds": (
                 int(retry_after_header) if retry_after_header else None
             ),
+            "failureCode": failure_code_header or None,
             "attempts": attempts,
         }
 
@@ -1528,6 +1539,11 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             )
             return
         outcome = "completed" if upstream.status < 400 else "failed"
+        if (outcome == "completed") != (route["failureCode"] is None):
+            self.record_event(
+                {"type": "provider.routing.invalid", "reason": "failure_code_attribution"}
+            )
+            return
         if outcome == "completed" and route["rateLimited"]:
             self.record_event(
                 {"type": "provider.routing.invalid", "reason": "rate_limit_attribution"}
@@ -1580,6 +1596,11 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         if outcome == "completed" and route["rateLimited"]:
             self.record_event(
                 {"type": "provider.routing.invalid", "reason": "rate_limit_attribution"}
+            )
+            return
+        if (outcome == "completed") != (route["failureCode"] is None):
+            self.record_event(
+                {"type": "provider.routing.invalid", "reason": "failure_code_attribution"}
             )
             return
         turn_ref = unquote(path.rsplit("/", 1)[-1])

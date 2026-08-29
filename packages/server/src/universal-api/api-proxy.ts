@@ -63,6 +63,7 @@ export class ApiProxyError extends Error {
     message: string,
     readonly param: string | null = null,
     readonly routing: ApiProxyRouting | null = null,
+    readonly routingFailureCode: string | null = null,
   ) {
     super(message)
     this.name = 'ApiProxyError'
@@ -422,6 +423,7 @@ export class ApiProxyAdapter {
           error.message,
           error.param,
           autoRouting(request, autoRoutes, autoExclusions, error.routing),
+          error.routingFailureCode,
         )
       }
       throw error
@@ -1718,7 +1720,17 @@ function apiProxyJobFailure(job: Job, modeOverride?: ApiProxyRouting['mode']) {
     `api proxy job did not produce a visible response: ${detail}`,
     null,
     routingFromJob(job, modeOverride),
+    jobRoutingFailureCode(job),
   )
+}
+
+function jobRoutingFailureCode(job: Job) {
+  for (const value of [job.error_json, job.blocker_json]) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue
+    const code = (value as { code?: unknown }).code
+    if (typeof code === 'string' && /^[a-z][a-z0-9_]{0,127}$/.test(code)) return code
+  }
+  return 'upstream_error'
 }
 
 export function routingFromJob(job: Job, modeOverride?: ApiProxyRouting['mode']): ApiProxyRouting | null {

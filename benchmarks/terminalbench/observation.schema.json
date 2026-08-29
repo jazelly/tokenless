@@ -182,7 +182,7 @@
     "routeEvent": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["trial", "task", "sequence", "scope", "mode", "preferenceRequested", "preferenceHonored", "exclusions", "fallbackProviders", "fallbackUsed", "provider", "outcome", "providerSubmitted", "rateLimited", "visibleProof", "limitWindow", "retryAfterSeconds", "attempts", "observedAt", "tokenEstimate"],
+      "required": ["trial", "task", "sequence", "scope", "mode", "preferenceRequested", "preferenceHonored", "exclusions", "fallbackProviders", "fallbackUsed", "provider", "outcome", "failureCode", "providerSubmitted", "rateLimited", "visibleProof", "limitWindow", "retryAfterSeconds", "attempts", "observedAt", "tokenEstimate"],
       "properties": {
         "trial": { "type": "string", "minLength": 1 },
         "task": { "type": "string", "minLength": 1 },
@@ -196,6 +196,7 @@
         "fallbackUsed": { "type": "boolean" },
         "provider": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
         "outcome": { "enum": ["completed", "failed"] },
+        "failureCode": { "type": ["string", "null"], "pattern": "^[a-z][a-z0-9_]{0,127}$" },
         "providerSubmitted": { "type": "boolean" },
         "rateLimited": { "type": "boolean" },
         "visibleProof": { "$ref": "#/definitions/nullableString" },

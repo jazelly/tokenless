@@ -590,7 +590,7 @@ function parseStartTurnRequest(value: unknown): StartTurnRequest {
   }
   if (request.conversation.mode === 'continue') return parseContinueTurnRequest(request)
   if (Object.keys(request.conversation).length !== 1 ||
-    !isPlainRecord(request.bootstrap) || Object.keys(request.bootstrap).length !== 2 || typeof request.bootstrap.text !== 'string' || request.bootstrap.text.length === 0 || Array.from(request.bootstrap.text).length > 8192 || Buffer.byteLength(request.bootstrap.text, 'utf8') > 8192 || !Array.isArray(request.bootstrap.attachments) || request.bootstrap.attachments.length < 1 || request.bootstrap.attachments.length > 33) {
+    !isPlainRecord(request.bootstrap) || Object.keys(request.bootstrap).length !== 2 || typeof request.bootstrap.text !== 'string' || request.bootstrap.text.length === 0 || Array.from(request.bootstrap.text).length > 65536 || Buffer.byteLength(request.bootstrap.text, 'utf8') > 65536 || !Array.isArray(request.bootstrap.attachments) || request.bootstrap.attachments.length < 1 || request.bootstrap.attachments.length > 33) {
     throw new Error('start_turn_request is invalid')
   }
   const refs = new Set<string>()

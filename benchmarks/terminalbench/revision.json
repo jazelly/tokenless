@@ -17,6 +17,6 @@
   "model": "tokenless/auto",
   "wiringTask": "terminal-bench/openssl-selfsigned-cert",
   "protocol": "tokenless.terminalbench-channel.v1",
-  "auditProtocol": "tokenless.terminalbench-deep-audit.v36",
+  "auditProtocol": "tokenless.terminalbench-deep-audit.v37",
   "routingProtocol": "tokenless.terminalbench-routing.v4"
 }

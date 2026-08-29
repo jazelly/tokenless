@@ -43,8 +43,8 @@ import {
 } from '../internal/model-response.js'
 
 const REQUIRED_CAPABILITIES = ['conversation.chat', 'file.upload'] as const
-const MAX_V0_BOOTSTRAP_TEXT_CODE_POINTS = 8 * 1024
-const MAX_V0_BOOTSTRAP_TEXT_BYTES = 8 * 1024
+const MAX_V0_BOOTSTRAP_TEXT_CODE_POINTS = 64 * 1024
+const MAX_V0_BOOTSTRAP_TEXT_BYTES = 64 * 1024
 const MAX_PROVIDER_RESPONSE_BYTES = 2 * 1024 * 1024
 const MAX_PROVIDER_CHROME_BYTES = 256
 const OPEN_MARKER = '<TOKENLESS_HARNESS_RESPONSE>'

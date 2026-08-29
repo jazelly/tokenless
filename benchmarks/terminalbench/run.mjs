@@ -844,6 +844,7 @@ function projectObservationEvent(event, record) {
     fallbackUsed: event.fallbackUsed,
     provider: event.provider,
     outcome: event.outcome,
+    failureCode: event.failureCode,
     providerSubmitted: event.providerSubmitted,
     rateLimited: event.rateLimited,
     visibleProof: event.visibleProof,
@@ -1930,7 +1931,7 @@ function validateProviderRoutingEvent(event) {
       'protocol', 'sequence', 'type', 'scope', 'mode', 'provider',
       'fallbackProviders', 'fallbackUsed', 'rateLimited', 'preferenceRequested',
       'preferenceHonored', 'providerSubmitted', 'visibleProof', 'limitWindow',
-      'retryAfterSeconds', 'exclusions', 'attempts', 'outcome', 'observedAt', 'tokenEstimate',
+      'retryAfterSeconds', 'failureCode', 'exclusions', 'attempts', 'outcome', 'observedAt', 'tokenEstimate',
     ].includes(key))
     ||
     event.protocol !== revision.auditProtocol
@@ -2017,6 +2018,12 @@ function validateProviderRoutingEvent(event) {
     ))
     || event.fallbackUsed !== (event.attempts.length > 0)
     || (event.outcome !== 'completed' && event.outcome !== 'failed')
+    || event.failureCode !== null && (
+      typeof event.failureCode !== 'string'
+      || !/^[a-z][a-z0-9_]{0,127}$/u.test(event.failureCode)
+    )
+    || event.outcome === 'completed' && event.failureCode !== null
+    || event.outcome === 'failed' && event.failureCode === null
     || event.outcome === 'completed' && event.rateLimited
     || event.outcome === 'completed' && event.visibleProof !== null
     || event.rateLimited && (event.visibleProof === null || event.limitWindow === null)

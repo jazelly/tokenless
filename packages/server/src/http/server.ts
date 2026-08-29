@@ -751,7 +751,12 @@ async function handlePrivateProviderTurnRequest(
     const action = turnRoute[2] ?? null
     if (method === 'GET' && action === null) {
       const read = await providerTurn.readWithRouting(turnRef)
-      writeApiProxyRoutingHeaders(response, read.routing, read.outcome)
+      writeApiProxyRoutingHeaders(
+        response,
+        read.routing,
+        read.outcome,
+        read.outcome === 'failed' ? privateProviderTurnFailureCode(read.turn) : null,
+      )
       writeJson(response, 200, { turn: read.turn })
       return true
     }
@@ -767,7 +772,7 @@ async function handlePrivateProviderTurnRequest(
 
 function writePrivateProviderTurnError(response: ServerResponse, error: unknown) {
   if (error instanceof PrivateProviderTurnRoutingError) {
-    writeApiProxyRoutingHeaders(response, error.routing, 'failed')
+    writeApiProxyRoutingHeaders(response, error.routing, 'failed', 'invalid_input')
   }
   const daemonError = toDaemonError(error)
   const requestRefConflict = error instanceof WebAiRequestRefConflictError
@@ -958,7 +963,7 @@ function apiProxyPayloadLifetime(request: IncomingMessage): ApiProxyPayloadLifet
 function writeApiProxyError(response: ServerResponse, dialect: ApiProxyDialect, error: unknown) {
   if (response.destroyed || response.headersSent || response.writableEnded) return
   if (error instanceof ApiProxyError) {
-    writeApiProxyRoutingHeaders(response, error.routing)
+    writeApiProxyRoutingHeaders(response, error.routing, 'failed', error.routingFailureCode ?? error.code)
     writeJson(response, error.status, apiProxyErrorBody(dialect, error.code, error.message, error.status, error.param))
     return
   }
@@ -979,8 +984,15 @@ function writeApiProxyRoutingHeaders(
   response: ServerResponse,
   routing: ApiProxyRouting | null | undefined,
   outcome: 'pending' | 'completed' | 'failed' | undefined = undefined,
+  failureCode: string | null = null,
 ) {
   if (outcome !== undefined) response.setHeader('X-Tokenless-Route-Outcome', outcome)
+  response.setHeader(
+    'X-Tokenless-Route-Failure-Code',
+    failureCode !== null && /^[a-z][a-z0-9_]{0,127}$/.test(failureCode)
+      ? failureCode
+      : '',
+  )
   if (!routing || !/^[a-z][a-z0-9-]{0,63}$/.test(routing.provider)) return
   response.setHeader('X-Tokenless-Route-Mode', routing.mode)
   response.setHeader('X-Tokenless-Route-Provider', routing.provider)
@@ -995,6 +1007,15 @@ function writeApiProxyRoutingHeaders(
   response.setHeader('X-Tokenless-Route-Visible-Proof', routing.visibleProof ?? '')
   response.setHeader('X-Tokenless-Route-Limit-Window', routing.limitWindow ?? '')
   response.setHeader('X-Tokenless-Route-Retry-After-Seconds', routing.retryAfterSeconds === undefined ? '' : String(routing.retryAfterSeconds))
+}
+
+function privateProviderTurnFailureCode(turn: Record<string, unknown>) {
+  const error = turn.error
+  if (!error || typeof error !== 'object' || Array.isArray(error)) return 'provider_turn_failed'
+  const code = (error as { code?: unknown }).code
+  return typeof code === 'string' && /^[a-z][a-z0-9_]{0,127}$/.test(code)
+    ? code
+    : 'provider_turn_failed'
 }
 
 /**
