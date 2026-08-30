@@ -157,6 +157,25 @@
         "durable_state"
       ]
     },
+    "harness-attachment-roundtrip": {
+      "gate": "mutation",
+      "submissions": 2,
+      "actions": [
+        "file.upload",
+        "prompt.input",
+        "prompt.submit",
+        "response.read"
+      ],
+      "closure": [
+        "cli",
+        "visible_attachment",
+        "visible_submission",
+        "visible_response",
+        "same_conversation",
+        "visible_two_turns",
+        "durable_state"
+      ]
+    },
     "conversation-continuation": {
       "gate": "mutation",
       "submissions": 2,
@@ -686,6 +705,7 @@
         "workspace-response-baseline"
       ],
       "unavailable": {
+        "harness-attachment-roundtrip": "harness_attachment_roundtrip_not_verified",
         "qwen-image": "provider_specific_capability",
         "meta-image": "provider_specific_capability",
         "chatgpt-image": "provider_specific_capability",
@@ -718,6 +738,7 @@
         "session-readiness",
         "prompt-draft",
         "file-selection",
+        "harness-attachment-roundtrip",
         "conversation-workflow",
         "chatgpt-image"
       ],
@@ -762,6 +783,7 @@
         "prompt-draft",
       "model-choice",
       "file-selection",
+      "harness-attachment-roundtrip",
       "conversation-workflow",
       "native-project"
       ],
@@ -804,6 +826,7 @@
         "session-readiness",
         "prompt-draft",
         "file-selection",
+        "harness-attachment-roundtrip",
         "gemini-image",
         "workspace-response-citations"
       ],
@@ -847,6 +870,7 @@
       "session-readiness",
       "prompt-draft",
       "file-selection",
+      "harness-attachment-roundtrip",
       "conversation-workflow",
       "grok-image"
       ],
@@ -892,6 +916,7 @@
         "effort-choice"
       ],
       "unavailable": {
+        "harness-attachment-roundtrip": "harness_attachment_roundtrip_not_verified",
         "qwen-image": "configured_profile_dns_unavailable_2026_08_17",
         "grok-image": "provider_specific_capability",
         "arena-search": "provider_specific_capability",
@@ -933,6 +958,7 @@
         "session-readiness",
         "prompt-draft",
         "file-selection",
+        "harness-attachment-roundtrip",
         "workspace-response-baseline"
       ],
       "unavailable": {
@@ -978,6 +1004,7 @@
         "workspace-response-citations"
       ],
       "unavailable": {
+        "harness-attachment-roundtrip": "harness_attachment_roundtrip_not_verified",
         "qwen-image": "provider_specific_capability",
         "arena-search": "provider_specific_capability",
         "arena-image": "provider_specific_capability",
@@ -1022,6 +1049,7 @@
         "workspace-response-baseline"
       ],
       "unavailable": {
+        "harness-attachment-roundtrip": "harness_attachment_roundtrip_not_verified",
         "qwen-image": "provider_specific_capability",
         "arena-search": "provider_specific_capability",
         "arena-image": "provider_specific_capability",
@@ -1067,6 +1095,7 @@
         "workspace-response-baseline"
       ],
       "unavailable": {
+        "harness-attachment-roundtrip": "harness_attachment_roundtrip_not_verified",
         "qwen-image": "provider_specific_capability",
         "arena-search": "provider_specific_capability",
         "arena-image": "provider_specific_capability",
@@ -1110,6 +1139,7 @@
         "kimi-search"
       ],
       "unavailable": {
+        "harness-attachment-roundtrip": "harness_attachment_roundtrip_not_verified",
         "qwen-image": "provider_specific_capability",
         "arena-search": "provider_specific_capability",
         "arena-image": "provider_specific_capability",
@@ -1151,6 +1181,7 @@
         "dola-image"
       ],
       "unavailable": {
+        "harness-attachment-roundtrip": "harness_attachment_roundtrip_not_verified",
         "qwen-image": "provider_specific_capability",
         "arena-search": "provider_specific_capability",
         "arena-image": "provider_specific_capability",
@@ -1196,6 +1227,7 @@
         "workspace-response-baseline"
       ],
       "unavailable": {
+        "harness-attachment-roundtrip": "harness_attachment_roundtrip_not_verified",
         "qwen-image": "provider_specific_capability",
         "arena-search": "provider_specific_capability",
         "arena-image": "provider_specific_capability",

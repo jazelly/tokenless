@@ -11,7 +11,7 @@ import { getProviderInstanceForUrl } from '../../packages/server/dist/src/browse
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const cliEntry = path.join(root, 'packages/cli/dist/src/tokenless.mjs')
-const daemonEntry = path.join(root, 'packages/server/dist/src/entry.mjs')
+const daemonEntry = path.join(root, 'packages/cli/dist/src/bootstrap/daemon-entry.mjs')
 const protocol = 'tokenless.e2e-browser-inspection.v3'
 const pollMs = 50
 const daemonStopTimeoutMs = 60_000
@@ -64,6 +64,7 @@ export async function createLiveBrowserInspectionSession(options) {
       seenBarriers,
       expectedJobId: observeOptions.jobId,
       childOutput: observeOptions.childOutput,
+      signal: observeOptions.signal,
       timeoutMs: observeOptions.timeoutMs ?? 120_000,
     })
     seenBarriers.add(barrierIdentity(waiting))
@@ -193,6 +194,7 @@ function cancelRunJobs({ homeDir, daemonUrl, env, jobPrefix }) {
 async function waitForWaitingBarrier(options) {
   const deadline = Date.now() + options.timeoutMs
   while (Date.now() <= deadline) {
+    if (options.signal?.aborted) throw new Error('Browser observer wait was aborted.')
     const exited = options.childOutput?.settled()
     const waiting = await findWaitingBarrier(
       options.barrierRoot,

@@ -38,6 +38,7 @@ const handlers = {
   'model-choice': modelChoice,
   'effort-choice': effortChoice,
   'file-selection': fileSelection,
+  'harness-attachment-roundtrip': harnessAttachmentRoundtrip,
   'conversation-continuation': conversationContinuation,
   'model-comparison': modelComparison,
   'arena-search': arenaSearch,
@@ -699,6 +700,196 @@ async function fileSelection({ provider, journey }) {
     await fs.rm(file, { force: true })
     if (deepSeekState) await restoreDeepSeekState(journey, deepSeekState)
   }
+}
+
+async function harnessAttachmentRoundtrip({ provider, journey }) {
+  const timeoutMs = 600_000
+  const workspace = path.join(
+    root,
+    'test-results',
+    'live-provider-inputs',
+    `${markerFor(provider, 'HARNESS_WORKSPACE')}_${randomUUID().slice(0, 8)}`,
+  )
+  const proof = markerFor(provider, 'HARNESS_READ_ONLY_PROOF')
+  const proofFile = 'readonly-proof.txt'
+  const evidence = []
+  let firstRequest = null
+  let first = null
+  let second = null
+  const browserJourney = { daemonPid: null, pageRefHash: null, targetId: null }
+  const continuationWait = new AbortController()
+  await fs.mkdir(workspace, { recursive: true, mode: 0o700 })
+  await fs.writeFile(path.join(workspace, proofFile), `${proof}\n`, { mode: 0o600 })
+
+  try {
+    first = await journey.session.startCli([
+      'agent', 'delegate',
+      '--provider', provider,
+      '--workspace-root', workspace,
+      '--prompt', [
+        `Use the read-only workspace.read tool to read ${proofFile}.`,
+        'Then return exactly the complete file contents with no additional text.',
+        'Do not call any write tool.',
+      ].join(' '),
+      '--max-turns', '4',
+      '--timeout-ms', String(timeoutMs),
+    ], {
+      startTimeoutMs: timeoutMs,
+      beforeRelease: async ({ waiting, page }) => {
+        assertHarnessJourneyPage(browserJourney, waiting, page, provider)
+        recordSubmissionAttempt(journey)
+        firstRequest = harnessTurnRequest(waiting.jobId, provider, 'tokenless-harness-system--')
+      },
+      observeAfterRelease: async ({ waiting, page }) => (
+        observeHarnessProviderTurn({ waiting, page, provider, turn: 1, evidence })
+      ),
+    })
+
+    const firstResult = first.wait()
+    const secondAttempt = journey.session.observeNextAttempt({
+      timeoutMs,
+      signal: continuationWait.signal,
+      beforeRelease: async ({ waiting, page }) => {
+        assertHarnessJourneyPage(browserJourney, waiting, page, provider)
+        recordSubmissionAttempt(journey)
+        const request = harnessTurnRequest(waiting.jobId, provider, 'tokenless-tool-result--')
+        assert.equal(request.pageRef, firstRequest?.pageRef, 'Harness continuation must keep the exact page ref')
+        assert.equal(request.taskId, firstRequest?.taskId, 'Harness continuation must keep the exact task id')
+      },
+      observeAfterRelease: async ({ waiting, page }) => (
+        observeHarnessProviderTurn({ waiting, page, provider, turn: 2, evidence })
+      ),
+    })
+    second = await Promise.race([
+      secondAttempt,
+      firstResult.then(
+        () => { throw new Error(`${provider} Harness delegate settled before a continuation browser turn`) },
+        (error) => { throw error },
+      ),
+    ])
+
+    const [{ payload }, secondObservation] = await Promise.all([firstResult, second.wait()])
+    assert.equal(secondObservation.status, 'succeeded')
+    assert.equal(payload?.ok, true)
+    assert.equal(payload?.status, 'succeeded')
+    assert.equal(payload?.turn, 2)
+    assert.equal(payload?.final?.output?.trim(), proof)
+    assert.deepEqual(payload?.final?.artifacts, [])
+    assert.equal(evidence.length, 2)
+    assert.deepEqual(evidence.map((entry) => entry.turn), [1, 2])
+    assert.ok(evidence.every((entry) => entry.provider === provider && entry.status === 'succeeded'))
+    await writeHarnessRoundtripEvidence(provider, evidence)
+  } finally {
+    continuationWait.abort()
+    await Promise.all([first?.close(), second?.close()])
+    await fs.rm(workspace, { recursive: true, force: true })
+  }
+}
+
+function assertHarnessJourneyPage(journey, waiting, page, provider) {
+  assert.equal(waiting.provider, provider)
+  assert.equal(canonicalPageUrl(waiting.url), canonicalPageUrl(page.url()))
+  if (journey.daemonPid === null) journey.daemonPid = waiting.daemonPid
+  assert.equal(waiting.daemonPid, journey.daemonPid, `${provider} Harness turns must stay on one daemon`)
+  if (journey.pageRefHash === null) journey.pageRefHash = waiting.pageRefHash
+  assert.equal(waiting.pageRefHash, journey.pageRefHash, `${provider} Harness turns must keep one page ref`)
+  assert.equal(
+    waiting.reusedPageBinding,
+    journey.targetId !== null,
+    `${provider} Harness continuation must reuse its managed page binding`,
+  )
+  if (journey.targetId === null) journey.targetId = waiting.targetId
+  assert.equal(waiting.targetId, journey.targetId, `${provider} Harness turns must stay on one Chromium target`)
+}
+
+function harnessTurnRequest(jobId, provider, expectedAttachmentPrefix) {
+  const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'), { readOnly: true })
+  try {
+    const row = database.prepare(
+      'SELECT provider, request_json FROM jobs WHERE job_id = ?',
+    ).get(jobId)
+    assert.equal(row?.provider, provider)
+    const request = JSON.parse(row.request_json)
+    assert.equal(request.provider, provider)
+    assert.equal(request.capabilityRoute?.provider, provider)
+    assert.deepEqual(request.capabilityRoute?.requirements, ['conversation.chat', 'file.upload'])
+    assert.equal(request.fallback, null, 'Explicit Harness provider turns must never fallback')
+    assert.deepEqual(
+      request.actions?.map((action) => action.action),
+      ['file.upload', 'prompt.input', 'prompt.submit', 'response.read'],
+    )
+    const names = request.actions[0]?.payload?.attachments?.map((attachment) => attachment.name)
+    assert.ok(Array.isArray(names) && names.length >= 1)
+    assert.ok(names[0].startsWith(expectedAttachmentPrefix))
+    assert.ok(names.every((name) => name.endsWith('.md')))
+    return { pageRef: request.pageRef, taskId: request.taskId }
+  } finally {
+    database.close()
+  }
+}
+
+async function observeHarnessProviderTurn({ waiting, page, provider, turn, evidence }) {
+  const deadline = Date.now() + 600_000
+  let row = null
+  while (Date.now() <= deadline) {
+    row = readHarnessJob(waiting.jobId)
+    if (row?.status === 'succeeded' || row?.status === 'failed' || row?.status === 'canceled') break
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  assert.equal(row?.provider, provider)
+  assert.equal(row?.status, 'succeeded')
+  assert.equal(typeof row?.provider_submitted_at, 'string', 'Harness attachment delivery must reach delivered')
+  const result = JSON.parse(row.result_json)
+  const responses = result?.responses
+  assert.deepEqual(
+    responses?.map((response) => response.action),
+    ['file.upload', 'prompt.input', 'prompt.submit', 'response.read'],
+  )
+  assert.ok(responses.every((response) => response.ok === true))
+  const attachmentNames = responses[0]?.result?.attachments?.map((attachment) => attachment.name)
+  assert.ok(Array.isArray(attachmentNames) && attachmentNames.length >= 1)
+  assert.equal(
+    await harnessAttachmentVisible(page, provider, attachmentNames[0]),
+    true,
+    `${provider} observer must see the Harness turn ${turn} Markdown attachment`,
+  )
+  assert.ok((responses[3]?.result?.text ?? '').trim().length > 0)
+  const entry = {
+    jobId: waiting.jobId,
+    provider,
+    turn,
+    status: row.status,
+    at: row.updated_at,
+  }
+  assert.deepEqual(Object.keys(entry), ['jobId', 'provider', 'turn', 'status', 'at'])
+  evidence.push(entry)
+  return { status: row.status }
+}
+
+function readHarnessJob(jobId) {
+  const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'), { readOnly: true })
+  try {
+    return database.prepare(
+      'SELECT provider, status, result_json, provider_submitted_at, updated_at FROM jobs WHERE job_id = ?',
+    ).get(jobId)
+  } finally {
+    database.close()
+  }
+}
+
+async function harnessAttachmentVisible(page, provider, name) {
+  const visibleName = provider === 'kimi' || provider === 'meta' ? path.parse(name).name : name
+  return pageContains(page, visibleName)
+}
+
+async function writeHarnessRoundtripEvidence(provider, evidence) {
+  const directory = path.join(root, 'test-results', 'live-provider-e2e', 'harness-attachment-roundtrip')
+  await fs.mkdir(directory, { recursive: true, mode: 0o700 })
+  await fs.writeFile(
+    path.join(directory, `${suiteRunMarker}-${provider}.json`),
+    `${JSON.stringify(evidence, null, 2)}\n`,
+    { mode: 0o600 },
+  )
 }
 
 async function conversationContinuation({ provider, journey }) {

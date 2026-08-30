@@ -7,6 +7,7 @@ import {
   type ManagedPlaywrightRoutingExclusion,
 } from '../../../browser/job-contract.js'
 import { VISIBLE_ACTIONS, createVisibleActionRequest } from '../../../browser/actions.js'
+import { createE2EInspectionJobId } from '../../../browser/e2e-inspection.js'
 import { isFreshProviderObservation, ManagedProfileRegistry } from '../../../browser/profiles/registry.js'
 import {
   getProviderInstanceById,
@@ -118,7 +119,7 @@ export class PrivateProviderTurnV0Adapter {
     if (bundleWith !== undefined && (!bundledAttachment || bundledAttachment.binding_ref !== binding.binding_ref || this.store.webAiStageStatus(bundleWith)?.consumed)) {
       throw invalidInput('web ai attachment bundle reference is unavailable')
     }
-    const reservedJobId = bundledAttachment?.bundle_id ?? randomUUID()
+    const reservedJobId = bundledAttachment?.bundle_id ?? createE2EInspectionJobId() ?? randomUUID()
     const ephemeral = payloadLifetime === 'ephemeral'
     if (payloadLifetime !== undefined && !ephemeral) throw invalidInput('web ai payload lifetime is invalid')
     if (bundledAttachment && hasEphemeralProviderBundle(reservedJobId) !== ephemeral) {
