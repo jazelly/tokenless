@@ -225,7 +225,7 @@ export class ArenaProvider extends BaseProvider<'arena'> {
         { retryable: true, details: { visibleProof: 'no-visible-arena-answer' } },
       )
     }
-    if (!comparison && visible.unique.length !== 1) {
+    if (!comparison && visible.unique.length > 1) {
       throw tokenlessError(
         'arena_direct_response_ambiguous',
         'Arena Direct exposed multiple different visible answers.',
@@ -1084,7 +1084,7 @@ async function waitForStableArenaResponse(
   signal: AbortSignal | undefined,
   expectedAnswers: number,
 ) {
-  const deadline = Date.now() + (expectedAnswers === 2 ? 120_000 : 10_000)
+  const deadline = Date.now() + 120_000
   let previous = ''
   let stableObservations = 0
   let latest: {
@@ -1096,7 +1096,7 @@ async function waitForStableArenaResponse(
     if (signal?.aborted) throw signal.reason ?? new Error('Visible provider action was aborted.')
     const turn = page.locator(ARENA_DIRECT_TURN_SELECTOR).filter({ visible: true }).first()
     if (await turn.isVisible().catch(() => false)) {
-      const containers = turn.locator('.prose.body-base').filter({ visible: true })
+      const containers = turn.locator('.prose.body-base:not(.text-interactive-negative)').filter({ visible: true })
       const responses = await containers.allInnerTexts()
       const answers = responses.map((text, index) => ({
         container: containers.nth(index),
@@ -1153,7 +1153,9 @@ async function visibleArenaComparisonModels(page: Page, mode: string) {
 }
 
 async function visibleArenaMode(page: Page) {
-  return normalizeVisibleText(await page.getByRole('combobox').first().innerText({ timeout: 5_000 }))
+  const control = page.getByRole('combobox').first()
+  if (!await control.isVisible({ timeout: 500 }).catch(() => false)) return null
+  return normalizeVisibleText(await control.innerText({ timeout: 5_000 }))
 }
 
 function normalizeVisibleText(value: string) {

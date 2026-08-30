@@ -93,8 +93,19 @@ export class MetaProvider extends BaseProvider<'meta'> {
     if (context.requirements?.includes('image.generation') === true) {
       return await readMetaImageResponse(page, context)
     }
+    await selectMetaRawJsonView(page)
     return super.readResponse(page, context)
   }
+}
+
+async function selectMetaRawJsonView(page: Page) {
+  const assistant = page.locator(META_ASSISTANT_SELECTOR).filter({ visible: true }).last()
+  const tree = assistant.locator('[role="tree"][aria-label="JSON tree view"]')
+  if (!await tree.isVisible().catch(() => false)) return
+  const raw = assistant.locator('button.ur-json-tree-toolbar__button').filter({ hasText: /^Raw$/u }).last()
+  if (!await raw.isVisible().catch(() => false)) return
+  await raw.click()
+  await assistant.locator('pre code').filter({ visible: true }).first().waitFor({ state: 'visible', timeout: 5_000 })
 }
 
 async function readMetaImageResponse(
