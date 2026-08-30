@@ -20,6 +20,8 @@ declare namespace chrome {
     function get(tabId: number): Promise<Tab>
     function sendMessage<T = unknown>(tabId: number, message: unknown): Promise<T>
     function create(createProperties: { url: string }): Promise<Tab>
+    function update(tabId: number, updateProperties: { url: string }): Promise<Tab>
+    function captureVisibleTab(windowId: number, options: { format: 'png' }): Promise<string>
   }
   namespace sidePanel {
     function open(options: { windowId: number }): Promise<void>

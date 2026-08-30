@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Tokenless Harness",
-  "version": "0.1.0",
-  "description": "Tokenless Harness / Tokenless Harness：在用户明确选择的 Chrome 页面上观察并填写普通文本字段。",
+  "version": "0.2.0",
+  "description": "Tokenless Harness / Tokenless Harness：在用户明确选择的 Chrome 页面上执行逐项批准的表单操作。",
   "permissions": ["activeTab", "scripting", "sidePanel", "storage"],
   "host_permissions": [
     "http://127.0.0.1:7331/*"

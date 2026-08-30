@@ -35,8 +35,9 @@ type ApiProxyStructuredControlDeclaration = Readonly<{
   evidence: readonly string[]
 }>
 
-// This is deliberately a narrow evidence matrix for the Universal API. A
-// visible conversation route alone does not prove structured-control framing.
+// This records provider-specific real evidence. Generic prompt emulation is
+// owned by Tokenless and remains available to every routed text conversation;
+// missing evidence must not become a permanent provider allowlist.
 const API_PROXY_STRUCTURED_CONTROL = Object.freeze([
   declaration({
     provider: 'deepseek',
@@ -105,19 +106,18 @@ export function resolveApiProxyStructuredControlRoutes(options: {
   candidates: readonly ApiProxyStructuredControlCandidate[]
   affinityProvider?: ProviderId | null | undefined
 }): readonly ApiProxyStructuredControlRoute[] {
-  const routes = options.candidates.flatMap((candidate) => {
+  const routes = options.candidates.map((candidate) => {
     const declared = DECLARATION_BY_PROVIDER.get(candidate.provider)
-    if (!declared || !supports(declared, options.requirements)) return []
     const strategy: ApiProxyStructuredControlStrategy = options.requirements.tools
       ? 'prompt_tool_envelope'
       : 'prompt_json_envelope'
-    return [{
+    return {
       provider: candidate.provider,
       capabilityRoute: candidate.capabilityRoute,
       strategy,
-      evidence: declared.evidence,
+      evidence: declared && supports(declared, options.requirements) ? declared.evidence : [],
       preferenceRank: candidate.preferenceRank,
-    }]
+    }
   })
   routes.sort((left, right) => {
     const leftAffinity = left.provider === options.affinityProvider ? 1 : 0

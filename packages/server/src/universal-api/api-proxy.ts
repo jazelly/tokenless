@@ -331,7 +331,7 @@ export class ApiProxyAdapter {
         503,
         'auto_route_unavailable',
         request.toolProtocol
-          ? 'No enabled provider with current profile access and real evidence can satisfy the structured-control request.'
+          ? 'No enabled provider with current profile access and conversation capability can carry the structured-control request.'
           : 'No enabled provider with current profile access and conversation capability can satisfy the conversation request.',
         'model',
         autoRouting(request, autoRoutes, autoExclusions),

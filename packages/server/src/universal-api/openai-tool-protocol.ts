@@ -355,7 +355,8 @@ export function parseOpenAiToolResponse(
   if (typeof responseText !== 'string' || Buffer.byteLength(responseText, 'utf8') > MAX_RESPONSE_BYTES) {
     fail(`provider response exceeds the ${MAX_RESPONSE_BYTES}-byte tool protocol limit`)
   }
-  const source = unwrapRawResponseFence(trimJsonWhitespace(responseText))
+  let source = unwrapRawResponseFence(trimJsonWhitespace(responseText))
+  source = recoverSingleJsonObjectCandidate(source, nonce) ?? source
   let parsed: unknown
   try {
     parsed = parseStrictJson(source)
@@ -665,6 +666,48 @@ function unwrapRawResponseFence(trimmed: string) {
   const fenced = /(?:^|\r?\n)```(?:json|text)?\r?\n([\s\S]*?)\r?\n```(?=$|\r?\n)/.exec(trimmed)
   if (!fenced) fail('provider response must use exactly one complete json or text code fence')
   return trimJsonWhitespace(fenced[1]!)
+}
+
+function recoverSingleJsonObjectCandidate(source: string, nonce: string) {
+  const candidates: { start: number; end: number }[] = []
+  let start = -1
+  let depth = 0
+  let quoted = false
+  let escaped = false
+
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index]!
+    if (start === -1) {
+      if (character === '}') return null
+      if (character !== '{') continue
+      start = index
+      depth = 1
+      continue
+    }
+    if (quoted) {
+      if (escaped) escaped = false
+      else if (character === '\\') escaped = true
+      else if (character === '"') quoted = false
+      continue
+    }
+    if (character === '"') quoted = true
+    else if (character === '{') depth += 1
+    else if (character === '}') {
+      depth -= 1
+      if (depth === 0) {
+        candidates.push({ start, end: index + 1 })
+        start = -1
+      }
+    }
+  }
+
+  if (start !== -1 || quoted || candidates.length !== 1) return null
+  const candidate = candidates[0]
+  if (!candidate) return null
+  const { start: candidateStart, end: candidateEnd } = candidate
+  const outside = `${source.slice(0, candidateStart)}${source.slice(candidateEnd)}`
+  if (outside.includes(OPENAI_TOOL_PROTOCOL) || outside.includes(nonce)) return null
+  return source.slice(candidateStart, candidateEnd)
 }
 
 function correlatedSerializationKind(source: string, nonce: string, message: string): OpenAiToolProtocolResult['kind'] | null {

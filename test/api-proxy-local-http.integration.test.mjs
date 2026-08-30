@@ -230,7 +230,7 @@ test('api proxy advertises every enabled provider as an explicit tokenless model
   })
 })
 
-test('auto accepts plain browser requests and keeps structured routing narrow', async () => {
+test('auto accepts plain browser requests and applies generic structured routing', async () => {
   await withDaemon(async (daemon) => {
     await enableApiProxy(daemon.homeDir)
     const plain = await call(daemon, 'POST', '/v1/chat/completions', {
@@ -293,21 +293,33 @@ test('auto accepts plain browser requests and keeps structured routing narrow', 
     assert.equal(plainReadyResponse.headers.get('x-tokenless-route-mode'), 'auto')
     assert.equal(plainReadyResponse.headers.get('x-tokenless-route-provider'), 'gemini')
 
-    const unsupported = await call(daemon, 'POST', '/v1/chat/completions', {
-      model: 'tokenless/auto',
-      messages: [{ role: 'user', content: 'Read package.json.' }],
-      tools: [functionTool('read_file')],
-      parallel_tool_calls: true,
+    const genericMultiple = fetch(`${daemon.origin}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${daemon.token}`,
+      },
+      body: JSON.stringify({
+        model: 'tokenless/auto',
+        messages: [{ role: 'user', content: 'Read package.json.' }],
+        tools: [functionTool('read_file')],
+        parallel_tool_calls: true,
+      }),
     })
-    assert.equal(unsupported.status, 503)
-    assert.equal(unsupported.body.error.code, 'auto_route_unavailable')
+    const genericMultipleJob = await waitForQueuedApiProxyJob(daemon, 'api-proxy:')
+    assert.equal(genericMultipleJob.provider, 'gemini')
+    assert.match(promptInputText(genericMultipleJob), /"parallel_tool_calls":true/u)
+    await daemon.store.cancelJob(genericMultipleJob.job_id, 'focused generic multiple-call route test completed')
+    const genericMultipleResponse = await genericMultiple
+    assert.equal(genericMultipleResponse.status, 502)
+    assert.equal(genericMultipleResponse.headers.get('x-tokenless-route-provider'), 'gemini')
 
     const jobs = await call(daemon, 'GET', '/v1/private/jobs')
     assert.equal(jobs.body.filter((job) => job.status === 'queued' || job.status === 'running').length, 0)
   })
 })
 
-test('auto admits Claude only for its evidenced single-call structured-control scope', async () => {
+test('auto keeps Claude available through generic single-call structured control', async () => {
   await withDaemon(async (daemon) => {
     const { ManagedProfileRegistry } = await import(profileRegistryModule)
     const registry = new ManagedProfileRegistry(daemon.homeDir)
@@ -367,7 +379,7 @@ test('auto admits Claude only for its evidenced single-call structured-control s
   })
 })
 
-test('auto exposes bounded exclusions while selecting Gemini and on a no-route error', async () => {
+test('auto exposes bounded exclusions while generic prompt emulation admits every conversation route', async () => {
   await withDaemon(async (daemon) => {
     const { ManagedProfileRegistry } = await import(profileRegistryModule)
     const registry = new ManagedProfileRegistry(daemon.homeDir)
@@ -421,14 +433,15 @@ test('auto exposes bounded exclusions while selecting Gemini and on a no-route e
     const selectedJob = await waitForQueuedApiProxyJob(daemon, 'api-proxy:')
     assert.equal(selectedJob.provider, 'gemini')
     assert.equal(selectedJob.request_json.capabilityRoute.provider, 'gemini')
-    assert.equal(selectedJob.request_json.fallback, null)
+    assert.deepEqual(selectedJob.request_json.fallback.alternatives.map((alternative) => alternative.provider), [
+      'perplexity',
+    ])
     await daemon.store.cancelJob(selectedJob.job_id, 'focused auto exclusion test completed')
     const selectedResponse = await selected
     assert.equal(selectedResponse.status, 502)
     assert.equal(selectedResponse.headers.get('x-tokenless-route-provider'), 'gemini')
     assert.deepEqual(JSON.parse(selectedResponse.headers.get('x-tokenless-route-exclusions')), [
       { provider: 'deepseek', category: 'access', reason: 'provider_access_account_blocked' },
-      { provider: 'perplexity', category: 'capability', reason: 'missing_structured_control_capability' },
     ])
     assert.deepEqual(JSON.parse(selectedResponse.headers.get('x-tokenless-route-attempts')), [])
 
@@ -438,7 +451,7 @@ test('auto exposes bounded exclusions while selecting Gemini and on a no-route e
         'structured-auto': { ...profile, enabledProviders: ['deepseek', 'perplexity'] },
       },
     })
-    const noRoute = await fetch(`${daemon.origin}/v1/chat/completions`, {
+    const generic = fetch(`${daemon.origin}/v1/chat/completions`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -453,14 +466,19 @@ test('auto exposes bounded exclusions while selecting Gemini and on a no-route e
         tokenless: { execution_mode: 'browser' },
       }),
     })
-    assert.equal(noRoute.status, 503)
-    assert.equal((await noRoute.json()).error.code, 'auto_route_unavailable')
-    assert.equal(noRoute.headers.get('x-tokenless-route-provider'), 'auto')
-    assert.deepEqual(JSON.parse(noRoute.headers.get('x-tokenless-route-exclusions')), [
+    const genericJob = await waitForQueuedApiProxyJob(daemon, 'api-proxy:')
+    assert.equal(genericJob.provider, 'perplexity')
+    assert.equal(genericJob.request_json.capabilityRoute.provider, 'perplexity')
+    assert.equal(genericJob.request_json.fallback, null)
+    assert.match(promptInputText(genericJob), /tokenless\.openai-tools\/v1/u)
+    await daemon.store.cancelJob(genericJob.job_id, 'focused generic structured-control route test completed')
+    const genericResponse = await generic
+    assert.equal(genericResponse.status, 502)
+    assert.equal(genericResponse.headers.get('x-tokenless-route-provider'), 'perplexity')
+    assert.deepEqual(JSON.parse(genericResponse.headers.get('x-tokenless-route-exclusions')), [
       { provider: 'deepseek', category: 'access', reason: 'provider_access_account_blocked' },
-      { provider: 'perplexity', category: 'capability', reason: 'missing_structured_control_capability' },
     ])
-    assert.deepEqual(JSON.parse(noRoute.headers.get('x-tokenless-route-attempts')), [])
+    assert.deepEqual(JSON.parse(genericResponse.headers.get('x-tokenless-route-attempts')), [])
   })
 })
 

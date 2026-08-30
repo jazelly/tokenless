@@ -149,10 +149,10 @@ tokenless/<provider>
 
 当前 scope 刻意保持狭窄：
 
-- Browser execution，且不带 provider-local backend 或 auth options。Plain text 会通过具有当前可用 observed access 的 enabled provider 的 eligible `conversation.chat` route；function-tool 与 JSON request 还要经过窄 structured-control evidence matrix。
+- Browser execution，且不带 provider-local backend 或 auth options。Plain text、function-tool 与 JSON request 都会使用具有当前可用 observed access 的 enabled provider 的 eligible `conversation.chat` route。Prompt-emulated structured-control layer 由 Tokenless 负责；provider 不需要原生 function-calling API。
 - Candidate 必须在 selected profile 上启用，并满足该请求对应的 route requirements。
-- Tool requirements 会区分调用、strict schema、完整 tool history 与 multiple-call output。只有当前 `tool_choice` 可能返回多个调用时，`parallel_tool_calls: true` 才要求 multiple-call evidence；`none` 与精确 named choice 不要求。
-- DeepSeek 凭已验证的 multiple/strict/history 与 JSON control 纳入；ChatGPT 凭已验证的 single-call strict/history 与 JSON control 纳入。Claude、Gemini 与 Grok 只凭已验证的 single-call strict/history control 纳入；multiple calls 与 JSON control 仍排除。见 [auto routing](evidence/openai-auto-provider-routing-2026-08-15.md)、[Claude](evidence/openai-structured-control-claude-2026-08-26.md)、[Gemini](evidence/openai-structured-control-gemini-2026-08-27.md) 与 [Grok](evidence/openai-structured-control-grok-2026-08-26.md) evidence。
+- Tokenless 会对每个 selected provider 使用相同的 tool catalog、strict schema、完整 history、call-count 与 structured-final validation。`parallel_tool_calls: false` 最多允许一个调用；精确 named choice 必须只返回该调用。
+- Provider-specific evidence 用于记录已观察到的 conformance，仍可供诊断使用；它不再是 generic emulation layer 的永久 allowlist。见 [auto routing](evidence/openai-auto-provider-routing-2026-08-15.md)、[Claude](evidence/openai-structured-control-claude-2026-08-26.md)、[Gemini](evidence/openai-structured-control-gemini-2026-08-27.md) 与 [Grok](evidence/openai-structured-control-grok-2026-08-26.md) evidence。
 - Direct execution、provider backend/auth options、opaque replay 或不完整 candidate set 都会在创建 job 前失败。
 
 Auto call 使用只编码 provider origin 的版本化 opaque public id。后续 full-history turn 会在重新检查 current eligibility 后优先该 provider；调用方影响 id 也无法绕过 filter。Responses `previous_response_id` 以相同方式使用现有 ledger provider——它是 portable affinity，不是 hard pin。
@@ -226,7 +226,7 @@ OpenAI 的 `tokenless/auto` 请求可以带一个 advisory 的 `tokenless.semant
 - `"required"`：必须返回至少一个已声明调用；`parallel_tool_calls: false` 会把调用数限制为一个。
 - `{"type":"function","function":{"name":"read_file"}}`：无论 parallel 设置为何，都必须且只能返回该已声明 function 的一个调用。
 
-Prompt-emulated tool support 取决于具体 strategy。Gemini 早期 diagnostic 因在输出前加 prose 而未通过 strict whole-response boundary。当前真实 packaged-daemon run 已通过精确 named strict call 与完整 tool history，因此只公布这一 single-call scope；multiple calls 与 JSON final control 仍排除。见[当前 Gemini evidence](evidence/openai-structured-control-gemini-2026-08-27.md)与[早期 framing evidence](evidence/openai-tool-prompt-framing-2026-08-15.md)。
+Prompt-emulated structured control 与 provider 无关。Tokenless 接受 bare JSON object、一个完整 `json`/`text` fence，或被 non-executable prose 包围的唯一完整 top-level JSON object。提取出的 object 仍必须包含本请求的 protocol 与 nonce，并通过原始 tool choice、call-count、argument/schema、history 与 response-format validation。多个 object candidate、额外 protocol marker、malformed JSON 或 ambiguous framing 都会 fail closed。Gemini 早期 diagnostic 在 JSON 前添加 prose，促成了这个 unique-object recovery；当前真实 evidence 仍只是 provider conformance observation，不是 eligibility gate。见[当前 Gemini evidence](evidence/openai-structured-control-gemini-2026-08-27.md)与[早期 framing evidence](evidence/openai-tool-prompt-framing-2026-08-15.md)。
 
 使用 `strict: true` 时，parameters 根节点必须是 object。每个 object schema（包括可空的嵌套 object）都必须设置 `additionalProperties: false`，并在 `required` 中列出所有 property key；可选字段用 nullable type 表示。Tokenless 会在提交 provider 前拒绝不合规的 strict schema，并按声明 schema 校验返回 arguments。
 
@@ -514,7 +514,7 @@ Response 中的 `tokenless.conversation_mode` 报告实际 route：fresh 或 map
 
 所有失败都会按对应方言的错误信封返回。
 
-对于 tool 或 structured-final 请求，一种狭窄 failure 可在同一 provider 与 execution strategy 上获得 bounded correction：bare raw JSON，或一个允许的完整 fence 经 unwrapped 后的 content，必须已按精确顺序以本请求的 protocol、nonce 与 `kind: final` 或 `kind: tool_calls` field 开头，但 strict JSON parsing 失败；duplicate-key failure 不符合条件。Correction 后的 response 必须保持相同 kind，并通过原始 catalog、choice、call-count、argument/schema 与 response-format 校验；不会再进行第二次 correction。Prose、multiple fences、correlation、已解析 envelope shape、tool-choice、call-count、argument/schema 与 valid structured-content failure 会立即返回 `provider_output_protocol_error`。Transport failure、timeout、ambiguous submission、已暴露 call 与调用方 tool execution 都不会重试。
+对于 tool 或 structured-final 请求，Tokenless 会先在 harmless prose 中提取一个无歧义 JSON object；它不会合并 candidate，也不会修复语义内容。之后，一种更窄的 failure 可在同一 provider 与 execution strategy 上获得 bounded correction：提取出的 raw JSON 必须已按精确顺序以本请求的 protocol、nonce 与 `kind: final` 或 `kind: tool_calls` field 开头，但 strict JSON parsing 失败；duplicate-key failure 不符合条件。Correction 后的 response 必须保持相同 kind，并通过原始 catalog、choice、call-count、argument/schema 与 response-format 校验；不会再进行第二次 correction。多个 candidate、额外 protocol 或 nonce marker、correlation、已解析 envelope shape、tool-choice、call-count、argument/schema 与 valid structured-content failure 会立即返回 `provider_output_protocol_error`。Transport failure、timeout、ambiguous submission、已暴露 call 与调用方 tool execution 都不会重试。
 
 OpenAI，其中 `param` 会在可定位时指出出错字段：
 
@@ -545,10 +545,10 @@ Anthropic：
 | 499 | `client_closed_request` | 客户端先断开了连接 | 否 —— 已无接收方 |
 | 500 | — | 本地 daemon 故障，message 刻意保持通用 | 可重试一次 |
 | 502 | `upstream_error` | provider 页面没有产生可见回复：登录 blocker、CAPTCHA 或 job 失败 | 用户清除 blocker 后可重试 |
-| 502 | `provider_output_protocol_error` | Tool 或 structured-final 校验失败；只有 nonce-correlated `final` 或 `tool_calls` strict JSON serialization failure 会获得一次 same-kind bounded correction | 不再重试 |
+| 502 | `provider_output_protocol_error` | Unique-object recovery 后 tool 或 structured-final 校验失败；只有 nonce-correlated `final` 或 `tool_calls` strict JSON serialization failure 会获得一次 same-kind bounded correction | 不再重试 |
 | 503 | `api_proxy_disabled` | proxy 未开启 | 否 —— 请先开启 |
 | 503 | `model_not_available` | 该 provider 未在解析出的 profile 上启用 | 否 —— 请先启用 |
-| 503 | `auto_route_unavailable` | 没有 enabled、当前可用的 provider 能满足 conversation 或 structured-control route | 否 —— 调整 scope 或 provider readiness |
+| 503 | `auto_route_unavailable` | 没有 enabled、当前可用的 provider 能满足所需 conversation route | 否 —— 调整 scope 或 provider readiness |
 | 504 | `completion_timeout` | provider 在 10 分钟内没有回复；exact local job 已被取消 | 先检查 response 与 job evidence 再决定 |
 
 除 499 之外的 `4xx` 表示调用方必须做出修改。`502`、`504`、`500` 属于运行期问题：同一请求稍后可能成功。这张表的全部意义就在于这一区分 —— 不要匹配 message 字符串。

@@ -191,13 +191,21 @@ async function dismissProviderAnnouncement(page: Page, provider: ProviderDomDefi
     return
   }
   if (provider.id !== 'zai') return
-  const announcement = page.locator('[role="dialog"]')
+  const dialog = page.locator('[role="dialog"]')
     .filter({ visible: true })
-    .filter({ hasText: 'Now Available' })
     .last()
-  if (await announcement.count() === 0) return
-  await page.keyboard.press('Escape').catch(() => undefined)
-  await announcement.waitFor({ state: 'hidden', timeout: 2_000 }).catch(() => undefined)
+  if (await dialog.count() === 0) return
+  if (await dialog.filter({ hasText: 'Now Available' }).count() > 0) {
+    await page.keyboard.press('Escape').catch(() => undefined)
+    await dialog.waitFor({ state: 'hidden', timeout: 2_000 }).catch(() => undefined)
+  }
+  if (!await dialog.isVisible({ timeout: 250 }).catch(() => false)) return
+  const close = dialog.locator('button[aria-label="Close"]')
+    .filter({ visible: true })
+    .last()
+  if (!await close.isEnabled({ timeout: 250 }).catch(() => false)) return
+  await close.click({ timeout: 5_000 }).catch(() => undefined)
+  await dialog.waitFor({ state: 'hidden', timeout: 2_000 }).catch(() => undefined)
 }
 
 async function clearClaudeDraftAttachments(
@@ -244,6 +252,7 @@ export async function submitDomPrompt(
   page: Page,
   signal?: AbortSignal,
 ) {
+  await dismissProviderAnnouncement(page, provider)
   const controlTimeoutMs = provider.interactionTimings.promptControlTimeoutMs
   const button = await waitForActionableSubmitControl(provider, page, signal)
   const disabledClaudeSubmit = provider.id === 'claude' && !button

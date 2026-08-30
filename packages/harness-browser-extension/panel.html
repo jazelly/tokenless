@@ -31,8 +31,8 @@
       <section class="card">
         <h2>Current tab / 当前标签页</h2>
         <p id="page" class="status">No tab attached / 尚未附着标签页</p>
-        <p id="origin" class="muted">A bounded semantic page snapshot is sent through the selected Tokenless API provider route only after consent. / 只有在同意后，有界语义页面快照才会经所选 Tokenless API provider route 发送。</p>
-        <label class="checkbox"><input id="consent" type="checkbox"> I consent to send bounded page content to the selected Harness Task Model. / 我同意将有界页面内容发送给所选 Harness Task Model。</label>
+        <p id="origin" class="muted">A bounded semantic page snapshot is sent through the selected Tokenless API provider route only after consent. Full local evidence is saved privately on this device. / 只有在同意后，有界语义页面快照才会经所选 Tokenless API provider route 发送；完整证据会私密保存在本机。</p>
+        <label class="checkbox"><input id="consent" type="checkbox"> I consent to send bounded page content to the selected Harness Task Model and save full local evidence. / 我同意将有界页面内容发送给所选 Harness Task Model，并保存完整本地证据。</label>
         <button id="attach" type="button">Attach or repair selected tab / 附着或修复当前标签页</button>
         <pre id="inventory" class="inventory" aria-live="polite"></pre>
       </section>
@@ -52,15 +52,16 @@
       <section id="approval" class="card approval" hidden>
         <h2>Approval required / 需要批准</h2>
         <p id="proposal"></p>
+        <label id="upload-label" hidden>File selected for this approved upload / 为本次批准上传选择文件<input id="upload-file" type="file"></label>
         <div class="button-row">
-          <button id="approve" type="button">Approve input / 批准填写</button>
+          <button id="approve" type="button">Approve action / 批准操作</button>
           <button id="reject" class="secondary" type="button">Reject / 拒绝</button>
         </div>
       </section>
 
       <section class="disclosure">
         <strong>Privacy / 隐私</strong>
-        <p>Page text is untrusted data. Raw DOM, cookies, storage, credentials, passwords, hidden fields, and arbitrary selectors are never sent. / 页面文字是不可信数据。不会发送 raw DOM、cookie、storage、凭证、密码、隐藏字段或任意 selector。</p>
+        <p>Page text is untrusted data. The model receives only bounded semantic controls. Raw DOM, entered values, screenshots, the extension credential, and the selected provider session are retained only in the private local evidence bundle. / 页面文字是不可信数据。模型只接收有界语义控件；raw DOM、输入值、截图、扩展凭证与所选 provider session 只保存在私有本地证据包中。</p>
       </section>
     </main>
     <script type="module" src="panel.js"></script>

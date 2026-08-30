@@ -1,17 +1,18 @@
 # Tokenless Harness Browser Extension
 
-状态：experimental candidate；仍需完成用户拥有的真实页面验收。
+状态：experimental V2 candidate；仍需完成用户拥有的真实页面/provider 验收与 provider-session evidence capture。
 
 Chrome 扩展同时是 Tokenless Harness client 与 browser-tool adapter。Tokenless API 仍是 provider-facing layer；Tokenless Harness 仍是 Agent runtime；Tokenless Harness API 是本地 run/control/tool-exchange 边界。
 
-## V1 支持边界
+## Candidate 支持边界
 
 | 支持 | 不支持 |
 |---|---|
 | 用户明确选择的一个 top-level `http` 或 `https` tab | Chrome 受保护页面、cross-origin frame、closed shadow DOM 或 canvas-only control |
-| 可见、启用的 `text`、`search`、`email`、`tel`、`url` 与 `number` input | Password、OTP、payment、authentication-secret、file、hidden、disabled 或 read-only control |
-| `textarea` 与可验证的可见 `contenteditable` surface | Click、submit、select、upload、download、popup 或 navigation |
-| 来自最新有界 observation 的 opaque `elementRef` | JavaScript、CSS selector、XPath、URL 或 CDP escape hatch |
+| 可见 textual input、`textarea` 与可验证的 `contenteditable` surface | Password、OTP、payment、authentication-secret、hidden、disabled 或 read-only control |
+| 非敏感 button、form submit control、原生 radio 与 file input | CAPTCHA、MFA、purchase、delete、download、popup 或 multi-tab automation |
+| 一次经过批准的绝对 `http` 或 `https` navigation | 隐式 navigation、background continuation 或受保护 browser URL |
+| 来自最新有界 observation 的 opaque `elementRef` | JavaScript、CSS selector、XPath 或 CDP escape hatch |
 
 ## 安装 candidate
 
@@ -34,19 +35,19 @@ npm run build --workspace packages/harness-browser-extension
 3. 检查确切 origin 与 semantic control inventory。
 4. 阅读 provider disclosure；任何有界页面内容离开扩展前必须明确同意。
 5. 输入自然语言任务并启动 Harness run。
-6. 检查确切 target label 与 proposed text，然后批准或拒绝。
-7. 确认预期的可见字段发生变化，而且 side panel 到达 final result。
+6. 检查确切 action、target、text 或 destination；upload 时选择一个本地文件。每个 action 单独批准或拒绝。
+7. 确认预期的可见结果与 side panel final output。
 
 只有用户在自己选择的真实页面目视确认正确字段被修改、无关字段和 tab 未变化，candidate 才算通过验收。
 
 ## 数据流与生命周期
 
-- Content script 最多返回 64 个支持控件的 semantic metadata，绝不发送 raw page HTML。
+- Content script 最多向 Harness Task Model 发送 128 个支持控件的 semantic metadata；raw page HTML 只写入私有本地证据包。
 - 每个 run 使用附着时冻结的 observation；页面发生变化或变 stale 时会 fail closed，必须重新附着并启动新 run。
-- 既有文字值、password-like field、cookie、storage、authorization data 与无关 tab 都会被排除。
-- Task text、semantic snapshot、proposed input text、provider response 与未脱敏 final response 只保留在 daemon-memory ephemeral overlay 中；持久 provider job 只包含脱敏 placeholder 与 correlation metadata。
-- 持久 pairing state 只保存 credential hash 与 route identity；extension storage 保存连接当前 daemon 所需的 scoped credential。
-- Daemon 重启会丢弃 run 与 daemon-memory payload overlay；detach 会移除 extension session 对该 run 的访问。请启动新 run；V1 不恢复或重放 mutation。
+- 既有文字值、password-like field、cookie、storage、authorization data 与无关 tab 仍不会进入 model context。
+- 用户批准的私有 evidence bundle 会在 Tokenless API home 中以仅 owner 可读权限保存 raw DOM、任务和输入值、前后截图、scoped extension credential、route identity、decision 与 result。
+- 把所选 provider 的 raw session values 写入同一个私有 bundle 仍是必需 acceptance item；该证据存在前 candidate 不算 verified。
+- Daemon 重启会丢弃 run 与 daemon-memory payload overlay；detach 会移除 extension session 对该 run 的访问，mutation 不会 replay。
 
 ## 修复、撤销与卸载
 

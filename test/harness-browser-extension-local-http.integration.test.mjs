@@ -102,15 +102,74 @@ test('built daemon pairs and revokes one extension-scoped Harness credential wit
     assert.match(polled.credential, /^extension-credential:[a-f0-9]{32}$/)
 
     const pairingFile = fs.readFileSync(path.join(homeDir, 'harness-extension-pairings.json'), 'utf8')
-    assert.equal(pairingFile.includes(polled.credential), false)
+    assert.equal(pairingFile.includes(polled.credential), true)
     assert.equal(pairingFile.includes(created.secret), false)
     assert.equal(JSON.parse(pairingFile)[0].credentialHash.length, 64)
+    if (process.platform !== 'win32') assert.equal(fs.statSync(path.join(homeDir, 'harness-extension-pairings.json')).mode & 0o777, 0o600)
 
     const connection = await jsonFetch(`${daemon.origin}/v1/harness/browser-extension/connection`, {
       headers: { origin: extensionOrigin, authorization: `Bearer ${polled.credential}` },
     })
     assert.equal(connection.pairing.extensionId, extensionId)
+    assert.equal(Object.hasOwn(connection.pairing, 'credential'), false)
     assert.equal(Object.hasOwn(connection.pairing, 'credentialHash'), false)
+
+    const sessionId = 'extension-session:evidenceboundary1234'
+    const page = {
+      tabId: 7,
+      origin: 'https://example.com',
+      url: 'https://example.com/form',
+      title: 'Evidence form',
+      documentId: 'document-11111111-1111-4111-8111-111111111111',
+      documentRevision: 1,
+    }
+    const observation = {
+      protocol: 'tokenless.harness-browser-extension/v2',
+      kind: 'semantic_page_observation',
+      page: { ...page, tabId: undefined },
+      observationRevision: 1,
+      controls: [{
+        elementRef: 'element-22222222-2222-4222-8222-222222222222',
+        role: 'textbox',
+        name: 'Answer',
+        label: 'Answer',
+        placeholder: '',
+        inputType: 'textarea',
+        valuePresence: 'empty',
+        actions: ['input'],
+        visible: true,
+        enabled: true,
+        editable: true,
+        structuralHint: 'form / field 1',
+        contextText: 'Answer',
+      }],
+    }
+    delete observation.page.tabId
+    await jsonFetch(`${daemon.origin}/v1/harness/browser-extension/sessions`, {
+      method: 'POST',
+      headers: { ...extensionHeaders, authorization: `Bearer ${polled.credential}` },
+      body: JSON.stringify({
+        sessionId,
+        page,
+        observation,
+        evidence: {
+          rawDom: '<html><body><textarea>full evidence</textarea></body></html>',
+          screenshotDataUrl: 'data:image/png;base64,iVBORw0KGgo=',
+          capturedAt: '2026-08-28T00:00:00.000Z',
+        },
+      }),
+    }, 201)
+    const evidenceDir = path.join(homeDir, 'harness-browser-extension-evidence', 'extension-session_evidenceboundary1234')
+    assert.match(fs.readFileSync(path.join(evidenceDir, 'page.html'), 'utf8'), /full evidence/)
+    assert.equal(JSON.parse(fs.readFileSync(path.join(evidenceDir, 'session.json'), 'utf8')).extensionCredential, polled.credential)
+    if (process.platform !== 'win32') {
+      assert.equal(fs.statSync(path.join(evidenceDir, 'page.html')).mode & 0o777, 0o600)
+      assert.equal(fs.statSync(path.join(evidenceDir, 'session.json')).mode & 0o777, 0o600)
+    }
+    await jsonFetch(`${daemon.origin}/v1/harness/browser-extension/sessions/${encodeURIComponent(sessionId)}`, {
+      method: 'DELETE',
+      headers: { ...extensionHeaders, authorization: `Bearer ${polled.credential}` },
+    })
 
     const daemonControl = await fetch(`${daemon.origin}/v1/private/control/state`, {
       headers: { origin: extensionOrigin, authorization: `Bearer ${polled.credential}` },

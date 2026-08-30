@@ -178,16 +178,25 @@ export type {
 } from './http/agent-run-handler.js'
 
 export {
+  BROWSER_PAGE_CLICK_TOOL,
   BROWSER_PAGE_INPUT_TOOL,
+  BROWSER_PAGE_NAVIGATE_TOOL,
   BROWSER_PAGE_OBSERVE_TOOL,
+  BROWSER_PAGE_RADIO_TOOL,
+  BROWSER_PAGE_SUBMIT_TOOL,
+  BROWSER_PAGE_UPLOAD_TOOL,
   HARNESS_BROWSER_EXTENSION_PROTOCOL,
 } from './browser-extension/contracts.js'
 
 export type {
+  BrowserActionKind,
   BrowserActionProposal,
+  BrowserActionResult,
   BrowserExtensionPageBinding,
+  BrowserPageAction,
+  BrowserPageElementAction,
   BrowserPageInputAction,
-  BrowserPageInputResult,
+  BrowserPageNavigateAction,
   BrowserPageObservation,
   BrowserPairingSummary,
   BrowserSemanticControl,

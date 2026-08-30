@@ -7,7 +7,7 @@ import { BrowserExtensionBroker, type BrowserExtensionAuth } from './broker.js'
 
 const EXTENSION_PREFIX = '/v1/harness/browser-extension'
 const DASHBOARD_PREFIX = '/v1/private/agent/browser-extension'
-const MAX_BODY_BYTES = 128 * 1024
+const MAX_BODY_BYTES = 32 * 1024 * 1024
 
 type JsonRecord = Record<string, unknown>
 
@@ -140,14 +140,20 @@ async function handleExtension(
   }
   if (method === 'POST' && relative === '/sessions') {
     const body = await readJsonObject(request)
-    requireExactKeys(body, ['sessionId', 'page', 'observation'])
+    requireExactKeys(body, ['sessionId', 'page', 'observation', 'evidence'])
     const sessionId = requiredString(body.sessionId, 'sessionId')
-    if (!isRecord(body.page) || !isBrowserPageObservation(body.observation)) {
+    if (!isRecord(body.page) || !isBrowserPageObservation(body.observation) || !isRecord(body.evidence)) {
       throw httpError('extension_session_invalid', 'The extension session body is invalid.', 400)
     }
     const summary = options.broker.attachSession(auth, sessionId, body.page as never)
     try {
       options.broker.setObservation(auth, sessionId, body.observation)
+      requireExactKeys(body.evidence, ['rawDom', 'screenshotDataUrl', 'capturedAt'])
+      options.broker.recordInitialEvidence(auth, sessionId, {
+        rawDom: requiredString(body.evidence.rawDom, 'evidence.rawDom'),
+        screenshotDataUrl: requiredString(body.evidence.screenshotDataUrl, 'evidence.screenshotDataUrl'),
+        capturedAt: requiredString(body.evidence.capturedAt, 'evidence.capturedAt'),
+      })
     } catch (error) {
       options.broker.detachSession(auth, sessionId)
       throw error
@@ -246,6 +252,18 @@ async function handleExtension(
     }))
     return true
   }
+  const evidenceMatch = /^\/sessions\/([^/]+)\/actions\/([^/]+)\/evidence$/u.exec(relative)
+  if (method === 'POST' && evidenceMatch) {
+    const sessionId = decodeURIComponent(evidenceMatch[1] ?? '')
+    const actionId = decodeURIComponent(evidenceMatch[2] ?? '')
+    const body = await readJsonObject(request)
+    requireExactKeys(body, ['screenshotDataUrl', 'capturedAt'])
+    writeJson(response, 200, options.broker.recordActionScreenshot(auth, sessionId, actionId, {
+      screenshotDataUrl: requiredString(body.screenshotDataUrl, 'screenshotDataUrl'),
+      capturedAt: requiredString(body.capturedAt, 'capturedAt'),
+    }))
+    return true
+  }
   return false
 }
 
@@ -259,7 +277,7 @@ function extensionAuth(broker: BrowserExtensionBroker, request: IncomingMessage,
 }
 
 function publicCredential(auth: BrowserExtensionAuth) {
-  const { credentialHash: _hash, credentialVersion: _version, ...summary } = auth.credential
+  const { credential: _credential, credentialHash: _hash, credentialVersion: _version, ...summary } = auth.credential
   return summary
 }
 

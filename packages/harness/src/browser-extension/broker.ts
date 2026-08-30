@@ -15,27 +15,40 @@ import type {
   ProviderTurnRequest,
 } from '../contracts.js'
 import {
+  BROWSER_ACTION_TOOLS,
+  BROWSER_PAGE_CLICK_TOOL,
   BROWSER_PAGE_INPUT_TOOL,
+  BROWSER_PAGE_NAVIGATE_TOOL,
   BROWSER_PAGE_OBSERVE_TOOL,
+  BROWSER_PAGE_RADIO_TOOL,
+  BROWSER_PAGE_SUBMIT_TOOL,
+  BROWSER_PAGE_UPLOAD_TOOL,
   HARNESS_BROWSER_EXTENSION_PROTOCOL,
+  type BrowserActionKind,
   type BrowserActionProposal,
+  type BrowserActionResult,
   type BrowserExtensionPageBinding,
+  type BrowserPageAction,
+  type BrowserPageElementAction,
   type BrowserPageInputAction,
-  type BrowserPageInputResult,
+  type BrowserPageNavigateAction,
   type BrowserPageObservation,
   type BrowserFailureCode,
   type BrowserPairingSummary,
   type BrowserSessionSummary,
-  isBrowserPageInputResult,
+  isBrowserActionResult,
   isBrowserPageObservation,
-  redactedInputResult,
+  isSafeNavigationUrl,
+  redactedActionResult,
 } from './contracts.js'
 
 const PAIRING_FILE = 'harness-extension-pairings.json'
+const EVIDENCE_DIRECTORY = 'harness-browser-extension-evidence'
 const ACTION_TIMEOUT_MS = 120_000
 const PAIRING_TTL_MS = 10 * 60_000
 
 export type PersistedPairing = BrowserPairingSummary & {
+  credential?: string
   credentialHash: string
   credentialVersion: 1
 }
@@ -60,12 +73,13 @@ export type SessionState = {
 
 type ActionState = {
   action: BrowserActionProposal
-  fullArguments: BrowserPageInputAction
+  fullArguments: BrowserPageAction
+  toolName: typeof BROWSER_ACTION_TOOLS[number]
   sessionId: string
   createdAt: number
   decision?: 'approved' | 'rejected'
-  resolve?: (result: BrowserPageInputResult) => void
-  result?: BrowserPageInputResult
+  resolve?: (result: BrowserActionResult) => void
+  result?: BrowserActionResult
   settled: boolean
 }
 
@@ -92,6 +106,7 @@ export type BrowserExtensionAuth = {
 export class BrowserExtensionBroker {
   readonly #baseUrl: string
   readonly #pairingsPath: string
+  readonly #evidenceRoot: string
   readonly #pairingRequests = new Map<string, PairingRequest>()
   readonly #pairings = new Map<string, PersistedPairing>()
   readonly #sessions = new Map<string, SessionState>()
@@ -104,6 +119,7 @@ export class BrowserExtensionBroker {
   constructor(homeDir: string, baseUrl: string) {
     this.#baseUrl = baseUrl.replace(/\/$/u, '')
     this.#pairingsPath = path.join(homeDir, PAIRING_FILE)
+    this.#evidenceRoot = path.join(homeDir, EVIDENCE_DIRECTORY)
     this.loadPairings()
   }
 
@@ -155,6 +171,7 @@ export class BrowserExtensionBroker {
       profileId: input.profileId,
       status: 'active',
       createdAt: request.createdAt,
+      credential,
       credentialHash: hash(credential),
       credentialVersion: 1,
     }
@@ -213,6 +230,12 @@ export class BrowserExtensionBroker {
     const tokenHash = hash(token)
     const pairing = [...this.#pairings.values()].find((candidate) => candidate.status === 'active' && safeEqual(candidate.credentialHash, tokenHash))
     if (!pairing) throw extensionError('extension_auth_rejected', 'The extension credential is invalid or revoked.')
+    if (pairing.credential !== token) {
+      const upgraded = { ...pairing, credential: token }
+      this.#pairings.set(pairing.pairingId, upgraded)
+      this.persistPairings()
+      return { credential: upgraded, token }
+    }
     return { credential: pairing, token }
   }
 
@@ -270,8 +293,56 @@ export class BrowserExtensionBroker {
     return { observationRevision: observation.observationRevision, controlCount: observation.controls.length }
   }
 
+  recordInitialEvidence(
+    auth: BrowserExtensionAuth,
+    sessionId: string,
+    input: { rawDom: string; screenshotDataUrl: string; capturedAt: string },
+  ) {
+    const session = this.session(auth, sessionId)
+    if (Buffer.byteLength(input.rawDom, 'utf8') > 8 * 1024 * 1024) {
+      throw extensionError('extension_evidence_invalid', 'The raw DOM evidence exceeds the 8 MiB limit.')
+    }
+    const screenshot = decodePngDataUrl(input.screenshotDataUrl)
+    const capturedAt = new Date(input.capturedAt)
+    if (!Number.isFinite(capturedAt.valueOf())) throw extensionError('extension_evidence_invalid', 'The evidence timestamp is invalid.')
+    const directory = this.evidenceDirectory(sessionId)
+    writePrivateFile(path.join(directory, 'page.html'), input.rawDom)
+    writePrivateFile(path.join(directory, 'before.png'), screenshot)
+    writePrivateJson(path.join(directory, 'session.json'), {
+      protocol: HARNESS_BROWSER_EXTENSION_PROTOCOL,
+      sessionId,
+      extensionId: session.summary.extensionId,
+      extensionVersion: session.pairing.extensionVersion,
+      extensionCredential: auth.token || session.pairing.credential,
+      pairingId: session.pairing.pairingId,
+      provider: session.pairing.provider,
+      profileId: session.pairing.profileId,
+      page: session.summary.page,
+      capturedAt: capturedAt.toISOString(),
+    })
+    this.appendEvidenceEvent(sessionId, { type: 'page_capture', capturedAt: capturedAt.toISOString() })
+    return { recorded: true as const }
+  }
+
+  recordActionScreenshot(
+    auth: BrowserExtensionAuth,
+    sessionId: string,
+    actionId: string,
+    input: { screenshotDataUrl: string; capturedAt: string },
+  ) {
+    this.session(auth, sessionId)
+    const state = this.#actions.get(actionId)
+    if (!state || state.sessionId !== sessionId) throw extensionError('extension_action_missing', 'The browser action is no longer available.')
+    const capturedAt = new Date(input.capturedAt)
+    if (!Number.isFinite(capturedAt.valueOf())) throw extensionError('extension_evidence_invalid', 'The evidence timestamp is invalid.')
+    writePrivateFile(path.join(this.evidenceDirectory(sessionId), `${safeFileName(actionId)}-after.png`), decodePngDataUrl(input.screenshotDataUrl))
+    this.appendEvidenceEvent(sessionId, { type: 'action_screenshot', actionId, capturedAt: capturedAt.toISOString() })
+    return { recorded: true as const }
+  }
+
   setTaskPrompt(auth: BrowserExtensionAuth, sessionId: string, taskPrompt: string) {
     this.session(auth, sessionId).taskPrompt = taskPrompt
+    this.appendEvidenceEvent(sessionId, { type: 'task_prompt', taskPrompt, capturedAt: new Date().toISOString() })
   }
 
   bindRun(runId: string, binding: HarnessToolBinding | undefined) {
@@ -290,51 +361,64 @@ export class BrowserExtensionBroker {
   }
 
   redactArguments(entry: HarnessToolCatalogEntry, value: JsonValue, context: HarnessToolExecutionContext): JsonValue {
-    if (entry.name !== BROWSER_PAGE_INPUT_TOOL) return value
-    const action = parseInputAction(value)
+    if (!isBrowserActionTool(entry.name)) return value
+    const actionKind = actionKindForTool(entry.name)
+    const action = parseBrowserAction(actionKind, value)
     const session = this.sessionForRun(context.runId)
-    const control = session?.observation?.controls.find((candidate) => candidate.elementRef === action.elementRef)
-    if (!session?.observation || !control) {
+    const elementRef = 'elementRef' in action ? action.elementRef : undefined
+    const control = elementRef === undefined
+      ? undefined
+      : session?.observation?.controls.find((candidate) => candidate.elementRef === elementRef)
+    if (!session?.observation || (elementRef !== undefined && (!control || !control.actions.includes(actionKind as never)))) {
       throw extensionError('extension_action_invalid', 'The model action does not reference the latest exact-page observation.')
     }
     const key = callKey(context)
     const existingActionId = this.#actionsByCall.get(key)
     const existing = existingActionId ? this.#actions.get(existingActionId) : undefined
-    if (existing) return redactedInputArguments(existing.fullArguments)
+    if (existing) return redactedActionArguments(existing.action.action, existing.fullArguments)
     const actionId = opaque('browser-action')
     const proposal: BrowserActionProposal = {
       protocol: HARNESS_BROWSER_EXTENSION_PROTOCOL,
-      kind: 'input_proposal',
+      kind: 'action_proposal',
+      action: actionKind,
       actionId,
       runId: context.runId,
       callId: context.callId,
       argumentsDigest: context.argumentsDigest,
       status: 'awaiting_approval',
-      target: {
-        elementRef: action.elementRef,
-        label: control.label,
-        name: control.name,
-        inputType: control.inputType,
-      },
-      text: action.text,
+      ...(control ? {
+        target: {
+          elementRef: control.elementRef,
+          label: control.label,
+          name: control.name,
+          inputType: control.inputType,
+        },
+      } : {}),
+      ...('text' in action ? { text: action.text } : {}),
+      ...('url' in action ? { url: action.url } : {}),
       page: session.summary.page,
       observationRevision: session.observation.observationRevision,
     }
     this.#actions.set(actionId, {
       action: proposal,
       fullArguments: action,
+      toolName: entry.name,
       sessionId: this.#runSessions.get(context.runId) ?? '',
       createdAt: Date.now(),
       settled: false,
     })
     this.#actionsByCall.set(key, actionId)
-    return redactedInputArguments(action)
+    this.appendEvidenceEvent(this.#runSessions.get(context.runId) ?? '', {
+      type: 'action_proposed', actionId, action: actionKind, arguments: action as unknown as JsonValue,
+      capturedAt: new Date().toISOString(),
+    })
+    return redactedActionArguments(actionKind, action)
   }
 
   restoreArguments(entry: HarnessToolCatalogEntry, value: JsonValue, context: HarnessToolExecutionContext): JsonValue {
-    if (entry.name !== BROWSER_PAGE_INPUT_TOOL) return value
+    if (!isBrowserActionTool(entry.name)) return value
     const action = [...this.#actions.values()].find((candidate) => candidate.action.runId === context.runId &&
-      candidate.action.callId === context.callId && candidate.action.argumentsDigest === context.argumentsDigest)
+      candidate.action.callId === context.callId && candidate.action.argumentsDigest === context.argumentsDigest && candidate.toolName === entry.name)
     if (!action) throw extensionError('extension_action_missing', 'The transient browser action payload is no longer available.')
     return action.fullArguments
   }
@@ -351,7 +435,7 @@ export class BrowserExtensionBroker {
         controlCount: value.controls.length,
       }
     }
-    if (entry.name === BROWSER_PAGE_INPUT_TOOL && isBrowserPageInputResult(value)) return redactedInputResult(value)
+    if (isBrowserActionTool(entry.name) && isBrowserActionResult(value)) return redactedActionResult(value)
     return value
   }
 
@@ -414,23 +498,26 @@ export class BrowserExtensionBroker {
     if (!state || state.sessionId !== sessionId || state.settled) throw extensionError('extension_action_missing', 'The browser action is no longer available.')
     if (state.action.status !== 'awaiting_approval') throw extensionError('extension_action_state', 'The browser action is already being applied.')
     state.decision = approved ? 'approved' : 'rejected'
+    this.appendEvidenceEvent(sessionId, {
+      type: 'action_decision', actionId, approved, capturedAt: new Date().toISOString(),
+    })
     if (!approved) {
       state.settled = true
-      state.resolve?.(failureResult(state, 'approval_rejected', 'The user rejected this input action.'))
+      state.resolve?.(failureResult(state, 'approval_rejected', 'The user rejected this browser action.'))
     }
     if (approved) state.action = { ...state.action, status: 'applying' }
     return { actionId, approved }
   }
 
-  async waitForAction(auth: BrowserExtensionAuth, sessionId: string, actionId: string): Promise<BrowserPageInputResult> {
+  async waitForAction(auth: BrowserExtensionAuth, sessionId: string, actionId: string): Promise<BrowserActionResult> {
     this.session(auth, sessionId)
     const state = this.#actions.get(actionId)
     if (!state || state.sessionId !== sessionId) return failureResult(state, 'extension_disconnected', 'The browser action is no longer available.')
     if (state.result) return state.result
     if (state.settled) return failureResult(state, 'extension_disconnected', 'The browser action is no longer available.')
-    if (state.decision === 'rejected') return failureResult(state, 'approval_rejected', 'The user rejected this input action.')
+    if (state.decision === 'rejected') return failureResult(state, 'approval_rejected', 'The user rejected this browser action.')
     if (state.decision !== 'approved') return failureResult(state, 'approval_rejected', 'The browser action was not approved.')
-    return await new Promise<BrowserPageInputResult>((resolve) => {
+    return await new Promise<BrowserActionResult>((resolve) => {
       state.resolve = (result) => {
         state.settled = true
         resolve(result)
@@ -443,7 +530,7 @@ export class BrowserExtensionBroker {
     })
   }
 
-  submitActionResult(auth: BrowserExtensionAuth, sessionId: string, input: { actionId: string; runId: string; result: BrowserPageInputResult }) {
+  submitActionResult(auth: BrowserExtensionAuth, sessionId: string, input: { actionId: string; runId: string; result: BrowserActionResult }) {
     this.session(auth, sessionId)
     const state = this.#actions.get(input.actionId)
     if (state?.settled && state.result) return { actionId: input.actionId, status: state.result.status, duplicate: true as const }
@@ -451,13 +538,18 @@ export class BrowserExtensionBroker {
     if (state.decision !== 'approved' || state.action.status !== 'applying') {
       throw extensionError('extension_action_state', 'The browser result cannot be accepted before the frozen action is approved.')
     }
-    if (!isBrowserPageInputResult(input.result) || input.result.elementRef !== state.fullArguments.elementRef ||
+    const expectedElementRef = 'elementRef' in state.fullArguments ? state.fullArguments.elementRef : undefined
+    if (!isBrowserActionResult(input.result) || input.result.action !== state.action.action || input.result.elementRef !== expectedElementRef ||
       input.result.observationRevision !== state.action.observationRevision ||
       input.result.documentRevision < state.action.page.documentRevision) {
       throw extensionError('extension_action_result_invalid', 'The browser result does not match the frozen action.')
     }
     state.settled = true
     state.result = input.result
+    this.appendEvidenceEvent(sessionId, {
+      type: 'action_result', actionId: input.actionId, result: input.result as unknown as JsonValue,
+      capturedAt: new Date().toISOString(),
+    })
     state.resolve?.(input.result)
     return { actionId: input.actionId, status: input.result.status }
   }
@@ -478,10 +570,10 @@ export class BrowserExtensionBroker {
           if (!session?.observation) return { status: 'failed', content: { code: 'no_supported_control', message: 'No live page observation is available.' } }
           return { status: 'succeeded', content: session.observation as unknown as JsonValue }
         }
-        if (entry.name === BROWSER_PAGE_INPUT_TOOL) {
+        if (isBrowserActionTool(entry.name)) {
           if (!context) throw extensionError('extension_context_missing', 'Browser tool correlation context is missing.')
           const action = [...browser.#actions.values()].find((candidate) => candidate.action.runId === context.runId &&
-            candidate.action.callId === context.callId && candidate.action.argumentsDigest === context.argumentsDigest)
+            candidate.action.callId === context.callId && candidate.action.argumentsDigest === context.argumentsDigest && candidate.toolName === entry.name)
           if (!action) return { status: 'failed', content: { code: 'invalid_action', message: 'The transient browser action is no longer available.' } }
           const sessionId = browser.#runSessions.get(context.runId)
           if (!sessionId) return { status: 'failed', content: { code: 'extension_session_missing', message: 'The extension session is no longer attached.' } }
@@ -496,10 +588,10 @@ export class BrowserExtensionBroker {
         browser.bindRun(runId, binding)
       },
       redactArguments(entry, args, context) {
-        return entry.name === BROWSER_PAGE_INPUT_TOOL ? browser.redactArguments(entry, args, context) : base.redactArguments?.(entry, args, context) ?? args
+        return isBrowserActionTool(entry.name) ? browser.redactArguments(entry, args, context) : base.redactArguments?.(entry, args, context) ?? args
       },
       restoreArguments(entry, args, context) {
-        return entry.name === BROWSER_PAGE_INPUT_TOOL ? browser.restoreArguments(entry, args, context) : base.restoreArguments?.(entry, args, context) ?? args
+        return isBrowserActionTool(entry.name) ? browser.restoreArguments(entry, args, context) : base.restoreArguments?.(entry, args, context) ?? args
       },
       redactResult(entry, content, context) {
         return entry.name.startsWith('browser_page_') ? browser.redactResult(entry, content, context) : base.redactResult?.(entry, content, context) ?? content
@@ -521,7 +613,20 @@ export class BrowserExtensionBroker {
   authForSession(sessionId: string): BrowserExtensionAuth {
     const session = this.#sessions.get(sessionId)
     if (!session) throw extensionError('extension_session_missing', 'The extension session is not attached.')
-    return { credential: session.pairing, token: '' }
+    return { credential: session.pairing, token: session.pairing.credential ?? '' }
+  }
+
+  private evidenceDirectory(sessionId: string) {
+    const directory = path.join(this.#evidenceRoot, safeFileName(sessionId))
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 })
+    if (process.platform !== 'win32') fs.chmodSync(directory, 0o700)
+    return directory
+  }
+
+  private appendEvidenceEvent(sessionId: string, value: JsonValue) {
+    const file = path.join(this.evidenceDirectory(sessionId), 'events.jsonl')
+    fs.appendFileSync(file, `${JSON.stringify(value)}\n`, { encoding: 'utf8', mode: 0o600 })
+    if (process.platform !== 'win32') fs.chmodSync(file, 0o600)
   }
 
   private loadPairings() {
@@ -586,16 +691,80 @@ export function browserCatalog(): readonly HarnessToolCatalogEntry[] {
       readOnly: false,
       approval: 'always',
     },
+    elementActionCatalogEntry(
+      BROWSER_PAGE_CLICK_TOOL,
+      'Propose one click on a non-submit button referenced by the latest exact-page observation.',
+    ),
+    elementActionCatalogEntry(
+      BROWSER_PAGE_SUBMIT_TOOL,
+      'Propose one form submission using a submit control or form referenced by the latest exact-page observation.',
+    ),
+    elementActionCatalogEntry(
+      BROWSER_PAGE_RADIO_TOOL,
+      'Propose selecting one radio control referenced by the latest exact-page observation.',
+    ),
+    elementActionCatalogEntry(
+      BROWSER_PAGE_UPLOAD_TOOL,
+      'Propose one user-approved local file upload to a file control referenced by the latest exact-page observation. The user selects the file in the extension panel.',
+    ),
+    {
+      name: BROWSER_PAGE_NAVIGATE_TOOL,
+      server: 'browser-extension',
+      serverToolName: BROWSER_PAGE_NAVIGATE_TOOL,
+      source: 'local',
+      description: 'Propose one approved top-level navigation of the exact attached tab to an absolute http(s) URL.',
+      inputSchema: {
+        type: 'object',
+        properties: { url: { type: 'string', minLength: 1, maxLength: 2048 } },
+        required: ['url'],
+        additionalProperties: false,
+      },
+      readOnly: false,
+      approval: 'always',
+    },
   ]
 }
 
-function parseInputAction(value: JsonValue): BrowserPageInputAction {
-  if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.elementRef !== 'string' ||
-    typeof value.text !== 'string' || value.elementRef.length < 1 || value.elementRef.length > 256 ||
-    value.text.length > 16_384 || value.text.includes('\0')) {
-    throw extensionError('extension_action_invalid', 'The browser input action is invalid.')
+function elementActionCatalogEntry(name: typeof BROWSER_PAGE_CLICK_TOOL | typeof BROWSER_PAGE_SUBMIT_TOOL | typeof BROWSER_PAGE_RADIO_TOOL | typeof BROWSER_PAGE_UPLOAD_TOOL, description: string): HarnessToolCatalogEntry {
+  return {
+    name,
+    server: 'browser-extension',
+    serverToolName: name,
+    source: 'local',
+    description,
+    inputSchema: {
+      type: 'object',
+      properties: { elementRef: { type: 'string', minLength: 1, maxLength: 256 } },
+      required: ['elementRef'],
+      additionalProperties: false,
+    },
+    readOnly: false,
+    approval: 'always',
   }
-  return { elementRef: value.elementRef, text: value.text }
+}
+
+function parseBrowserAction(action: BrowserActionKind, value: JsonValue): BrowserPageAction {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw extensionError('extension_action_invalid', 'The browser action is invalid.')
+  }
+  if (action === 'navigate') {
+    if (Object.keys(value).length !== 1 || !isSafeNavigationUrl(value.url)) {
+      throw extensionError('extension_action_invalid', 'The browser navigation action is invalid.')
+    }
+    return { url: value.url } satisfies BrowserPageNavigateAction
+  }
+  if (typeof value.elementRef !== 'string' || value.elementRef.length < 1 || value.elementRef.length > 256) {
+    throw extensionError('extension_action_invalid', 'The browser element action is invalid.')
+  }
+  if (action === 'input') {
+    if (Object.keys(value).some((key) => !['elementRef', 'text'].includes(key)) || typeof value.text !== 'string' ||
+      value.text.length > 16_384 || value.text.includes('\0')) {
+      throw extensionError('extension_action_invalid', 'The browser input action is invalid.')
+    }
+    return { elementRef: value.elementRef, text: value.text } satisfies BrowserPageInputAction
+  }
+  if (Object.keys(value).length !== 1) throw extensionError('extension_action_invalid', 'The browser element action is invalid.')
+  return { elementRef: value.elementRef } satisfies BrowserPageElementAction
 }
 
 function validatePageBinding(value: BrowserExtensionPageBinding) {
@@ -614,27 +783,30 @@ function validatePageBinding(value: BrowserExtensionPageBinding) {
   }
 }
 
-function failureResult(state: ActionState | undefined, code: BrowserFailureCode, message: string): BrowserPageInputResult {
+function failureResult(state: ActionState | undefined, code: BrowserFailureCode, message: string): BrowserActionResult {
+  const elementRef = state && 'elementRef' in state.fullArguments ? state.fullArguments.elementRef : undefined
   return {
     protocol: HARNESS_BROWSER_EXTENSION_PROTOCOL,
-    kind: 'input_result',
+    kind: 'action_result',
+    action: state?.action.action ?? 'input',
     status: 'failed',
-    elementRef: state?.fullArguments.elementRef ?? '',
-    documentRevision: state?.action.page.documentRevision ?? 0,
-    observationRevision: state?.action.observationRevision ?? 0,
-    valueEvidence: { state: 'not_verified' },
+    ...(elementRef === undefined ? {} : { elementRef }),
+    documentRevision: state?.action.page.documentRevision ?? 1,
+    observationRevision: state?.action.observationRevision ?? 1,
+    evidence: { state: 'not_verified' },
     failure: { code, message },
   }
 }
 
 function publicPairing(value: PersistedPairing): BrowserPairingSummary {
-  const { credentialHash: _credentialHash, credentialVersion: _credentialVersion, ...summary } = value
+  const { credential: _credential, credentialHash: _credentialHash, credentialVersion: _credentialVersion, ...summary } = value
   return summary
 }
 
 function isPersistedPairing(value: unknown): value is PersistedPairing {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value) &&
     typeof (value as any).pairingId === 'string' && typeof (value as any).extensionId === 'string' &&
+    ((value as any).credential === undefined || typeof (value as any).credential === 'string') &&
     typeof (value as any).credentialHash === 'string' && (value as any).credentialVersion === 1 &&
     ((value as any).status === 'active' || (value as any).status === 'revoked'))
 }
@@ -674,11 +846,53 @@ function callKey(context: Pick<HarnessToolExecutionContext, 'runId' | 'callId' |
   return `${context.runId}:${context.callId}:${context.argumentsDigest}`
 }
 
-function redactedInputArguments(action: BrowserPageInputAction): JsonValue {
+function redactedActionArguments(actionKind: BrowserActionKind, action: BrowserPageAction): JsonValue {
+  if ('url' in action) return { url: action.url }
+  if (!('text' in action)) return { elementRef: action.elementRef }
   return {
     elementRef: action.elementRef,
     text: { redacted: true, length: action.text.length, sha256: hash(action.text) },
+    action: actionKind,
   }
+}
+
+function isBrowserActionTool(value: string): value is typeof BROWSER_ACTION_TOOLS[number] {
+  return (BROWSER_ACTION_TOOLS as readonly string[]).includes(value)
+}
+
+function actionKindForTool(value: typeof BROWSER_ACTION_TOOLS[number]): BrowserActionKind {
+  const actions: Record<typeof BROWSER_ACTION_TOOLS[number], BrowserActionKind> = {
+    [BROWSER_PAGE_INPUT_TOOL]: 'input',
+    [BROWSER_PAGE_CLICK_TOOL]: 'click',
+    [BROWSER_PAGE_SUBMIT_TOOL]: 'submit',
+    [BROWSER_PAGE_RADIO_TOOL]: 'radio',
+    [BROWSER_PAGE_UPLOAD_TOOL]: 'upload',
+    [BROWSER_PAGE_NAVIGATE_TOOL]: 'navigate',
+  }
+  return actions[value]
+}
+
+function decodePngDataUrl(value: string) {
+  const match = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/u.exec(value)
+  if (!match) throw extensionError('extension_evidence_invalid', 'The screenshot evidence must be a PNG data URL.')
+  const bytes = Buffer.from(match[1]!, 'base64')
+  if (bytes.length === 0 || bytes.length > 16 * 1024 * 1024) {
+    throw extensionError('extension_evidence_invalid', 'The screenshot evidence exceeds the 16 MiB limit.')
+  }
+  return bytes
+}
+
+function safeFileName(value: string) {
+  return value.replace(/[^A-Za-z0-9._-]+/gu, '_').slice(0, 180)
+}
+
+function writePrivateFile(file: string, value: string | Buffer) {
+  fs.writeFileSync(file, value, { mode: 0o600 })
+  if (process.platform !== 'win32') fs.chmodSync(file, 0o600)
+}
+
+function writePrivateJson(file: string, value: unknown) {
+  writePrivateFile(file, `${JSON.stringify(value, null, 2)}\n`)
 }
 
 function isRedactedObservation(value: JsonValue) {

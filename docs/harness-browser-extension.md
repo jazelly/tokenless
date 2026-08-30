@@ -1,17 +1,18 @@
 # Tokenless Harness Browser Extension
 
-Status: experimental candidate; user-owned real-page acceptance is still required.
+Status: experimental V2 candidate; user-owned real-page/provider acceptance and provider-session evidence capture are still required.
 
 The Chrome extension is a Tokenless Harness client and browser-tool adapter. Tokenless API remains the provider-facing layer; Tokenless Harness remains the Agent runtime; Tokenless Harness API is the local run/control/tool-exchange boundary.
 
-## Supported V1 boundary
+## Supported candidate boundary
 
 | Supported | Not supported |
 |---|---|
 | One explicitly selected top-level `http` or `https` tab | Protected Chrome pages, cross-origin frames, closed shadow DOM, or canvas-only controls |
-| Visible, enabled `text`, `search`, `email`, `tel`, `url`, and `number` inputs | Password, OTP, payment, authentication-secret, file, hidden, disabled, or read-only controls |
-| `textarea` and verifiable visible `contenteditable` surfaces | Click, submit, select, upload, download, popup, or navigation |
-| Opaque `elementRef` from the latest bounded observation | JavaScript, CSS selector, XPath, URL, or CDP escape hatches |
+| Visible textual inputs, `textarea`, and verifiable `contenteditable` surfaces | Password, OTP, payment, authentication-secret, hidden, disabled, or read-only controls |
+| Non-sensitive buttons, form submit controls, native radio controls, and file inputs | CAPTCHA, MFA, purchase, delete, download, popup, or multi-tab automation |
+| One approved absolute `http` or `https` navigation | Implicit navigation, background continuation, or protected browser URLs |
+| Opaque `elementRef` from the latest bounded observation | JavaScript, CSS selector, XPath, or CDP escape hatches |
 
 ## Install the candidate
 
@@ -34,19 +35,19 @@ The issued credential is scoped to that extension identity and its own Harness s
 3. Check the exact origin and semantic control inventory.
 4. Read the provider disclosure, then explicitly consent before any bounded page content leaves the extension.
 5. Enter a natural-language task and start the Harness run.
-6. Review the exact target label and proposed text. Approve or reject it.
-7. Confirm the intended visible field changed and the side panel reached a final result.
+6. Review the exact action, target, text, or destination. For upload, choose one local file. Approve or reject each action separately.
+7. Confirm the intended visible result and the side panel's final output.
 
 The candidate is not accepted until the user visually confirms the correct field changed on a user-selected real page and unrelated fields and tabs did not change.
 
 ## Data flow and lifetime
 
-- The content script returns semantic metadata for at most 64 supported controls; it never sends raw page HTML.
+- The content script sends semantic metadata for at most 128 supported controls to the Harness Task Model. Raw page HTML is stored only in the private local evidence bundle.
 - Each run uses the observation frozen at attachment time. A changed or stale page fails closed and requires a new attachment and run.
-- Existing text values, password-like fields, cookies, storage, authorization data, and unrelated tabs are excluded.
-- Task text, the semantic snapshot, proposed input text, provider response, and the unredacted final response remain in an ephemeral daemon-memory overlay; persisted provider jobs contain only redacted placeholders and correlation metadata.
-- Durable pairing state stores only a credential hash and route identity. Extension storage keeps the scoped credential needed to reconnect to the running daemon.
-- Daemon restart discards the run and daemon-memory payload overlay. Detaching removes the extension session's access to that run. Start a new run; V1 does not recover or replay mutations.
+- Existing text values, password-like fields, cookies, storage, authorization data, and unrelated tabs remain excluded from model context.
+- The user-approved private evidence bundle stores raw DOM, task and entered values, before/after screenshots, the scoped extension credential, route identity, decisions, and results under the Tokenless API home with owner-only permissions.
+- Capturing the selected provider's raw session values into that same private bundle remains a required acceptance item; the candidate is not verified until that evidence exists.
+- Daemon restart discards the run and daemon-memory payload overlay. Detaching removes the extension session's access to that run; mutations are not replayed.
 
 ## Repair, revoke, and uninstall
 

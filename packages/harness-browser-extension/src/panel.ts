@@ -5,16 +5,28 @@ type Observation = {
   kind: string
   page: Omit<Page, 'tabId'>
   observationRevision: number
-  controls: Array<{ elementRef: string; name: string; label: string; inputType: string; valuePresence: string }>
+  controls: Array<{
+    elementRef: string
+    role: string
+    name: string
+    label: string
+    inputType: string
+    valuePresence: string
+    checked?: boolean
+    actions: string[]
+  }>
 }
+type PrivateEvidence = { rawDom: string; screenshotDataUrl: string; capturedAt: string }
 type Proposal = {
   actionId: string
+  action: 'input' | 'click' | 'submit' | 'radio' | 'upload' | 'navigate'
   runId: string
   callId: string
   argumentsDigest: string
   status: 'awaiting_approval' | 'applying'
-  target: { elementRef: string; label: string; name: string; inputType: string }
-  text: string
+  target?: { elementRef: string; label: string; name: string; inputType: string }
+  text?: string
+  url?: string
   page: Page
   observationRevision: number
 }
@@ -35,11 +47,14 @@ const approval = $('approval')
 const proposalText = $('proposal')
 const approveButton = $<HTMLButtonElement>('approve')
 const rejectButton = $<HTMLButtonElement>('reject')
+const uploadLabel = $('upload-label')
+const uploadFile = $<HTMLInputElement>('upload-file')
 
 let credential = ''
 let sessionId = ''
 let selectedPage: Page | undefined
 let observation: Observation | undefined
+let initialEvidence: PrivateEvidence | undefined
 let runId = ''
 let proposal: Proposal | undefined
 let stopped = true
@@ -54,6 +69,9 @@ $('run').addEventListener('click', () => void startRun())
 $('cancel').addEventListener('click', () => void cancelRun())
 approveButton.addEventListener('click', () => void decide(true))
 rejectButton.addEventListener('click', () => void decide(false))
+uploadFile.addEventListener('change', () => {
+  if (proposal?.action === 'upload' && proposal.status === 'awaiting_approval') approveButton.disabled = uploadFile.files?.length !== 1
+})
 
 void initialize()
 
@@ -127,19 +145,23 @@ async function refreshConnection() {
 async function observeTab() {
   if (!credential) return setRunStatus('Pair the extension first / 请先配对扩展')
   try {
-    const result = await chrome.runtime.sendMessage<{ tabId: number; observation: Observation }>({ type: 'observe-active-tab' })
+    const result = await chrome.runtime.sendMessage<{ tabId: number; observation: Observation; evidence: PrivateEvidence }>({ type: 'observe-active-tab' })
     const next = result.observation
     if (!next || next.kind !== 'semantic_page_observation') throw new Error('The page did not return a semantic observation.')
     observation = next
+    initialEvidence = result.evidence
     selectedPage = { tabId: result.tabId, ...next.page }
     consent.checked = false
     sessionId = `extension-session:${crypto.randomUUID().replaceAll('-', '')}`
     detached = false
     pageStatus.textContent = `${next.page.title || 'Untitled'} · ${next.page.origin}`
-    disclosure.textContent = `Origin: ${next.page.origin}. Bounded page content is sent through the approved provider route only after consent. / Origin：${next.page.origin}。只有同意后，有界页面内容才会经已批准 provider route 发送。`
+    disclosure.textContent = `Origin: ${next.page.origin}. Bounded page content is sent through the approved provider route after consent; full evidence remains in the local private bundle. / Origin：${next.page.origin}。同意后有界页面内容会经批准的 provider route 发送；完整证据只保留在本机私有证据包。`
     inventory.textContent = next.controls.length === 0
-      ? 'No supported visible textual controls / 没有支持的可见文本控件'
-      : next.controls.map((control, index) => `${index + 1}. ${control.label || control.name || 'Text field'} · ${control.inputType} · ${control.valuePresence}`).join('\n')
+      ? 'No supported visible controls / 没有支持的可见控件'
+      : next.controls.map((control, index) => {
+        const state = control.role === 'radio' ? (control.checked ? 'selected' : 'not selected') : control.valuePresence
+        return `${index + 1}. ${control.label || control.name || 'Control'} · ${control.inputType} · ${control.actions.join('/')} · ${state}`
+      }).join('\n')
     setRunStatus(`Tab attached locally · ${next.controls.length} control(s) / 标签页已在本地附着 · ${next.controls.length} 个控件`)
   } catch (error) {
     setRunStatus(errorMessage(error))
@@ -147,14 +169,14 @@ async function observeTab() {
 }
 
 async function startRun() {
-  if (!credential || !observation || !selectedPage || !sessionId) return setRunStatus('Pair and attach a tab first / 请先配对并附着标签页')
-  if (!consent.checked) return setRunStatus('Consent is required before page content leaves the extension / 页面内容离开扩展前需要同意')
+  if (!credential || !observation || !selectedPage || !sessionId || !initialEvidence) return setRunStatus('Pair and attach a tab first / 请先配对并附着标签页')
+  if (!consent.checked) return setRunStatus('Consent is required before page content leaves the extension or full evidence is saved / 发送页面内容或保存完整证据前需要同意')
   if (!task.value.trim()) return setRunStatus('Enter a task / 请输入任务')
   try {
     await saveOrigin()
     await request('/v1/harness/browser-extension/sessions', {
       method: 'POST',
-      body: JSON.stringify({ sessionId, page: selectedPage, observation }),
+      body: JSON.stringify({ sessionId, page: selectedPage, observation, evidence: initialEvidence }),
     })
     const started = await request<RunView>('/v1/harness/browser-extension/runs', {
       method: 'POST', body: JSON.stringify({ sessionId, taskPrompt: task.value.trim() }),
@@ -197,6 +219,7 @@ async function pollUntilTerminal() {
 }
 
 async function actionLoop() {
+  let visibleActionId = ''
   while (!stopped && runId && sessionId) {
     try {
       const next = await request<Proposal | null>(`/v1/harness/browser-extension/sessions/${encodeURIComponent(sessionId)}/actions?runId=${encodeURIComponent(runId)}`)
@@ -206,8 +229,13 @@ async function actionLoop() {
       } else {
         proposal = next
         approval.hidden = false
-        proposalText.textContent = `${next.target.label || next.target.name || 'Text field'} · ${next.target.inputType}\n\nProposed text / 拟填文本：${next.text}`
-        approveButton.disabled = next.status !== 'awaiting_approval'
+        if (visibleActionId !== next.actionId) {
+          visibleActionId = next.actionId
+          uploadFile.value = ''
+        }
+        proposalText.textContent = proposalDescription(next)
+        uploadLabel.hidden = next.action !== 'upload'
+        approveButton.disabled = next.status !== 'awaiting_approval' || (next.action === 'upload' && uploadFile.files?.length !== 1)
         rejectButton.disabled = next.status !== 'awaiting_approval'
         if (next.status === 'applying' && !appliedActions.has(next.actionId)) await applyAction(next)
       }
@@ -221,6 +249,9 @@ async function actionLoop() {
 async function decide(approved: boolean) {
   const frozen = proposal
   if (!frozen || frozen.status !== 'awaiting_approval') return
+  if (approved && frozen.action === 'upload' && uploadFile.files?.length !== 1) {
+    return setRunStatus('Select exactly one file before approval / 批准前请选择一个文件')
+  }
   approveButton.disabled = true
   rejectButton.disabled = true
   void request(`/v1/harness/browser-extension/runs/${encodeURIComponent(frozen.runId)}/actions/${encodeURIComponent(frozen.actionId)}/decision`, {
@@ -233,32 +264,49 @@ async function applyAction(action: Proposal) {
   appliedActions.add(action.actionId)
   let result: unknown
   try {
+    const file = action.action === 'upload' ? uploadFile.files?.[0] : undefined
+    const filePayload = file ? {
+      name: file.name,
+      type: file.type,
+      lastModified: file.lastModified,
+      bytes: await file.arrayBuffer(),
+    } : undefined
     result = await chrome.runtime.sendMessage({
-      type: 'apply-input',
+      type: 'apply-action',
+      action: action.action,
       tabId: action.page.tabId,
       origin: action.page.origin,
       url: action.page.url,
-      elementRef: action.target.elementRef,
+      destination: action.url,
+      elementRef: action.target?.elementRef,
       text: action.text,
+      file: filePayload,
       documentId: action.page.documentId,
       documentRevision: action.page.documentRevision,
       observationRevision: action.observationRevision,
     })
   } catch (error) {
     result = {
-      protocol: 'tokenless.harness-browser-extension/v1',
-      kind: 'input_result',
+      protocol: 'tokenless.harness-browser-extension/v2',
+      kind: 'action_result',
+      action: action.action,
       status: 'failed',
-      elementRef: action.target.elementRef,
+      ...(action.target ? { elementRef: action.target.elementRef } : {}),
       documentRevision: action.page.documentRevision,
       observationRevision: action.observationRevision,
-      valueEvidence: { state: 'not_verified' },
+      evidence: { state: 'not_verified' },
       failure: { code: 'inaccessible_page', message: errorMessage(error) },
     }
   }
   try {
     await request(`/v1/harness/browser-extension/sessions/${encodeURIComponent(sessionId)}/actions/${encodeURIComponent(action.actionId)}/result`, {
       method: 'POST', body: JSON.stringify({ runId: action.runId, result }),
+    })
+    const screenshot = await chrome.runtime.sendMessage<Pick<PrivateEvidence, 'screenshotDataUrl' | 'capturedAt'>>({
+      type: 'capture-tab-evidence', tabId: action.page.tabId,
+    })
+    await request(`/v1/harness/browser-extension/sessions/${encodeURIComponent(sessionId)}/actions/${encodeURIComponent(action.actionId)}/evidence`, {
+      method: 'POST', body: JSON.stringify(screenshot),
     })
   } catch (error) {
     setRunStatus(errorMessage(error))
@@ -280,6 +328,27 @@ async function detachSession() {
   if (detached || !sessionId) return
   detached = true
   await request(`/v1/harness/browser-extension/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' }).catch(() => undefined)
+}
+
+function proposalDescription(value: Proposal) {
+  const target = value.target ? `${value.target.label || value.target.name || 'Control'} · ${value.target.inputType}` : value.page.origin
+  const detail = value.action === 'input' ? `\n\nProposed text / 拟填文本：${value.text ?? ''}`
+    : value.action === 'navigate' ? `\n\nDestination / 目标地址：${value.url ?? ''}`
+      : value.action === 'upload' ? '\n\nSelect one local file below. / 请在下方选择一个本地文件。'
+        : ''
+  return `${actionLabel(value.action)}\n${target}${detail}`
+}
+
+function actionLabel(action: Proposal['action']) {
+  const labels: Record<Proposal['action'], string> = {
+    input: 'Text input / 文本填写',
+    click: 'Button click / 按钮点击',
+    submit: 'Form submit / 表单提交',
+    radio: 'Radio selection / 单选项选择',
+    upload: 'File upload / 文件上传',
+    navigate: 'Page navigation / 页面导航',
+  }
+  return labels[action]
 }
 
 async function saveOrigin() {
@@ -313,7 +382,7 @@ function stateLabel(state: string) {
     discovering_tools: 'Capturing page tools / 正在准备页面工具',
     submitting_provider: 'Waiting for Harness Task Model / 正在等待 Harness Task Model',
     running: 'Harness run is running / Harness run 正在运行',
-    waiting_for_approval: 'Waiting for input approval / 正在等待填写批准',
+    waiting_for_approval: 'Waiting for action approval / 正在等待操作批准',
     succeeded: 'Completed / 已完成',
     failed: 'Failed / 失败',
     cancelled: 'Cancelled / 已取消',

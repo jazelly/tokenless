@@ -1,30 +1,35 @@
+type ActionKind = 'input' | 'click' | 'submit' | 'radio' | 'upload'
+
 type Control = {
   elementRef: string
-  role: 'textbox'
+  role: 'textbox' | 'button' | 'radio' | 'file' | 'form'
   name: string
   label: string
   placeholder: string
   inputType: string
   valuePresence: 'empty' | 'present'
+  checked?: boolean
+  actions: ActionKind[]
   visible: true
   enabled: true
-  editable: true
+  editable: boolean
   structuralHint: string
   contextText: string
 }
 
 type Observation = {
-  protocol: 'tokenless.harness-browser-extension/v1'
+  protocol: 'tokenless.harness-browser-extension/v2'
   kind: 'semantic_page_observation'
   page: { origin: string; url: string; title: string; documentId: string; documentRevision: number }
   observationRevision: number
   controls: Control[]
 }
 
-type InputMessage = {
-  type: 'input'
+type ActionMessage = {
+  type: ActionKind
   elementRef: string
-  text: string
+  text?: string
+  file?: { name: string; type: string; lastModified: number; bytes: ArrayBuffer }
   url: string
   documentId: string
   documentRevision: number
@@ -32,30 +37,31 @@ type InputMessage = {
 }
 
 type Adapter = { handle(message: unknown): Promise<unknown> | unknown }
+type ElementState = { element: HTMLElement; actions: ActionKind[]; documentRevision: number; observationRevision: number }
 
-const globalScope = globalThis as typeof globalThis & { __tokenlessHarnessPageAdapterV1?: Adapter }
-globalScope.__tokenlessHarnessPageAdapterV1 ??= createAdapter()
+const globalScope = globalThis as typeof globalThis & { __tokenlessHarnessPageAdapterV2?: Adapter }
+globalScope.__tokenlessHarnessPageAdapterV2 ??= createAdapter()
 
 function createAdapter(): Adapter {
   const documentId = `document-${crypto.randomUUID()}`
   let documentRevision = 1
   let observationRevision = 0
-  const elements = new Map<string, { element: HTMLElement; documentRevision: number; observationRevision: number }>()
+  const elements = new Map<string, ElementState>()
   const mutationObserver = new MutationObserver((records) => recordMutations(records))
   mutationObserver.observe(document.documentElement, {
     subtree: true,
     childList: true,
     characterData: true,
     attributes: true,
-    attributeFilter: ['aria-label', 'aria-labelledby', 'contenteditable', 'disabled', 'hidden', 'placeholder', 'readonly', 'role', 'style', 'type'],
+    attributeFilter: ['aria-checked', 'aria-label', 'aria-labelledby', 'checked', 'contenteditable', 'disabled', 'hidden', 'placeholder', 'readonly', 'role', 'style', 'type'],
   })
 
   const adapter: Adapter = {
     handle(message) {
       if (!message || typeof message !== 'object') return undefined
       const type = (message as { type?: unknown }).type
-      if (type === 'observe') return observe()
-      if (type === 'input') return input(message as InputMessage)
+      if (type === 'observe') return { observation: observe(), rawDom: document.documentElement.outerHTML }
+      if (['input', 'click', 'submit', 'radio', 'upload'].includes(String(type))) return act(message as ActionMessage)
       return undefined
     },
   }
@@ -87,12 +93,12 @@ function createAdapter(): Adapter {
       const semantic = semanticControl(element, controls.length)
       if (!semantic) continue
       const elementRef = `element-${crypto.randomUUID()}`
-      elements.set(elementRef, { element, documentRevision, observationRevision })
+      elements.set(elementRef, { element, actions: semantic.actions, documentRevision, observationRevision })
       controls.push({ ...semantic, elementRef })
-      if (controls.length >= 64) break
+      if (controls.length >= 128) break
     }
     return {
-      protocol: 'tokenless.harness-browser-extension/v1',
+      protocol: 'tokenless.harness-browser-extension/v2',
       kind: 'semantic_page_observation',
       page: { origin: location.origin, url: boundedUrl(), title: boundedText(document.title, 512), documentId, documentRevision },
       observationRevision,
@@ -100,92 +106,176 @@ function createAdapter(): Adapter {
     }
   }
 
-  async function input(message: InputMessage) {
+  async function act(message: ActionMessage) {
     flushMutations()
+    const action = message.type
     const elementRef = typeof message.elementRef === 'string' ? message.elementRef : ''
     if (message.documentId !== documentId || message.url !== boundedUrl() || message.documentRevision !== documentRevision) {
-      return failure(elementRef, 'stale_document', 'The attached document changed; attach the current page again.')
+      return failure(action, elementRef, 'stale_document', 'The attached document changed; attach the current page again.')
     }
     const target = elements.get(elementRef)
     if (!target || message.observationRevision !== observationRevision || target.observationRevision !== observationRevision) {
-      return failure(elementRef, 'stale_observation', 'The page controls changed after observation; observe again.')
+      return failure(action, elementRef, 'stale_observation', 'The page controls changed after observation; observe again.')
     }
-    if (target.documentRevision !== documentRevision) return failure(elementRef, 'stale_document', 'The page document revision is stale.')
-    const text = typeof message.text === 'string' ? message.text : ''
-    if (text.length > 16_384 || text.includes('\0')) return failure(elementRef, 'invalid_action', 'The proposed text is invalid.')
-    const reason = mutationBlocker(target.element)
-    if (reason) return failure(elementRef, reason.code, reason.message)
+    if (target.documentRevision !== documentRevision) return failure(action, elementRef, 'stale_document', 'The page document revision is stale.')
+    if (!target.actions.includes(action)) return failure(action, elementRef, 'invalid_action', 'The approved control does not support this action.')
+    const reason = actionBlocker(target.element)
+    if (reason) return failure(action, elementRef, reason.code, reason.message)
 
     try {
-      target.element.focus({ preventScroll: true })
-      const beforeInput = new InputEvent('beforeinput', {
-        bubbles: true, cancelable: true, composed: true, inputType: 'insertText', data: text,
-      })
-      if (!target.element.dispatchEvent(beforeInput)) return failure(elementRef, 'invalid_action', 'The page rejected the editing event.')
-      if (isContentEditable(target.element)) setContentEditableValue(target.element, text)
-      else setNativeValue(target.element as HTMLInputElement | HTMLTextAreaElement, text)
-      target.element.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
-      await nextPaint()
-      if (!target.element.isConnected || currentValue(target.element) !== text) {
-        return failure(elementRef, 'invalid_action', 'The live visible control did not verify the proposed text.')
-      }
-      flushMutations()
-      return {
-        protocol: 'tokenless.harness-browser-extension/v1',
-        kind: 'input_result',
-        status: 'succeeded',
-        elementRef,
-        documentRevision,
-        observationRevision,
-        valueEvidence: { state: 'present', length: text.length, sha256: await sha256(text) },
-      }
+      if (action === 'input') return await input(target.element, elementRef, message.text)
+      if (action === 'click') return await clickButton(target.element, elementRef)
+      if (action === 'submit') return submit(target.element, elementRef)
+      if (action === 'radio') return await selectRadio(target.element, elementRef)
+      return await upload(target.element, elementRef, message.file)
     } catch {
-      return failure(elementRef, 'invalid_action', 'The live control rejected the input mutation.')
+      return failure(action, elementRef, 'invalid_action', 'The live control rejected the approved action.')
     }
   }
 
-  function failure(elementRef: string, code: string, message: string) {
+  async function input(element: HTMLElement, elementRef: string, proposed: unknown) {
+    const text = typeof proposed === 'string' ? proposed : ''
+    if (text.length > 16_384 || text.includes('\0')) return failure('input', elementRef, 'invalid_action', 'The proposed text is invalid.')
+    element.focus({ preventScroll: true })
+    const beforeInput = new InputEvent('beforeinput', {
+      bubbles: true, cancelable: true, composed: true, inputType: 'insertText', data: text,
+    })
+    if (!element.dispatchEvent(beforeInput)) return failure('input', elementRef, 'invalid_action', 'The page rejected the editing event.')
+    if (isContentEditable(element)) setContentEditableValue(element, text)
+    else setNativeValue(element as HTMLInputElement | HTMLTextAreaElement, text)
+    element.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
+    await nextPaint()
+    if (!element.isConnected || currentValue(element) !== text) {
+      return failure('input', elementRef, 'invalid_action', 'The live visible control did not verify the proposed text.')
+    }
+    flushMutations()
+    return success('input', elementRef, { state: 'verified', length: text.length, sha256: await sha256(text) })
+  }
+
+  async function clickButton(element: HTMLElement, elementRef: string) {
+    element.focus({ preventScroll: true })
+    element.click()
+    await nextPaint()
+    flushMutations()
+    return success('click', elementRef, { state: 'dispatched' })
+  }
+
+  function submit(element: HTMLElement, elementRef: string) {
+    const form = element instanceof HTMLFormElement ? element : element.closest('form')
+    if (!form) return failure('submit', elementRef, 'invalid_action', 'The approved submit control has no form.')
+    if (!form.checkValidity()) return failure('submit', elementRef, 'invalid_action', 'The form is not valid and was not submitted.')
+    const submitter = element instanceof HTMLButtonElement || (element instanceof HTMLInputElement && element.type === 'submit')
+      ? element
+      : undefined
+    setTimeout(() => form.requestSubmit(submitter), 0)
+    return success('submit', elementRef, { state: 'dispatched' })
+  }
+
+  async function selectRadio(element: HTMLElement, elementRef: string) {
+    if (!(element instanceof HTMLInputElement) || element.type !== 'radio') {
+      return failure('radio', elementRef, 'invalid_action', 'The approved control is not a native radio input.')
+    }
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked')?.set
+    if (!setter) return failure('radio', elementRef, 'invalid_action', 'The native radio setter is unavailable.')
+    setter.call(element, true)
+    element.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
+    element.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
+    await nextPaint()
+    if (!element.checked) return failure('radio', elementRef, 'invalid_action', 'The live radio control did not verify selection.')
+    flushMutations()
+    return success('radio', elementRef, { state: 'verified', checked: true })
+  }
+
+  async function upload(element: HTMLElement, elementRef: string, proposed: ActionMessage['file']) {
+    if (!(element instanceof HTMLInputElement) || element.type !== 'file' || !proposed ||
+      typeof proposed.name !== 'string' || proposed.name.length === 0 || proposed.name.length > 512 ||
+      !(proposed.bytes instanceof ArrayBuffer) || proposed.bytes.byteLength > 32 * 1024 * 1024) {
+      return failure('upload', elementRef, 'invalid_action', 'The selected upload file is invalid.')
+    }
+    const file = new File([proposed.bytes], proposed.name, {
+      type: proposed.type || 'application/octet-stream', lastModified: proposed.lastModified,
+    })
+    const transfer = new DataTransfer()
+    transfer.items.add(file)
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'files')?.set
+    if (!setter) return failure('upload', elementRef, 'invalid_action', 'The native file setter is unavailable.')
+    setter.call(element, transfer.files)
+    element.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
+    element.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
+    await nextPaint()
+    if (element.files?.length !== 1 || element.files[0]?.name !== proposed.name) {
+      return failure('upload', elementRef, 'invalid_action', 'The live file control did not verify the selected file.')
+    }
+    flushMutations()
+    return success('upload', elementRef, { state: 'verified', fileName: proposed.name })
+  }
+
+  function success(action: ActionKind, elementRef: string, evidence: Record<string, unknown>) {
     return {
-      protocol: 'tokenless.harness-browser-extension/v1', kind: 'input_result', status: 'failed', elementRef,
-      documentRevision, observationRevision, valueEvidence: { state: 'not_verified' }, failure: { code, message },
+      protocol: 'tokenless.harness-browser-extension/v2', kind: 'action_result', action, status: 'succeeded', elementRef,
+      documentRevision, observationRevision, evidence,
+    }
+  }
+
+  function failure(action: ActionKind, elementRef: string, code: string, message: string) {
+    return {
+      protocol: 'tokenless.harness-browser-extension/v2', kind: 'action_result', action, status: 'failed', elementRef,
+      documentRevision, observationRevision, evidence: { state: 'not_verified' }, failure: { code, message },
     }
   }
 }
 
 function semanticControl(element: HTMLElement, index: number): Omit<Control, 'elementRef'> | null {
-  if (mutationBlocker(element)) return null
+  if (actionBlocker(element)) return null
+  const label = associatedLabel(element)
+  const placeholder = boundedText(element.getAttribute('placeholder') ?? '', 160)
+  const common = {
+    name: accessibleName(element, label, placeholder),
+    label,
+    placeholder,
+    visible: true as const,
+    enabled: true as const,
+    structuralHint: structuralHint(element, index),
+    contextText: surroundingText(element),
+  }
+  if (element instanceof HTMLInputElement && element.type === 'radio') {
+    return { ...common, role: 'radio', inputType: 'radio', valuePresence: element.checked ? 'present' : 'empty', checked: element.checked, actions: ['radio'], editable: true }
+  }
+  if (element instanceof HTMLInputElement && element.type === 'file') {
+    return { ...common, role: 'file', inputType: 'file', valuePresence: element.files?.length ? 'present' : 'empty', actions: ['upload'], editable: true }
+  }
+  if (element instanceof HTMLFormElement) {
+    return { ...common, role: 'form', inputType: 'form', valuePresence: 'empty', actions: ['submit'], editable: false }
+  }
+  if (isButton(element)) {
+    const submit = isSubmitControl(element)
+    return { ...common, role: 'button', inputType: submit ? 'submit' : 'button', valuePresence: 'empty', actions: [submit ? 'submit' : 'click'], editable: false }
+  }
   const inputType = element instanceof HTMLInputElement
     ? (element.type || 'text').toLowerCase()
     : element instanceof HTMLTextAreaElement ? 'textarea' : 'contenteditable'
   if (element instanceof HTMLInputElement && !['text', 'search', 'email', 'tel', 'url', 'number'].includes(inputType)) return null
   if (!(element instanceof HTMLInputElement) && !(element instanceof HTMLTextAreaElement) && !isContentEditable(element)) return null
-  const label = associatedLabel(element)
-  const placeholder = boundedText(element.getAttribute('placeholder') ?? '', 160)
   return {
+    ...common,
     role: 'textbox',
-    name: accessibleName(element, label, placeholder),
-    label,
-    placeholder,
     inputType,
     valuePresence: currentValue(element).length > 0 ? 'present' : 'empty',
-    visible: true,
-    enabled: true,
+    actions: ['input'],
     editable: true,
-    structuralHint: structuralHint(element, index),
-    contextText: surroundingText(element),
   }
 }
 
-function mutationBlocker(element: HTMLElement): { code: string; message: string } | null {
+function actionBlocker(element: HTMLElement): { code: string; message: string } | null {
   if (!element.isConnected) return { code: 'detached_control', message: 'The approved control is detached.' }
   if (!isVisible(element)) return { code: 'hidden_control', message: 'The approved control is hidden.' }
-  if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
-    if (element.disabled) return { code: 'disabled_control', message: 'The approved control is disabled.' }
-    if (element.readOnly) return { code: 'read_only_control', message: 'The approved control is read-only.' }
-  } else if (!isContentEditable(element)) {
-    return { code: 'read_only_control', message: 'The approved textbox is not an editable DOM surface.' }
+  if ('disabled' in element && Boolean((element as HTMLInputElement | HTMLButtonElement).disabled)) {
+    return { code: 'disabled_control', message: 'The approved control is disabled.' }
   }
-  if (isSensitive(element)) return { code: 'sensitive_control', message: 'Sensitive controls cannot be edited by this V1.' }
+  if ((element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) && element.readOnly) {
+    return { code: 'read_only_control', message: 'The approved control is read-only.' }
+  }
+  if (isSensitive(element)) return { code: 'sensitive_control', message: 'Sensitive controls cannot be operated.' }
   return null
 }
 
@@ -212,7 +302,16 @@ function setContentEditableValue(element: HTMLElement, text: string) {
 function accessibleName(element: HTMLElement, label: string, placeholder: string) {
   const ariaLabel = boundedText(element.getAttribute('aria-label') ?? '', 160)
   const labelledBy = labelledByText(element)
-  return ariaLabel || labelledBy || label || placeholder || boundedText(element.getAttribute('name') ?? '', 160) || 'Text field'
+  const buttonText = isButton(element) ? boundedText(element.textContent ?? (element as HTMLInputElement).value ?? '', 160) : ''
+  return ariaLabel || labelledBy || label || buttonText || placeholder || boundedText(element.getAttribute('name') ?? '', 160) || defaultName(element)
+}
+
+function defaultName(element: HTMLElement) {
+  if (element instanceof HTMLFormElement) return 'Form'
+  if (element instanceof HTMLInputElement && element.type === 'radio') return 'Radio option'
+  if (element instanceof HTMLInputElement && element.type === 'file') return 'File upload'
+  if (isButton(element)) return 'Button'
+  return 'Text field'
 }
 
 function labelledByText(element: HTMLElement) {
@@ -224,8 +323,7 @@ function labelledByText(element: HTMLElement) {
 
 function associatedLabel(element: HTMLElement) {
   if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
-    return boundedText([...(element.labels ?? [])]
-      .map((item) => redactCandidateValues(item, item.textContent ?? '')).join(' '), 160)
+    return boundedText([...(element.labels ?? [])].map((item) => redactCandidateValues(item, item.textContent ?? '')).join(' '), 160)
   }
   const label = element.closest('label')
   return boundedText(label ? redactCandidateValues(label, label.textContent ?? '') : '', 160)
@@ -234,7 +332,7 @@ function associatedLabel(element: HTMLElement) {
 function structuralHint(element: HTMLElement, index: number) {
   const group = element.closest('fieldset, [role="group"], section, form')
   const heading = group?.querySelector('h1, h2, h3, h4, legend')?.textContent ?? ''
-  return boundedText([boundedText(heading, 120), element.parentElement?.tagName.toLowerCase() ?? '', `field ${index + 1}`].filter(Boolean).join(' / '), 160)
+  return boundedText([boundedText(heading, 120), element.parentElement?.tagName.toLowerCase() ?? '', `control ${index + 1}`].filter(Boolean).join(' / '), 160)
 }
 
 function surroundingText(element: HTMLElement) {
@@ -265,37 +363,41 @@ function isSensitive(element: HTMLElement) {
 }
 
 function isVisible(element: HTMLElement) {
-  const checkVisibility = (element as HTMLElement & { checkVisibility?: (options: object) => boolean }).checkVisibility
-  if (checkVisibility && !checkVisibility.call(element, { checkOpacity: true, checkVisibilityCSS: true })) return false
+  if (element.hidden || element.getAttribute('aria-hidden') === 'true') return false
   const style = getComputedStyle(element)
+  if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false
   const rect = element.getBoundingClientRect()
-  return style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) > 0 && rect.width > 0 && rect.height > 0
+  return rect.width > 0 && rect.height > 0
 }
 
-function isContentEditable(element: HTMLElement) {
-  const value = element.getAttribute('contenteditable')
-  return element.isContentEditable || value === 'true' || value === 'plaintext-only'
+function isButton(element: HTMLElement) {
+  return element instanceof HTMLButtonElement ||
+    (element instanceof HTMLInputElement && ['button', 'submit'].includes(element.type)) ||
+    element.getAttribute('role') === 'button'
 }
 
+function isSubmitControl(element: HTMLElement) {
+  if (element instanceof HTMLButtonElement) return (element.getAttribute('type') ?? 'submit').toLowerCase() === 'submit'
+  return element instanceof HTMLInputElement && element.type === 'submit'
+}
+
+function isContentEditable(element: HTMLElement) { return element.isContentEditable || element.getAttribute('role') === 'textbox' }
 function currentValue(element: HTMLElement) {
-  return isContentEditable(element) ? element.innerText : (element as HTMLInputElement | HTMLTextAreaElement).value
+  if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) return element.value
+  return element.textContent ?? ''
 }
-
-function isCandidateOrRelated(node: Node | null) {
-  const element = node instanceof Element ? node : node?.parentElement
-  return Boolean(element && (matchesCandidate(element) || element.closest('label, fieldset, [role="group"]')))
+function candidateSelector() {
+  return 'input:not([type]), input[type="text"], input[type="search"], input[type="email"], input[type="tel"], input[type="url"], input[type="number"], input[type="radio"], input[type="file"], input[type="button"], input[type="submit"], textarea, button, form, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="button"]'
 }
-
-function matchesCandidate(element: Element) { return element.matches(candidateSelector()) }
-function candidateSelector() { return 'input, textarea, [contenteditable], [role="textbox"]' }
-function boundedText(value: string, max: number) { return value.replace(/\s+/gu, ' ').trim().slice(0, max) }
+function matchesCandidate(node: Element) { return node.matches(candidateSelector()) }
+function isCandidateOrRelated(node: Node | null): boolean {
+  if (!(node instanceof Element)) return false
+  return matchesCandidate(node) || Boolean(node.closest(candidateSelector())) || Boolean(node.querySelector(candidateSelector()))
+}
 function boundedUrl() { return `${location.origin}${location.pathname}`.slice(0, 2048) }
-
+function boundedText(value: string, max: number) { return value.replace(/\s+/gu, ' ').trim().slice(0, max) }
+function nextPaint() { return new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))) }
 async function sha256(value: string) {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
-}
-
-function nextPaint() {
-  return new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+  const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
+  return [...new Uint8Array(bytes)].map((item) => item.toString(16).padStart(2, '0')).join('')
 }

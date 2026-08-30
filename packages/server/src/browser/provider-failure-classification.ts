@@ -45,6 +45,12 @@ const USER_RESOLVABLE_LOCAL_CODES = new Set([
   'unsafe_attachment_cleanup_root',
 ])
 
+const UNCERTAIN_PROMPT_SUBMIT_FAILURE_CODES = new Set([
+  'prompt_submit_actionability_timeout',
+  'prompt_submit_failed',
+  'prompt_submit_not_accepted',
+])
+
 export function classifyProviderFailure(options: {
   error: unknown
   submitted: boolean
@@ -62,10 +68,21 @@ export function classifyProviderFailure(options: {
   }
   const lifecycle = options.actionLifecycle
   if (
-    response.code === 'prompt_submit_actionability_timeout'
+    !options.submitted
+    && UNCERTAIN_PROMPT_SUBMIT_FAILURE_CODES.has(response.code)
     && lifecycle?.completion === 'records_submission'
   ) {
-    return classified('safe_pre_submit_provider_failure', response, true, true)
+    return classified('safe_pre_submit_provider_failure', {
+      ...response,
+      code: 'provider_rate_limited',
+      retryable: true,
+      details: {
+        cause: response,
+        family: 'rate_limit',
+        visibleProof: `visible-prompt-submit-failure:${response.code.replaceAll('_', '-')}`,
+        limitWindow: 'unknown',
+      },
+    }, true, true)
   }
   const reconstructable = !lifecycle?.mutating || lifecycle.reconstructablePreSubmit
   if (

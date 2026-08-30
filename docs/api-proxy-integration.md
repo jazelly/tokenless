@@ -149,10 +149,10 @@ A well-formed name for a provider that does not exist or is not built in returns
 
 The current scope is deliberately narrow:
 
-- Browser execution without provider-local backend or auth options. Plain text uses enabled providers with currently usable observed access through an eligible `conversation.chat` route; function-tool and JSON requests additionally use the narrow structured-control evidence matrix.
+- Browser execution without provider-local backend or auth options. Plain text, function-tool, and JSON requests use enabled providers with currently usable observed access through an eligible `conversation.chat` route. Tokenless owns the prompt-emulated structured-control layer; a provider does not need a native function-calling API.
 - Candidates must be enabled on the selected profile and satisfy the route requirements for the request.
-- Tool requirements distinguish calls, strict schemas, complete tool history, and multiple-call output. `parallel_tool_calls: true` requires multiple-call evidence only when the current `tool_choice` may return multiple calls; `none` and an exact named choice do not.
-- DeepSeek is admitted for evidenced multiple/strict/history and JSON control. ChatGPT is admitted for evidenced single-call strict/history and JSON control. Claude, Gemini, and Grok are admitted only for evidenced single-call strict/history control; multiple calls and JSON control remain excluded. See the [auto routing](evidence/openai-auto-provider-routing-2026-08-15.md), [Claude](evidence/openai-structured-control-claude-2026-08-26.md), [Gemini](evidence/openai-structured-control-gemini-2026-08-27.md), and [Grok](evidence/openai-structured-control-grok-2026-08-26.md) evidence.
+- Tokenless applies the same tool catalog, strict schema, complete history, call-count, and structured-final validation to every selected provider. `parallel_tool_calls: false` limits output to one call; an exact named choice requires exactly that call.
+- Provider-specific evidence records observed conformance and remains useful for diagnostics. It is not a permanent allowlist for the generic emulation layer. See the [auto routing](evidence/openai-auto-provider-routing-2026-08-15.md), [Claude](evidence/openai-structured-control-claude-2026-08-26.md), [Gemini](evidence/openai-structured-control-gemini-2026-08-27.md), and [Grok](evidence/openai-structured-control-grok-2026-08-26.md) evidence.
 - Unsupported direct execution, provider backend/auth options, opaque replay, or an incomplete candidate set fails before a job is created.
 
 Auto calls use versioned opaque public ids that encode only their provider origin. A later full-history turn prefers that provider after rechecking current eligibility; a caller-influenced id cannot bypass the filter. Responses `previous_response_id` uses its existing ledger provider the same way—as portable affinity, not a hard pin.
@@ -226,7 +226,7 @@ Modern OpenAI function tools are accepted for non-streaming and streaming reques
 - `"required"`: return at least one declared call; `parallel_tool_calls: false` limits calls to one.
 - `{"type":"function","function":{"name":"read_file"}}`: return exactly one call of that declared function, regardless of the parallel setting.
 
-Prompt-emulated tool support is strategy-specific. Earlier Gemini diagnostics prepended prose and failed the strict whole-response boundary. Current real packaged-daemon runs passed an exact named strict call and complete tool history, so only that single-call scope is advertised; multiple calls and JSON final control remain excluded. See the [current Gemini evidence](evidence/openai-structured-control-gemini-2026-08-27.md) and [earlier framing evidence](evidence/openai-tool-prompt-framing-2026-08-15.md).
+Prompt-emulated structured control is provider-neutral. Tokenless accepts a bare JSON object, one complete `json`/`text` fence, or exactly one complete top-level JSON object surrounded by non-executable prose. The recovered object must still carry this request's protocol and nonce and pass the original tool choice, call-count, argument/schema, history, and response-format validation. Multiple object candidates, extra protocol markers, malformed JSON, or ambiguous framing fail closed. Earlier Gemini diagnostics that prepended prose motivated the unique-object recovery; current real evidence remains an observation of provider conformance, not an eligibility gate. See the [current Gemini evidence](evidence/openai-structured-control-gemini-2026-08-27.md) and [earlier framing evidence](evidence/openai-tool-prompt-framing-2026-08-15.md).
 
 For `strict: true`, the parameters root must be an object. Every object schema, including nullable nested objects, must set `additionalProperties: false` and list every property key in `required`; represent optional fields with a nullable type. Tokenless rejects malformed strict schemas before provider submission and validates returned arguments against the declared schema.
 
@@ -514,7 +514,7 @@ The response `tokenless.conversation_mode` value reports the actual route: `new-
 
 Every failure returns the dialect's own error envelope.
 
-For a tool or structured-final request, one narrow failure may receive a bounded correction on the same provider and execution strategy: bare raw JSON, or the unwrapped content of one permitted complete fence, must already start with this request's exact protocol, nonce, and a `kind: final` or `kind: tool_calls` field, but fail strict JSON parsing. Duplicate-key failures are excluded. The corrected response must retain the same kind and pass the original catalog, choice, call-count, argument/schema, and response-format validation; there is no second correction. Prose, multiple fences, correlation, parsed-envelope shape, tool-choice, call-count, argument/schema, and valid structured-content failures return `provider_output_protocol_error` immediately. Transport failures, timeouts, ambiguous submissions, exposed calls, and caller tool execution are never retried.
+For a tool or structured-final request, Tokenless first extracts one unambiguous JSON object when harmless prose surrounds it. It does not merge candidates or repair semantic content. One narrower failure may then receive a bounded correction on the same provider and execution strategy: the extracted raw JSON must already start with this request's exact protocol, nonce, and a `kind: final` or `kind: tool_calls` field, but fail strict JSON parsing. Duplicate-key failures are excluded. The corrected response must retain the same kind and pass the original catalog, choice, call-count, argument/schema, and response-format validation; there is no second correction. Multiple candidates, extra protocol or nonce markers, correlation, parsed-envelope shape, tool-choice, call-count, argument/schema, and valid structured-content failures return `provider_output_protocol_error` immediately. Transport failures, timeouts, ambiguous submissions, exposed calls, and caller tool execution are never retried.
 
 OpenAI, where `param` names the offending field when there is one:
 
@@ -545,10 +545,10 @@ The status is the signal to branch on. Read `code` for the specific cause and tr
 | 499 | `client_closed_request` | The client disconnected first | No — nobody is listening |
 | 500 | — | Local daemon fault, message deliberately generic | Yes, once |
 | 502 | `upstream_error` | The provider page produced no visible reply: sign-in blocker, CAPTCHA, or a failed job | Yes, after the user clears the blocker |
-| 502 | `provider_output_protocol_error` | Tool or structured-final validation failed; only a nonce-correlated strict JSON serialization failure for `final` or `tool_calls` receives one same-kind bounded correction | No further retry |
+| 502 | `provider_output_protocol_error` | Tool or structured-final validation failed after unique-object recovery; only a nonce-correlated strict JSON serialization failure for `final` or `tool_calls` receives one same-kind bounded correction | No further retry |
 | 503 | `api_proxy_disabled` | The proxy is off | No — enable it |
 | 503 | `model_not_available` | The provider is not enabled for the resolved profile | No — enable it |
-| 503 | `auto_route_unavailable` | No enabled, currently usable provider satisfies the conversation or structured-control route | No — change scope or provider readiness |
+| 503 | `auto_route_unavailable` | No enabled, currently usable provider satisfies the required conversation route | No — change scope or provider readiness |
 | 504 | `completion_timeout` | The provider did not answer within 10 minutes; the exact local job was canceled | Check the response and job evidence before deciding |
 
 A `4xx` other than 499 means the caller must change something. A `502`, `504`, or `500` is operational: the same request may succeed later. That distinction is the whole point of the table — do not match on message strings.
