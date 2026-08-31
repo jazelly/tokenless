@@ -171,7 +171,7 @@ test('auto bootstrap preference reorders eligible providers while continuation k
       const { writeTokenlessConfig } = await import(daemonConfig)
       const registry = new ManagedProfileRegistry(homeDir)
       const profile = await registry.addProfile({ slug: 'semantic-auto', setDefault: true })
-      for (const provider of ['chatgpt', 'grok']) {
+      for (const provider of ['chatgpt', 'gemini', 'grok']) {
         await registry.updateProviderStatus(profile.slug, {
           provider,
           auth: 'authenticated',
@@ -196,7 +196,7 @@ test('auto bootstrap preference reorders eligible providers while continuation k
         profiles: {
           [profile.slug]: {
             roleLabel: '',
-            enabledProviders: ['grok', 'chatgpt', 'deepseek', 'perplexity', 'blackbox'],
+            enabledProviders: ['grok', 'gemini', 'chatgpt', 'deepseek', 'perplexity', 'blackbox'],
             browserVisibility: 'headed',
             proxy: null,
           },
@@ -216,8 +216,9 @@ test('auto bootstrap preference reorders eligible providers while continuation k
       const firstJob = daemon.store.getJob(firstMapping.job_id)
       assert.equal(firstJob.provider, 'chatgpt')
       assert.equal(firstJob.request_json.semanticPreference, 'chatgpt')
-      assert.equal(firstJob.request_json.fallback.alternatives[0].provider, 'grok')
+      assert.equal(firstJob.request_json.fallback.alternatives[0].provider, 'gemini')
       const expectedExclusions = [
+        { provider: 'grok', category: 'capability', reason: 'capability_route_unavailable' },
         { provider: 'deepseek', category: 'access', reason: 'provider_access_account_blocked' },
         { provider: 'perplexity', category: 'capability', reason: 'capability_route_unavailable' },
         { provider: 'blackbox', category: 'runtime', reason: 'provider_mode_disabled' },
@@ -266,11 +267,11 @@ test('auto bootstrap preference reorders eligible providers while continuation k
       assert.ok(continuedMapping)
       const continuedJob = daemon.store.getJob(continuedMapping.job_id)
       assert.equal(continuedJob.provider, 'chatgpt')
-      assert.equal(continuedJob.request_json.fallback.alternatives[0].provider, 'grok')
+      assert.equal(continuedJob.request_json.fallback.alternatives[0].provider, 'gemini')
       assert.equal(Object.hasOwn(continuedJob.request_json, 'semanticPreference'), false)
 
       await registry.updateProviderStatus(profile.slug, {
-        provider: 'grok',
+        provider: 'gemini',
         auth: 'authenticated',
         access: 'signed_in_free',
         checkedAt: '2000-01-01T00:00:00.000Z',
@@ -278,13 +279,13 @@ test('auto bootstrap preference reorders eligible providers while continuation k
       const staleAttachment = await client.stage(binding.providerBindingRef, new TextEncoder().encode('# stale preference\n'))
       const stalePreference = await client.start(binding.providerBindingRef, {
         ...requestFor(binding, staleAttachment, '4'),
-        semanticPreference: 'grok',
+        semanticPreference: 'gemini',
       })
       const staleMapping = daemon.store.getWebAiTurn(stalePreference.turnRef)
       assert.ok(staleMapping)
       const staleJob = daemon.store.getJob(staleMapping.job_id)
       assert.equal(staleJob.provider, 'chatgpt')
-      assert.equal(staleJob.request_json.semanticPreference, 'grok')
+      assert.equal(staleJob.request_json.semanticPreference, 'gemini')
 
       const ignoredAttachment = await client.stage(binding.providerBindingRef, new TextEncoder().encode('# ignored preference\n'))
       const ignored = await client.start(binding.providerBindingRef, {

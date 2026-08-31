@@ -42,10 +42,9 @@ test('built Browser provider navigation catalog owns every entry point and known
       page.kind === 'entry' && page.urlPattern === descriptor.navigation.entryUrl
     )))
   }
-  assert.equal(PROVIDER_NAVIGATION_CATALOG.zai.entryUrl, 'https://z.ai/chat')
+  assert.equal(PROVIDER_NAVIGATION_CATALOG.zai.entryUrl, 'https://chat.z.ai/')
   assert.equal(PROVIDER_NAVIGATION_CATALOG.zai.homeUrl, 'https://chat.z.ai/')
   assert.deepEqual(PROVIDER_NAVIGATION_CATALOG.zai.origins, [
-    'https://z.ai',
     'https://chat.z.ai',
   ])
   assert.ok(PROVIDER_NAVIGATION_CATALOG.zai.pagePatterns.some((page) => (
@@ -69,14 +68,25 @@ test('built capability routes stay provenance-bound to required live provider ma
       assert.ok(route.evidence.length > 0, `${route.provider}/${capability.id} must declare live evidence cases`)
       for (const evidence of route.evidence) {
         assert.ok(matrix.cases[evidence], `${route.provider}/${capability.id} references unknown live case ${evidence}`)
+        const currentCapacityBlocker = provider.unavailable[evidence]
         assert.ok(
-          provider.required.includes(evidence),
-          `${route.provider}/${capability.id} evidence ${evidence} must be required for that provider`,
+          provider.required.includes(evidence) || currentCapacityBlocker === CURRENT_CAPACITY_BLOCKERS[route.provider]?.[evidence],
+          `${route.provider}/${capability.id} evidence ${evidence} must be required or carry its exact current capacity blocker`,
         )
-        assert.equal(provider.unavailable[evidence], undefined)
       }
     }
   }
+})
+
+const CURRENT_CAPACITY_BLOCKERS = Object.freeze({
+  grok: Object.freeze({
+    'conversation-workflow': 'tokenless_api_capacity_guard_blocks_current_profile_until_2026_09_02_06_47_22z',
+    'file-selection': 'markdown_upload_route_retained_but_tokenless_api_capacity_guard_blocks_current_profile_until_2026_09_02_06_47_22z',
+    'grok-image': 'selected_profile_week_rate_limit_until_2026_09_02_06_47_22z',
+  }),
+  perplexity: Object.freeze({
+    'file-selection': 'selected_free_profile_currently_exhausted_official_3_file_uploads_per_day_allowance_2026_08_31',
+  }),
 })
 
 test('persistent config accepts only the current native browser and router shape', async () => {

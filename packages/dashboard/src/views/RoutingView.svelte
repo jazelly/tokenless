@@ -248,9 +248,39 @@
   function buildProviderCandidates(): RouterProviderCandidate[] {
     return providers.flatMap((provider) => {
       const suitableTasks = configuredProviderRules.find((rule) => rule.id === provider.id)?.suitableTasks
-      if (providerState(provider)?.enabled !== true || !suitableTasks) return []
-      return [{ providerId: provider.id, label: provider.label, suitableTasks, model: selectedModel(provider) }]
+      const state = providerState(provider)
+      if (!state || state.enabled !== true || !suitableTasks || !hasVerifiedHarnessRoute(state) || state.capacity.decision === 'defer') return []
+      return [{
+        providerId: provider.id,
+        label: provider.label,
+        suitableTasks,
+        model: selectedModel(provider),
+        plan: {
+          accessClass: state.capacity.subscription.accessClass,
+          planId: state.capacity.subscription.planId,
+          label: state.capacity.subscription.observedLabel,
+        },
+        capacity: {
+          decision: state.capacity.decision,
+          rules: state.capacity.rules.filter((rule) => rule.decision !== 'defer').map((rule) => ({
+            action: rule.action,
+            publishedAllowance: rule.publishedAllowance,
+            remainingUnits: rule.remainingUnits,
+            requestedUnits: rule.requestedUnits,
+            decision: rule.decision,
+          })),
+        },
+      }]
     })
+  }
+
+  function hasVerifiedHarnessRoute(state: NonNullable<ReturnType<typeof providerState>>) {
+    const browserCapabilities = state.capabilities.filter((capability) => capability.executionMode === 'browser')
+    return browserCapabilities.some((capability) => capability.id === 'conversation.chat')
+      && browserCapabilities.some((capability) => (
+        capability.id === 'file.upload'
+        && capability.evidence.includes('harness-attachment-roundtrip')
+      ))
   }
 
   function semanticContextSignature() {
@@ -258,7 +288,7 @@
       selectedProfile,
       enabled,
       browserBindingKey,
-      candidates.map((candidate) => [candidate.providerId, candidate.suitableTasks, candidate.model ?? null]),
+      candidates,
       task,
     ])
   }

@@ -162,7 +162,7 @@ export async function inputDomPrompt(
     throw tokenlessError(
       'prompt_input_visibility_timeout',
       `Timed out after ${timeoutMs}ms waiting for a visible prompt input.`,
-      { retryable: true },
+      { retryable: true, details: await promptInputDiagnostics(page) },
     )
   }
   const finalComposer = await firstVisibleLocator(page, provider.composerSelectors)
@@ -177,6 +177,28 @@ export async function inputDomPrompt(
     'The visible prompt input remained empty after input.',
     { retryable: true },
   )
+}
+
+async function promptInputDiagnostics(page: Page) {
+  return await page.evaluate(() => {
+    const isVisible = (element: Element): element is HTMLElement => {
+      if (!(element instanceof HTMLElement)) return false
+      const style = window.getComputedStyle(element)
+      const rect = element.getBoundingClientRect()
+      return style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0 && rect.width > 0 && rect.height > 0
+    }
+    return Array.from(document.querySelectorAll('textarea, input, [contenteditable="true"], [role="textbox"]'))
+      .filter(isVisible)
+      .slice(0, 12)
+      .map((element) => ({
+        tag: element.tagName.toLowerCase(),
+        role: element.getAttribute('role'),
+        placeholder: element.getAttribute('placeholder'),
+        contentEditable: element.getAttribute('contenteditable'),
+        id: element.id || null,
+        classes: Array.from(element.classList).slice(0, 8),
+      }))
+  }).catch(() => [])
 }
 
 async function dismissProviderAnnouncement(page: Page, provider: ProviderDomDefinition) {
@@ -301,10 +323,32 @@ export async function submitDomPrompt(
       attempt += 1
     }
   } while (Date.now() < deadline)
+  if (provider.id === 'zai') {
+    const composer = await firstVisibleLocator(page, provider.composerSelectors, 50)
+    if (composer && !await composerIsVisiblyEmpty(composer)) {
+      await composer.focus({ timeout: 5_000 })
+      await page.keyboard.press('Enter')
+      const keyboardDeadline = Date.now() + acceptanceTimeoutMs
+      attempt = 0
+      do {
+        assertNotAborted(signal)
+        if (await submissionTransitionIsVisible(provider, page, button, baseline)) {
+          return {
+            visible: true as const,
+            submissionProof: 'visible-submission-transition',
+          }
+        }
+        if (Date.now() < keyboardDeadline) {
+          await waitForNextDomObservation(page, keyboardDeadline, attempt, signal)
+          attempt += 1
+        }
+      } while (Date.now() < keyboardDeadline)
+    }
+  }
   throw tokenlessError(
     'prompt_submit_not_accepted',
     `No visible provider submission transition followed the activation within ${acceptanceTimeoutMs}ms.`,
-    { retryable: false },
+    { retryable: false, details: await promptSubmitDiagnostics(provider, page) },
   )
 }
 

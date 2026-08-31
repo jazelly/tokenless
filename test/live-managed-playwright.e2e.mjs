@@ -625,7 +625,7 @@ async function choiceLabelVisible(page, label) {
 }
 
 async function fileSelection({ provider, journey }) {
-  const extension = provider === 'arena' ? '.png' : provider === 'gemini' || provider === 'meta' ? '.md' : '.txt'
+  const extension = provider === 'arena' ? '.png' : '.md'
   const name = provider === 'meta'
     ? `browser-fingerprint-review-${compactTimestamp(new Date())}${extension}`
     : `${markerFor(provider, 'ATTACHMENT')}${extension}`
@@ -710,7 +710,7 @@ async function harnessAttachmentRoundtrip({ provider, journey }) {
     'live-provider-inputs',
     `${markerFor(provider, 'HARNESS_WORKSPACE')}_${randomUUID().slice(0, 8)}`,
   )
-  const proof = markerFor(provider, 'HARNESS_READ_ONLY_PROOF')
+  const proof = markerFor(provider, 'HARNESS_READ_ONLY_PROOF').replaceAll('_', '-')
   const proofFile = 'readonly-proof.txt'
   const evidence = []
   let firstRequest = null

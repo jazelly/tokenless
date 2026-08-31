@@ -75,6 +75,14 @@ export type DashboardApplicationServicesOptions = {
   startedAt: number
 }
 
+const HARNESS_ROUNDTRIP_CAPACITY_REQUEST = Object.freeze({
+  actions: Object.freeze([
+    Object.freeze({ action: 'file.upload', payload: Object.freeze({ attachments: Object.freeze([{}, {}]) }) }),
+    Object.freeze({ action: 'prompt.submit' }),
+    Object.freeze({ action: 'prompt.submit' }),
+  ]),
+})
+
 export class TokenlessApplicationServices {
   readonly store: JobStore
   readonly profiles: ManagedProfileRegistry
@@ -157,6 +165,7 @@ export class TokenlessApplicationServices {
           profileConfig(config, profile.slug),
           capabilityRoutes,
           jobs,
+          this.store,
         )),
       })),
       capabilities: listTaskCapabilityDefinitions().map((capability) => ({
@@ -1154,8 +1163,18 @@ function providerProfileState(
   configured: ManagedProfileConfig,
   routes: ReturnType<typeof listProviderTaskCapabilityRoutes>,
   jobs: Job[],
+  store: JobStore,
 ) {
   const observation = profile.lastObservedAuth[provider]
+  const accessClass = observation?.access ?? (observation?.auth === 'authenticated' ? 'signed_in_unknown' : 'unknown')
+  const capacity = store.projectProviderCapacity({
+    provider,
+    profile_id: profile.slug,
+    access_class: accessClass,
+    tier_label: observation?.account?.tier.label ?? null,
+    subscription_label: observation?.account?.subscription ?? null,
+    request_json: HARNESS_ROUNDTRIP_CAPACITY_REQUEST,
+  })
   return {
     profileId: profile.slug,
     enabled: configured.enabledProviders.includes(provider),
@@ -1172,7 +1191,22 @@ function providerProfileState(
     capabilities: routes.filter((route) => route.provider === provider).map((route) => ({
       id: route.capability,
       support: route.support,
+      executionMode: route.executionMode,
+      evidence: route.evidence,
     })),
+    capacity: {
+      decision: capacity.decision,
+      reason: capacity.reason,
+      subscription: capacity.subscription,
+      rules: capacity.rules.map((rule) => ({
+        ruleId: rule.ruleId,
+        action: rule.action,
+        publishedAllowance: rule.publishedAllowance,
+        remainingUnits: rule.remainingUnits,
+        requestedUnits: rule.requestedUnits,
+        decision: rule.decision,
+      })),
+    },
     controls: latestProviderControls(jobs, profile.slug, provider),
   }
 }

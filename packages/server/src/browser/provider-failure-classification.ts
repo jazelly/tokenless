@@ -72,17 +72,7 @@ export function classifyProviderFailure(options: {
     && UNCERTAIN_PROMPT_SUBMIT_FAILURE_CODES.has(response.code)
     && lifecycle?.completion === 'records_submission'
   ) {
-    return classified('safe_pre_submit_provider_failure', {
-      ...response,
-      code: 'provider_rate_limited',
-      retryable: true,
-      details: {
-        cause: response,
-        family: 'rate_limit',
-        visibleProof: `visible-prompt-submit-failure:${response.code.replaceAll('_', '-')}`,
-        limitWindow: 'unknown',
-      },
-    }, true, true)
+    return classified('safe_pre_submit_provider_failure', response, true, true)
   }
   const reconstructable = !lifecycle?.mutating || lifecycle.reconstructablePreSubmit
   if (

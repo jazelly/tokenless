@@ -7760,6 +7760,53 @@
               "type": "object"
             }
           },
+          "capacity": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["decision", "reason", "subscription", "rules"],
+            "properties": {
+              "decision": {
+                "type": "string",
+                "enum": ["admit", "defer", "unknown"]
+              },
+              "reason": {
+                "type": "string"
+              },
+              "subscription": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["accessClass", "observedLabel", "planId", "match"],
+                "properties": {
+                  "accessClass": { "type": "string" },
+                  "observedLabel": { "type": ["string", "null"] },
+                  "planId": { "type": "string" },
+                  "match": {
+                    "type": "string",
+                    "enum": ["label", "access_class", "unknown"]
+                  }
+                }
+              },
+              "rules": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["ruleId", "action", "publishedAllowance", "remainingUnits", "requestedUnits", "decision"],
+                  "properties": {
+                    "ruleId": { "type": "string" },
+                    "action": { "type": "string" },
+                    "publishedAllowance": { "type": ["integer", "null"] },
+                    "remainingUnits": { "type": ["integer", "null"] },
+                    "requestedUnits": { "type": "integer", "minimum": 0 },
+                    "decision": {
+                      "type": "string",
+                      "enum": ["admit", "defer", "unknown"]
+                    }
+                  }
+                }
+              }
+            }
+          },
           "controls": {
             "type": "object"
           }
@@ -7771,6 +7818,7 @@
           "observation",
           "runtimeEligibility",
           "capabilities",
+          "capacity",
           "controls"
         ],
         "additionalProperties": false

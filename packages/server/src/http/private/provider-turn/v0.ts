@@ -38,6 +38,7 @@ import { routingFromJob, type ApiProxyRouting } from '../../../universal-api/api
 
 const SYSTEM_PROMPT_LIMIT_BYTES = 1024 * 1024
 const REQUIRED_CAPABILITIES = ['conversation.chat', 'file.upload'] as const
+const HARNESS_ATTACHMENT_EVIDENCE = 'harness-attachment-roundtrip'
 const WEB_AI_INTERACTION_PROTOCOL_V0 = 'tokenless.internal.web-ai-interaction-protocol/v0' as const
 const AUTO_PROVIDER = 'auto'
 
@@ -215,7 +216,9 @@ export class PrivateProviderTurnV0Adapter {
         requirements: REQUIRED_CAPABILITIES,
         candidates: [{ provider, runtimeEligibility: 'unchecked' }],
       })
-      if (!explicitRoute.ok) throw invalidInput('web ai provider does not have a static chat and upload route')
+      if (!explicitRoute.ok || !hasHarnessAttachmentEvidence(explicitRoute.route)) {
+        throw invalidInput('web ai provider does not have a verified Harness attachment route')
+      }
       capabilityRoute = explicitRoute.route
     }
 
@@ -302,7 +305,9 @@ export class PrivateProviderTurnV0Adapter {
       throw invalidInput('web ai request payload lifetime does not match its attachments')
     }
     const routeDecision = resolveTaskCapabilityRoute({ requirements: REQUIRED_CAPABILITIES, candidates: [{ provider, runtimeEligibility: 'unchecked' }] })
-    if (!routeDecision.ok) throw invalidInput('web ai provider does not have a static chat and upload route')
+    if (!routeDecision.ok || !hasHarnessAttachmentEvidence(routeDecision.route)) {
+      throw invalidInput('web ai provider does not have a verified Harness attachment route')
+    }
     const route = routeDecision.route
     const autoResolution = binding.provider === AUTO_PROVIDER
       ? await this.autoCapabilityRoutes(binding.profile_id, null, true)
@@ -458,7 +463,7 @@ export class PrivateProviderTurnV0Adapter {
     })
     const resolved = resolveTaskCapabilityRoutes({ requirements: REQUIRED_CAPABILITIES, candidates })
     const routes = resolved.ok
-      ? prioritizeTaskCapabilityRoutes(resolved.routes, semanticPreference)
+      ? prioritizeTaskCapabilityRoutes(resolved.routes.filter(hasHarnessAttachmentEvidence), semanticPreference)
       : []
     const candidateByProvider = new Map(candidates.map((candidate) => [candidate.provider, candidate]))
     const evaluatedByProvider = new Map(resolved.evaluated.map((candidate) => [candidate.provider, candidate]))
@@ -678,12 +683,20 @@ function staticCapabilities(provider: string): CapabilityDocument['supportedCapa
     candidates: [{ provider, runtimeEligibility: 'unchecked' }],
   }).ok
   const chat = supports('conversation.chat')
-  const upload = supports('file.upload')
+  const uploadDecision = resolveTaskCapabilityRoute({
+    requirements: REQUIRED_CAPABILITIES,
+    candidates: [{ provider, runtimeEligibility: 'unchecked' }],
+  })
+  const upload = uploadDecision.ok && hasHarnessAttachmentEvidence(uploadDecision.route)
   if (chat && upload) return REQUIRED_CAPABILITIES
   if (chat) return ['conversation.chat']
   if (upload) return ['file.upload']
   // A configured provider must advertise at least one V0 primitive. Do not make up a route.
   throw invalidInput('web ai provider has no static V0 capability route')
+}
+
+function hasHarnessAttachmentEvidence(route: TaskCapabilityRoute) {
+  return route.evidence.includes(HARNESS_ATTACHMENT_EVIDENCE)
 }
 
 function attachmentPublicView(attachment: import('../../../jobs/store.js').WebAiStagedAttachment) {

@@ -150,7 +150,11 @@ async function resolveAttachmentPayload(attachmentRoot: string | undefined, atta
 }
 
 async function openProviderFileChooser(page: Page, provider: ProviderDomDefinition): Promise<FileChooser | null> {
-  const trigger = await firstEnabledLocator(page, provider.fileUploadTriggerSelectors)
+  const trigger = await waitForEnabledLocator(
+    page,
+    provider.fileUploadTriggerSelectors,
+    provider.interactionTimings.promptControlTimeoutMs,
+  )
   const waitForEvent = (page as Page & {
     waitForEvent?: (event: 'filechooser', options?: { timeout?: number }) => Promise<FileChooser>
   }).waitForEvent

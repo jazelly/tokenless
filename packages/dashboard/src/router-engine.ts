@@ -28,6 +28,21 @@ export type RouterProviderCandidate = {
   label: string
   suitableTasks: string
   model: string | null
+  plan: {
+    accessClass: string
+    planId: string
+    label: string | null
+  }
+  capacity: {
+    decision: 'admit' | 'unknown'
+    rules: Array<{
+      action: string
+      publishedAllowance: number | null
+      remainingUnits: number | null
+      requestedUnits: number
+      decision: 'admit' | 'unknown'
+    }>
+  }
 }
 
 export type RouterResult = {
@@ -274,5 +289,5 @@ function languageModelApi() {
   return (window as Window & { LanguageModel?: LanguageModelApi }).LanguageModel
 }
 
-const semanticInstruction = 'Analyze the task. Choose the enabled AI provider whose suitableTasks best matches it. Return that provider ID, its configured model, the task type, complexity, and a concise reason.'
+const semanticInstruction = 'Analyze the task. Choose the eligible AI provider whose suitableTasks best matches it. Provider candidates include the current profile plan and known remaining capacity after deterministic exclusions. Treat unknown capacity as uncertainty, not an unlimited allowance. Return that provider ID, its configured model, the task type, complexity, and a concise reason.'
 const titleInstruction = 'Write a direct, descriptive title for this conversation. Use the conversation language. Return only JSON. Keep the title under eight words in English or twenty characters in Chinese.'

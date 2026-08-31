@@ -55,6 +55,7 @@ export type {
   DashboardProviderAccount,
   DashboardProviderAction,
   DashboardProviderChoice,
+  DashboardProviderCapacity,
   DashboardProviderControls,
   DashboardProviderExecutionMode,
   DashboardProviderObservation,

@@ -241,7 +241,7 @@ export const providerCapacityPolicy: ProviderCapacityPolicy = Object.freeze({
       ? 'defer'
       : unknown.length > 0 ? 'unknown' : numeric.length > 0 ? 'admit' : 'unknown'
     const reason = deferred.length > 0
-      ? 'At least one known provider allowance requires a later eligible time.'
+      ? 'At least one known provider allowance cannot admit this request.'
       : unknown.length > 0
         ? 'At least one applicable allowance is non-numeric; Tokenless preserves the uncertainty and allows execution.'
         : numeric.length > 0
@@ -276,6 +276,32 @@ function projectRule(
 ): ProviderRuleCapacityProjection {
   const requestedUnits = unitsForRule(rule, requestContext)
   const action = rule.appliesTo.actions.join(',')
+  if (
+    rule.allowance.kind === 'exact' &&
+    rule.window.kind === 'request' &&
+    typeof rule.allowance.count === 'number' &&
+    Number.isSafeInteger(rule.allowance.count)
+  ) {
+    const publishedAllowance = rule.allowance.count
+    const deferred = requestedUnits > publishedAllowance
+    return {
+      ruleId: rule.id,
+      knowledge: 'official_exact',
+      action,
+      windowSeconds: null,
+      publishedAllowance,
+      effectiveAllowance: publishedAllowance,
+      usedUnits: 0,
+      requestedUnits,
+      remainingUnits: Math.max(0, publishedAllowance - requestedUnits),
+      burstUnits: null,
+      cadenceSeconds: null,
+      decision: deferred ? 'defer' : 'admit',
+      reason: deferred
+        ? 'The request exceeds the provider published per-request allowance.'
+        : 'The request is within the provider published per-request allowance.',
+    }
+  }
   if (
     rule.allowance.kind !== 'exact' ||
     typeof rule.allowance.count !== 'number' ||

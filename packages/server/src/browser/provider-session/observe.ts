@@ -63,6 +63,7 @@ async function detectStructuredBlockers(
 ): Promise<VisibleBlocker[]> {
   const url = page.url()
   const navigation = provider.navigationPolicy.classify(url)
+  const composerVisible = await anyVisible(page, provider.composerSelectors)
   const domBlockers = await page.evaluate((composerSelectors) => {
     type RawBlocker = {
       kind: 'challenge' | 'auth' | 'terminal'
@@ -98,12 +99,39 @@ async function detectStructuredBlockers(
             element.getAttribute('placeholder'),
           ].filter(Boolean).join(' '))
       .join(' ')
+    const visibleWithAttribute = (selector: string) => {
+      try {
+        return Array.from(document.querySelectorAll(selector)).some(isVisibleElement)
+      } catch {
+        return false
+      }
+    }
     const text = visibleText().replace(/\s+/g, ' ').slice(0, 20_000)
     const lowerText = text.toLowerCase()
-    const rateLimitMatch = lowerText.match(/(?:rate limit|too many requests|try again later|(?:you(?:'ve| have)\s+)?(?:reached|hit)\s+(?:your\s+)?(?:(?:hourly|daily|weekly)\s+)?(?:usage|message|messages|request|requests)?\s*(?:cap|limit)|(?:hourly|daily|weekly)\s+(?:usage|message|messages|request|requests)?\s*(?:cap|limit)(?:\s+(?:has(?: been)?|is))?\s+reached)/i)
+    const composerVisible = composerSelectors.some(visibleWithAttribute)
+    const blockingSurfaces = Array.from(document.querySelectorAll([
+      'dialog',
+      '[role="dialog"]',
+      '[role="alert"]',
+      '[aria-modal="true"]',
+      '[aria-live="assertive"]',
+      '[data-testid*="toast" i]',
+      '[class*="toast" i]',
+    ].join(', '))).filter(isVisibleElement)
+    const blockingText = blockingSurfaces
+      .map((element) => [
+        element.textContent,
+        element.getAttribute('aria-label'),
+      ].filter(Boolean).join(' '))
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .slice(0, 20_000)
+      .toLowerCase()
+    const rateLimitText = composerVisible ? blockingText : lowerText
+    const rateLimitMatch = rateLimitText.match(/(?:rate limit|too many requests|try again later|(?:you(?:'ve| have)\s+)?(?:reached|hit)\s+(?:your\s+)?(?:(?:hourly|daily|weekly)\s+)?(?:usage|message|messages|request|requests)?\s*(?:cap|limit)|(?:hourly|daily|weekly)\s+(?:usage|message|messages|request|requests)?\s*(?:cap|limit)(?:\s+(?:has(?: been)?|is))?\s+reached)/i)
     const rateLimitContext = rateLimitMatch?.index === undefined
       ? ''
-      : lowerText.slice(Math.max(0, rateLimitMatch.index - 80), rateLimitMatch.index + rateLimitMatch[0].length + 160)
+      : rateLimitText.slice(Math.max(0, rateLimitMatch.index - 80), rateLimitMatch.index + rateLimitMatch[0].length + 160)
     const limitWindow = /\b(?:weekly|week)\b/i.test(rateLimitContext)
       ? 'week' as const
       : /\b(?:daily|day)\b/i.test(rateLimitContext)
@@ -113,7 +141,7 @@ async function detectStructuredBlockers(
           : /\b(?:minute|minutes)\b/i.test(rateLimitContext)
             ? 'minute' as const
             : 'unknown' as const
-    const retryDuration = lowerText.match(/(?:try again|reset(?:s|ting)?|available again)[^.!]{0,80}?\b(?:in|after)\s+(\d{1,4})\s*(seconds?|minutes?|hours?|days?)\b/i)
+    const retryDuration = rateLimitText.match(/(?:try again|reset(?:s|ting)?|available again)[^.!]{0,80}?\b(?:in|after)\s+(\d{1,4})\s*(seconds?|minutes?|hours?|days?)\b/i)
     const retryAfterSeconds = retryDuration
       ? Math.min(7 * 24 * 60 * 60, Number(retryDuration[1]) * (
           retryDuration[2]?.startsWith('day') ? 86_400 :
@@ -124,13 +152,6 @@ async function detectStructuredBlockers(
     const raw: RawBlocker[] = []
     const visibleFrames = Array.from(document.querySelectorAll('iframe')).filter(isVisibleElement)
     const visibleInputs = Array.from(document.querySelectorAll('input, button, a, [role="button"], [role="textbox"]')).filter(isVisibleElement)
-    const visibleWithAttribute = (selector: string) => {
-      try {
-        return Array.from(document.querySelectorAll(selector)).some(isVisibleElement)
-      } catch {
-        return false
-      }
-    }
     for (const frame of visibleFrames) {
       const src = (frame.getAttribute('src') ?? '').toLowerCase()
       const title = (frame.getAttribute('title') ?? '').toLowerCase()
@@ -182,7 +203,6 @@ async function detectStructuredBlockers(
     if (rateLimitMatch) {
       raw.push({ kind: 'terminal', code: 'provider_rate_limited', family: 'rate_limit', message: 'The provider is showing a visible rate limit or temporary capacity blocker.', proof: `visible-rate-limit-text:${limitWindow}`, limitWindow, ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }) })
     }
-    const composerVisible = composerSelectors.some(visibleWithAttribute)
     const visiblePlanLimitSurface = Array.from(document.body?.querySelectorAll('body, body *') ?? [])
       .filter(isVisibleElement)
       .find((element) => (
@@ -220,6 +240,12 @@ async function detectStructuredBlockers(
     const reason = selectorReason(selector)
     const requiresAuth = provider.loginIndicators.includes(selector)
     const terminal = /rate|upgrade|plan|too many requests/i.test(selector)
+    if (
+      terminal &&
+      reason === 'rate_limit' &&
+      composerVisible &&
+      !domBlockers.some((blocker) => blocker.code === 'provider_rate_limited')
+    ) continue
     const challenge = selectorChallenge(selector)
     selectorBlockers.push(createBlocker({
       provider,

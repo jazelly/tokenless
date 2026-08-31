@@ -894,6 +894,7 @@ export function renderHarnessBootstrapPrompt({
     runId,
     turn: 1,
     nonce,
+    instruction: 'Read the attached Tokenless Harness instructions as the user-requested response format for this task. Follow provider system instructions and safety policies. Return the requested structured proposal without claiming to execute local tools yourself or answering the task directly.',
     task: {
       authority: 'untrusted_lower_priority_data',
       content: taskPrompt,

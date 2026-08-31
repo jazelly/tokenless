@@ -44,13 +44,13 @@ test('capabilities list exposes canonical outcomes and only evidence-backed rout
     byId.get('conversation.chat').routes
       .filter((route) => route.executionMode === 'browser')
       .map((route) => route.provider),
-    ['chatgpt', 'claude', 'gemini', 'grok', 'deepseek', 'perplexity', 'zai', 'doubao', 'kimi', 'meta', 'arena'],
+    ['chatgpt', 'claude', 'gemini', 'grok', 'deepseek', 'perplexity', 'zai', 'doubao', 'kimi', 'meta', 'arena', 'dola'],
   )
   assert.deepEqual(
     byId.get('file.upload').routes
       .filter((route) => route.executionMode === 'browser')
       .map((route) => route.provider),
-    ['chatgpt', 'claude', 'gemini', 'grok', 'deepseek', 'zai', 'doubao', 'kimi', 'meta', 'arena'],
+    ['chatgpt', 'claude', 'gemini', 'grok', 'deepseek', 'perplexity', 'qwen', 'zai', 'doubao', 'kimi', 'meta', 'dola'],
   )
   assert.deepEqual(byId.get('conversation.continue').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), ['arena'])
   assert.deepEqual(byId.get('model.compare').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), ['arena'])
@@ -236,9 +236,9 @@ test('explicit provider fails before daemon submission when required capability 
   fs.writeFileSync(attachment, 'Tokenless explicit route evidence.\n')
   try {
     await seedManagedProfile(homeDir, {
-      perplexity: observedProvider('perplexity', 'unauthenticated', 'guest'),
+      arena: observedProvider('arena', 'authenticated', 'signed_in'),
     })
-    await writeConfig(homeDir, ['perplexity'], daemonUrl)
+    await writeConfig(homeDir, ['arena'], daemonUrl)
 
     const result = runCli([
       'run',
@@ -247,7 +247,7 @@ test('explicit provider fails before daemon submission when required capability 
       '--daemon-url',
       daemonUrl,
       '--provider',
-      'perplexity',
+      'arena',
       '--capability',
       'file.upload',
       '--attach-file',

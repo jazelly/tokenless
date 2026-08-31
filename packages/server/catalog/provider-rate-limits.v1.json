@@ -1,9 +1,9 @@
 {
   "schema": "tokenless.provider-rate-limit-catalog.v1",
   "catalogVersion": 1,
-  "revision": "2026-08-02",
-  "reviewedAt": "2026-08-02",
-  "reviewAfter": "2026-09-02",
+  "revision": "2026-08-31",
+  "reviewedAt": "2026-08-31",
+  "reviewAfter": "2026-09-30",
   "scope": {
     "productSurface": "consumer_web",
     "capacityScope": "provider_profile",
@@ -326,6 +326,20 @@
       "url": "https://www.perplexity.ai/help-center/en/articles/10352901-what-is-perplexity-pro",
       "authority": "official",
       "retrievedAt": "2026-08-01"
+    },
+    "perplexity-account-tiers": {
+      "publisher": "Perplexity",
+      "title": "Account Management and Security",
+      "url": "https://www.perplexity.ai/help-center/en/articles/10352998-account-management-and-security",
+      "authority": "official",
+      "retrievedAt": "2026-08-31"
+    },
+    "perplexity-enterprise-file-limits": {
+      "publisher": "Perplexity",
+      "title": "Enterprise file limits",
+      "url": "https://www.perplexity.ai/help-center/en/articles/12009761-enterprise-file-limits",
+      "authority": "official",
+      "retrievedAt": "2026-08-31"
     },
     "zai-glm52": {
       "publisher": "Z.ai",
@@ -1911,6 +1925,175 @@
           "notes": [
             "This rule applies to Pro Search, not practically unlimited basic searches or Best mode."
           ]
+        },
+        {
+          "id": "perplexity.standard.file-upload.daily",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["standard"],
+            "accessClasses": ["signed_in_free"],
+            "modelFamilies": ["*"],
+            "actions": ["file.upload"]
+          },
+          "meter": {
+            "kind": "count",
+            "unit": "file"
+          },
+          "window": {
+            "kind": "provider_managed",
+            "durationSeconds": 86400
+          },
+          "allowance": {
+            "kind": "exact",
+            "count": 3
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "official_exact",
+              "sourceIds": ["perplexity-account-tiers"]
+            }
+          ],
+          "notes": [
+            "The official account-tier page states that a Free account includes three file uploads per day."
+          ]
+        },
+        {
+          "id": "perplexity.enterprise-pro.file-upload.weekly",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["enterprise_pro"],
+            "accessClasses": ["signed_in_paid"],
+            "modelFamilies": ["*"],
+            "actions": ["file.upload"]
+          },
+          "meter": {
+            "kind": "count",
+            "unit": "file"
+          },
+          "window": {
+            "kind": "provider_managed",
+            "durationSeconds": 604800
+          },
+          "allowance": {
+            "kind": "exact",
+            "count": 100
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "official_exact",
+              "sourceIds": ["perplexity-enterprise-file-limits"]
+            }
+          ],
+          "notes": [
+            "Enterprise Pro session uploads are also limited to 30 files per upload."
+          ]
+        },
+        {
+          "id": "perplexity.enterprise-max.file-upload.weekly",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["enterprise_max"],
+            "accessClasses": ["signed_in_paid"],
+            "modelFamilies": ["*"],
+            "actions": ["file.upload"]
+          },
+          "meter": {
+            "kind": "count",
+            "unit": "file"
+          },
+          "window": {
+            "kind": "provider_managed",
+            "durationSeconds": 604800
+          },
+          "allowance": {
+            "kind": "exact",
+            "count": 1000
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "official_exact",
+              "sourceIds": ["perplexity-enterprise-file-limits"]
+            }
+          ],
+          "notes": [
+            "Enterprise Max session uploads are also limited to 30 files per upload."
+          ]
+        },
+        {
+          "id": "perplexity.enterprise-pro.file-upload.request",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["enterprise_pro"],
+            "accessClasses": ["signed_in_paid"],
+            "modelFamilies": ["*"],
+            "actions": ["file.upload"]
+          },
+          "meter": {
+            "kind": "count",
+            "unit": "file"
+          },
+          "window": {
+            "kind": "request"
+          },
+          "allowance": {
+            "kind": "exact",
+            "count": 30
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "official_exact",
+              "sourceIds": ["perplexity-enterprise-file-limits"]
+            }
+          ],
+          "notes": []
+        },
+        {
+          "id": "perplexity.enterprise-max.file-upload.request",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["enterprise_max"],
+            "accessClasses": ["signed_in_paid"],
+            "modelFamilies": ["*"],
+            "actions": ["file.upload"]
+          },
+          "meter": {
+            "kind": "count",
+            "unit": "file"
+          },
+          "window": {
+            "kind": "request"
+          },
+          "allowance": {
+            "kind": "exact",
+            "count": 30
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "official_exact",
+              "sourceIds": ["perplexity-enterprise-file-limits"]
+            }
+          ],
+          "notes": []
         },
         {
           "id": "perplexity.enterprise-pro.pro-search.weekly",

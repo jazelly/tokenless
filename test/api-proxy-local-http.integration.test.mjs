@@ -115,7 +115,7 @@ test('image auto routing creates one browser job from image-capable providers on
   })
 })
 
-test('browser image edit decodes and stages one reference image before the Arena prompt', async () => {
+test('browser image edit rejects Arena before staging because it has no generic file upload route', async () => {
   await withDaemon(async (daemon) => {
     const { ManagedProfileRegistry } = await import(profileRegistryModule)
     const registry = new ManagedProfileRegistry(daemon.homeDir)
@@ -139,7 +139,7 @@ test('browser image edit decodes and stages one reference image before the Arena
       },
     })
 
-    const pending = call(daemon, 'POST', '/v1/images/generations', {
+    const response = await call(daemon, 'POST', '/v1/images/generations', {
       model: 'tokenless/arena',
       prompt: 'Turn the attached mark into a small green leaf icon.',
       reference_image: REFERENCE_IMAGE,
@@ -151,39 +151,11 @@ test('browser image edit decodes and stages one reference image before the Arena
         timeout_ms: 30_000,
       },
     })
-    let job
-    for (let attempt = 0; attempt < 40 && !job; attempt += 1) {
-      job = daemon.store.listJobs({ limit: 1 })[0]
-      if (!job) await new Promise((resolve) => setTimeout(resolve, 25))
-    }
-    assert.ok(job)
-    assert.equal(job.provider, 'arena')
-    assert.deepEqual(job.request_json.capabilityRoute.requirements, [
-      'image.edit',
-      'image.input',
-      'file.upload',
-      'artifact.download',
-    ])
-    assert.deepEqual(job.request_json.actions.map((action) => action.action), [
-      'arena.surface.select',
-      'file.upload',
-      'prompt.input',
-      'prompt.submit',
-      'response.read',
-    ])
-    const upload = job.request_json.actions[1].payload.attachments[0]
-    assert.equal(upload.name, 'reference.png')
-    assert.equal(upload.type, 'image/png')
-    assert.equal(upload.size, Buffer.from(REFERENCE_IMAGE.slice(REFERENCE_IMAGE.indexOf(',') + 1), 'base64').byteLength)
-    const stagedPath = path.join(daemon.homeDir, 'attachments', upload.bundleId, `${upload.attachmentId}.bin`)
-    assert.deepEqual(fs.readFileSync(stagedPath), Buffer.from(REFERENCE_IMAGE.slice(REFERENCE_IMAGE.indexOf(',') + 1), 'base64'))
-    assert.equal(fs.existsSync(path.join(path.dirname(stagedPath), '.tokenless-web-ai-v0-stage')), false)
-
-    await daemon.store.cancelJob(job.job_id, 'focused image reference staging test completed')
-    assert.equal(fs.existsSync(path.dirname(stagedPath)), false)
-    const response = await pending
-    assert.equal(response.status, 502)
-    assert.equal(response.body.error.code, 'image_provider_job_failed')
+    assert.equal(response.status, 503)
+    assert.equal(response.body.error.code, 'image_route_unavailable')
+    assert.deepEqual(daemon.store.listJobs({ limit: 1 }), [])
+    const attachmentRoot = path.join(daemon.homeDir, 'attachments')
+    assert.equal(fs.existsSync(attachmentRoot) ? fs.readdirSync(attachmentRoot).length : 0, 0)
   })
 })
 

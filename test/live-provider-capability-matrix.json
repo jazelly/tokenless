@@ -705,7 +705,7 @@
         "workspace-response-baseline"
       ],
       "unavailable": {
-        "harness-attachment-roundtrip": "harness_attachment_roundtrip_not_verified",
+        "harness-attachment-roundtrip": "real_file_input_accepts_only_png_jpeg_and_webp_not_markdown_2026_08_30",
         "qwen-image": "provider_specific_capability",
         "meta-image": "provider_specific_capability",
         "chatgpt-image": "provider_specific_capability",
@@ -781,13 +781,13 @@
       "required": [
         "session-readiness",
         "prompt-draft",
-      "model-choice",
-      "file-selection",
-      "harness-attachment-roundtrip",
-      "conversation-workflow",
-      "native-project"
+        "model-choice",
+        "file-selection",
+        "conversation-workflow",
+        "native-project"
       ],
       "unavailable": {
+        "harness-attachment-roundtrip": "real_markdown_upload_submit_and_response_succeed_but_claude_rejects_the_harness_attachment_as_prompt_injection_2026_08_31",
         "qwen-image": "provider_specific_capability",
         "arena-search": "provider_specific_capability",
         "arena-image": "provider_specific_capability",
@@ -866,21 +866,16 @@
     "grok": {
       "stage": "supported",
       "account": "signed_in_selected_setup_profile",
-      "required": [
-      "session-readiness",
-      "prompt-draft",
-      "file-selection",
-      "harness-attachment-roundtrip",
-      "conversation-workflow",
-      "grok-image"
-      ],
+      "required": [],
       "unavailable": {
+        "harness-attachment-roundtrip": "selected_profile_week_rate_limit_until_2026_09_02_06_47_22z",
         "qwen-image": "provider_specific_capability",
         "arena-search": "provider_specific_capability",
         "arena-image": "provider_specific_capability",
         "meta-image": "provider_specific_capability",
         "chatgpt-image": "provider_specific_capability",
         "gemini-image": "provider_specific_capability",
+        "grok-image": "selected_profile_week_rate_limit_until_2026_09_02_06_47_22z",
         "dola-image": "provider_specific_capability",
         "doubao-image": "provider_specific_capability",
         "arena-code": "provider_specific_capability",
@@ -888,9 +883,13 @@
         "arena-video": "provider_specific_capability",
         "model-comparison": "provider_specific_capability",
         "conversation-continuation": "separate_focused_continuation_gate_not_declared",
+        "session-readiness": "tokenless_api_capacity_guard_blocks_current_profile_until_2026_09_02_06_47_22z",
+        "prompt-draft": "tokenless_api_capacity_guard_blocks_current_profile_until_2026_09_02_06_47_22z",
+        "file-selection": "markdown_upload_route_retained_but_tokenless_api_capacity_guard_blocks_current_profile_until_2026_09_02_06_47_22z",
+        "conversation-workflow": "tokenless_api_capacity_guard_blocks_current_profile_until_2026_09_02_06_47_22z",
         "model-choice": "selected_free_plan_only_fast_enabled_2026_08_10",
         "effort-choice": "no_independent_effort_control_observed_2026_08_10",
-      "native-project": "no_visible_project_instruction_control_2026_08_10",
+        "native-project": "no_visible_project_instruction_control_2026_08_10",
         "deepseek-controls": "provider_specific_capability",
         "deepseek-search-reasoning": "provider_specific_capability",
         "deepseek-vision-input": "provider_specific_capability",
@@ -913,10 +912,11 @@
       "required": [
         "session-readiness",
         "prompt-draft",
-        "effort-choice"
+        "effort-choice",
+        "file-selection"
       ],
       "unavailable": {
-        "harness-attachment-roundtrip": "harness_attachment_roundtrip_not_verified",
+        "harness-attachment-roundtrip": "real_markdown_upload_is_supported_but_full_harness_jobs_intermittently_show_no_attachment_card_and_submit_has_no_visible_transition_2026_08_31",
         "qwen-image": "configured_profile_dns_unavailable_2026_08_17",
         "grok-image": "provider_specific_capability",
         "arena-search": "provider_specific_capability",
@@ -935,7 +935,6 @@
         "deepseek-search-reasoning": "provider_specific_capability",
         "deepseek-vision-input": "provider_specific_capability",
         "model-choice": "no_real_selection_closure",
-        "file-selection": "three_markdown_cards_accepted_but_submit_click_had_no_visible_transition_2026_08_09",
         "conversation-workflow": "no_real_attachment_or_continuation_closure",
         "workspace-response-citations": "no_real_visible_response_closure_after_repeated_12_minute_timeouts_2026_08_10",
         "workspace-response-baseline": "no_real_visible_response_closure_after_repeated_12_minute_timeouts_2026_08_10",
@@ -1004,7 +1003,7 @@
         "workspace-response-citations"
       ],
       "unavailable": {
-        "harness-attachment-roundtrip": "harness_attachment_roundtrip_not_verified",
+        "harness-attachment-roundtrip": "selected_free_profile_has_3_file_uploads_per_day_and_current_submission_history_exhausted_all_3_before_required_2_upload_roundtrip_2026_08_31",
         "qwen-image": "provider_specific_capability",
         "arena-search": "provider_specific_capability",
         "arena-image": "provider_specific_capability",
@@ -1024,7 +1023,7 @@
         "deepseek-controls": "provider_specific_capability",
         "deepseek-search-reasoning": "provider_specific_capability",
         "deepseek-vision-input": "provider_specific_capability",
-        "file-selection": "selected_free_plan_third_document_visible_upgrade_gate_2026_08_09",
+        "file-selection": "selected_free_profile_currently_exhausted_official_3_file_uploads_per_day_allowance_2026_08_31",
         "conversation-workflow": "no_real_attachment_or_continuation_closure",
         "workspace-response-baseline": "covered_by_workspace_response_citations",
         "qwen-mode-workspace": "provider_specific_capability",
@@ -1046,10 +1045,10 @@
         "session-readiness",
         "prompt-draft",
         "file-selection",
+        "harness-attachment-roundtrip",
         "workspace-response-baseline"
       ],
       "unavailable": {
-        "harness-attachment-roundtrip": "harness_attachment_roundtrip_not_verified",
         "qwen-image": "provider_specific_capability",
         "arena-search": "provider_specific_capability",
         "arena-image": "provider_specific_capability",
@@ -1090,12 +1089,12 @@
         "session-readiness",
         "prompt-draft",
         "file-selection",
+        "harness-attachment-roundtrip",
         "doubao-controls",
         "doubao-image",
         "workspace-response-baseline"
       ],
       "unavailable": {
-        "harness-attachment-roundtrip": "harness_attachment_roundtrip_not_verified",
         "qwen-image": "provider_specific_capability",
         "arena-search": "provider_specific_capability",
         "arena-image": "provider_specific_capability",
@@ -1135,11 +1134,11 @@
         "prompt-draft",
         "effort-choice",
         "file-selection",
+        "harness-attachment-roundtrip",
         "conversation-workflow",
         "kimi-search"
       ],
       "unavailable": {
-        "harness-attachment-roundtrip": "harness_attachment_roundtrip_not_verified",
         "qwen-image": "provider_specific_capability",
         "arena-search": "provider_specific_capability",
         "arena-image": "provider_specific_capability",
@@ -1178,10 +1177,10 @@
         "session-readiness",
         "prompt-draft",
         "model-choice",
+        "harness-attachment-roundtrip",
         "dola-image"
       ],
       "unavailable": {
-        "harness-attachment-roundtrip": "harness_attachment_roundtrip_not_verified",
         "qwen-image": "provider_specific_capability",
         "arena-search": "provider_specific_capability",
         "arena-image": "provider_specific_capability",
@@ -1227,7 +1226,7 @@
         "workspace-response-baseline"
       ],
       "unavailable": {
-        "harness-attachment-roundtrip": "harness_attachment_roundtrip_not_verified",
+        "harness-attachment-roundtrip": "real_markdown_upload_succeeds_but_meta_home_silently_rejects_harness_attachment_instruction_without_creating_a_conversation_2026_08_31",
         "qwen-image": "provider_specific_capability",
         "arena-search": "provider_specific_capability",
         "arena-image": "provider_specific_capability",

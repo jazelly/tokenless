@@ -104,6 +104,7 @@ export class DoubaoProvider extends BaseProvider<'doubao'> {
 
   protected override async submitPrompt(page: Page, context: ProviderExecutionContext) {
     await page.waitForTimeout(400)
+    await dismissDoubaoDesktopPromotion(page)
     return await super.submitPrompt(page, context)
   }
 
@@ -160,6 +161,19 @@ export class DoubaoProvider extends BaseProvider<'doubao'> {
       ? { state: 'ready' }
       : { state: 'pending' }
   }
+}
+
+async function dismissDoubaoDesktopPromotion(page: Page) {
+  const dialog = page.getByRole('dialog')
+    .filter({ visible: true, has: page.getByRole('button', { name: '下载电脑版', exact: true }) })
+    .last()
+  if (!await dialog.isVisible({ timeout: 250 }).catch(() => false)) return
+  const close = dialog.getByRole('button', { name: '关闭', exact: true })
+    .filter({ visible: true })
+    .last()
+  if (!await close.isEnabled({ timeout: 250 }).catch(() => false)) return
+  await close.click({ timeout: 5_000 })
+  await dialog.waitFor({ state: 'hidden', timeout: 2_000 })
 }
 
 async function prepareDoubaoImageCursor(page: Page): Promise<ProviderActionPreparation> {

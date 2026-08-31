@@ -31,6 +31,21 @@ export type HarnessFrontDoorProviderCandidate = {
   label: string
   suitableTasks: string
   model: string | null
+  plan: {
+    accessClass: string
+    planId: string
+    label: string | null
+  }
+  capacity: {
+    decision: 'admit' | 'unknown'
+    rules: Array<{
+      action: string
+      publishedAllowance: number | null
+      remainingUnits: number | null
+      requestedUnits: number
+      decision: 'admit' | 'unknown'
+    }>
+  }
 }
 
 export type HarnessFrontDoorInput = {
@@ -107,7 +122,7 @@ export function createHarnessFrontDoorSidecar(engine: HarnessAiEngine): HarnessF
       }))
 
       const route = readRoute(await engine.complete({
-        instruction: 'Analyze the task. Choose the enabled AI provider whose suitableTasks best matches it. Return that provider ID, its configured model, the task type, complexity, and a concise reason.',
+        instruction: 'Analyze the task. Choose the eligible AI provider whose suitableTasks best matches it. Provider candidates include the current profile plan and known remaining capacity after deterministic exclusions. Treat unknown capacity as uncertainty, not an unlimited allowance. Return that provider ID, its configured model, the task type, complexity, and a concise reason.',
         input: {
           task: input.taskPrompt,
           providerConfiguration: input.providers.map((provider) => ({ ...provider })),

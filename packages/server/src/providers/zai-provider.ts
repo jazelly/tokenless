@@ -37,6 +37,7 @@ export class ZaiProvider extends BaseProvider<'zai'> {
       }),
       composerSelectors: Object.freeze([
         '#chat-input[placeholder="How can I help you today?"]',
+        '#chat-input[placeholder="Send a Message"]',
       ]),
       submitSelectors: Object.freeze([
         'button.sendMessageButton[type="submit"]',

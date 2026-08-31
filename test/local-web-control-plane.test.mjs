@@ -708,6 +708,32 @@ test('local web control plane opens directly, establishes Dashboard sessions, an
     assert.deepEqual(storedWorkProfile.enabledProviders, ['chatgpt', 'claude'])
     assert.deepEqual(storedWorkProfile.providerModes.chatgpt, ['browser'])
 
+    await new ManagedProfileRegistry(homeDir).updateProviderStatus('work', {
+      provider: 'perplexity',
+      auth: 'authenticated',
+      access: 'signed_in_free',
+      checkedAt: new Date().toISOString(),
+      account: {
+        name: null,
+        subscription: 'Free plan',
+        tier: { class: 'signed_in_free', label: 'Free' },
+      },
+    })
+    for (let index = 0; index < 3; index += 1) {
+      const uploadJob = daemon.store.createJob({
+        provider: 'perplexity',
+        profile_id: 'work',
+        request_json: {
+          provider: 'perplexity',
+          actions: [{ action: 'file.upload', payload: { attachments: [{}] } }],
+        },
+      })
+      const runningUpload = daemon.store.takeNextJob({ job_id_prefix: uploadJob.job_id }, 'work')
+      assert.ok(runningUpload)
+      daemon.store.recordProviderSubmission(runningUpload.job_id)
+      daemon.store.completeJob(runningUpload.job_id, { result_json: { visible: true } })
+    }
+
     const afterProfile = await fetch(`${daemon.origin}/dashboard-api/v1/snapshot`, { headers: { cookie } }).then((response) => response.json())
     assertDashboardSchema(validateDashboardSnapshot, afterProfile)
     assert.deepEqual(afterProfile.profiles[0].enabledProviders, ['chatgpt', 'claude'])
@@ -722,6 +748,28 @@ test('local web control plane opens directly, establishes Dashboard sessions, an
     assert.equal(Object.hasOwn(afterProfile.profiles[0], 'preferences'), false)
     assert.equal(afterProfile.providers.find((provider) => provider.id === 'chatgpt').profiles[0].enabled, true)
     assert.deepEqual(afterProfile.providers.find((provider) => provider.id === 'chatgpt').profiles[0].enabledModes, ['browser'])
+    const chatgptProfileState = afterProfile.providers.find((provider) => provider.id === 'chatgpt').profiles[0]
+    assert.ok(chatgptProfileState.capabilities.some((capability) => (
+      capability.id === 'file.upload'
+      && capability.executionMode === 'browser'
+      && capability.evidence.includes('harness-attachment-roundtrip')
+    )))
+    assert.equal(chatgptProfileState.capacity.subscription.accessClass, 'unknown')
+    assert.equal(chatgptProfileState.capacity.decision, 'unknown')
+    const perplexityProfileState = afterProfile.providers.find((provider) => provider.id === 'perplexity').profiles[0]
+    assert.equal(perplexityProfileState.capacity.subscription.planId, 'standard')
+    assert.equal(perplexityProfileState.capacity.decision, 'defer')
+    assert.deepEqual(
+      perplexityProfileState.capacity.rules.find((rule) => rule.ruleId === 'perplexity.standard.file-upload.daily'),
+      {
+        ruleId: 'perplexity.standard.file-upload.daily',
+        action: 'file.upload',
+        publishedAllowance: 3,
+        remainingUnits: 0,
+        requestedUnits: 2,
+        decision: 'defer',
+      },
+    )
     assert.equal(afterProfile.providers.find((provider) => provider.id === 'gemini').profiles[0].enabled, false)
 
     const cloakProfile = await fetch(`${daemon.origin}/dashboard-api/v1/profiles`, {

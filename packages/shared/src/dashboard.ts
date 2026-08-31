@@ -257,13 +257,38 @@ export type DashboardProviderControls = {
 
 export type DashboardProviderExecutionMode = 'browser' | 'direct'
 
+export type DashboardProviderCapacity = {
+  decision: 'admit' | 'defer' | 'unknown'
+  reason: string
+  subscription: {
+    accessClass: string
+    observedLabel: string | null
+    planId: string
+    match: 'label' | 'access_class' | 'unknown'
+  }
+  rules: Array<{
+    ruleId: string
+    action: string
+    publishedAllowance: number | null
+    remainingUnits: number | null
+    requestedUnits: number
+    decision: 'admit' | 'defer' | 'unknown'
+  }>
+}
+
 export type DashboardProviderProfileState = {
   profileId: string
   enabled: boolean
   enabledModes: readonly DashboardProviderExecutionMode[]
   observation: Omit<DashboardProviderObservation, 'provider'> | null
   runtimeEligibility: 'eligible' | 'ineligible'
-  capabilities: Array<{ id: string; support: string }>
+  capabilities: Array<{
+    id: string
+    support: string
+    executionMode: DashboardProviderExecutionMode
+    evidence: readonly string[]
+  }>
+  capacity: DashboardProviderCapacity
   controls: DashboardProviderControls
 }
 
