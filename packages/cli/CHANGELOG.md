@@ -84,6 +84,70 @@
 
   为 browser 与 direct image generation 新增统一的 authenticated `/v1/images/generations` endpoint，让 CLI image runs 通过该 endpoint 路由；移除公开的 G4F-namespaced image route，并关闭 Gemini、Dola 与 Doubao browser image routes。
 
+- 7653c94: Add an experimental Tokenless Harness Chrome side-panel extension with scoped Dashboard pairing, semantic page observation, full private local evidence, and individually approved input, click, submit, radio, upload, and navigation actions for one explicitly selected tab.
+
+  新增 experimental Tokenless Harness Chrome side panel 扩展，通过 scoped Dashboard pairing、semantic page observation、完整私有本地证据，以及逐项批准的 input、click、submit、radio、upload 与 navigation 操作一个明确选择的 tab。
+
+- 8885628: Add synchronous Tokenless Harness delegation with bounded workspace read/search tools, a reversible DeepSeek Harness subagent provider integration, and the pinned Terminal-Bench 2.0 runner for that combined lane. Document Codex as explicit delegation because its hooks do not replace native subagent execution.
+
+  新增同步 Tokenless Harness delegation、有界 workspace read/search tools、可逆的 DeepSeek Harness subagent provider 集成，以及用于该组合 lane 的固定 Terminal-Bench 2.0 runner。Codex 因 hooks 无法替换 native subagent execution，按显式 delegation 如实记录。
+
+- c5329ae: Add the authenticated menu bar snapshot contract, dashboard job deep links, and a read-only `tokenless upgrade --check` command for native macOS clients.
+
+  新增 authenticated menu bar snapshot contract、dashboard job deep links，以及供原生 macOS clients 使用的只读 `tokenless upgrade --check` command。
+
+- 5c60425: Move every non-compatibility bearer-authenticated Tokenless machine endpoint under `/v1/private/*`. Make `packages/contracts` a documentation-only OpenAPI source with one generated reference, and move runtime primitives and the provider-turn Client Adapter to their owning packages without changing payload, lifecycle, Dashboard, CLI, Harness, or provider behavior.
+
+  将所有非 compatibility 的 bearer-authenticated Tokenless machine endpoint 统一迁移到 `/v1/private/*`。`packages/contracts` 收纯为 documentation-only OpenAPI source 与单一 generated reference，runtime primitive 和 provider-turn Client Adapter 回到各自 owner package；payload、lifecycle、Dashboard、CLI、Harness 与 provider behavior 保持不变。
+
+- 28362bf: Let DeepSeek Harness benchmark agents inspect one file, delegate one bounded read-only workspace pass, then batch or locally search the permitted changes with a hard verification budget. Record safe live-page limit evidence, configured provider plan observations, and per-interaction token estimates in Terminal-Bench reports. Add the one-pass 89-task Terminal-Bench sweep as the required phase gate before the formal k=5 run.
+
+  让 DeepSeek Harness benchmark agents 检查一个文件、执行一次有界的只读 workspace pass，再对获准变更进行 batch 或本地搜索，并设置严格的 verification budget。在 Terminal-Bench reports 中记录安全的 live-page limit evidence、配置的 provider plan observations 与每次 interaction 的 token estimates；在正式 k=5 run 前增加一次性 89-task Terminal-Bench sweep 作为必需的 phase gate。
+
+  Terminal-Bench reports now distinguish successful and failed DeepSeek Harness parents from unsettled parent routing requests, and the sweep gate rejects those failures even when verifier rewards pass.
+
+  Terminal-Bench reports 现在会区分成功和失败的 DeepSeek Harness parents 与尚未定案的 parent routing requests；即使 verifier rewards pass，sweep gate 仍会拒绝这些 failures。
+
+- 5a5f421: Turn System into a complete configuration center with structured editing, a fresh server-backed config.json view, bottom-anchored navigation, and a dedicated Chat History icon.
+
+  将 System 扩展为完整配置中心，提供结构化编辑、由 server 实时读取的 config.json 视图、固定在底部的导航入口，以及专用的对话历史图标。
+
+- ef2ec65: Open Chat History conversations as complete Dashboard pages, keep provider-readiness feedback visually stable, and synchronize the local UI session before protected mutations.
+
+  将对话历史详情改为完整的 Dashboard 页面，保持 Provider 就绪状态反馈稳定，并在受保护的修改请求前同步本地 UI 会话。
+
+- f3426da: Add a Google Chrome Prompt API Dashboard flow for generating the pinned Terminal-Bench semantic manifest.
+
+  新增 Google Chrome Prompt API Dashboard 流程，用于生成 pinned Terminal-Bench semantic manifest。
+
+- 62d15e2: Localize CLI setup and success output, the full Dashboard, generated HTTP API references, and public product documentation in English and Simplified Chinese without changing commands, protocol values, or runtime behavior.
+
+  为 CLI setup 与成功输出、完整 Dashboard、生成式 HTTP API reference 和公开产品文档提供 English/简体中文双语支持，不改变 command、protocol value 或 runtime behavior。
+
+- bf11fbe: Keep Tokenless Harness runs in daemon memory and remove durable admissions, restart recovery, and `--admission-ref`.
+
+  让 Tokenless Harness runs 保存在 daemon memory 中，并移除 durable admissions、restart recovery 与 `--admission-ref`。
+
+- 2056fe7: Add provider-neutral semantic preferences and provider-scoped rate-limit fallback for Tokenless API auto routing, with per-provider Terminal-Bench observations.
+
+  Allow auto private provider-turn continuations to retain their settled provider mapping while carrying portable provider-home fallback alternatives; exact provider bindings remain pinned.
+
+  为 Tokenless API auto routing 增加 provider-neutral semantic preference 与 provider-scoped rate-limit fallback，并在 Terminal-Bench 中按 provider 记录观测指标。
+
+  允许 auto private provider-turn continuation 保留 settled provider mapping，同时携带 portable provider-home fallback alternative；精确 provider binding 仍保持 pinned。
+
+- 86d7b64: Allow every eligible text conversation provider to carry Tokenless-owned prompt-emulated function calls and structured finals. Recover one unambiguous JSON object from surrounding provider prose while preserving protocol, nonce, tool, call-count, history, and schema validation. Close a still-visible Z.ai announcement through its scoped dialog control when Escape does not unblock the real send button. Normalize provider-rendered non-breaking JSON spaces, read Meta AI JSON from its visible Raw view, and keep Arena Direct from treating the submitted prompt as an assistant answer.
+
+  允许每个 eligible text conversation provider 承载由 Tokenless 实现的 prompt-emulated function call 与 structured final。在 provider prose 中提取唯一且无歧义的 JSON object，同时保留 protocol、nonce、tool、call-count、history 与 schema validation。当 Escape 未能解除 Z.ai 公告对真实发送按钮的遮挡时，只通过该公告内部的 dialog control 关闭它。统一 provider 页面渲染出的 JSON non-breaking space，从 Meta AI 可见的 Raw 视图读取 JSON，并防止 Arena Direct 把已提交的 prompt 当成 assistant answer。
+
+- 315aa73: Add a dedicated setup route that discovers installed Chrome, Brave, and CloakBrowser runtimes, lets users add a verified native executable path, and saves the selected runtime with the config-wired default profile.
+
+  新增专用 setup 路由，发现已安装的 Chrome、Brave 和 CloakBrowser runtime，允许用户添加经过验证的原生 executable path，并将所选 runtime 与配置关联的默认 profile 一起保存。
+
+- 455a289: Use one `tokenless.sqlite3` for current business records: jobs, provider Project and conversation mappings, Responses API continuation entries, output-savings events, provider status observations, and Tokenless Harness context when used. Keep only in-flight Web AI execution in daemon memory; remove custom writer/startup locks, claim leases, checkpoints, replay/resume, delayed recovery, idempotency-key aliases, dispatch-certainty state, request-cancellation tombstones, legacy profile-registry import, and the background output-savings queue. Unfinished jobs fail with `job_interrupted` after restart; completed history and continuation state remain available.
+
+  只使用一个 `tokenless.sqlite3` 存储当前业务记录：jobs、provider Project 与 conversation mappings、Responses API continuation entries、output-savings events、provider status observations，以及使用 Tokenless Harness 时的 context。只有 in-flight Web AI execution 留在 daemon memory；移除自定义 writer/startup lock、claim lease、checkpoint、replay/resume、delayed recovery、idempotency-key alias、dispatch-certainty state、request-cancellation tombstone、旧 profile-registry import 与后台 output-savings queue。重启后未完成 job 以 `job_interrupted` 失败；已完成历史和 continuation state 会继续保留。
+
 ### Patch Changes
 
 - 3553ec6: Make local API proxy failures distinguishable and serve the default OpenAI paths. Errors now carry a real HTTP status and a stable code — `404` for an unknown model, `413` for an oversized body, `499` on client disconnect, `502` for a visible-provider failure, `503` for a disabled proxy or unready profile, `504` for the completion deadline — so clients can decide whether to retry without matching message strings. `POST /v1/chat/completions` and `GET /v1/models` are accepted as aliases of the `/v1/openai` routes, letting an unmodified OpenAI client work with only a base-URL change, and every proxy route now requires the proxy to be enabled. `tokenless api-proxy status --json` reports the additional `openaiDefault` endpoint.
@@ -125,6 +189,86 @@
 - a3c2d40: Harden the local dashboard's daemon connection with a shared typed contract, profile-scoped provider-readiness state, semantic dashboard operations, and immediate secure 404 responses for missing UI assets.
 
   通过 shared typed contract、profile-scoped provider-readiness state、semantic dashboard operations，以及对缺失 UI assets 立即返回的 secure 404 responses，强化 local dashboard 的 daemon connection。
+
+- 0981a5e: Align the Dashboard header metrics on one line, report idle runtime activity accurately, and add a finished-job count.
+
+  将 Dashboard header 指标对齐为单行，准确显示空闲 runtime 状态，并增加已结束任务计数。
+
+- 293e258: Bind newly created and setup-managed profiles to the exact browser executable that created them, while retaining the existing protection against opening a profile with an older browser version.
+
+  将新建和通过 setup 管理的 managed profile 绑定到创建它的确切 browser executable，同时保留现有的旧版本浏览器保护。
+
+- 4ab236f: Clarify the installed Codex coordination guidance and paired documentation for internal sub-agents, sidebar-visible separate tasks, and concise coordinator reporting.
+
+  补充 Codex coordination guidance 与配套文档，明确 internal sub-agent、侧边栏可见的 separate task，以及简洁的 coordinator 报告规则。
+
+- 86d7b64: Classify uncertain visible prompt-submission failures as unknown-window provider rate limits so automatic routing can fall back before any provider submission occurs.
+
+  将不确定的可见 prompt 提交失败归类为未知窗口的 provider rate limit，使自动路由可以在 provider 尚未收到提交时安全 fallback。
+
+- d95a211: Close every released Tokenless API-owned provider tab after its idle timeout and let the Dashboard reopen an empty profile browser on demand.
+
+  在空闲超时后关闭所有已释放且由 Tokenless API 拥有的 provider tabs，并允许 Dashboard 按需重新打开没有 tab 的 profile 浏览器。
+
+- 536edf9: Bound auto new-conversation provider completion time within the existing request deadline and continue through each untried provider route once after a submitted timeout.
+
+  在现有 request deadline 内限制 auto new-conversation 的单 provider completion 时间，并在 submitted timeout 后依次尝试每条尚未使用的 provider route 一次。
+
+- 657872b: Open the Tokenless Dashboard in the operating system's default browser instead of the selected provider profile browser.
+
+  使用操作系统默认浏览器打开 Tokenless Dashboard，不再使用所选 provider profile 的浏览器。
+
+- d0021fd: Defer providers after a real visible rate-limit observation so auto routing does not immediately select the same exhausted provider again.
+
+  真实可见的 rate-limit observation 出现后暂时 defer 对应 provider，避免 auto routing 立即再次选择同一个已耗尽 provider。
+
+- a7ce915: Fix Dashboard Direct tooltips and links to show each provider's upstream API URL.
+
+  修复 Dashboard Direct tooltips 与 links，使其显示每个 provider 的 upstream API URL。
+
+- 89803cf: Remove AI Badgr and Api.Airforce from the Tokenless API provider catalog.
+
+  从 Tokenless API provider catalog 中移除 AI Badgr 与 Api.Airforce。
+
+- 89803cf: Explain Provider readiness icons and badges with localized hover tooltips, including observed provider-specific subscription tiers.
+
+  为 Provider readiness icons 与 badges 增加 localized hover tooltips，并包含已观察到的 provider-specific subscription tiers 说明。
+
+- 455a289: Mark providers that do not expose subscription tiers and hide the plan indicator for them in the dashboard.
+
+  标记不提供订阅等级的 provider，并在 dashboard 中隐藏其方案指示器。
+
+- 2e24f7d: Fix Arena authentication status detection by inspecting the visible sidebar account surface.
+
+  通过检查可见的侧边栏账户界面，修复 Arena 登录状态检测。
+
+- 89803cf: Increase text sizes throughout the Tokenless Dashboard for easier reading.
+
+  增大 Tokenless Dashboard 的整体文字尺寸，提升可读性。
+
+- b9ed152: Read completed Claude code-block responses, enter Claude prompts through native keyboard input, dismiss its observed transient `Not now` prompt, clear restored draft attachments and reload the cleared draft before Universal API new conversations, submit through its visible enabled send control even when a non-mutating actionability probe times out, retain native Enter only when no send control is present, preserve sanitized submit-actionability and provider-session diagnostics through the provider-action boundary before safe fallback, route away safely when that control remains disabled, isolate Universal API new conversations on replacement pages while preserving continuations, make the existing one-shot correction explicitly repair invalid structural punctuation and schema-invalid tool arguments, and admit its real-provider-proven single-call strict tool and tool-history scope to `tokenless/auto` routing.
+
+  读取已完成的 Claude code-block response；通过原生键盘输入 Claude prompt；关闭已观察到的短暂 `Not now` 弹窗；在 Universal API 新会话开始前清除恢复的旧 draft 附件并 reload 已清空的 draft；即使非变更性 actionability 检查超时，仍通过可见且 enabled 的发送按钮提交，只在完全没有发送控件时保留 Claude 原生 Enter 路径；在安全 fallback 前让净化后的 submit actionability 与 provider-session diagnostics 完整穿过 provider-action 边界，并在控件仍 disabled 时安全路由到下一个 provider；让 Universal API 新会话使用 replacement page 隔离旧 draft，同时保留 continuation page；明确要求现有的一次性 correction 修复无效结构标点与 schema-invalid tool arguments；并将真实 provider 已验证的 single-call strict tool 与 tool-history scope 纳入 `tokenless/auto` routing。
+
+- c5329ae: Show relative provider and conversation timestamps, readable truncated chat titles, per-provider readiness checks, a clearly limited recent-conversation summary, and direct job-detail links in the local Dashboard overview.
+
+  在 local Dashboard overview 中显示 relative provider 与 conversation timestamps、可读的截断 chat titles、按 provider 的 readiness checks、明确受限的 recent-conversation summary，以及直接的 job-detail links。
+
+- 5e297c8: Show canonical Browser and Direct entry URLs in interactive provider mode tooltips.
+
+  在 interactive provider mode tooltips 中显示 canonical Browser 与 Direct entry URLs。
+
+- c5329ae: Persist provider authentication observations in the shared `tokenless.sqlite3` while keeping profile identity and configuration in `config.json`.
+
+  将 provider authentication observations 持久化到共享的 `tokenless.sqlite3`，profile identity 与 configuration 继续保存在 `config.json`。
+
+- 455a289: Give every Tokenless Dashboard page its own pathname instead of a URL hash.
+
+  为每个 Tokenless Dashboard 页面提供独立 pathname，不再使用 URL hash。
+
+- ab8cde5: Require real bootstrap, tool, continuation, and final-result evidence for Browser Harness eligibility while retaining independently verified generic Markdown upload routes.
+
+  要求 Browser Harness eligibility 必须具备真实 bootstrap、tool、continuation 与 final-result evidence，同时保留已独立验证的 generic Markdown upload routes。
 
 ## 0.5.0
 

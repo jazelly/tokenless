@@ -262,7 +262,7 @@
         },
         capacity: {
           decision: state.capacity.decision,
-          rules: state.capacity.rules.filter((rule) => rule.decision !== 'defer').map((rule) => ({
+          rules: state.capacity.rules.filter((rule): rule is typeof rule & { decision: 'admit' | 'unknown' } => rule.decision !== 'defer').map((rule) => ({
             action: rule.action,
             publishedAllowance: rule.publishedAllowance,
             remainingUnits: rule.remainingUnits,
