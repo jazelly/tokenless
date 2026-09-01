@@ -150,6 +150,22 @@
 
 ### Patch Changes
 
+- 5685e9c: Disable Dola image-generation and artifact routes after the 2026-09-01 real run could not reach the daemon, while retaining verified chat and document routes.
+
+  在 2026-09-01 真实运行无法连接 daemon 后，关闭 Dola 的图像生成与 artifact 路由，同时保留已验证的聊天和文档路由。
+
+- 902644d: Close Arena website-generation and agent-execution routes until stable real response evidence is restored, and correct the workspace response baseline check for one visible answer.
+
+  在稳定的真实响应证据恢复前关闭 Arena website-generation 和 agent-execution 路由，并修正 workspace response baseline 检查以匹配单个可见回答。
+
+- 4ba3477: Fix current Arena model selection and Qwen effort selection controls.
+
+  修复 Arena 当前 model 选择和 Qwen effort 选择控件。
+
+- 4f89cfe: Granularize browser file-input capabilities and stabilize Qwen document uploads.
+
+  细分 browser file-input capabilities，并稳定 Qwen document uploads。
+
 - 3553ec6: Make local API proxy failures distinguishable and serve the default OpenAI paths. Errors now carry a real HTTP status and a stable code — `404` for an unknown model, `413` for an oversized body, `499` on client disconnect, `502` for a visible-provider failure, `503` for a disabled proxy or unready profile, `504` for the completion deadline — so clients can decide whether to retry without matching message strings. `POST /v1/chat/completions` and `GET /v1/models` are accepted as aliases of the `/v1/openai` routes, letting an unmodified OpenAI client work with only a base-URL change, and every proxy route now requires the proxy to be enabled. `tokenless api-proxy status --json` reports the additional `openaiDefault` endpoint.
 
   让 local API proxy 的失败可区分，并提供默认 OpenAI paths。错误现在带有真实 HTTP status 与稳定 code：未知 model 为 `404`、请求体过大为 `413`、client disconnect 为 `499`、visible-provider failure 为 `502`、proxy disabled 或 profile 未就绪为 `503`、completion deadline 超时为 `504`，客户端无需匹配错误文本即可决定是否重试。`POST /v1/chat/completions` 与 `GET /v1/models` 作为 `/v1/openai` routes 的 aliases 接受，未修改的 OpenAI client 只需更换 base URL；每个 proxy route 都要求 proxy 已启用，`tokenless api-proxy status --json` 也会报告新增的 `openaiDefault` endpoint。
