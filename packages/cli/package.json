@@ -1,6 +1,6 @@
 {
   "name": "tokenless",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Tokenless CLI for managed Playwright access to visible AI provider sessions.",
   "type": "module",
   "license": "MIT",
@@ -14,10 +14,19 @@
   "exports": {
     ".": "./dist/src/index.js"
   },
+  "imports": {
+    "#tokenless-shared/*": "./dist/shared/src/*",
+    "#tokenless-server/*": "./dist/server/src/*",
+    "#tokenless-harness/*": "./dist/harness/src/*"
+  },
   "files": [
+    "dist/integrations",
     "dist/src",
+    "dist/server",
     "dist/schemas",
-    "dist/web-agent-harness",
+    "dist/harness",
+    "dist/shared",
+    "dist/runtime",
     "README.md",
     "README.zh-CN.md",
     "package.json"
@@ -27,20 +36,17 @@
   },
   "scripts": {
     "build": "node scripts/build-package.mjs",
-    "lint": "tsc -p tsconfig.json --noEmit && svelte-check --tsconfig ./tsconfig.ui.json",
+    "lint": "tsc -b ../server && tsc -p tsconfig.json --noEmit",
     "prepack": "node scripts/build-package.mjs"
   },
   "dependencies": {
+    "impers": "0.1.0",
     "playwright-core": "1.61.1"
   },
   "engines": {
     "node": ">=22.13.0"
   },
   "devDependencies": {
-    "@lucide/svelte": "1.28.0",
-    "@sveltejs/vite-plugin-svelte": "7.2.0",
-    "svelte": "5.56.8",
-    "svelte-check": "4.7.4",
     "vite": "8.2.0"
   }
 }

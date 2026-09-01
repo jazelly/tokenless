@@ -6,20 +6,20 @@ import path from 'node:path'
 import test from 'node:test'
 import { gzipSync } from 'node:zlib'
 
-import { verifyAndExtractManagedBrowserArtifact } from '../packages/cli/dist/src/browser-runtime/manager.js'
+import { verifyAndExtractManagedBrowserArtifact } from '../packages/server/dist/src/browser/runtime/manager.js'
 
 test('managed browser artifact verification fails closed across real archive and executable boundaries', async () => {
   const temporaryRoot = await fs.realpath(os.tmpdir())
   const root = await fs.mkdtemp(path.join(temporaryRoot, 'tokenless-browser-artifact-security-'))
   const stateDirectory = path.join(root, 'state')
   const configPath = path.join(stateDirectory, 'config.json')
-  const registryPath = path.join(stateDirectory, 'profiles.json')
+  const databasePath = path.join(stateDirectory, 'tokenless.sqlite3')
   const configSentinel = Buffer.from('{"browser":"sentinel"}\n')
-  const registrySentinel = Buffer.from('{"profiles":["sentinel"]}\n')
+  const databaseSentinel = Buffer.from('sqlite sentinel\n')
   try {
     await fs.mkdir(stateDirectory, { recursive: true, mode: 0o700 })
     await fs.writeFile(configPath, configSentinel, { mode: 0o600 })
-    await fs.writeFile(registryPath, registrySentinel, { mode: 0o600 })
+    await fs.writeFile(databasePath, databaseSentinel, { mode: 0o600 })
 
     const checksumCase = await prepareCase(root, 'checksum', createTarGz([
       fileEntry('artifact.txt', Buffer.from('real archive bytes\n')),
@@ -69,7 +69,7 @@ test('managed browser artifact verification fails closed across real archive and
 
   async function assertStateUnchanged() {
     assert.deepEqual(await fs.readFile(configPath), configSentinel)
-    assert.deepEqual(await fs.readFile(registryPath), registrySentinel)
+    assert.deepEqual(await fs.readFile(databasePath), databaseSentinel)
   }
 })
 

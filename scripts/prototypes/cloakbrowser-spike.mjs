@@ -243,15 +243,15 @@ async function runProviderAction(cliEntry, browserPath, provider, action, extraA
 }
 
 async function runProviderConversation(cliEntry, browserPath, provider) {
-  const marker = `TOKENLESS_CLOAK_${provider.toUpperCase()}_E2E_${Date.now()}`
-  const taskId = `cloak-${provider}-e2e-${Date.now()}`
+  const prompt = 'What is the capital of Australia? Answer in one sentence.'
+  const taskId = 'cloakbrowser-semantic:' + provider
   const command = await run(process.execPath, [
     cliEntry,
     'run',
     '--provider', provider,
     '--profile', profileSlug,
     '--task-id', taskId,
-    '--prompt', `Reply with exactly ${marker} and no other text.`,
+    '--prompt', prompt,
     '--home', tokenlessHome,
     '--browser-visibility', 'headed',
     '--timeout-ms', '300000',
@@ -269,7 +269,7 @@ async function runProviderConversation(cliEntry, browserPath, provider) {
   if (!payload) {
     return {
       taskId,
-      marker,
+      probe: 'capital-of-australia',
       exitCode: command.code,
       status: 'failed',
       succeeded: false,
@@ -279,7 +279,7 @@ async function runProviderConversation(cliEntry, browserPath, provider) {
   if (payload.status !== 'succeeded' || typeof payload.jobId !== 'string') {
     return {
       taskId,
-      marker,
+      probe: 'capital-of-australia',
       jobId: payload.jobId ?? null,
       exitCode: command.code,
       status: payload.status ?? 'failed',
@@ -290,7 +290,9 @@ async function runProviderConversation(cliEntry, browserPath, provider) {
   }
 
   const response = responseResult(payload, 'response.read')
-  const responseMatched = typeof response?.text === 'string' && response.text.includes(marker)
+  const evaluation = typeof response?.text === 'string'
+    ? { passed: /Canberra/i.test(response.text), detail: 'semantic_response' }
+    : { passed: false, detail: 'missing_response_text' }
   const durableCommand = await run(process.execPath, [
     cliEntry,
     'state',
@@ -309,12 +311,12 @@ async function runProviderConversation(cliEntry, browserPath, provider) {
   const durablePayload = parseOptionalJsonOutput(durableCommand.stdout)
   return {
     taskId,
-    marker,
+    probe: 'capital-of-australia',
     jobId: payload.jobId,
     exitCode: command.code,
     status: payload.status,
-    succeeded: responseMatched && durablePayload?.latest?.status === 'succeeded',
-    responseMatched,
+    succeeded: evaluation.passed === true && durablePayload?.latest?.status === 'succeeded',
+    evaluation,
     durableStatus: durablePayload?.latest?.status ?? null,
   }
 }

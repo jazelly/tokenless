@@ -1,25 +1,165 @@
 # Tokenless Architecture
 
-Tokenless exposes visible AI websites through a provider-neutral local CLI and a browser-based local control plane. Managed Playwright through the authenticated local daemon remains the only provider execution path. The machine bearer API and browser session API are separate trust boundaries.
+This document defines the stable product architecture. It is not a roadmap and does not define delivery order. Roadmaps may describe how a capability is delivered, but they must preserve the ownership and dependency boundaries defined here.
 
-## Components
+Tokenless exposes visible AI websites through an HTTP-centered local server, a thin local CLI, a full browser-based Dashboard, a first-party Web Agent Harness, and a Universal API. Managed Playwright through the authenticated local daemon remains the primary visible-provider execution path; approved direct provider strategies remain behind the provider runtime boundary.
 
-1. The `tokenless` CLI handles setup, profile management, job submission, state, cancellation, and diagnostics.
-2. The local TypeScript daemon stores jobs in SQLite and exposes an authenticated loopback control plane.
-3. The Playwright worker claims managed-web jobs, connects over CDP to independently launched resident Chromium processes, and uses Playwright browser, page, and locator APIs inside persistent managed profiles.
-4. The provider navigation catalog centrally declares each entry URL, automation home, owned origins, known page patterns, and trusted sign-in routes; the provider registry adds access, account-plan, selector, and capability policy for ChatGPT, Claude, Gemini, Grok, Qwen, DeepSeek, Perplexity, Z.ai, and Doubao.
-5. The provider-session state machine turns visible page observations and catalog policy into ready, guest-continuation, handoff, wait, or terminal decisions.
-6. Provider adapters translate shared actions into visible provider page operations after the session decision allows them.
-7. Shared application services expose redacted config, profile, provider, capability, job, runtime, and diagnostic operations to the local control plane.
-8. The bundled TypeScript SPA is served from `/ui/`; its authenticated `/ui-api/v1` surface never exposes the daemon control bearer token to browser JavaScript.
+## Final shape
 
-## Execution path
+Tokenless has several entry surfaces above one server-owned execution core:
 
-`tokenless run` submits a managed Playwright job through the local daemon. For an implicit, provider-neutral, pre-submit run, the same durable job may move to another provider only through its capability-ranked fallback plan. It never switches runtime paths, degrades a required capability, or replays after an ambiguous or confirmed submission.
+```mermaid
+flowchart TB
+  Skill["Host Agent Skill<br/>skills/tokenless"] --> CLI
+  CLI["packages/cli<br/>commands, bootstrap, HTTP client"] --> AgentAPI["Tokenless Harness API<br/>/v1/private/agent/*"]
+  CLI --> Control["Bearer machine HTTP<br/>/v1/private/*"]
+  Dashboard["packages/dashboard<br/>full read + mutation control plane"] --> UIAPI["/ui-api/v1"]
+  OpenAIClient["OpenAI SDK / external Harness"] --> API["OpenAI-compatible HTTP<br/>chat, responses, images"]
+  AnthropicClient["Anthropic SDK / external Harness"] --> Anthropic["Anthropic-compatible HTTP<br/>messages"]
+  AgentAPI --> Harness["packages/harness<br/>AgentRun, Skills, tools, MCP"]
+  Harness --> API
+  Harness -. "only non-representable extensions" .-> PrivateTurn["/v1/private/provider-turn/*"]
+
+  subgraph Server["packages/server"]
+    Control --> Application["Application services"]
+    UIAPI --> Application
+    API --> Universal["Universal API conversion"]
+    Anthropic --> Universal
+    PrivateTurn --> Application
+    Universal --> Application
+    Application --> Provider["Jobs, routing, providers, browser/direct runtime, persistence"]
+  end
+
+  Browser["Real provider website or approved direct provider endpoint"]
+  Tools["Harness-owned tools<br/>filesystem / local / MCP"]
+
+  Harness --> Tools
+  Provider --> Browser
+
+  Contracts["packages/contracts<br/>OpenAPI source + generated reference"] -. "documents" .-> API
+  Contracts -. "documents" .-> Anthropic
+  Contracts -. "documents" .-> Control
+  Contracts -. "documents" .-> UIAPI
+```
+
+The callers use distinct HTTP Interfaces but share one server implementation. OpenAI-compatible and Anthropic-compatible are parallel compatibility Interfaces; OpenAI-compatible chat, Responses, and images remain the default model/media Interface for the first-party Harness. Tokenless-only bearer machine control and non-representable provider-turn extensions stay under `/v1/private/*`.
+
+## Layer 1: Universal API
+
+The Universal API is the low-level, provider-facing compatibility boundary. It turns supported visible or direct provider strategies into a stable API that existing external Harnesses can consume.
+
+It owns:
+
+- OpenAI-compatible Chat Completions and Responses request/response contracts;
+- OpenAI-compatible image-generation request/response contracts and media result handling;
+- canonical provider-turn history, tool-call/result validation, structured output, streaming, and errors;
+- provider routing and the provider-turn lifecycle behind the API boundary; and
+- low-level correlation, dispatch certainty, attachment identity, and opaque continuation references.
+
+An external Harness sends its temporary tool catalog and conversation history to the Universal API. The API validates the catalog and returns a tool call or final result; it does not resolve, authorize, or execute the external Harness's tools.
+
+The Universal API does not own:
+
+- Tokenless agent-run state, prompt or Skill compilation, or Harness mission queues;
+- filesystem roots, local tools, MCP sessions, approvals, or tool execution;
+- a second scheduler, general conversation database, or first-party agent loop; or
+- the authorization policy of an external caller.
+
+This makes the API directly deployable to an existing Harness. Pi, Mono, Codex, DeepSeek Harness, or another compatible caller can own its tools and call the API without loading the Tokenless Web Agent Harness.
+
+## Layer 2: Web Agent Harness
+
+The Web Agent Harness is Tokenless's first-party agent runtime in `packages/harness/`. It is used by Tokenless-owned agent runs and integrations while remaining above the server HTTP boundary.
+
+Its caller-facing local control and tool-exchange surface is the **Tokenless Harness API**. The current trusted-machine routes live under `/v1/private/agent/*`, with a Dashboard projection under `/ui-api/v1/harness/*`; both call the same Harness implementation. The Tokenless Harness API remains above and uses the provider-facing Tokenless API.
+
+It owns:
+
+- `AgentRun` identity, lifecycle, in-process execution, and final output;
+- system prompts, prompt management, Skills, tool discovery, and the internal Tool Registry;
+- filesystem and local tools, MCP clients/servers, authorization, approvals, timeout, cancellation, and user intervention;
+- bounded `action_batch` loops, tool-result aggregation, continuation, and failure handling; and
+- the OpenAI-compatible Client Adapter used for ordinary model turns;
+- the private provider-turn Client Adapter used only for current semantics that OpenAI requests cannot express; and
+- no imports from provider adapters or Playwright internals.
+
+Harness-owned tools are not external caller tools. The Harness may project its own authorized tools into a provider turn and execute the resulting actions under its own policy. That is a Layer 2 responsibility and must not be moved into the Universal API.
+
+## Access paths and tool ownership
+
+| Caller | Agent owner | Provider path | Tool executor |
+| --- | --- | --- | --- |
+| Pi, Mono, Codex, DeepSeek Harness, or another external Harness | External Harness | Universal API → Web Provider API / direct provider runtime | External Harness |
+| Tokenless CLI agent run | Tokenless Web Agent Harness | `/v1/private/agent/*` → Harness → OpenAI-compatible API, plus necessary `/v1/private/provider-turn/*` extensions | Tokenless Web Agent Harness |
+| Provider inspection or administration command | Tokenless CLI/control adapter | Daemon → managed provider runtime | The provider/control adapter, within its command boundary |
+
+Host integration has two distinct seams:
+
+| Integration | What changes | Child agent loop owner |
+| --- | --- | --- |
+| Model base URL | The host's existing model adapter calls Tokenless API | The host Harness |
+| Subagent provider | A host-specific executor delegates one child to Tokenless Harness | Tokenless Harness for that child |
+
+DeepSeek Harness supports the second path through its `SubagentProvider` seam. Its model-base-URL path continues to use `llm-deepseek`; Tokenless neither configures nor requires `llm-pi-ai`. Codex currently exposes hooks but no external subagent-executor replacement seam, so its supported Tokenless Harness path is explicit `tokenless agent delegate`, not a claimed replacement of native `spawn_agent`. See [Harness Integrations](harness-integrations.md).
+
+```text
+External Harness -> Universal API
+  API validates caller-owned tools
+  API returns tool_call
+  External Harness executes the tool
+  External Harness sends tool result in the next API request
+
+Tokenless CLI -> Web Agent Harness -> Universal API
+  Harness projects its internal Tool Registry into the provider turn
+  Harness validates the model action_batch
+  Harness authorizes and executes filesystem / local / MCP calls
+  Harness sends one bounded aggregate result into the next provider turn
+```
+
+Universal API non-execution of external caller tools therefore does not prohibit the first-party Harness from executing its own tools. It prohibits only moving Harness authority into the low-level API or silently treating an external caller's tool catalog as Tokenless authority.
+
+## HTTP contract and runtime ownership
+
+`packages/contracts/tokenless.openapi.json` is the single HTTP documentation source. It describes paths, methods, authentication, serialized request/response shapes, status codes, and examples for all compatibility, private machine, Dashboard, and readiness Interfaces; `npm run api:docs` renders English and Simplified Chinese Scalar references from that source plus a text-only Chinese Overlay.
+
+`packages/contracts` is not a runtime dependency. Server routes and request validation remain in `packages/server`; the private provider-turn Client Adapter and its defensive response validation remain in `packages/harness`. `packages/shared` contains only runtime primitives with multiple real consumers—Dashboard DTO types, locale normalization/interpolation, localized error summaries, and strict JSON helpers—and is not an HTTP contract source.
+
+## Localization ownership
+
+- `packages/shared/src/i18n.ts` owns only supported locales, normalization, fallback, and message interpolation.
+- `packages/cli/src/i18n/` and `packages/dashboard/src/i18n/` own their respective user-facing catalogs; neither imports the other's copy.
+- Server and Harness return stable codes and bounded fallback diagnostics. They do not own CLI or Dashboard presentation catalogs; Server validates persisted language as a configuration value inside its standalone package boundary.
+- Public Markdown uses aligned `.md` and `.zh-CN.md` partners. The OpenAPI Overlay changes human-readable text only and cannot redefine paths, schemas, operation IDs, or examples.
+
+The high-level runtime Interfaces remain separate:
+
+- Tokenless Harness API: AgentRun admission, state, intervention, cancellation, and authorized Harness-owned tool exchange;
+- Universal API: OpenAI-compatible `tools`, `tool_calls`, `role: tool`, Responses items, `tool_choice`, and structured output;
+- Anthropic compatibility: Anthropic Messages framing mapped to the same Universal execution implementation;
+- Web Agent Harness: `AgentRun`, Skills, `action_batch`, `needs`, approval decisions, MCP outcomes, interventions, and final-output policy.
+
+The API Adapter must not call the Harness mission queue, Tool Registry, or MCP runtime. The Harness must not import provider Adapters, Playwright, daemon storage, profile management, or CLI implementation modules.
+
+## Runtime components
+
+1. The `tokenless` CLI handles command parsing, daemon bootstrap, authenticated HTTP calls, waiting, localization, and output formatting.
+2. The Web Agent Harness owns Tokenless's first-party agent-run coordination, OpenAI-compatible model calls, and only the necessary private provider-turn extension calls.
+3. The local TypeScript daemon stores job facts and results in SQLite and exposes an authenticated loopback control plane; active execution belongs to the daemon process.
+4. The Playwright worker selects queued managed-web jobs, connects over CDP to independently launched resident Chromium processes, and uses Playwright browser, page, and locator APIs inside persistent managed profiles.
+5. The provider navigation catalog centrally declares each entry URL, automation home, owned origins, known page patterns, and trusted sign-in routes; the provider registry adds access, account-plan, selector, and capability policy.
+6. The provider-session state machine turns visible page observations and catalog policy into ready, guest-continuation, handoff, wait, or terminal decisions.
+7. Provider adapters translate shared actions into visible provider page operations after the session decision allows them.
+8. Shared server application services expose redacted config, profile, provider, capability, job, runtime, and diagnostic operations to every HTTP surface without duplicating business logic.
+9. The full Dashboard SPA in `packages/dashboard/` is served from `/ui/`; its authenticated `/ui-api/v1` surface retains all read and mutation behavior and never exposes the daemon control bearer token to browser JavaScript.
+
+## Provider runtime execution path
+
+Every normal cross-surface call enters through HTTP. The target first-party agent path is `Tokenless CLI → Tokenless Harness API (/v1/private/agent/*) → Web Agent Harness → Tokenless API → provider runtime`, with `/v1/private/provider-turn/*` used only for non-representable extensions. After daemon readiness, jobs, provider inspection, profile/configuration, capability routing, output-savings, and administration commands use bearer-authenticated `/v1/private/*` machine routes. Pre-daemon discovery, daemon installation/start, setup-time browser provisioning, upgrade, and offline diagnostics are explicit bootstrap boundaries; normal product commands must never use them as an in-process fallback. When no verified daemon exists, the CLI may retain request-local validation and a read-only fail-fast capability/profile preflight solely to preserve rejection before daemon, token, SQLite, or job side effects; an accepted request is always re-resolved by the server over authenticated HTTP before execution.
 
 | Interface | Execution path | Authentication | Status |
 | --- | --- | --- | --- |
-| CLI | CLI → daemon → Playwright worker → managed profile → visible provider page | Provider sign-in stored inside the managed profile | Primary interface |
+| CLI agent run | CLI → Tokenless Harness API (`/v1/private/agent/*`) → Web Agent Harness → Tokenless API/private extension → provider runtime | Provider sign-in stored inside the managed profile | First-party Tokenless Harness API interface |
+| Provider/control command | CLI → `/v1/private/*` → daemon → Playwright worker → managed profile → visible provider page | Daemon bearer token plus provider sign-in inside the managed profile | Private machine Interface |
 | Local dashboard | Browser → `/ui-api/v1` → shared services/daemon → managed profile → visible provider page | Direct loopback opening plus a short-lived UI session; provider sign-in remains inside the managed profile | Local administration interface |
 | Machine API | Trusted local caller → bearer API → daemon → Playwright worker | Daemon bearer token plus provider sign-in inside the managed profile | Local scripting interface |
 
@@ -31,50 +171,48 @@ request
   → rank compatible providers by live eligibility, evidence maturity, and configured preference
   → validate target, actions, context envelope, files, and limits
   → create an authenticated daemon job
-  → Playwright worker claims the job for that profile
+  → Playwright worker selects the queued job for that profile
   → recheck visible session and task-capability eligibility before mutation
   → provider adapter operates visible page controls
   → verify visible postconditions
-  → atomically requeue the same job on the next ranked provider only for a classified safe pre-submit failure
+  → immediately try the next ranked provider in the same execution only for a classified safe pre-submit failure
   → complete the daemon job
   → return normalized result and citations
 ```
 
 Jobs use explicit provider and profile identity. Unsupported controls, ambiguous pages, unexpected navigation, authentication blockers, and selector drift fail closed.
 
-The job contract derives requirements again from visible actions, attachment media types, and native workspace intent. A caller cannot under-declare `file.upload`, media input, chat, or native workspace requirements to manufacture an unsafe fallback route. Every alternative carries the identical implication-complete requirement set. Provider-specific conversation and Project URLs, provider controls, exact continuation, non-reconstructable mutations, and post-submission state suppress automatic fallback with a structured reason.
+The job contract derives requirements again from visible actions, attachment media types, and native workspace intent. A caller cannot under-declare `file.upload`, media input, chat, or native workspace requirements to manufacture an unsafe fallback route. Every alternative carries the identical implication-complete requirement set. Provider-specific conversation and Project URLs, provider controls, exact continuation, non-reconstructable mutations, and post-submission state suppress automatic fallback with a structured reason, except for the narrow `tokenless/auto` private provider-turn pre-submit sequence `file.upload` → `prompt.input` → `prompt.submit` → `response.read`, which keeps the settled conversation as primary and only carries reconstructable provider-home alternatives.
 
-Before opening a provider page, each attempt also projects known profile-scoped provider capacity from the checked-in official-source catalog and durable submission history. A known exhausted window consumes the next full-capability route when one exists; otherwise the same job is durably deferred until its calculated eligibility time. Unknown or non-numeric limits remain explicit uncertainty and never become invented quotas.
+Before opening a provider page, each attempt also projects known profile-scoped provider capacity from the checked-in official-source catalog and stored submission history. A known exhausted window consumes the next full-capability route in the same execution when one exists; otherwise the request fails clearly instead of being delayed. Unknown or non-numeric limits remain explicit uncertainty and never become invented quotas.
 
-Each routed job carries `tokenless.context-envelope.v1`. It records the task identity, normalized requirements, role-bearing instructions, attachment provenance, output and constraint contracts, upstream agent state, and hashes of the prompt actions that actually deliver the context. Provider changes replay the same validated envelope and action payloads from the start.
+A visible provider rate-limit observation is also read from the existing job history. `minute`, `hour`, `day`, and `week` evidence temporarily defers that provider for the observed window; an explicit retry duration takes precedence, while an unknown window uses a five-minute routing cooldown. This runtime cooldown is not presented as a published provider quota.
+
+Each routed job carries `tokenless.context-envelope.v1`. It records the task identity, normalized requirements, role-bearing instructions, attachment provenance, output and constraint contracts, upstream agent state, and hashes of the prompt actions that actually deliver the context. Provider fallback reuses the same validated envelope and action payloads during the current execution.
 
 ## Setup and profiles
 
-`tokenless setup` is the interactive onboarding flow. It first crosses the `BrowserRuntimeManager` seam to discover, install when authorized, and verify one exact runtime. It then selects or creates a clean runtime-compatible profile, collects that profile's provider membership, commits the preference, aligns the global skills and daemon with the installed CLI, and checks only the selected providers. Tokenless never copies an existing Chrome, Brave, or Cloak profile or its authentication state; users sign in through the visible clean managed profile and the browser preserves that managed session across jobs.
+`tokenless setup` is the interactive onboarding flow. It crosses the `BrowserRuntimeManager` seam to discover, install when authorized, and verify one exact runtime. It then selects or creates a clean runtime-compatible profile, collects that profile's provider membership, commits the preference, aligns the global skills and daemon with the installed CLI, and checks only the selected providers. Tokenless never copies an existing Chrome, Brave, or Cloak profile or its authentication state; users sign in through the visible clean managed profile and the browser preserves that managed session across jobs.
 
-`tokenless setup --fresh` is the clean-profile path. Add `--json` for non-interactive setup. On a new installation it creates `default`, selects the first supported browser, uses an explicit or existing provider scope (falling back to every non-disabled provider only when none exists), checks the installed CLI against the latest npm release, runs the same skills-and-daemon maintenance reconciler used by the verified new CLI during `tokenless upgrade`, and checks each enabled provider's visible sign-in status once. Interactive setup then opens the reserved dashboard tab; machine-oriented and `--no-open` runs return `tokenless dashboard` as the later handoff. Ordinary daemon startup uses the Tokenless Daemon API v1 OpenAPI contract: `/ready` supplies a same-home proof, exact package version, and integer control API revision. A client that finds a proof-verified daemon for the same home with a stale package version or control revision gracefully shuts it down, launches the packaged daemon from the current CLI, and continues against the replacement. Job, action, and local recovery payloads keep internal schema IDs where persisted validation needs them; they are not negotiated across the CLI-daemon boundary. Foreign, different-home, and unverified listeners remain untouched. Shutdown verifies `/ready` for the same home immediately before sending the bearer token to `/control/shutdown`; Tokenless never kills a process merely because it occupies the configured loopback port. An unavailable npm registry is reported as an advisory check failure rather than making an otherwise runnable local setup fail.
+`tokenless setup --fresh` is the clean-profile path. Add `--json` for non-interactive setup. Ordinary daemon startup uses the Tokenless Daemon API v1 readiness contract and fails clearly when the requested loopback port is already occupied; it does not scan later ports or take over another listener.
 
-Browser selection is system-first. `auto` uses an installed supported browser and lazily installs catalog-pinned Chrome for Testing 145 only when none exists. `managed-chromium` forces that cache-managed runtime; `cloak` explicitly opts into the platform-specific Cloak release. Managed downloads happen only during setup or install, pass fixed SHA-256, archive-path, executable-version, sandboxed smoke-launch, and atomic-cache checks, and are never performed by npm postinstall, daemon startup, or a job. Cloak binaries are downloaded from the official release and are not redistributed by Tokenless.
+Browser selection is system-first. `auto` uses an installed supported browser and lazily installs catalog-pinned Chrome for Testing only when none exists. `managed-chromium` forces that cache-managed runtime; `cloak` explicitly opts into the platform-specific Cloak release. Managed downloads happen only during setup or install and are never performed by npm postinstall, daemon startup, or a job.
 
-Each managed profile stores a runtime binding containing the exact runtime identity, family, browser ID, and creation version. The daemon resolves from this binding and always passes the resulting executable path to Playwright. It never reinterprets the global preference, silently falls back across runtime families, or opens a profile with an older browser. Existing unbound profiles can migrate only to a compatible system/test runtime; a family change provisions a clean profile.
+Every managed profile stores a runtime binding containing the exact runtime identity, canonical browser executable path, family, browser ID, and creation version. The daemon resolves from this binding and always passes the same executable instance to Playwright; two installations of the same browser family are different runtimes. A family or executable-instance change provisions a clean profile.
 
 Managed profiles live under the Tokenless home and use unique directories. Jobs reuse them but never import, reset, clear, or replace them automatically. New profiles always start clean; deletion requires an explicit command and confirmation.
 
-Authentication status is a single visible observation, not an enforced login workflow. A provider-specific account control is authenticated evidence; it does not have to be clicked to prove the state. A visible login surface is unauthenticated evidence. For guest-capable providers, an unauthenticated visible composer produces `access: guest`; for providers that require an account it produces `access: sign_in_required`. A page that has not stabilized may be reported honestly as `unknown`. Setup does not retry after login or open a handoff.
+Authentication status is a single visible observation, not an enforced login workflow. A provider-specific account control is authenticated evidence; a visible login surface is unauthenticated evidence. A page that has not stabilized may be reported honestly as `unknown`. Setup does not retry after login or open a handoff.
 
-Successful account observations retain only the visible account display name, subscription evidence, and the normalized tier class `signed_in_free`, `signed_in_paid`, or `signed_in_unknown`. Plan labels remain diagnostic: they never authorize a capability. Grok derives plan evidence from visible model entitlements: all of `Auto`, `Expert`, and `Heavy` unavailable means `Free`, while any available entitlement means `SuperGrok`.
-
-`profiles status` runs this provider-page inspection and persists the observation. `profiles list` is a registry read: it reports the last saved observation and never refreshes a provider page implicitly.
-
-Normal provider actions do not run the setup authentication report. Before a gated action, the provider-session state machine waits up to 15 seconds for the page to expose a stable account, guest composer, sign-in surface, challenge, or terminal blocker. ChatGPT, Gemini, experimental Qwen, experimental Perplexity, and experimental Z.ai may proceed in guest mode. Claude, Grok, DeepSeek, and experimental Doubao hand off before the adapter enters or submits task content when no authenticated session is established. A visible exact guest-continuation control may be accepted once, followed by a fresh observation.
+Successful account observations retain only the visible account display name, subscription evidence, and the normalized tier class. Plan labels remain diagnostic: they never authorize a capability.
 
 ## Provider architecture and session state machine
 
-`packages/cli/src/providers/registry.ts` is the single production registration point for providers. Each entry is a concrete `BaseProvider` subclass with one provider-owned definition. Shared CLI, daemon, setup, profile, and Playwright code resolves providers through that registry instead of maintaining provider allowlists or branching on concrete provider IDs.
+`packages/server/src/providers/registry.ts` is the single production registration point for providers. Each entry is a concrete `BaseProvider` subclass with one provider-owned definition. Shared server, setup, profile, and browser code resolves providers through that registry instead of maintaining provider allowlists or branching on concrete provider IDs.
 
-`BaseProvider` owns the public execution template and the invariant ordering for navigation validation, authentication, blocker checks, prompt operations, response observation, and normalized failures. Its protected TypeScript hooks provide the shared DOM implementation and use normal dynamic dispatch, so a provider subclass overrides only behavior that differs. The runner calls the stable public provider contract and does not select child-class methods itself.
+`BaseProvider` owns the public execution template and the invariant ordering for navigation validation, authentication, blocker checks, prompt operations, response observation, and normalized failures. Its protected TypeScript hooks provide the shared DOM implementation and use normal dynamic dispatch, so a provider subclass overrides only behavior that differs.
 
-Optional behavior is composed through typed structural capability slots. File upload, model and effort selection, workspace handling, diagnostics, conversation continuation, and image generation can be replaced independently without widening the mandatory base-class contract. Provider-specific extensions can register their own typed capability and actions without promoting a provider-only concept into the shared slots; current examples are Qwen's `qwen.mode` and Doubao's `doubao.mode` plus `doubao.skill`. A capability object must satisfy the relevant TypeScript interface; it does not need to inherit from a framework class.
+Optional behavior is composed through typed structural capability slots. File upload, model and effort selection, workspace handling, diagnostics, conversation continuation, and image generation can be replaced independently without widening the mandatory base-class contract. Provider-specific extensions can register their own typed capability and actions without promoting a provider-only concept into the shared slots.
 
 Adding a provider therefore normally requires:
 
@@ -83,83 +221,63 @@ Adding a provider therefore normally requires:
 3. typed optional capability overrides only when the provider differs from the shared defaults; and
 4. one registry entry.
 
-Observation, account classification, decisions, and resolution live under `packages/cli/src/playwright/provider-session/`. The runner consumes normalized decisions; provider-owned code remains the only place for provider-specific visible-page behavior.
-
-| Provider | Guest policy | Account-name strategy | Plan strategy |
-| --- | --- | --- | --- |
-| ChatGPT | Supported | Visible account control text | `Free`; paid `Go`, `Plus`, `Pro`, `Team`, `Business`, or `Enterprise` |
-| Claude | Sign-in required | Visible account control text | `Free`; paid `Pro`, `Max`, `Team`, or `Enterprise` |
-| Gemini | Supported | Google account ARIA label | Unknown until reliable visible plan evidence is available |
-| Grok | Sign-in required | Visible account control text | Derived from visible model entitlements as `Free` or `SuperGrok` |
-| Qwen | Supported | Visible account control text when signed in | Unknown until reliable visible plan evidence is available |
-| DeepSeek | Sign-in required | Visible account control text | Unknown until reliable visible plan evidence is available |
-| Perplexity | Supported | Visible menu or account control text when signed in | Unknown until reliable visible plan evidence is available |
-| Z.ai | Supported | Visible menu or account control text when signed in | Unknown until reliable visible plan evidence is available |
-| Doubao | Sign-in required | Visible account control image | Unknown until reliable visible plan evidence is available |
-| Kimi | Sign-in required | Visible account control text | Unknown until reliable visible plan evidence is available |
+Observation, account classification, decisions, and resolution live under `packages/server/src/browser/provider-session/`. The runner consumes normalized decisions; provider-owned code remains the only place for provider-specific visible-page behavior.
 
 The provider-session machine is intentionally separate from the daemon job state machine:
 
 - The provider-session machine handles one page observation cycle: `wait`, `continue_guest`, `ready(guest|account|unknown)`, `handoff`, or `terminal`.
-- The daemon state machine owns durable execution: `queued`, `claimed`, `running`, `waiting_for_user`, `succeeded`, `failed`, `canceled`, and `timed_out`.
-- A provider `handoff` becomes the daemon's durable `waiting_for_user` state. It does not create a replacement job.
-- A plan, quota, rate-limit, maintenance, region, capability-UI, navigation, or surface-readiness failure remains structurally classified and is not collapsed into authentication. A safe pre-submit provider-scoped failure may consume the next capability-compatible fallback route; ambiguous external state and post-submission failures never do.
+- The daemon records business facts with states `queued`, `running`, `waiting_for_user`, `succeeded`, `failed`, `canceled`, and `timed_out`; active execution remains in the daemon process.
+- A provider `handoff` becomes the current execution's `waiting_for_user` state. It does not create a replacement job.
+- A plan, quota, rate-limit, maintenance, region, capability-UI, navigation, or surface-readiness failure remains structurally classified and is not collapsed into authentication. A safe pre-submit provider-scoped failure may consume the next capability-compatible fallback route. The only broader completion boundary is a `tokenless/auto` new-conversation request: it cancels a submitted provider that exhausts its bounded share of the existing request deadline before starting the next untried route, with each route attempted at most once. Ambiguous external state, exact providers, and provider-specific continuation remain terminal.
 
 ## Local control plane
 
-The daemon binds to loopback, stores its bearer token beside its SQLite database, and protects job and control endpoints with that token. The daemon home and token use restrictive filesystem permissions on supported systems. User configuration stores a preferred loopback origin. The daemon may scan upward from that port when it is occupied, while a single SQLite runtime-state row records the current actual origin, startup generation, and owner. CLI processes probe that row and coordinate startup through a compare-and-swap lease; no operating-system service actively restarts the daemon.
+The daemon binds to loopback, stores its bearer token beside its SQLite database, and protects job and control endpoints with that token. The daemon home and token use restrictive filesystem permissions on supported systems. User configuration stores a preferred loopback origin. If that requested port is occupied, startup fails clearly; the daemon does not scan later ports or take over another listener.
 
-The bearer-protected machine endpoints remain an internal runtime control plane. Browser administration uses a separate `/ui-api/v1` surface documented in `api/tokenless-ui-api.openapi.json`. Opening the daemon's loopback root redirects to `/ui/` and establishes a short-lived `HttpOnly`, `SameSite=Strict` session cookie; allowed UI GET requests establish a replacement session when needed. UI mutations require the exact daemon Origin and a per-session CSRF header. Sessions live only in daemon memory and are invalidated on restart.
+Every bearer-protected Tokenless machine endpoint, except the parallel compatibility Interfaces, lives under `/v1/private/*`. Browser administration uses the separate `/ui-api/v1` session/CSRF Interface; both are documented in [`packages/contracts/tokenless.openapi.json`](../packages/contracts/tokenless.openapi.json). Opening the daemon's loopback root redirects to `/ui/` and establishes a short-lived `HttpOnly`, `SameSite=Strict` session cookie; UI mutations require the exact daemon Origin and a per-session CSRF header. Sessions live only in daemon memory and are invalidated on restart.
 
-All UI routes enforce the daemon's exact loopback `Host`, a restrictive same-origin CSP, `frame-ancestors 'none'`, `nosniff`, and `Referrer-Policy: no-referrer`. The browser application lives under `packages/cli/src/daemon/ui`: `app.ts` is the single startup interface, the dashboard controller owns state and event orchestration, the HTTP client owns session/CSRF/ETag behavior, and page modules are pure renderers. A dedicated `tsconfig.ui.json` type-checks and emits browser-native ES modules separately from the Node daemon build. Static assets are still bundled in the same npm package, served by the daemon, and load no remote JavaScript, fonts, analytics, or CDN resources. Purpose-built responses redact control tokens, claims, checkpoints, browser storage, raw DOM, legacy source paths, and private file paths. Bounded polling uses revision ETags and defers rendering while a form has uncommitted edits; there is no SSE or WebSocket transport.
+All UI routes enforce the daemon's exact loopback `Host`, a restrictive same-origin CSP, `frame-ancestors 'none'`, `nosniff`, and `Referrer-Policy: no-referrer`. Static assets are bundled in the same npm package and load no remote JavaScript, fonts, analytics, or CDN resources. Purpose-built responses redact control tokens, authentication material, browser storage, raw DOM, legacy source paths, and private file paths.
 
-The dashboard's reserved page key is `tokenless:control-plane:<daemon-home-id>`. It has a separate registry from provider page leases, cannot be selected by provider `pagePolicy: replace`, is focused rather than duplicated, and is recreated if the user closes it. Closing the tab does not stop the daemon or managed context.
+The dashboard's reserved page key is `tokenless:control-plane:<daemon-home-id>`. It has a separate registry from provider page leases, cannot be selected by provider `pagePolicy: replace`, and is recreated if the user closes it. Closing the tab does not stop the daemon or managed context.
 
-Job creation, claim, lease renewal, completion, cancellation, state queries, and agent replay are daemon-backed. Before readiness is activated, startup reconciles expired claims and durable Playwright checkpoints, then starts the runner. Claims are correlated to one worker and expire safely. CLI cancellation is reported as complete only after the authenticated control endpoint confirms `canceled`.
+Job creation, completion, cancellation, and state queries use the shared SQLite business record. Execution belongs to the current daemon process, with no delayed admission or automatic recovery; CLI cancellation is reported as complete only after the authenticated control endpoint confirms `canceled`.
 
-Jobs may be addressed to an explicit `agent_kind` and `agent_session_id`. SQLite assigns a monotonic outcome revision whenever an externally visible waiting or terminal outcome changes. `POST /replay/drain` selects only unreported actionable revisions for that recipient, marks them reported in the same immediate transaction, and then returns allowlisted metadata. This is intentional at-most-once reporting, not a reliable message queue: no agent acknowledgement is required, and a lost drain response is not proactively repeated. Full job state remains durable and repeatably queryable. Attached CLI commands write the same idempotent receipt before returning an addressed outcome.
-
-Stable task identifiers come from explicit task or idempotency keys, or from agent project and chat names. State output omits capability tokens and does not expose raw authentication data.
+Completed and failed job facts remain queryable from SQLite. Active jobs are owned by the current daemon process, and unfinished jobs are marked `job_interrupted` after a daemon restart; state output omits capability tokens and does not expose raw authentication data.
 
 ## Browser boundary
 
-- Each active managed profile owns one browser instance backed by that profile's persistent user-data directory. Providers and conversations use independently keyed tabs inside their profile's browser. The daemon may retain up to four profile-owned instances and never closes one profile to launch another; additional profiles wait for capacity or fail explicitly at a direct open boundary.
-- Tokenless independently launches the exact Chromium executable resolved from the profile's runtime binding with a persistent non-default user-data directory and a profile-scoped loopback DevTools endpoint. The worker attaches with Playwright `connectOverCDP`; provider automation still uses Playwright browser, context, page, and locator APIs. The browser library and managed browser versions are independently pinned.
+- Each active managed profile owns one browser instance backed by that profile's persistent user-data directory. Providers and conversations use independently keyed tabs inside their profile's browser.
+- Tokenless independently launches the exact Chromium executable resolved from the profile's runtime binding with a persistent non-default user-data directory and a profile-scoped loopback DevTools endpoint. The worker attaches with Playwright `connectOverCDP`.
 - Automation uses approved provider origins, visible page controls, and visible postconditions.
 - Provider credentials and browser sign-in data stay opaque inside the managed profile; only visible account display and subscription labels cross the boundary.
 - Sign-in, CAPTCHA, account limits, payment, consent, and confirmation remain user actions.
 - Every provider adapter has an explicit action and capability contract. Unverified behavior is unavailable rather than guessed.
 - Navigation and target URLs are canonicalized and checked before and after actions.
-- Pages are owned by a logical key derived from provider plus stable task identity, or provider plus job identity when no task exists. The default preserve policy never navigates an unrelated owned page; replacement requires an explicit job policy.
 - The control-plane page is separately reserved and can never be acquired, navigated, or replaced by a provider job.
 
 ## Capability and Workspace strategy
 
-The public capability vocabulary, provider mapping rules, evidence ladder, and extension process are defined in the [Capability Matrix](capability-matrix.md). This section describes how that contract is executed by the runtime.
-
-The current visible-action schema includes `capability.inspect`, `workspace.ensure`, Qwen-only `qwen.mode.inspect/select`, DeepSeek control actions, and Doubao-only `doubao.mode.inspect/select` plus `doubao.skill.inspect/select`. Capability inspection reports `available`, `unavailable`, or `unknown` with visible proof, native resource information, fallback information, and experimental stability for every enabled provider. Provider-control results may include canonical candidate mappings, but only independently E2E-closed outcome lifecycles enter the route table.
+The public capability vocabulary, provider mapping rules, evidence ladder, and extension process are defined in the [Capability Matrix](capability-matrix.md). Capability inspection reports `available`, `unavailable`, or `unknown` with visible proof, native resource information, fallback information, and experimental stability for every enabled provider.
 
 Subscription labels are diagnostic evidence, not authorization. Runtime decisions prefer an enabled visible control, then an explicit disabled, upgrade, or plan-limit state, and otherwise report `unknown`. Missing selectors never prove that a subscription lacks a capability.
 
-Native Project creation and reuse are capability-gated runtime behavior. The implementation can use exact visible names, report `created` or `reused`, and persist provider resource identity, but `workspace.native` is not currently routeable because the complete real-provider Project gate has not passed. `auto` can report conversation fallback only after stable visible native unavailability, `conversation` requires that strategy, and `native` fails before prompt or file mutation. `--project-name` remains metadata unless the caller opts in with `--workspace-mode`.
+Native Project creation and reuse are capability-gated runtime behavior. The implementation can use exact visible names, report `created` or `reused`, and persist provider resource identity, but native workspace routing remains gated on complete real-provider evidence.
 
 Conversation fallback is scoped to one provider, managed profile, and task identifier. Before reusing a previous provider URL, the CLI queries the authenticated daemon and accepts only a successful same-scope job result that passes provider URL validation.
 
 ## Browser visibility policy
 
-Tokenless stores a global browser visibility fallback and profile-scoped visibility preferences, defaulting omitted values to `auto`. The same policy can be overridden per job, but the runner resolves it into the same managed-browser contract every time. Profile preferences also contain provider routing membership, a human role label, and an optional credential-free HTTP/HTTPS/SOCKS5 proxy. Proxy changes require browser quiescence and cause the persistent context to be recreated.
+Tokenless stores a global browser visibility fallback and profile-scoped visibility preferences, defaulting omitted values to `auto`. The same policy can be overridden per job, but the runner resolves it into the same managed-browser contract every time. Proxy changes require browser quiescence and cause the persistent context to be recreated.
 
-The persistent config stores the concrete `browser` selected by setup together with `browserExecutablePath`. For system browsers, the path is a verified cache: resolution tries it first, requires a runnable executable with a readable Chromium version, falls back to standard installation discovery on failure, and refreshes the cache after a successful fallback. The cache is used only when the requested profile binding matches the configured browser. Managed Chromium and Cloak ignore arbitrary path overrides and resolve their catalog-pinned executable under the versioned `$TOKENLESS_HOME/browser/runtimes` tree.
+The persistent config stores the concrete `browser` selected by setup together with `browserExecutablePath`. Managed Chromium and Cloak resolve their catalog-pinned executable under the versioned `$TOKENLESS_HOME/browser/runtimes` tree.
 
 CDP is the only managed browser-control boundary and is not a user-selectable configuration mode. Tokenless detaches from the resident Chromium process when the daemon stops and a later daemon reconnects through Playwright `connectOverCDP`. A launch-signature change—such as visibility, runtime, or proxy—still closes and relaunches the browser because Chromium cannot apply those process-level settings in place.
 
-- `auto` starts headless. If the provider page becomes blocked by user-resolvable sign-in, CAPTCHA, MFA, consent, or confirmation, the runner switches the same managed profile into headed mode and marks the job `waiting_for_user`.
-- Terminal errors do not trigger a visible window.
-- `headless` never opens a visible window. If that job parks, the same daemon job must later be resumed with headed visibility instead of submitting a replacement job.
+- `auto` starts headless and switches the same managed profile into headed mode only for a user-resolvable blocker, keeping the current execution in `waiting_for_user`.
+- `terminal` errors do not trigger a visible window.
+- `headless` never opens a visible window; a user-resolvable blocker fails clearly in that mode.
 - `profiles open` is always headed. `doctor` is read-only. Chromium sandbox stays enabled in both modes.
-- Headed automation creates new Chromium targets with background and no-focus intent, and ordinary navigation or diagnostics never foreground a tab. Only explicit user handoffs such as `profiles open`, the dashboard, or a user-resolvable blocker may call `bringToFront`; the operating system may still activate Chromium once when its first headed process starts.
-- The same `jobId`, `taskId`, and profile identity are preserved across a visible handoff. Callers query or resume the same daemon job instead of creating a new one.
-- Auto-escalated windows close after 30 seconds of idle time after the job completes. Explicit headed and `profiles open` windows remain open until closed.
+- The same `jobId`, `taskId`, and profile identity remain attached during a visible handoff in the current execution.
 
 ## File handling
 
@@ -167,10 +285,37 @@ The CLI accepts only intentionally selected regular files. It stages them under 
 
 ## Long-running and user-handoff states
 
-Managed jobs transition through daemon states such as `queued`, `claimed`, `running`, `waiting_for_user`, `succeeded`, `failed`, `canceled`, and `timed_out`. When a provider requires visible user action, the existing job and browser profile remain authoritative. Callers must resume or query that job rather than submitting a replacement.
+Jobs transition through daemon-recorded states such as `queued`, `running`, `waiting_for_user`, `succeeded`, `failed`, `canceled`, and `timed_out`. When a provider requires visible user action, the current execution may wait in the existing job; a daemon restart marks it `job_interrupted` rather than resuming it.
 
 `--long-running` extends the attached wait for provider work that exceeds the normal timeout while keeping machine-readable stdout clean. `--no-wait` is a detached submission option and is not used for flows that require immediate user handoff.
 
-## Current delivery status
+## Trust and persistence boundaries
 
-The managed profile lifecycle, local daemon, Playwright worker, CLI setup flow, readiness reporting, job APIs, and browser-based local control plane are implemented. The UI API is local and purpose-built for the bundled dashboard; it is not a remote administration contract. Provider parity and file-upload acceptance across enabled providers remain under active development. The roadmap is a delivery plan, not a compatibility guarantee.
+- Provider credentials and browser objects remain inside the provider runtime.
+- Harness state stores bounded identifiers, policy decisions, digests, and results; it does not store raw provider credentials or execution recovery data.
+- External caller tools remain ephemeral to the API request unless the external Harness persists them itself.
+- Harness-owned tools execute only inside the Harness's explicit authorization and current `AgentRun` boundary.
+- User content, Skill content, model output, and tool results are untrusted data; none can add tools, relax policy, or rewrite protocol framing.
+- A provider submission that is ambiguous is handled by the provider-turn and dispatch-certainty contract; the Harness does not silently resubmit a completed external mutation.
+
+## Relationship to roadmaps
+
+This document is the architecture source of truth. `docs/roadmaps/` documents sequencing, milestones, evidence, and incomplete work. A roadmap may defer or stage MCP, CLI integration, persistence, or provider coverage, but it must not redefine the two-layer ownership above.
+
+The repository boundaries are:
+
+```text
+skills/              Host Agent instructions
+packages/cli/        commands, bootstrap, HTTP clients, localization, output
+packages/dashboard/  full Local Web Control Plane frontend
+packages/harness/    AgentRun, Skills, tools, MCP, approvals, agent loop
+packages/contracts/  canonical OpenAPI source, examples, generated API reference
+packages/shared/     shared DTO types, locale primitives, error summaries, strict JSON helpers
+packages/server/     HTTP, application, jobs, providers, browser/direct runtime, persistence
+```
+
+The primary dependency direction is `CLI/Dashboard/Harness/external caller → HTTP → server`. `packages/contracts` documents that Seam but is not in the runtime dependency graph. The server does not import the Harness runtime, the Dashboard imports only shared browser-safe primitives rather than backend source, and the Harness does not import provider, browser, or persistence internals. The existing single `tokenless` npm distribution continues to bundle the required private artifacts.
+
+The Web Agent Harness roadmap owns the first-party Harness implementation. The Universal API tool-calling roadmap owns the OpenAI-compatible contract. The OpenAI-compatible API convergence roadmap owns migration of CLI and Harness model calls plus removal of unnecessary private provider-turn extensions.
+
+The runtime package boundary refactor and private namespace correction are implemented: `packages/server/`, `packages/cli/`, `packages/dashboard/`, `packages/harness/`, `packages/shared/`, and documentation-only `packages/contracts/` own their respective source. OpenAI-compatible API convergence remains separate product work because it changes execution ownership rather than source location.

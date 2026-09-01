@@ -1,19 +1,32 @@
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import test from 'node:test'
 
 import {
   PersistentContextManager,
-} from '../packages/cli/dist/src/playwright/index.js'
+} from '../packages/server/dist/src/browser/index.js'
 import { resolveConfiguredBrowserTarget } from './helpers/configured-browser-profile.mjs'
 
 test('CDP production launch allows configured Chromium executables to use native credential storage', async () => {
   await withManager(async ({ manager, profile }) => {
     const managed = await manager.ensureContext(profile, 'auto')
-    const page = await managed.acquirePage({ key: 'browser-command-line' })
-    await page.goto('chrome://version')
-    const commandLine = await page.locator('#command_line').textContent()
-    assert.doesNotMatch(commandLine ?? '', /(?:^|\s)--password-store=basic(?:\s|$)/u)
-    assert.doesNotMatch(commandLine ?? '', /(?:^|\s)--use-mock-keychain(?:\s|$)/u)
+    const baselinePages = managed.browserContext.pages()
+    const baselineVersionPages = baselinePages.filter((page) => page.url() === 'chrome://version/').length
+    const temporary = await managed.acquireTemporaryPage()
+    try {
+      await temporary.page.goto('chrome://version')
+      const commandLine = await temporary.page.locator('#command_line').textContent()
+      assert.doesNotMatch(commandLine ?? '', /(?:^|\s)--password-store=basic(?:\s|$)/u)
+      assert.doesNotMatch(commandLine ?? '', /(?:^|\s)--use-mock-keychain(?:\s|$)/u)
+    } finally {
+      await temporary.close()
+    }
+    const remainingPages = managed.browserContext.pages()
+    assert.equal(remainingPages.length, baselinePages.length)
+    assert.equal(
+      remainingPages.filter((page) => page.url() === 'chrome://version/').length,
+      baselineVersionPages,
+    )
   })
 })
 
@@ -75,48 +88,93 @@ test('CDP managed browser preserves independent logical tabs in one profile', as
   })
 })
 
-test('CDP provider soft leases reuse released tabs without sharing concurrent work', async () => {
+test('CDP provider Page Refs reuse stable live bindings without sharing independent work', async () => {
   await withManager(async ({ manager, profile }) => {
     const context = await manager.ensureContext(profile, 'auto')
-    const first = await context.acquireProviderPage({ provider: 'chatgpt', taskKey: 'task:first' })
-    const generic = await context.acquirePage({ key: 'provider:generic:task:claim-guard' })
-    const reserved = await context.acquireReservedPage({ key: 'tokenless:control-plane:provider-lease-guard' })
-    assert.notEqual(generic, first.page)
-    assert.notEqual(reserved, first.page)
+    const pageRefA = `page:test:a:${randomUUID()}`
+    const pageRefB = `page:test:b:${randomUUID()}`
+    const pageRefC = `page:test:c:${randomUUID()}`
+
+    const first = await context.acquireProviderPage({ provider: 'chatgpt', pageRef: pageRefA })
+    assert.equal(first.reused, false)
+    await assert.rejects(
+      context.acquireProviderPage({ provider: 'chatgpt', pageRef: pageRefA }),
+      (error) => error?.code === 'managed_provider_page_busy',
+    )
     await first.release()
 
-    const [reused, concurrent] = await Promise.all([
-      context.acquireProviderPage({ provider: 'chatgpt', taskKey: 'task:second' }),
-      context.acquireProviderPage({ provider: 'chatgpt', taskKey: 'task:third' }),
+    const continued = await context.acquireProviderPage({ provider: 'chatgpt', pageRef: pageRefA })
+    assert.equal(continued.page, first.page)
+    assert.equal(continued.reused, true)
+    await continued.release()
+
+    const independent = await context.acquireProviderPage({ provider: 'chatgpt', pageRef: pageRefB })
+    assert.notEqual(independent.page, first.page)
+    await independent.release()
+
+    const independentContinued = await context.acquireProviderPage({ provider: 'chatgpt', pageRef: pageRefB })
+    assert.equal(independentContinued.page, independent.page)
+    assert.equal(independentContinued.reused, true)
+    await independentContinued.release()
+
+    const concurrentFirstAcquires = await Promise.allSettled([
+      context.acquireProviderPage({ provider: 'chatgpt', pageRef: pageRefC }),
+      context.acquireProviderPage({ provider: 'chatgpt', pageRef: pageRefC }),
     ])
-    assert.equal(reused.page, first.page)
-    assert.notEqual(concurrent.page, reused.page)
+    const acquired = concurrentFirstAcquires.filter((result) => result.status === 'fulfilled')
+    const rejected = concurrentFirstAcquires.filter((result) => result.status === 'rejected')
+    assert.equal(acquired.length, 1)
+    assert.equal(rejected.length, 1)
+    assert.equal(rejected[0].reason?.code, 'managed_provider_page_busy')
+    await acquired[0].value.release()
 
-    await reused.release()
-    await concurrent.release()
-
-    const replacement = await context.acquireProviderPage({
+    const replaced = await context.acquireProviderPage({
       provider: 'chatgpt',
-      taskKey: 'task:second',
+      pageRef: pageRefA,
       policy: 'replace',
     })
-    assert.equal(replacement.page, concurrent.page)
-    await replacement.release()
+    assert.notEqual(replaced.page, first.page)
+    assert.equal(replaced.reused, false)
+    assert.equal(first.page.isClosed(), true)
+    await replaced.release()
   })
+})
+
+test('CDP detach removes released blank provider pages before their runtime bindings are lost', async () => {
+  const primary = await resolveConfiguredBrowserTarget()
+  const marker = `tokenless-detach-cleanup-${randomUUID()}`
+  const manager = createManager(primary.runtime)
+  let baselinePageCount
+  try {
+    const context = await manager.ensureContext(primary.profile, 'auto')
+    baselinePageCount = context.browserContext.pages().length
+    for (const suffix of ['a', 'b']) {
+      const lease = await context.acquireProviderPage({
+        provider: 'chatgpt',
+        pageRef: `page:test:detach:${suffix}:${randomUUID()}`,
+      })
+      await lease.page.evaluate((title) => { document.title = title }, `${marker}-${suffix}`)
+      await lease.release()
+    }
+  } finally {
+    await manager.detach()
+  }
+
+  const observer = createManager(primary.runtime)
+  try {
+    const reconnected = await observer.ensureContext(primary.profile, 'auto')
+    const pages = reconnected.browserContext.pages()
+    const titles = await Promise.all(pages.map((page) => page.title().catch(() => '')))
+    assert.equal(titles.some((title) => title.startsWith(marker)), false)
+    assert.ok(pages.length <= Math.max(1, baselinePageCount))
+  } finally {
+    await observer.detach()
+  }
 })
 
 async function withManager(operation) {
   const primary = await resolveConfiguredBrowserTarget()
-  const runtime = primary.runtime
-  const manager = new PersistentContextManager({
-    maxContexts: 2,
-    browser: {
-      id: runtime.browserId,
-      executablePath: runtime.executablePath,
-      runtimeId: runtime.runtimeId,
-      launchPolicy: runtime.launchPolicy,
-    },
-  })
+  const manager = createManager(primary.runtime)
   const profile = primary.profile
   try {
     return await operation({
@@ -126,4 +184,16 @@ async function withManager(operation) {
   } finally {
     await manager.detach()
   }
+}
+
+function createManager(runtime) {
+  return new PersistentContextManager({
+    maxContexts: 2,
+    browser: {
+      id: runtime.browserId,
+      executablePath: runtime.executablePath,
+      runtimeId: runtime.runtimeId,
+      launchPolicy: runtime.launchPolicy,
+    },
+  })
 }

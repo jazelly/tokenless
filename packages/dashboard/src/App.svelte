@@ -1,0 +1,405 @@
+<script lang="ts">
+  import { onMount } from 'svelte'
+  import { Blocks, LayoutDashboard, MessageSquareText, PanelsTopLeft, Settings, UsersRound } from '@lucide/svelte'
+  import { DashboardClient } from './dashboard-client.js'
+  import { translate } from './i18n/index.js'
+  import { DEFAULT_TOKENLESS_LANGUAGE, normalizeTokenlessLanguage } from 'tokenless-internal-shared/i18n'
+  import { createReadinessState } from './readiness-state.svelte.js'
+  import HarnessExtensionPairing from './components/HarnessExtensionPairing.svelte'
+  import TopHeader from './components/TopHeader.svelte'
+  import CapabilitiesView from './views/CapabilitiesView.svelte'
+  import JobsView from './views/JobsView.svelte'
+  import OverviewView from './views/OverviewView.svelte'
+  import ProfilesView from './views/ProfilesView.svelte'
+  import ProvidersView from './views/ProvidersView.svelte'
+  import SetupView from './views/SetupView.svelte'
+  import SystemView from './views/SystemView.svelte'
+  import type {
+    DashboardActions,
+    DashboardOperation,
+    Language,
+    Section,
+    DashboardSetupInput,
+    DashboardSnapshot,
+  } from './types.js'
+
+  const sections = new Set<Section>(['overview', 'profiles', 'providers', 'capabilities', 'jobs', 'system'])
+  const initialLanguage: Language = normalizeTokenlessLanguage(document.documentElement.lang) ?? DEFAULT_TOKENLESS_LANGUAGE
+
+  function parseSection(pathname: string, hash = ''): Section {
+    const pathCandidate = /^\/dashboard\/([^/]+)\/?$/.exec(pathname)?.[1]
+    const candidate = (pathname === '/dashboard' || pathname === '/dashboard/'
+      ? hash.replace(/^#/, '')
+      : pathCandidate) as Section | undefined
+    return candidate && sections.has(candidate) ? candidate : 'overview'
+  }
+
+  function sectionPath(section: Section) {
+    return `/dashboard/${section}/`
+  }
+
+  let language = $state<Language>(initialLanguage)
+  let snapshot = $state<DashboardSnapshot | null>(null)
+  let offline = $state(false)
+  let busy = $state(false)
+  let fatal = $state('')
+  let toast = $state('')
+  let setupRoute = $state(isSetupPath(location.pathname))
+  let selectedProfile = $state(new URL(location.href).searchParams.get('profile') ?? '')
+  let harnessPairingId = $state(new URL(location.href).searchParams.get('harnessPairing') ?? '')
+  let section = $state<Section>(parseSection(location.pathname, location.hash))
+  let toastTimer = 0
+  let pollTimer = 0
+  const client = new DashboardClient(() => language)
+  const readiness = createReadinessState({
+    client,
+    snapshot: () => snapshot,
+    refreshSnapshot: refresh,
+    notify: showToast,
+    t,
+  })
+  const actions: DashboardActions = {
+    updateConfig: (input, announce = true) => perform(() => client.updateConfig(input), announce),
+    getConfigDocument: () => client.getConfigDocument(),
+    createProfile: (input, announce = true) => perform(() => client.createProfile(input), announce),
+    updateProfile: (slug, input, announce = true) => perform(() => client.updateProfile(slug, input), announce),
+    removeProfile: (slug, announce = true) => perform(() => client.removeProfile(slug), announce),
+    openProfile: (slug, announce = true) => perform(() => client.openProfile(slug), announce),
+    runProviderAction: (profileSlug, providerId, action, announce = true) => perform(
+      () => client.runProviderAction(profileSlug, providerId, action),
+      announce,
+    ),
+    selectProviderControl: (profileSlug, providerId, input, announce = true) => perform(
+      () => client.selectProviderControl(profileSlug, providerId, input),
+      announce,
+    ),
+    getJob: (jobId) => client.getJob(jobId),
+    cancelJob: (jobId, announce = true) => perform(() => client.cancelJob(jobId), announce),
+    startHarnessRun: (input, announce = true) => perform(() => client.startHarnessRun(input), announce),
+    readHarnessRun: (runId) => client.readHarnessRun(runId),
+    resumeHarnessRun: (runId, input, announce = true) => perform(() => client.resumeHarnessRun(runId, input), announce),
+    cancelHarnessRun: (runId, announce = true) => perform(() => client.cancelHarnessRun(runId), announce),
+    readTerminalBenchSemanticTasks: () => client.readTerminalBenchSemanticTasks(),
+    saveTerminalBenchSemanticManifest: (input) => client.saveTerminalBenchSemanticManifest(input),
+    quiesceRuntime: (announce = true) => perform(() => client.quiesceRuntime(), announce),
+    enableOutputSavings: (announce = true) => perform(() => client.enableOutputSavings(), announce),
+    disableOutputSavings: (announce = true) => perform(() => client.disableOutputSavings(), announce),
+    clearOutputSavings: (announce = true) => perform(() => client.clearOutputSavings(), announce),
+    uninstallOutputSavings: (announce = true) => perform(() => client.uninstallOutputSavings(), announce),
+  }
+
+  const navigation = $derived([
+    { id: 'overview' as const, label: t('overview'), icon: LayoutDashboard },
+    { id: 'profiles' as const, label: t('profiles'), icon: UsersRound },
+    { id: 'providers' as const, label: t('providers'), icon: PanelsTopLeft },
+    { id: 'capabilities' as const, label: t('capabilities'), icon: Blocks },
+    { id: 'jobs' as const, label: t('jobs'), icon: MessageSquareText },
+    { id: 'system' as const, label: t('system'), icon: Settings },
+  ])
+  const primaryNavigation = $derived(navigation.filter((item) => item.id !== 'system'))
+
+  $effect(() => {
+    document.documentElement.lang = language
+    document.title = t('documentTitle')
+    const skipLink = document.querySelector<HTMLAnchorElement>('.skip-link')
+    if (skipLink) skipLink.textContent = t('skipToContent')
+  })
+
+  onMount(() => {
+    if (!setupRoute) {
+      const url = new URL(location.href)
+      url.pathname = sectionPath(section)
+      url.hash = ''
+      if (url.href !== location.href) history.replaceState(history.state, '', url)
+    }
+    const skipLink = document.querySelector<HTMLAnchorElement>('.skip-link')
+    const skipToContent = (event: MouseEvent) => {
+      event.preventDefault()
+      const main = document.querySelector<HTMLElement>('#main')
+      main?.focus()
+      main?.scrollIntoView({ block: 'start' })
+    }
+    const popState = () => {
+      setupRoute = isSetupPath(location.pathname)
+      section = parseSection(location.pathname, location.hash)
+      queueMicrotask(() => document.querySelector<HTMLElement>('#main')?.focus())
+    }
+    const visibilityChange = () => { if (!document.hidden) void refresh() }
+    window.addEventListener('popstate', popState)
+    document.addEventListener('visibilitychange', visibilityChange)
+    skipLink?.addEventListener('click', skipToContent)
+    void initialize()
+    return () => {
+      window.removeEventListener('popstate', popState)
+      document.removeEventListener('visibilitychange', visibilityChange)
+      skipLink?.removeEventListener('click', skipToContent)
+      window.clearTimeout(pollTimer)
+      window.clearTimeout(toastTimer)
+    }
+  })
+
+  async function initialize() {
+    try {
+      await client.authenticate()
+      await refresh()
+      schedulePoll()
+    } catch (error) {
+      fatal = error instanceof Error ? error.message : t('requestFailed')
+    }
+  }
+
+  function schedulePoll() {
+    window.clearTimeout(pollTimer)
+    pollTimer = window.setTimeout(async () => {
+      if (!document.hidden && !busy && !readiness.state.busy) await refresh()
+      schedulePoll()
+    }, 3000)
+  }
+
+  async function refresh() {
+    const wasOffline = offline
+    try {
+      const result = await client.snapshot()
+      if (result.snapshot) snapshot = result.snapshot
+      offline = false
+      synchronizeSnapshot()
+    } catch (error) {
+      if ((error as { sessionExpired?: boolean })?.sessionExpired) {
+        fatal = error instanceof Error ? error.message : t('reopen')
+        return
+      }
+      offline = true
+      if (!snapshot || !wasOffline) showToast(t('offlineBody'))
+    }
+  }
+
+  function synchronizeSnapshot() {
+    if (!snapshot) return
+    if (snapshot.profiles.length === 0 && !setupRoute && isDashboardPath(location.pathname)) {
+      const url = new URL(location.href)
+      url.pathname = '/dashboard/setup/'
+      url.hash = ''
+      history.replaceState(history.state, '', url)
+      setupRoute = true
+    }
+    if (snapshot.config?.language === 'en' || snapshot.config?.language === 'zh-CN') language = snapshot.config.language
+    const requestedProfile = snapshot.profiles.find((profile) => profile.slug === selectedProfile)
+    if (requestedProfile && requestedProfile.slug !== selectedProfile) {
+      selectProfile(requestedProfile.slug)
+    } else if (!requestedProfile) {
+      selectProfile(snapshot.profiles.find((profile) => profile.isDefault)?.slug
+        ?? snapshot.profiles[0]?.slug
+        ?? '')
+    }
+  }
+
+  function selectProfile(slug: string) {
+    if (slug !== selectedProfile) {
+      readiness.reset(slug)
+    }
+    selectedProfile = slug
+    const url = new URL(location.href)
+    if (slug) url.searchParams.set('profile', slug)
+    else url.searchParams.delete('profile')
+    history.replaceState(history.state, '', url)
+  }
+
+  function sectionHref(next: Section) {
+    const url = new URL(location.href)
+    url.pathname = sectionPath(next)
+    url.hash = ''
+    return `${url.pathname}${url.search}`
+  }
+
+  function navigate(next: Section, href: string) {
+    const url = new URL(href, location.href)
+    if (url.href !== location.href) history.pushState(history.state, '', url)
+    section = next
+    setupRoute = false
+    queueMicrotask(() => document.querySelector<HTMLElement>('#main')?.focus())
+  }
+
+  function handleDashboardNavigation(event: MouseEvent) {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+    const anchor = (event.target as Element).closest<HTMLAnchorElement>('a[data-dashboard-section]')
+    const next = anchor?.dataset.dashboardSection as Section | undefined
+    if (!anchor || !next || !sections.has(next)) return
+    event.preventDefault()
+    navigate(next, anchor.href)
+  }
+
+  async function perform<Result>(operation: DashboardOperation<Result>, announce = true): Promise<Result> {
+    busy = true
+    try {
+      const result = await operation()
+      await refresh()
+      if (announce) showToast(t('updateSaved'))
+      return result
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : t('requestFailed'))
+      throw error
+    } finally {
+      busy = false
+    }
+  }
+
+  async function setup(input: DashboardSetupInput) {
+    const profile = await perform(() => client.setup(input), false)
+    selectedProfile = profile.slug
+    readiness.reset(profile.slug)
+    setupRoute = false
+    section = 'profiles'
+    const url = new URL(location.href)
+    url.pathname = sectionPath('profiles')
+    url.searchParams.set('profile', profile.slug)
+    url.hash = ''
+    history.replaceState(history.state, '', url)
+    showToast(t('updateSaved'))
+  }
+
+  function showToast(message: string) {
+    toast = message
+    window.clearTimeout(toastTimer)
+    toastTimer = window.setTimeout(() => toast = '', 3200)
+  }
+
+  function closeHarnessPairing() {
+    harnessPairingId = ''
+    const url = new URL(location.href)
+    url.searchParams.delete('harnessPairing')
+    history.replaceState(history.state, '', url)
+  }
+
+  function t(key: Parameters<typeof translate>[1]) {
+    return translate(language, key)
+  }
+
+  function isSetupPath(pathname: string) {
+    return pathname === '/dashboard/setup' || pathname === '/dashboard/setup/'
+  }
+
+  function isDashboardPath(pathname: string) {
+    return pathname === '/dashboard' || pathname === '/dashboard/' || /^\/dashboard\/(?:overview|profiles|providers|capabilities|jobs|system)\/?$/.test(pathname)
+  }
+</script>
+
+{#if fatal}
+  <main id="main" tabindex="-1" class="fatal-state" data-testid="fatal-state">
+    <img src="/dashboard/mark.png" alt="" width="42" height="42" />
+    <h1>{t('sessionExpired')}</h1>
+    <p>{fatal}</p>
+    <p>{t('reopen')}</p>
+  </main>
+{:else if !snapshot}
+  <main id="main" tabindex="-1" class="loading-state" aria-live="polite">
+    <img src="/dashboard/mark.png" alt="" width="42" height="42" />
+    <span class="spinner"></span>
+    <p>{t('loading')}</p>
+  </main>
+{:else if setupRoute || snapshot.profiles.length === 0}
+  <SetupView
+    {snapshot}
+    {language}
+    {t}
+    {busy}
+    onsetup={setup}
+  />
+{:else}
+  <div class:profiles-active={section === 'profiles'} class="app-shell" data-testid="app-shell">
+    <aside class="rail">
+      <div class="rail-brand"><img src="/dashboard/mark.png" alt="Tokenless" width="28" height="28" translate="no" /></div>
+      <nav aria-label={t('primaryNavigation')}>
+        {#each primaryNavigation as item (item.id)}
+          {@const Icon = item.icon}
+          <a
+            class:active={section === item.id}
+            class="rail-button"
+            href={sectionHref(item.id)}
+            aria-label={item.label}
+            aria-current={section === item.id ? 'page' : undefined}
+            title={item.label}
+            data-tooltip={item.label}
+            data-nav={item.id}
+            data-dashboard-section={item.id}
+          ><Icon size={19} strokeWidth={1.8} /></a>
+        {/each}
+      </nav>
+      <a
+        class:active={section === 'system'}
+        class="rail-button rail-system-button"
+        href={sectionHref('system')}
+        aria-label={t('system')}
+        aria-current={section === 'system' ? 'page' : undefined}
+        title={t('system')}
+        data-tooltip={t('system')}
+        data-nav="system"
+        data-dashboard-section="system"
+      ><Settings size={19} strokeWidth={1.8} /></a>
+      <div class="rail-status" class:offline aria-label={offline ? t('offline') : t('healthy')} title={offline ? t('offline') : t('healthy')}>
+        <span></span>
+      </div>
+    </aside>
+
+    <TopHeader {snapshot} {selectedProfile} {language} {t} onselect={selectProfile} />
+
+    {#if offline}<div class="offline-banner" role="status">{t('offlineShort')}</div>{/if}
+
+    <main id="main" tabindex="-1" class:profile-main={section === 'profiles'}>
+      {#if section === 'overview'}
+        <OverviewView
+          {snapshot}
+          {selectedProfile}
+          {language}
+          {t}
+          readinessBusy={readiness.state.busy}
+          readinessJobs={readiness.state.jobs}
+          onrefreshreadiness={readiness.refresh}
+          onrefreshproviderreadiness={readiness.refreshProvider}
+        />
+      {:else if section === 'profiles'}
+        <ProfilesView {snapshot} {selectedProfile} {language} {t} {busy} {actions} onselect={selectProfile} />
+      {:else if section === 'providers'}
+        <ProvidersView {snapshot} {selectedProfile} {language} {t} {busy} {actions} onselect={selectProfile} />
+      {:else if section === 'capabilities'}
+        <CapabilitiesView {snapshot} {selectedProfile} {language} {t} onselect={selectProfile} />
+      {:else if section === 'jobs'}
+        <JobsView {snapshot} {language} {t} {busy} {actions} />
+      {:else}
+        <SystemView
+          {snapshot}
+          {language}
+          {t}
+          {busy}
+          {actions}
+          ontoast={showToast}
+        />
+      {/if}
+    </main>
+
+    <nav class="mobile-nav" aria-label={t('primaryNavigation')}>
+      {#each navigation as item (item.id)}
+        {@const Icon = item.icon}
+        <a class:active={section === item.id} href={sectionHref(item.id)} aria-label={item.label} aria-current={section === item.id ? 'page' : undefined} data-nav={item.id} data-dashboard-section={item.id}>
+          <Icon size={18} strokeWidth={1.8} /><span>{item.label}</span>
+        </a>
+      {/each}
+    </nav>
+  </div>
+{/if}
+
+<div class="toast-region" aria-live="polite" aria-atomic="true">{#if toast}<div class="toast" role="status">{toast}</div>{/if}</div>
+
+{#if snapshot && harnessPairingId}
+  <HarnessExtensionPairing
+    {client}
+    pairingId={harnessPairingId}
+    {snapshot}
+    {selectedProfile}
+    {t}
+    onclose={closeHarnessPairing}
+    onapproved={() => showToast(t('harnessExtensionApproved'))}
+  />
+{/if}
+
+<svelte:head><meta name="theme-color" content="#f6f5f2" /></svelte:head>
+<svelte:window onclick={handleDashboardNavigation} />

@@ -34,13 +34,13 @@ test(`Web UI displays one completed real-provider job from ${profile}`, { timeou
     profileSlug: profile,
   })
 
-  const marker = `TOKENLESS_WEB_UI_${new Date().toISOString().replaceAll(/[^0-9]/g, '').slice(0, 14)}_${randomUUID().slice(0, 8)}`
-  const taskId = `web-ui-provider-${provider}-${randomUUID()}`
+  const prompt = 'What is the capital of Australia? Answer in one sentence.'
+  const taskId = 'web-ui-semantic:' + provider + ':' + randomUUID()
   runningJob = await inspection.startCli([
     'run',
     '--provider', provider,
     '--task-id', taskId,
-    '--prompt', `Reply with this exact marker: ${marker}`,
+    '--prompt', prompt,
     '--browser-visibility', 'headed',
     '--timeout-ms', '300000',
   ])
@@ -48,12 +48,16 @@ test(`Web UI displays one completed real-provider job from ${profile}`, { timeou
   assert.equal(run.payload.ok, true)
   assert.equal(run.payload.status, 'succeeded', `real ${provider} job must complete successfully`)
   assert.equal(typeof run.payload.jobId, 'string')
+  const response = responseResult(run.payload?.result?.result, 'response.read')
+  assert.equal(typeof response?.text, 'string')
+  assert.match(response.text, /Canberra/i)
 
   const dashboard = await cli([
     'dashboard',
     '--home', homeDir,
     '--profile', profile,
     '--no-open',
+    '--json',
   ], 60_000)
   assert.equal(dashboard.ok, true)
   assert.equal(dashboard.profile.slug, profile)
@@ -81,7 +85,9 @@ test(`Web UI displays one completed real-provider job from ${profile}`, { timeou
       await row.click()
       const detail = page.getByTestId('job-detail')
       await detail.waitFor()
-      assert.match(await detail.textContent(), new RegExp(marker), matrixCase.id)
+      assert.match(await detail.textContent(), /capital of Australia/i, matrixCase.id)
+      assert.equal(await page.getByTestId('modal').count(), 0, matrixCase.id)
+      assert.equal(await page.locator('.modal-backdrop').count(), 0, matrixCase.id)
       assert.equal(await hasDocumentOverflow(page), false, matrixCase.id)
   }
   assert.deepEqual(consoleFailures, [])
@@ -89,6 +95,12 @@ test(`Web UI displays one completed real-provider job from ${profile}`, { timeou
   await runningJob.close()
   runningJob = undefined
 })
+
+function responseResult(result, action) {
+  const responses = result?.responses
+  if (!Array.isArray(responses)) return null
+  return [...responses].reverse().find((response) => response?.ok === true && response.action === action)?.result ?? null
+}
 
 async function openJobs(page) {
   const desktop = page.locator('.rail [data-nav="jobs"]')
@@ -99,11 +111,14 @@ async function openJobs(page) {
 
 function observePage(page, failures) {
   page.on('console', (message) => {
-    if (message.type() === 'error' || message.type() === 'warning') failures.push(message.text())
+    if (message.type() === 'error' || message.type() === 'warning') {
+      const location = message.location()
+      failures.push(`${message.text()}${location.url ? ` (${location.url})` : ''}`)
+    }
   })
   page.on('pageerror', (error) => failures.push(error.message))
   page.on('response', (response) => {
-    if (response.url().includes('/ui-api/') && response.status() >= 500) failures.push(`${response.status()} ${response.url()}`)
+    if (response.url().includes('/dashboard-api/') && response.status() >= 400) failures.push(`${response.status()} ${response.url()}`)
   })
 }
 

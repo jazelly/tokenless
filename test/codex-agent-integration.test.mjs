@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { spawnSync } from 'node:child_process'
 import test from 'node:test'
 
@@ -63,6 +65,12 @@ test('built CLI installs, preserves, reports, and uninstalls the Codex integrati
     assert.match(guidance, /^# Existing guidance/m)
     assert.equal(count(guidance, '<!-- tokenless-codex-guidance v1 -->'), 1)
     assert.match(guidance, /Do not .*start Codex through Tokenless/)
+    assert.match(guidance, /Internal sub-agent use does not hide Codex UI delegation messages/)
+    assert.match(guidance, /Tokenless cannot control Codex UI or native `spawn_agent` behavior/)
+    assert.match(guidance, /Do not repeat long child reports in the coordinator response/)
+    assert.match(guidance, /child name, status, at most one blocker, and the coordinator decision/)
+    assert.match(guidance, /separate Codex tasks for sidebar-visible worker\/reviewer work only when the user explicitly requests separate tasks or independently visible progress/)
+    assert.match(guidance, /main task reads statuses and gives a short synthesis/)
 
     const hooks = JSON.parse(fs.readFileSync(path.join(fixture.codexHome, 'hooks.json'), 'utf8'))
     assert.equal(hooks.description, 'Existing user hooks.')
@@ -172,9 +180,12 @@ test('Codex installer patches the effective nonempty AGENTS.override.md instead 
   }
 })
 
-test('Codex integration install output follows the persisted Simplified Chinese preference', () => {
+test('Codex integration install output follows the persisted Simplified Chinese preference', async () => {
   const fixture = createFixture()
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
   try {
+    const { writeTokenlessConfig } = await import('../packages/cli/dist/src/index.js')
+    await writeTokenlessConfig({ homeDir: fixture.tokenlessHome, daemonUrl })
     const configured = runCli([
       'config',
       '--home', fixture.tokenlessHome,
@@ -190,6 +201,7 @@ test('Codex integration install output follows the persisted Simplified Chinese 
     assert.equal(installed.status, 0, installed.stderr || installed.stdout)
     assert.match(installed.stdout, /Tokenless 已安装到普通 Codex sessions/)
   } finally {
+    runCli(['daemon', 'stop', '--home', fixture.tokenlessHome, '--daemon-url', daemonUrl, '--json'])
     fixture.cleanup()
   }
 })
@@ -310,8 +322,22 @@ test('Codex hooks bind exact chat, turn, tool call, project, and provider contin
       'https://chatgpt.com/c/provider-conversation-one',
     )
 
-    const databaseBytes = fs.readFileSync(path.join(fixture.tokenlessHome, 'harness.sqlite3'))
+    assert.equal(fs.existsSync(path.join(fixture.tokenlessHome, 'harness.sqlite3')), false)
+    const databaseBytes = fs.readFileSync(path.join(fixture.tokenlessHome, 'tokenless.sqlite3'))
     assert.equal(databaseBytes.includes(Buffer.from(secretPrompt)), false)
+    const db = new DatabaseSync(path.join(fixture.tokenlessHome, 'tokenless.sqlite3'))
+    try {
+      const row = db.prepare('SELECT data_json FROM harness_context_records WHERE chat_id = ?').get('thr_integration_chat')
+      assert.ok(row)
+      const stored = JSON.parse(row.data_json)
+      assert.equal(Object.hasOwn(stored.turns[0], 'lastSeenAt'), false)
+      assert.equal(Object.hasOwn(stored.invocations[0], 'agentKind'), false)
+      assert.equal(Object.hasOwn(stored.invocations[0], 'agentChatId'), false)
+      assert.equal(Object.hasOwn(stored.invocations[0], 'providerTaskId'), false)
+      assert.equal(Object.hasOwn(stored.providerBindings[0], 'providerTaskId'), false)
+    } finally {
+      db.close()
+    }
 
     const conflict = runCli([
       'run',
@@ -344,6 +370,39 @@ test('Codex hooks bind exact chat, turn, tool call, project, and provider contin
     })
     assert.equal(identityConflict.status, 1)
     assert.equal(JSON.parse(identityConflict.stdout).error.code, 'agent_context_identity_conflict')
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('Harness context persistence uses only the chat owner and JSON payload', () => {
+  const fixture = createFixture()
+  try {
+    assert.deepEqual(runHook(fixture, {
+      session_id: 'thr_schema_probe',
+      transcript_path: null,
+      cwd: root,
+      model: 'gpt-test',
+      permission_mode: 'default',
+      hook_event_name: 'SessionStart',
+      source: 'startup',
+    }), {})
+
+    const db = new DatabaseSync(path.join(fixture.tokenlessHome, 'tokenless.sqlite3'))
+    try {
+      const columns = db.prepare('PRAGMA table_info(harness_context_records)').all().map((row) => ({
+        name: row.name,
+        type: row.type,
+        notnull: row.notnull,
+        pk: row.pk,
+      }))
+      assert.deepEqual(columns, [
+        { name: 'chat_id', type: 'TEXT', notnull: 1, pk: 1 },
+        { name: 'data_json', type: 'TEXT', notnull: 1, pk: 0 },
+      ])
+    } finally {
+      db.close()
+    }
   } finally {
     fixture.cleanup()
   }
@@ -398,7 +457,7 @@ test('Codex CLI rebinds root Hook provenance to the concrete thread and PostTool
     assert.equal(pending.invocations[0].hookSessionId, 'thr_tree_root')
     assert.equal(pending.invocations[0].status, 'pending')
 
-    const { completeBoundAgentInvocation } = await import('../packages/web-agent-harness/dist/src/index.js')
+    const { completeBoundAgentInvocation } = await import('../packages/harness/dist/src/index.js')
     await completeBoundAgentInvocation({
       tokenlessHome: fixture.tokenlessHome,
       bindingId,
@@ -600,6 +659,18 @@ function createFixture() {
     tokenlessHome: path.join(directory, 'tokenless'),
     cleanup: () => fs.rmSync(directory, { recursive: true, force: true }),
   }
+}
+
+async function freePort() {
+  const server = net.createServer()
+  await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  const address = server.address()
+  await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+  assert.equal(typeof address, 'object')
+  return address.port
 }
 
 function environmentValue(command, key) {

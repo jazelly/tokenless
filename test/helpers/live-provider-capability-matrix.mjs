@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import {
   VISIBLE_ACTIONS,
   listProviderDescriptors,
-} from '../../packages/cli/dist/src/playwright/index.js'
+} from '../../packages/server/dist/src/browser/index.js'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 export const liveProviderCapabilityMatrixPath = path.join(root, 'test/live-provider-capability-matrix.json')
@@ -34,18 +34,16 @@ const closures = new Set([
   'two_cli_processes',
   'same_conversation',
   'visible_two_turns',
-  'durable_mapping',
+  'process_local_mapping',
   'conversation_fallback',
   'created_then_reused',
   'project_identity',
   'project_instructions',
-  'durable_project_mapping',
-  'durable_conversation_mapping',
   'exact_visible_identity',
   'deep_research_surface',
   'research_plan',
   'terminal_report',
-  'durable_background_job',
+  'visible_background_progress',
   'docs_surface',
   'slides_surface',
   'sheets_surface',
@@ -56,7 +54,10 @@ const closures = new Set([
   'agent_swarm_surface',
   'visible_agent_plan',
   'visible_parallel_progress',
+  'visible_tool_steps',
   'visible_search_selection',
+  'authenticated_asset_readback',
+  'local_digest',
 ])
 
 export function loadLiveProviderCapabilityMatrix() {
@@ -74,10 +75,15 @@ export function validateLiveProviderCapabilityMatrix(matrix) {
   )
   assert.equal(matrix.schema, schema)
   assert.deepEqual(matrix.journey, {
-    scope: 'provider_capability',
-    pagePolicy: 'one_managed_page',
+    scope: 'provider_capability_case',
+    pagePolicy: 'caller_page_ref_per_case',
     caseOrder: 'providers.required',
-    identityProof: ['stable_task_id', 'stable_chromium_target_id'],
+    identityProof: [
+      'distinct_page_ref_per_case',
+      'distinct_chromium_target_id_per_case',
+      'stable_page_ref_within_case',
+      'stable_chromium_target_id_within_case',
+    ],
   })
   assert.equal(isRecord(matrix.cases), true, 'live capability matrix cases must be an object')
   assert.equal(isRecord(matrix.providers), true, 'live capability matrix providers must be an object')
@@ -113,12 +119,13 @@ export function validateLiveProviderCapabilityMatrix(matrix) {
   }
 
   const descriptors = listProviderDescriptors()
+    .filter((provider) => provider.executionModes.includes('browser'))
   const providerIds = new Set(descriptors.map((provider) => provider.id))
   validateKnownIssueSkips(matrix.knownIssueSkips, providerIds)
   assert.deepEqual(
     Object.keys(matrix.providers).sort(),
     descriptors.map((provider) => provider.id).sort(),
-    'live capability matrix must classify every registered provider exactly once',
+    'live capability matrix must classify every registered Browser provider exactly once',
   )
   for (const descriptor of descriptors) {
     const provider = matrix.providers[descriptor.id]

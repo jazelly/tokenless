@@ -1,0 +1,31 @@
+{
+  "name": "tokenless-web-agent-harness",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Isolated web agent harness preparation and Skill delivery module for Tokenless.",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./dist/src/index.js"
+  },
+  "files": [
+    "dist/src",
+    "README.md",
+    "package.json"
+  ],
+  "scripts": {
+    "build": "tsc -b ../shared && tsc -p tsconfig.json",
+    "lint": "tsc -b ../shared && tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "js-yaml": "^4.3.0",
+    "tokenless-internal-shared": "0.0.0"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/server-everything": "2026.7.4"
+  }
+}

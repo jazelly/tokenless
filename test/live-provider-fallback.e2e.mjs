@@ -13,7 +13,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliDir = path.join(root, 'packages/cli')
 const cliEntry = path.join(cliDir, 'dist/src/tokenless.mjs')
 const cliIndex = pathToFileURL(path.join(cliDir, 'dist/src/index.js')).href
-const playwrightIndex = pathToFileURL(path.join(cliDir, 'dist/src/playwright/index.js')).href
+const playwrightIndex = pathToFileURL(path.join(cliDir, 'dist/server/src/browser/index.js')).href
 const browserTarget = await resolveConfiguredBrowserTarget()
 const homeDir = browserTarget.homeDir
 const profileSlug = browserTarget.profile.slug
@@ -37,7 +37,7 @@ test.after(async () => {
   restoreInspectionEnvironment?.()
 })
 
-test('real visible provider blocker falls back under one durable job', { timeout: 600_000 }, async () => {
+test('real visible provider blocker falls back under one current job', { timeout: 600_000 }, async () => {
   inspection = await createLiveBrowserInspectionSession({
     homeDir,
     profileSlug,
@@ -52,14 +52,14 @@ test('real visible provider blocker falls back under one durable job', { timeout
   const fallbackRoute = requiredRoute(playwright, fallbackProvider)
   const primary = requiredProvider(playwright, primaryProvider)
   const fallback = requiredProvider(playwright, fallbackProvider)
-  const marker = `TOKENLESS_E2E_PROVIDER_FALLBACK_${new Date().toISOString().replace(/\W/gu, '')}_${randomUUID().slice(0, 8)}`
-  const taskId = `provider-fallback:${marker}`
+  const prompt = 'Read the attached note and answer its question in one sentence.'
+  const taskId = 'provider-fallback:semantic:' + randomUUID()
   const jobId = inspection.createJobId()
   const attachmentName = `tokenless-fallback-input-${randomUUID().slice(0, 8)}.txt`
   const attachmentPath = path.join(root, 'test-results', 'live-provider-inputs', attachmentName)
   liveAttachmentPath = attachmentPath
   await fs.mkdir(path.dirname(attachmentPath), { recursive: true, mode: 0o700 })
-  await fs.writeFile(attachmentPath, `${marker}\n`, { mode: 0o600 })
+  await fs.writeFile(attachmentPath, 'Question: What is the capital of Australia?\n', { mode: 0o600 })
   const attachments = await runtime.stageVisibleAttachments({
     homeDir,
     bundleId: jobId,
@@ -90,7 +90,7 @@ test('real visible provider blocker falls back under one durable job', { timeout
       {
         requestId: `${jobId}:prompt`,
         action: playwright.VISIBLE_ACTIONS.PROMPT_INPUT,
-        payload: { text: 'Read the attached text file, then reply with exactly the single marker written inside it and no other text.' },
+        payload: { text: prompt },
       },
       {
         requestId: `${jobId}:submit`,
@@ -114,7 +114,7 @@ test('real visible provider blocker falls back under one durable job', { timeout
   const created = await playwright.submitManagedPlaywrightJob({
     daemonUrl: daemon.url,
     homeDir,
-    profileId: profile.id,
+    profileId: profile.slug,
     request,
     jobId,
   })
@@ -149,24 +149,11 @@ test('real visible provider blocker falls back under one durable job', { timeout
   assert.equal(completed.status, 'succeeded')
   assert.equal(completed.job.job_id, jobId)
   assert.equal(completed.job.provider, fallback.id)
-  const attempts = completed.job.provider_attempts_json
-  assert.equal(Array.isArray(attempts), true)
-  assert.equal(attempts.length, 2)
-  assert.deepEqual(attempts.map((attempt) => [attempt.provider, attempt.status]), [
-    [primary.id, 'blocked'],
-    [fallback.id, 'succeeded'],
-  ])
-  assert.equal(structuredBlockerCodes(attempts[0]?.blocker).some((code) => (
-    code === 'provider_sign_in_required' ||
-    code === 'provider_sign_in_visible' ||
-    code === 'provider_sign_in_navigation' ||
-    code === 'provider_sign_in_url' ||
-    code === 'visible_cloudflare_turnstile' ||
-    code === 'visible_cloudflare_interstitial'
-  )), true, JSON.stringify(attempts[0]?.blocker, null, 2))
+  assert.equal(Object.hasOwn(completed.job, 'provider_attempts_json'), false)
   assert.deepEqual(completed.job.request_json.capabilityRoute.requirements, [
     playwright.TASK_CAPABILITIES.CONVERSATION_CHAT,
     playwright.TASK_CAPABILITIES.FILE_UPLOAD,
+    playwright.TASK_CAPABILITIES.DOCUMENT_INPUT,
   ])
   assert.deepEqual(completed.job.request_json.context, request.context)
   const upload = responseResult(completed.result, playwright.VISIBLE_ACTIONS.FILE_UPLOAD)
@@ -174,7 +161,8 @@ test('real visible provider blocker falls back under one durable job', { timeout
   assert.equal(upload?.visibleProof, 'visible-attachment-filename')
   assert.ok(upload?.attachments?.some((attachment) => attachment.name === attachmentName))
   const response = responseResult(completed.result, playwright.VISIBLE_ACTIONS.RESPONSE_READ)
-  assert.equal(response?.text?.trim(), marker)
+  assert.equal(typeof response?.text, 'string')
+  assert.match(response.text, /Canberra/i)
 
   const state = spawnSync(process.execPath, [
     cliEntry,
@@ -193,7 +181,7 @@ test('real visible provider blocker falls back under one durable job', { timeout
   const statePayload = JSON.parse(state.stdout)
   assert.equal(statePayload.latest.jobId, jobId)
   assert.equal(statePayload.latest.provider, fallback.id)
-  assert.deepEqual(statePayload.latest.providerAttempts, attempts)
+  assert.equal(Object.hasOwn(statePayload.latest, 'providerAttempts'), false)
   await fs.rm(attachmentPath, { force: true })
   liveAttachmentPath = undefined
 })
@@ -203,6 +191,7 @@ function requiredRoute(playwright, provider) {
     requirements: [
       playwright.TASK_CAPABILITIES.CONVERSATION_CHAT,
       playwright.TASK_CAPABILITIES.FILE_UPLOAD,
+      playwright.TASK_CAPABILITIES.DOCUMENT_INPUT,
     ],
     candidates: [{ provider, runtimeEligibility: 'unchecked' }],
   })

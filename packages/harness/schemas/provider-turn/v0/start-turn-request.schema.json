@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tokenless-internal:web-ai-interaction-protocol:v0:start-turn-request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol", "requestRef", "providerRef", "providerBindingRef", "requiredCapabilities", "conversation"],
+  "properties": {
+    "protocol": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/protocol" },
+    "requestRef": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/requestRef" },
+    "providerRef": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/providerRef" },
+    "providerBindingRef": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/providerBindingRef" },
+    "semanticPreference": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$", "maxLength": 64, "x-tokenless-internal-maxUtf8Bytes": 64 },
+    "requiredCapabilities": {
+      "type": "array",
+      "prefixItems": [{ "const": "conversation.chat" }, { "const": "file.upload" }, { "const": "document.input" }],
+      "items": false,
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "conversation": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["mode"], "properties": { "mode": { "const": "new" } } },
+        { "type": "object", "additionalProperties": false, "required": ["mode", "conversationRef"], "properties": { "mode": { "const": "continue" }, "conversationRef": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/conversationRef" } } }
+      ]
+    },
+    "bootstrap": { "$ref": "#/$defs/message" },
+    "continuation": { "$ref": "#/$defs/message" }
+  },
+  "$defs": {
+    "message": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "attachments"],
+      "properties": {
+        "text": { "type": "string", "minLength": 1, "maxLength": 4000, "x-tokenless-internal-maxUtf8Bytes": 8192 },
+        "attachments": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 33,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "name", "attachmentRef", "mediaType", "byteLength", "sha256"],
+            "properties": {
+              "kind": { "enum": ["system_prompt", "tool_result", "skill"] },
+              "name": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", "maxLength": 128, "x-tokenless-internal-maxUtf8Bytes": 128 },
+              "attachmentRef": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/attachmentRef" },
+              "mediaType": { "const": "text/markdown" },
+              "byteLength": { "type": "integer", "minimum": 1, "maximum": 1048576 },
+              "sha256": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/sha256" }
+            }
+          }
+        }
+      }
+    }
+  },
+  "oneOf": [
+    { "properties": { "conversation": { "type": "object", "properties": { "mode": { "const": "new" } } } }, "required": ["bootstrap"], "not": { "required": ["continuation"] } },
+    { "properties": { "conversation": { "type": "object", "properties": { "mode": { "const": "continue" } } } }, "required": ["continuation"], "not": { "anyOf": [{ "required": ["bootstrap"] }, { "required": ["semanticPreference"] }] } }
+  ]
+}

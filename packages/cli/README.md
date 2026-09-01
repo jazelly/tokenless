@@ -1,6 +1,6 @@
 # Tokenless CLI
 
-`tokenless` gives agents local CLI access to visible AI websites by attaching Playwright to the user's running Google Chrome or Brave Browser. Provider credentials and browser state stay in the selected browser on the user's machine.
+`tokenless` currently gives agents local CLI access to visible AI websites by attaching Playwright to the user's running Google Chrome or Brave Browser. In this visible-browser mode, provider credentials and browser state stay in the selected browser on the user's machine.
 
 [中文](README.zh-CN.md) · [Commands](https://github.com/jazelly/tokenless/blob/main/COMMANDS.md) · [Capability Matrix](https://github.com/jazelly/tokenless/blob/main/docs/capability-matrix.md) · [Capability Matrix 中文](https://github.com/jazelly/tokenless/blob/main/docs/capability-matrix.zh-CN.md) · [中文命令参考](https://github.com/jazelly/tokenless/blob/main/COMMANDS.zh-CN.md) · [Privacy](https://github.com/jazelly/tokenless/blob/main/PRIVACY.md)
 
@@ -36,6 +36,18 @@ Restart Codex and trust the Tokenless definition in `/hooks`, then continue laun
 
 Use `tokenless agents status codex --json`, `tokenless agents inspect codex --chat-id <codex-thread-id> --json`, and `tokenless agents uninstall codex` for inspection and removal. The separate Harness ledger stores bounded IDs and hashes, not raw Codex prompts, transcripts, credentials, or browser state.
 
+Codex hooks do not replace native subagent execution. Use `tokenless agent delegate --workspace-root "$PWD" ...` when a Codex workflow explicitly delegates a Tokenless Harness-owned child.
+
+Internal Codex sub-agent use does not hide Codex UI delegation messages, and Tokenless cannot control Codex UI or native `spawn_agent` behavior. Use separate Codex tasks for sidebar-visible worker/reviewer work only when the user explicitly requests separate tasks or independently visible progress; the main task reads statuses and gives a short synthesis. Do not repeat long child reports: report only the child name, status, at most one blocker, and the coordinator decision.
+
+## DeepSeek Harness Subagent Integration
+
+```bash
+tokenless agents install dsh --provider chatgpt --profile default --dsh-profile headless --json
+```
+
+This registers a DeepSeek Harness `SubagentProvider` and routes its ordinary one-shot `subagent` tool to Tokenless Harness. It is separate from the model-base-URL path, which continues to use DeepSeek Harness's existing `llm-deepseek` adapter.
+
 ## Run
 
 ```bash
@@ -45,6 +57,24 @@ tokenless run \
   --prompt "Review this proposal." \
   --json
 ```
+
+Use the setup-managed GPT4Free backend for a direct ChatGPT text chat:
+
+```bash
+tokenless run \
+  --profile default \
+  --provider chatgpt \
+  --execution-mode direct \
+  --provider-backend g4f \
+  --prompt "Review this proposal." \
+  --json
+```
+
+Use `--provider-backend native` to keep the existing Tokenless ChatGPT or Perplexity implementation for A/B testing and rollback.
+
+Setup installs one pinned private `g4f[all]` Python service. Tokenless keeps browser control and profile ownership; G4F handles direct provider HTTP, impersonation, Sentinel/PoW, streaming, HAR/Cookie auth, and media behind the authenticated daemon API. Omitting `--execution-mode direct` keeps visible-browser behavior.
+
+See [GPT4Free direct provider service](../../docs/g4f-direct-provider-service.md) for backend flags, standard API routes, provider mappings, pins, and isolation boundaries.
 
 If no provider is explicit, Tokenless uses the first configured provider with a cached guest or signed-in observation. If none is usable, it fails before creating a job and reports how to refresh access.
 
@@ -56,7 +86,7 @@ tokenless capabilities list --json
 
 The public [Capability Matrix](https://github.com/jazelly/tokenless/blob/main/docs/capability-matrix.md) explains the outcome vocabulary, current provider mappings, evidence ladder, and extension process.
 
-`--capability` is repeatable. Tokenless also infers `conversation.chat` for a normal run, `file.upload` plus the media-specific input capability from attachments, and `workspace.native` from native Workspace intent. One provider must satisfy the entire merged requirement set:
+`--capability` is repeatable. Tokenless also infers `conversation.chat` for a normal run, `file.upload` plus a MIME-specific input capability from attachments (`document.input` for non-media files and `image.input`, `audio.input`, or `video.input` for the matching media type), and `workspace.native` from native Workspace intent. One provider must satisfy the entire merged requirement set:
 
 ```bash
 tokenless run \
@@ -68,7 +98,7 @@ tokenless run \
 
 The catalog also contains future candidate outcomes so agents can inspect a stable vocabulary. A candidate is not routeable until its provider strategy and complete real-provider lifecycle are implemented and E2E-closed.
 
-Implicit normal runs persist compatible provider alternatives. Before prompt submission, a provider-scoped auth, CAPTCHA, capacity, or plan blocker can atomically requeue the same durable job on the next provider whose real-E2E-closed route satisfies the run's complete requirements. Explicit providers, exact continuation, provider-specific controls, completed non-reconstructable mutations, and ambiguous submissions fail closed instead. Inspect `providerAttempts` and `fallback` through JSON state output.
+Implicit normal runs keep compatible provider alternatives for the current execution. Before prompt submission, a provider-scoped auth, CAPTCHA, capacity, or plan blocker can immediately try the next provider whose real-E2E-closed route satisfies the run's complete requirements. Explicit providers, exact continuation, provider-specific controls, completed non-reconstructable mutations, and ambiguous submissions fail closed instead. Inspect the current `provider` and `fallback` through JSON state output.
 
 ## Providers
 
@@ -83,8 +113,12 @@ Implicit normal runs persist compatible provider alternatives. Before prompt sub
 | Perplexity | Experimental | Guest supported |
 | Z.ai / GLM | Experimental | Guest supported |
 | Doubao / 豆包 | Experimental | Sign-in required |
+| Kimi | Experimental | Sign-in required |
+| Dola | Experimental | Sign-in required |
+| Arena | Supported | Sign-in required |
+| Meta AI | Experimental | Sign-in required |
 
-Prompt submission and response reading are the shared baseline. Files, citations, model or effort controls, conversation continuation, and Workspaces depend on the visible provider, profile, and account state. Doubao text-file selection is experimentally routeable; its advanced modes and Web skills are exposed as provider controls without advertising their still-unclosed outcome lifecycles.
+Prompt submission and response reading are the shared baseline. Files, citations, model or effort controls, conversation continuation, and Workspaces depend on the visible provider, profile, and account state. Meta AI chat and file upload are experimentally routeable from a selected signed-in profile; Instant/Thinking selection is available, while image generation remains unadvertised until the CLI exposes its artifact lifecycle.
 
 Inspect the current runtime capability state:
 
@@ -140,12 +174,12 @@ tokenless profiles open --profile work --provider claude
 tokenless profiles status --profile work --provider claude --json
 ```
 
-Tokenless profiles organize provider tabs and configuration; they do not create separate browser identities. Tokenless does not inspect or expose individual cookies, tokens, browser storage, Keychain data, or authentication values.
+Tokenless profiles organize provider tabs and configuration; they do not create separate browser identities. The currently shipped visible-browser mode does not inspect individual cookies, tokens, browser storage, Keychain data, or authentication values, and no mode exposes those values to agents.
 
 ## Browser and Local Runtime
 
 Native mode is headed-only because it controls the Chrome or Brave instance the user already opened. Stopping or restarting the daemon disconnects Playwright without closing the browser.
 
-Every request uses the authenticated loopback daemon and Tokenless-owned tabs in the user's selected browser. Credentials remain opaque to agents. Sign-in, CAPTCHA, consent, payment, plan, and confirmation steps remain under user control.
+Every visible-browser request uses the authenticated loopback daemon and Tokenless-owned tabs in the user's selected browser. Provider credentials are never exposed to agents. Sign-in, CAPTCHA, payment, plan, and ambiguous or external confirmations remain under user control; a provider adapter may accept an exact, known onboarding Terms/Privacy dialog for a provider the user selected.
 
 See the [command reference](https://github.com/jazelly/tokenless/blob/main/COMMANDS.md) for all commands and options, and [Architecture](https://github.com/jazelly/tokenless/blob/main/docs/architecture.md) for runtime details.

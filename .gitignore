@@ -4,6 +4,12 @@ packages/cli/npm/*/bin/
 dist/
 packages/*/dist/
 *.tsbuildinfo
+/tokenless-beta
+/benchmarks/terminalbench/cache/
+/benchmarks/terminalbench/observations/
+/benchmarks/terminalbench/results/
+/benchmarks/__pycache__/
+/benchmarks/terminalbench/__pycache__/
 .DS_Store
 
 .env
@@ -14,9 +20,18 @@ docs/
 docs/*
 !docs/README.md
 !docs/README.zh-CN.md
+!docs/api-proxy-integration.md
+!docs/api-proxy-integration.zh-CN.md
 !docs/capability-matrix.md
 !docs/capability-matrix.zh-CN.md
+!docs/g4f-direct-provider-service.md
+!docs/g4f-direct-provider-service.zh-CN.md
+!docs/glossary.md
+!docs/glossary.zh-CN.md
+!docs/harness-browser-extension.md
+!docs/harness-browser-extension.zh-CN.md
 !docs/provider-capability-census.md
+!docs/provider-capability-census.zh-CN.md
 !docs/provider-rate-limits.md
-!docs/roadmaps/
-!docs/roadmaps/**
+!docs/provider-rate-limits.zh-CN.md
+/docs/roadmaps/

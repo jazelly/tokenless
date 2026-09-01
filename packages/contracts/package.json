@@ -1,0 +1,23 @@
+{
+  "name": "tokenless-api-contracts",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Canonical Tokenless OpenAPI source and generated HTTP API reference.",
+  "type": "module",
+  "license": "MIT",
+  "files": [
+    "tokenless.openapi.json",
+    "tokenless.zh-CN.overlay.json",
+    "reference.html",
+    "reference.zh-CN.html",
+    "fixtures",
+    "spec",
+    "examples/v0",
+    "README.md",
+    "README.zh-CN.md",
+    "package.json"
+  ],
+  "engines": {
+    "node": ">=22.13.0"
+  }
+}

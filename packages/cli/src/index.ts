@@ -3,6 +3,8 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import type { TokenlessLanguage } from './localization.js'
 
+export { tokenlessHome } from './bootstrap/home.js'
+
 export {
   DEFAULT_DAEMON_URL,
   MAX_DAEMON_REQUEST_BYTES,
@@ -10,34 +12,47 @@ export {
   cancelDaemonJob,
   createDaemonJob,
   daemonUrl,
-  drainDaemonReplay,
   getDaemonJob,
+  generateImage,
   getProviderCapacity,
+  getControlState,
+  getControlCapabilities,
   listDaemonJobs,
-  markDaemonJobReported,
   openBrowserRuntimeProfile,
   openBrowserRuntimeProviderTabs,
   openTokenlessDashboard,
+  getMenuBarSnapshot,
+  addControlProfile,
+  clearControlProfiles,
   quiesceBrowserRuntime,
   readDaemonToken,
   resolveProviderConversation,
   resolveProviderMapping,
-  resumeDaemonJob,
+  resolveControlProfile,
+  resolveControlExecution,
+  removeControlProfile,
   shutdownDaemon,
   waitDaemonJobResult,
-} from './daemon-client.js'
+  startAgentRun,
+  readAgentRun,
+  resumeAgentRun,
+  cancelAgentRun,
+  setDefaultControlProfile,
+  updateControlConfig,
+  updateControlProfileConfig,
+  updateControlProfileObservation,
+  updateOutputSavings,
+} from './http/daemon-client.js'
 
 export type {
   CancelDaemonJobOptions,
   CreateDaemonJobOptions,
-  DrainDaemonReplayOptions,
-  DaemonReplaySummary,
   DaemonClientOptions,
   DaemonJob,
   GetDaemonJobOptions,
+  GenerateImageOptions,
   GetProviderCapacityOptions,
   ListDaemonJobsOptions,
-  MarkDaemonJobReportedOptions,
   BrowserRuntimeStatus,
   BrowserRuntimeOpenProfileOptions,
   BrowserRuntimeOpenProfileResponse,
@@ -45,23 +60,34 @@ export type {
   BrowserRuntimeOpenProviderTabsResponse,
   OpenDashboardOptions,
   OpenDashboardResponse,
-  ResumeDaemonJobOptions,
+  MenuBarConversation,
+  MenuBarSnapshot,
   ResolveProviderMappingOptions,
   ResolveProviderConversationOptions,
   ShutdownDaemonOptions,
   ShutdownDaemonResponse,
   WaitDaemonJobResultOptions,
-} from './daemon-client.js'
+  AgentRunClientOptions,
+  ControlProfile,
+  ControlState,
+  ResolveControlProfileResponse,
+} from './http/daemon-client.js'
 
-export type { ManagedProfileConfig, TokenlessConfig } from './job-store.js'
-export type { OutputSavingsConfig } from './job-store.js'
-export type { BrowserVisibility, EffectiveBrowserVisibility } from './browser-visibility.js'
+export type { ManagedProfileConfig, TokenlessConfig } from '#tokenless-server/persistence/config.js'
+export type { OutputSavingsConfig } from '#tokenless-server/persistence/config.js'
+export { API_PROXY_CONVERSATION_MODES } from '#tokenless-server/persistence/config.js'
+export type { ApiProxyConfig, ApiProxyConversationMode } from '#tokenless-server/persistence/config.js'
+export type { DirectProviderConfig, G4fConfig, ProviderBackend } from '#tokenless-server/persistence/config.js'
+export * from '#tokenless-server/providers/direct/g4f/index.js'
+export * from '#tokenless-server/providers/direct/g4f-map.js'
+export * from '#tokenless-server/providers/direct/protocol-router.js'
+export type { BrowserVisibility, EffectiveBrowserVisibility } from '#tokenless-server/browser-visibility.js'
 
 export {
   BROWSER_VISIBILITIES,
   normalizeBrowserVisibility,
   resolveEffectiveBrowserVisibility,
-} from './browser-visibility.js'
+} from '#tokenless-server/browser-visibility.js'
 
 export {
   configPath,
@@ -71,11 +97,10 @@ export {
   normalizeManagedProfileProxy,
   readTokenlessConfig,
   TOKENLESS_CONFIG_SCHEMA_ID,
-  tokenlessHome,
   upsertTokenlessProfileConfig,
   writeTokenlessConfig,
   hasConfiguredTokenlessLanguage,
-} from './job-store.js'
+} from '#tokenless-server/persistence/config.js'
 
 export {
   TOKENLESS_LANGUAGES,
@@ -93,7 +118,7 @@ export {
   currentBrowserRuntimePlatform,
   managedBrowserCatalogEntry,
   normalizeBrowserSelection,
-} from './browser-runtime/index.js'
+} from '#tokenless-server/browser/runtime/index.js'
 
 export type {
   BrowserCandidate,
@@ -104,7 +129,7 @@ export type {
   BrowserRuntimePlatform,
   BrowserSelection,
   ResolvedBrowserRuntime,
-} from './browser-runtime/index.js'
+} from '#tokenless-server/browser/runtime/index.js'
 
 export {
   OUTPUT_SAVINGS_ESTIMATOR,
@@ -114,23 +139,22 @@ export {
   OUTPUT_SAVINGS_RUNTIME_INSTALLED_BYTES,
   OUTPUT_SAVINGS_RUNTIME_VERSION,
   OutputSavingsRuntimeManager,
-} from './output-savings/index.js'
+} from '#tokenless-server/output-savings/index.js'
 
-export type { OutputSavingsRuntimeInspection } from './output-savings/index.js'
+export type { OutputSavingsRuntimeInspection } from '#tokenless-server/output-savings/index.js'
 export type {
   MeasureVisibleOutput,
   OutputSavingsMeasurement,
   OutputSavingsResult,
   OutputSavingsUnavailable,
-} from './output-savings/index.js'
+} from '#tokenless-server/output-savings/index.js'
 
 export {
   DAEMON_CONTROL_API_REVISION,
   DAEMON_LOG_FILE,
-  DAEMON_PID_FILE,
-  DAEMON_PROCESS_SCHEMA_ID,
   MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID,
   MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID_V3,
+  MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID_V4,
   VISIBLE_ACTION_SCHEMA_ID,
   VISIBLE_ACTION_SCHEMA_ID_V3,
   ensureDaemonReady,
@@ -143,14 +167,12 @@ export {
   resolveChromiumBrowser,
   semanticVersionMajor,
   stopDaemon,
-} from './runtime.js'
+} from './bootstrap/runtime.js'
 
 export {
   DEFAULT_MAX_VISIBLE_ATTACHMENT_BYTES,
-  DEFAULT_VISIBLE_ATTACHMENT_ORPHAN_TTL_MS,
   VISIBLE_ATTACHMENT_DIRECTORY,
   VISIBLE_ATTACHMENT_SCHEMA_ID,
-  cleanupOrphanedVisibleAttachmentBundles,
   createVisibleAttachmentId,
   removeStagedVisibleAttachmentBundle,
   stageVisibleAttachment,
@@ -159,13 +181,13 @@ export {
   visibleAttachmentBundlePath,
   visibleAttachmentPath,
   visibleAttachmentRoot,
-} from './visible-attachments.js'
+} from '#tokenless-server/persistence/attachments.js'
 
 export type {
   StageVisibleAttachmentOptions,
   StageVisibleAttachmentsOptions,
   VisibleAttachmentDescriptor,
-} from './visible-attachments.js'
+} from '#tokenless-server/persistence/attachments.js'
 
 export type {
   ChromiumBrowser,
@@ -173,7 +195,7 @@ export type {
   EnsureDaemonOptions,
   ManagedRuntimeInspection,
   StopDaemonResult,
-} from './runtime.js'
+} from './bootstrap/runtime.js'
 
 const DEFAULT_MAX_FILE_BYTES = 24_000
 const DEFAULT_MAX_TOTAL_BYTES = 80_000

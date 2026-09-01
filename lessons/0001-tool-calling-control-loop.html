@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Who Actually Calls the Tool? / 到底是谁调用工具？</title>
+  <link rel="stylesheet" href="../assets/teaching.css">
+</head>
+<body>
+<main>
+  <p class="muted">Lesson 0001 · Tool-Driven Agent Runtime</p>
+  <h1>Who actually calls the tool?</h1>
+  <p class="lead">到底是谁调用工具？把“模型选择”和“系统执行”拆开，你就能判断 Tokenless 应该做 adapter 还是完整 runtime。</p>
+
+  <div class="verdict">
+    <strong>Verdict / 结论：</strong>
+    Yes—the abstract pattern is “show the model an available capability contract, then let it propose a call.” But the model only proposes. The Harness chooses what to expose, validates and authorizes the proposal, executes code, returns results, and decides whether another model turn is needed.
+    <br><br>
+    对，抽象模式就是“把可用能力契约展示给模型，让模型提出调用”。但模型只负责提议；Harness 负责暴露范围、校验、授权、执行、回传结果和续轮。
+  </div>
+
+  <h2>1. Registry is not the menu / Registry 不等于菜单</h2>
+  <p>A registry contains executable code and private runtime behavior. The model receives only a projection: name, description, and argument schema.</p>
+  <p>Registry 包含执行函数、权限、超时、取消和 UI。模型只收到它的投影：名称、描述与参数 schema。</p>
+
+  <pre><code>ToolDefinition (private)
+  ├── name ───────────────┐
+  ├── description ────────┼──▶ ToolSchema (model-visible)
+  ├── parameters ─────────┘
+  ├── execute()
+  ├── authorization / timeout / cancellation
+  └── presentation</code></pre>
+
+  <h2>2. The model requests; it does not execute / 模型请求，不执行</h2>
+  <p class="flow"><strong>Harness menu → model proposal → Harness gate → real execution → result → model</strong></p>
+  <p>The phrase “the model called a tool” is shorthand. For a client-side function tool, the model emitted structured intent such as <code>{name, arguments, call_id}</code>. Nothing has touched the filesystem yet.</p>
+  <p>“模型调用了工具”只是简称。对 client-side function tool 而言，模型只输出了结构化意图；这时文件系统还没有发生任何变化。</p>
+
+  <h2>3. Native channel and text envelope / 原生通道与文本信封</h2>
+  <table>
+    <thead><tr><th></th><th>Native structured call</th><th>Text envelope</th></tr></thead>
+    <tbody>
+      <tr><td>Capability advertisement</td><td>Provider <code>tools</code> field</td><td>System prompt catalog</td></tr>
+      <tr><td>Model output</td><td>Typed <code>tool_call</code> event/block</td><td>Marked JSON text</td></tr>
+      <tr><td>Parser</td><td>Provider adapter</td><td>Tokenless</td></tr>
+      <tr><td>Abstract semantics</td><td>Model proposes a call</td><td>Model proposes a call</td></tr>
+      <tr><td>Main difference</td><td>Provider supplies framing</td><td>Tokenless must enforce framing</td></tr>
+    </tbody>
+  </table>
+  <p>So a text protocol is not fake merely because it is text. It can faithfully emulate the client-visible contract. It is weaker operationally because malformed prose, duplicate envelopes, truncation, or prompt injection must be handled by Tokenless rather than by a provider-native response channel.</p>
+  <p>所以文本协议并非天然“假 tool call”。它可以忠实模拟外部契约；只是 framing、解析与抗干扰责任落到了 Tokenless。</p>
+
+  <h2>4. The decisive architecture question / 真正决定架构的问题</h2>
+  <div class="card">
+    <strong>If DeepSeek Harness is the caller:</strong> it already owns <code>ToolDefinition</code>, execution, tool results, and the agent loop. Tokenless only needs to translate one model turn: OpenAI-style schemas in, web prompt out, parsed OpenAI-style tool calls back. The caller sends the next request after execution.
+    <br><br>
+    <strong>如果调用者是 DeepSeek Harness：</strong>它已经拥有工具定义、执行、结果和循环。Tokenless 只需翻译一次模型 turn；执行完之后的下一轮由外层 Harness 发起。
+  </div>
+  <div class="card">
+    <strong>If Tokenless promises a completed autonomous task:</strong> Tokenless must own the registry, executors, results, and continuation loop because no outer runtime will do it.
+    <br><br>
+    <strong>如果 Tokenless 自己承诺完成 autonomous task：</strong>它才需要完整拥有 registry、执行器、结果与续轮循环。
+  </div>
+
+  <h2>5. Apply it to this repository / 套回当前仓库</h2>
+  <p><code>packages/harness/src/internal/system-prompt.ts</code> already serializes a tool catalog into the prompt and asks the web model for an <code>action_batch</code> envelope. That is the text-envelope version of the same abstract control loop.</p>
+  <p>Meanwhile, the OpenAI-compatible API proxy currently rejects <code>tools</code>. Bridging those two boundaries does not automatically require copying DeepSeek Harness's execution runtime into Tokenless.</p>
+
+  <h2>Retrieval check / 回忆检验</h2>
+  <details>
+    <summary>At the instant a model emits a tool call, what has definitely happened?</summary>
+    <p>Only a call proposal has been produced. The Harness still has to parse, validate, authorize, execute, and correlate a result.</p>
+  </details>
+  <details>
+    <summary>When does Tokenless need its own full Agent Loop?</summary>
+    <p>When Tokenless, rather than an outer Harness, owns the promise to execute calls repeatedly until a final answer is produced.</p>
+  </details>
+
+  <h2>Primary references / 一手资料</h2>
+  <ul>
+    <li><a href="https://developers.openai.com/api/docs/guides/function-calling">OpenAI Function calling</a></li>
+    <li><a href="https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview">Anthropic Tool use overview</a></li>
+    <li><a href="../reference/tool-calling-runtime-map.html">Runtime map / 运行时速查</a></li>
+  </ul>
+
+  <p class="muted">Ask the agent a follow-up question whenever a boundary still feels ambiguous. / 任何边界仍然模糊时，继续追问你的 agent。</p>
+</main>
+</body>
+</html>

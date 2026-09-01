@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 
-const harnessModule = '../packages/web-agent-harness/dist/src/index.js'
+const harnessModule = '../packages/harness/dist/src/index.js'
 
 test('built Harness package prepares the required System Prompt and preselected Skill files through the filesystem', async () => {
   const fixture = await createFixture()
@@ -28,7 +28,7 @@ test('built Harness package prepares the required System Prompt and preselected 
       }],
     })
 
-    assert.deepEqual(prepared.requiredProviderCapabilities, ['conversation.chat', 'file.upload'])
+    assert.deepEqual(prepared.requiredProviderCapabilities, ['conversation.chat', 'file.upload', 'document.input'])
     assert.deepEqual(prepared.registry.skills.map((skill) => skill.name), [
       'document-review',
       'legacy-description',
@@ -91,7 +91,7 @@ test('built Harness package finalizes a correlated bootstrap turn only after exa
     assert.equal(preparation.runId, 'bootstrap-run')
     assert.equal(preparation.turn, 1)
     assert.equal(preparation.nonce, 'bootstrap-nonce-001')
-    assert.deepEqual(preparation.requiredProviderCapabilities, ['conversation.chat', 'file.upload'])
+    assert.deepEqual(preparation.requiredProviderCapabilities, ['conversation.chat', 'file.upload', 'document.input'])
     assert.deepEqual(preparation.attachments.map((attachment) => attachment.kind), ['system_prompt', 'skill', 'skill'])
     assert.equal(preparation.attachments[0].sourcePath, preparation.systemPrompt.sourcePath)
     assert.deepEqual(preparation.attachments.slice(1).map((attachment) => attachment.skillName), [
@@ -475,6 +475,71 @@ test('built Harness package rejects malformed or uncorrelated visible model enve
       (error) => error instanceof HarnessSkillError && error.code === 'harness_response_correlation_invalid',
     )
 
+    const invalidArguments = await parseHarnessModelResponse({
+      runId: 'validation-run',
+      stagingRoot: fixture.stagingRoot,
+      turn: 1,
+      nonce: 'nonce-validation',
+      responseText: framed({
+        protocol: 'tokenless.web-agent/v1',
+        kind: 'action_batch',
+        runId: 'validation-run',
+        turn: 1,
+        nonce: 'nonce-validation',
+        skillLoads: [],
+        calls: [{ id: 'call-search', tool: 'mcp.drive.search', arguments: { query: 42 } }],
+        needs: [],
+      }),
+    })
+    assert.equal(invalidArguments.kind, 'action_batch')
+    assert.deepEqual(invalidArguments.calls[0].validationError, {
+      code: 'harness_tool_arguments_invalid',
+      message: "Arguments for tool 'mcp.drive.search' does not satisfy its frozen JSON Schema.",
+      details: { issues: [{ path: '/query', keyword: 'type', message: 'must be string' }] },
+    })
+
+    const unknownTool = await parseHarnessModelResponse({
+      runId: 'validation-run',
+      stagingRoot: fixture.stagingRoot,
+      turn: 1,
+      nonce: 'nonce-validation',
+      responseText: framed({
+        protocol: 'tokenless.web-agent/v1',
+        kind: 'action_batch',
+        runId: 'validation-run',
+        turn: 1,
+        nonce: 'nonce-validation',
+        skillLoads: [],
+        calls: [{ id: 'call-unknown', tool: 'mcp.drive.missing', arguments: {} }],
+        needs: [],
+      }),
+    })
+    assert.deepEqual(unknownTool.calls[0].validationError, {
+      code: 'harness_tool_unknown',
+      message: "Tool 'mcp.drive.missing' is not present in the frozen catalog.",
+      details: { tool: 'mcp.drive.missing' },
+    })
+
+    for (const argumentsValue of [[], null]) {
+      const nonObjectArguments = await parseHarnessModelResponse({
+        runId: 'validation-run',
+        stagingRoot: fixture.stagingRoot,
+        turn: 1,
+        nonce: 'nonce-validation',
+        responseText: framed({
+          protocol: 'tokenless.web-agent/v1',
+          kind: 'action_batch',
+          runId: 'validation-run',
+          turn: 1,
+          nonce: 'nonce-validation',
+          skillLoads: [],
+          calls: [{ id: 'call-nonobject', tool: 'mcp.drive.search', arguments: argumentsValue }],
+          needs: [],
+        }),
+      })
+      assert.equal(nonObjectArguments.calls[0].validationError.code, 'harness_tool_arguments_invalid')
+    }
+
     await assert.rejects(
       parseHarnessModelResponse({
         runId: 'validation-run',
@@ -488,11 +553,80 @@ test('built Harness package rejects malformed or uncorrelated visible model enve
           turn: 1,
           nonce: 'nonce-validation',
           skillLoads: [],
-          calls: [{ id: 'call-search', tool: 'mcp.drive.search', arguments: { query: 42 } }],
+          calls: [
+            { id: 'duplicate', tool: 'mcp.drive.search', arguments: { query: 42 } },
+            { id: 'duplicate', tool: 'mcp.drive.search', arguments: { query: 'valid' } },
+          ],
           needs: [],
         }),
       }),
-      (error) => error instanceof HarnessSkillError && error.code === 'harness_json_schema_validation_failed',
+      (error) => error instanceof HarnessSkillError && error.code === 'harness_response_schema_invalid',
+    )
+
+    await assert.rejects(
+      parseHarnessModelResponse({
+        runId: 'validation-run',
+        stagingRoot: fixture.stagingRoot,
+        turn: 1,
+        nonce: 'nonce-validation',
+        responseText: framed({
+          protocol: 'tokenless.web-agent/v1',
+          kind: 'action_batch',
+          runId: 'validation-run',
+          turn: 1,
+          nonce: 'nonce-validation',
+          skillLoads: [],
+          calls: [{ id: 'missing-arguments', tool: 'mcp.drive.search' }],
+          needs: [],
+        }),
+      }),
+      (error) => error instanceof HarnessSkillError && error.code === 'harness_response_schema_invalid',
+    )
+
+    await assert.rejects(
+      parseHarnessModelResponse({
+        runId: 'validation-run',
+        stagingRoot: fixture.stagingRoot,
+        turn: 1,
+        nonce: 'nonce-validation',
+        responseText: framed({
+          protocol: 'tokenless.web-agent/v1',
+          kind: 'action_batch',
+          runId: 'validation-run',
+          turn: 1,
+          nonce: 'nonce-validation',
+          skillLoads: [],
+          calls: [
+            { id: 'invalid-dependency', tool: 'mcp.drive.search', arguments: { query: 42 }, dependsOn: ['missing'] },
+            { id: 'valid-independent', tool: 'mcp.drive.search', arguments: { query: 'valid' } },
+          ],
+          needs: [],
+        }),
+      }),
+      (error) => error instanceof HarnessSkillError && error.code === 'harness_dependency_invalid',
+    )
+
+    await assert.rejects(
+      parseHarnessModelResponse({
+        runId: 'validation-run',
+        stagingRoot: fixture.stagingRoot,
+        turn: 1,
+        nonce: 'nonce-validation',
+        responseText: framed({
+          protocol: 'tokenless.web-agent/v1',
+          kind: 'action_batch',
+          runId: 'validation-run',
+          turn: 1,
+          nonce: 'nonce-validation',
+          skillLoads: [],
+          calls: [
+            { id: 'cycle-a', tool: 'mcp.drive.search', arguments: { query: 42 }, dependsOn: ['cycle-b'] },
+            { id: 'cycle-b', tool: 'mcp.drive.search', arguments: { query: 'valid' }, dependsOn: ['cycle-a'] },
+          ],
+          needs: [],
+        }),
+      }),
+      (error) => error instanceof HarnessSkillError && error.code === 'harness_dependency_cycle',
     )
 
     await assert.rejects(

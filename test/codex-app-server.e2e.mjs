@@ -6,7 +6,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import test from 'node:test'
 
 const root = path.resolve(import.meta.dirname, '..')
-const harnessModule = '../packages/web-agent-harness/dist/src/index.js'
+const harnessModule = '../packages/harness/dist/src/index.js'
 const model = 'gpt-5.6-luna'
 const reasoningEffort = 'xhigh'
 const gracefulCloseTimeoutMs = 500

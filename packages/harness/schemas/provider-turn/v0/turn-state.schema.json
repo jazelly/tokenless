@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tokenless-internal:web-ai-interaction-protocol:v0:turn-state",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol", "requestRef", "turnRef", "providerRef", "providerBindingRef", "conversationRef", "lifecycle", "attachmentDelivery"],
+  "properties": {
+    "protocol": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/protocol" },
+    "requestRef": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/requestRef" },
+    "turnRef": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/turnRef" },
+    "providerRef": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/providerRef" },
+    "providerBindingRef": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/providerBindingRef" },
+    "conversationRef": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/conversationRef" },
+    "lifecycle": { "enum": ["queued", "running", "waiting_for_user", "succeeded", "failed", "cancelled"] },
+    "attachmentDelivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "attachmentRef", "sha256"],
+      "properties": {
+        "status": { "enum": ["pending", "delivered", "rejected"] },
+        "attachmentRef": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/attachmentRef" },
+        "sha256": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/sha256" }
+      }
+    },
+    "waitingReason": { "enum": ["authentication", "mfa", "captcha", "consent", "provider_blocker", "manual_intervention"] },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "citations"],
+      "properties": {
+        "text": { "type": "string", "minLength": 1, "maxLength": 65536, "x-tokenless-internal-maxUtf8Bytes": 131072 },
+        "citations": {
+          "type": "array",
+          "maxItems": 64,
+          "items": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/citation" }
+        }
+      }
+    },
+    "error": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/stableError" },
+    "cancelReason": { "enum": ["client_requested", "provider_cancelled", "timeout", "user_declined", "shutdown"] }
+  }
+}

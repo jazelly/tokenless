@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import net from 'node:net'
 import path from 'node:path'
@@ -38,6 +38,21 @@ const handlers = {
   'model-choice': modelChoice,
   'effort-choice': effortChoice,
   'file-selection': fileSelection,
+  'harness-attachment-roundtrip': harnessAttachmentRoundtrip,
+  'conversation-continuation': conversationContinuation,
+  'model-comparison': modelComparison,
+  'arena-search': arenaSearch,
+  'arena-image': arenaImage,
+  'meta-image': metaImage,
+  'chatgpt-image': chatgptImage,
+  'gemini-image': geminiImage,
+  'dola-image': dolaImage,
+  'doubao-image': doubaoImage,
+  'grok-image': grokImage,
+  'qwen-image': qwenImage,
+  'arena-code': arenaCode,
+  'arena-agent': arenaAgent,
+  'arena-video': arenaVideo,
   'conversation-workflow': conversationWorkflow,
   'workspace-response-citations': workspaceResponseCitations,
   'workspace-response-baseline': workspaceResponseBaseline,
@@ -112,21 +127,22 @@ for (const { provider, declaration, caseIds } of selectedProviders) {
   test(`real provider ${provider}: ${gate} journey`, { timeout: 1_200_000 }, async (t) => {
     const session = sharedSession
     assert.ok(session, 'shared live E2E browser session must be initialized')
-    const journey = createProviderJourney(session, provider)
+    const providerState = createProviderState()
     for (const caseId of caseIds) {
       await t.test(`${provider}: ${caseId}`, { timeout: 1_200_000 }, async (step) => {
         const caseStartedAt = Date.now()
-        if (journey.skipReason) {
+        if (providerState.skipReason) {
           recordLiveProviderCapability(suiteReport, {
             provider,
             capability: caseId,
             status: 'known_issue',
-            error: e2eSkip('e2e_known_issue_provider_blocker', journey.skipReason),
+            error: e2eSkip('e2e_known_issue_provider_blocker', providerState.skipReason),
             durationMs: Date.now() - caseStartedAt,
           })
-          step.skip(journey.skipReason)
+          step.skip(providerState.skipReason)
           return
         }
+        const journey = createCapabilityJourney(session, provider, caseId, providerState)
         const handler = handlers[caseId]
         assert.equal(typeof handler, 'function', `missing real E2E handler for ${caseId}`)
         submissionTrackers.set(journey, {
@@ -138,7 +154,7 @@ for (const { provider, declaration, caseIds } of selectedProviders) {
           if (
             matrix.cases[caseId].gate !== 'non_submission' &&
             declaration.account === 'signed_in_selected_setup_profile' &&
-            !journey.authenticated
+            !providerState.authenticated
           ) {
             await requireSignedInSelectedProfile(journey)
           }
@@ -152,7 +168,7 @@ for (const { provider, declaration, caseIds } of selectedProviders) {
           })
         } catch (error) {
           if (isKnownIssueSkip(error)) {
-            journey.skipReason = `${caseId}: ${error.message}`
+            providerState.skipReason = `${caseId}: ${error.message}`
             recordLiveProviderCapability(suiteReport, {
               provider,
               capability: caseId,
@@ -160,7 +176,7 @@ for (const { provider, declaration, caseIds } of selectedProviders) {
               error,
               durationMs: Date.now() - caseStartedAt,
             })
-            step.skip(journey.skipReason)
+            step.skip(providerState.skipReason)
             return
           }
           recordLiveProviderCapability(suiteReport, {
@@ -191,7 +207,7 @@ async function requireSignedInSelectedProfile(journey) {
       `${journey.provider} selected setup profile is not authenticated`,
     )
   }
-  journey.authenticated = true
+  journey.providerState.authenticated = true
 }
 
 async function sessionReadiness({ provider, declaration, journey }) {
@@ -219,7 +235,7 @@ async function sessionReadiness({ provider, declaration, journey }) {
       `${provider} selected setup profile does not satisfy ${declaration.account}`,
     )
   }
-  journey.authenticated = signedIn
+  journey.providerState.authenticated = signedIn
 }
 
 async function promptDraft({ provider, journey }) {
@@ -288,7 +304,7 @@ async function qwenModeWorkspace({ provider, journey }) {
   })
   assert.equal(clarification.observerResult, true, 'Qwen observer must see Deep Research Advanced selected')
   assert.ok((responseResult(clarification.payload, 'response.read')?.text ?? '').length > 0)
-  const conversationUrl = assertConversationWorkspaceResult(provider, journey.taskId, clarification)
+  const conversationUrl = assertConversationWorkspaceResult(clarification)
   await clarification.close()
 
   const report = await journey.run([
@@ -304,7 +320,6 @@ async function qwenModeWorkspace({ provider, journey }) {
   ], 720_000)
   assert.match(responseResult(report.payload, 'response.read')?.text ?? '', new RegExp(escapeRegExp(marker)))
   assert.equal(canonicalPageUrl(report.page.url()), conversationUrl)
-  assertTaskConversationMapping(provider, journey.taskId, conversationUrl, report.payload)
   await report.close()
 
   const restored = await journey.action('qwen.mode.select', ['--qwen-mode', 'Chat'])
@@ -492,7 +507,7 @@ async function doubaoControls({ provider, journey }) {
       nativeLabel: '普通对话',
       visibleProof: 'doubao-default-composer-visible',
     })
-    assert.equal(await restored.page.locator('textarea.semi-input-textarea').filter({ visible: true }).count(), 1)
+    assert.equal(await restored.page.locator('textarea.semi-input-textarea, div[role="textbox"].tiptap.ProseMirror').filter({ visible: true }).count(), 1)
     await restored.close()
   }
 }
@@ -599,7 +614,7 @@ async function choiceCase({ provider, journey }, kind) {
 
 async function choiceLabelVisible(page, label) {
   if (await exactTextVisible(page, label)) return true
-  const controls = page.locator('button[aria-haspopup="menu"]').filter({ visible: true })
+  const controls = page.locator('button[aria-haspopup="menu"], button[aria-haspopup="dialog"]').filter({ visible: true })
   for (let index = 0; index < await controls.count(); index += 1) {
     const text = await controls.nth(index).evaluate((element) => (
       `${element.textContent ?? ''} ${element.getAttribute('aria-label') ?? ''}`
@@ -610,11 +625,21 @@ async function choiceLabelVisible(page, label) {
 }
 
 async function fileSelection({ provider, journey }) {
-  const extension = provider === 'gemini' ? '.md' : '.txt'
-  const name = `${markerFor(provider, 'ATTACHMENT')}${extension}`
+  const extension = '.md'
+  const name = provider === 'meta'
+    ? `browser-fingerprint-review-${compactTimestamp(new Date())}${extension}`
+    : `${markerFor(provider, 'ATTACHMENT')}${extension}`
   const file = path.join(root, 'test-results', 'live-provider-inputs', name)
   await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 })
-  await fs.writeFile(file, `${name}\n`, { mode: 0o600 })
+  const contents = provider === 'meta'
+    ? [
+        '# Browser Fingerprint Review',
+        '',
+        'A browser identity spans TLS ClientHello behavior, HTTP/2 settings, request headers, JavaScript APIs, IP reputation, and behavioral timing.',
+        'Matching one layer does not establish end-to-end browser equivalence.',
+      ].join('\n')
+    : `${name}\n`
+  await fs.writeFile(file, contents, { mode: 0o600 })
   const deepSeekState = provider === 'deepseek' ? await captureDeepSeekState(journey) : null
   let geminiAttachmentCardsBefore = null
   try {
@@ -654,7 +679,7 @@ async function fileSelection({ provider, journey }) {
         'Gemini observer must see one newly visible physical attachment card',
       )
     } else {
-      const visibleName = provider === 'kimi' ? path.parse(name).name : name
+      const visibleName = provider === 'kimi' || provider === 'meta' ? path.parse(name).name : name
       assert.equal(await exactTextVisible(uploaded.page, visibleName), true, `${provider} observer must see selected attachment`)
     }
     await uploaded.close()
@@ -664,6 +689,650 @@ async function fileSelection({ provider, journey }) {
     await fs.rm(file, { force: true })
     if (deepSeekState) await restoreDeepSeekState(journey, deepSeekState)
   }
+}
+
+async function harnessAttachmentRoundtrip({ provider, journey }) {
+  const timeoutMs = 600_000
+  const workspace = path.join(
+    root,
+    'test-results',
+    'live-provider-inputs',
+    `${markerFor(provider, 'HARNESS_WORKSPACE')}_${randomUUID().slice(0, 8)}`,
+  )
+  const proof = markerFor(provider, 'HARNESS_READ_ONLY_PROOF').replaceAll('_', '-')
+  const proofFile = 'readonly-proof.txt'
+  const evidence = []
+  let firstRequest = null
+  let first = null
+  let second = null
+  const browserJourney = { daemonPid: null, pageRefHash: null, targetId: null }
+  const continuationWait = new AbortController()
+  await fs.mkdir(workspace, { recursive: true, mode: 0o700 })
+  await fs.writeFile(path.join(workspace, proofFile), `${proof}\n`, { mode: 0o600 })
+
+  try {
+    first = await journey.session.startCli([
+      'agent', 'delegate',
+      '--provider', provider,
+      '--workspace-root', workspace,
+      '--prompt', [
+        `Use the read-only workspace.read tool to read ${proofFile}.`,
+        'Then return exactly the complete file contents with no additional text.',
+        'Do not call any write tool.',
+      ].join(' '),
+      '--max-turns', '4',
+      '--timeout-ms', String(timeoutMs),
+    ], {
+      startTimeoutMs: timeoutMs,
+      beforeRelease: async ({ waiting, page }) => {
+        assertHarnessJourneyPage(browserJourney, waiting, page, provider)
+        recordSubmissionAttempt(journey)
+        firstRequest = harnessTurnRequest(waiting.jobId, provider, 'tokenless-harness-system--')
+      },
+      observeAfterRelease: async ({ waiting, page }) => (
+        observeHarnessProviderTurn({ waiting, page, provider, turn: 1, evidence })
+      ),
+    })
+
+    const firstResult = first.wait()
+    const secondAttempt = journey.session.observeNextAttempt({
+      timeoutMs,
+      signal: continuationWait.signal,
+      beforeRelease: async ({ waiting, page }) => {
+        assertHarnessJourneyPage(browserJourney, waiting, page, provider)
+        recordSubmissionAttempt(journey)
+        const request = harnessTurnRequest(waiting.jobId, provider, 'tokenless-tool-result--')
+        assert.equal(request.pageRef, firstRequest?.pageRef, 'Harness continuation must keep the exact page ref')
+        assert.equal(request.taskId, firstRequest?.taskId, 'Harness continuation must keep the exact task id')
+      },
+      observeAfterRelease: async ({ waiting, page }) => (
+        observeHarnessProviderTurn({ waiting, page, provider, turn: 2, evidence })
+      ),
+    })
+    second = await Promise.race([
+      secondAttempt,
+      firstResult.then(
+        () => { throw new Error(`${provider} Harness delegate settled before a continuation browser turn`) },
+        (error) => { throw error },
+      ),
+    ])
+
+    const [{ payload }, secondObservation] = await Promise.all([firstResult, second.wait()])
+    assert.equal(secondObservation.status, 'succeeded')
+    assert.equal(payload?.ok, true)
+    assert.equal(payload?.status, 'succeeded')
+    assert.equal(payload?.turn, 2)
+    assert.equal(payload?.final?.output?.trim(), proof)
+    assert.deepEqual(payload?.final?.artifacts, [])
+    assert.equal(evidence.length, 2)
+    assert.deepEqual(evidence.map((entry) => entry.turn), [1, 2])
+    assert.ok(evidence.every((entry) => entry.provider === provider && entry.status === 'succeeded'))
+    await writeHarnessRoundtripEvidence(provider, evidence)
+  } finally {
+    continuationWait.abort()
+    await Promise.all([first?.close(), second?.close()])
+    await fs.rm(workspace, { recursive: true, force: true })
+  }
+}
+
+function assertHarnessJourneyPage(journey, waiting, page, provider) {
+  assert.equal(waiting.provider, provider)
+  assert.equal(canonicalPageUrl(waiting.url), canonicalPageUrl(page.url()))
+  if (journey.daemonPid === null) journey.daemonPid = waiting.daemonPid
+  assert.equal(waiting.daemonPid, journey.daemonPid, `${provider} Harness turns must stay on one daemon`)
+  if (journey.pageRefHash === null) journey.pageRefHash = waiting.pageRefHash
+  assert.equal(waiting.pageRefHash, journey.pageRefHash, `${provider} Harness turns must keep one page ref`)
+  assert.equal(
+    waiting.reusedPageBinding,
+    journey.targetId !== null,
+    `${provider} Harness continuation must reuse its managed page binding`,
+  )
+  if (journey.targetId === null) journey.targetId = waiting.targetId
+  assert.equal(waiting.targetId, journey.targetId, `${provider} Harness turns must stay on one Chromium target`)
+}
+
+function harnessTurnRequest(jobId, provider, expectedAttachmentPrefix) {
+  const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'), { readOnly: true })
+  try {
+    const row = database.prepare(
+      'SELECT provider, request_json FROM jobs WHERE job_id = ?',
+    ).get(jobId)
+    assert.equal(row?.provider, provider)
+    const request = JSON.parse(row.request_json)
+    assert.equal(request.provider, provider)
+    assert.equal(request.capabilityRoute?.provider, provider)
+    assert.deepEqual(request.capabilityRoute?.requirements, ['conversation.chat', 'file.upload', 'document.input'])
+    assert.equal(request.fallback, null, 'Explicit Harness provider turns must never fallback')
+    assert.deepEqual(
+      request.actions?.map((action) => action.action),
+      ['file.upload', 'prompt.input', 'prompt.submit', 'response.read'],
+    )
+    const names = request.actions[0]?.payload?.attachments?.map((attachment) => attachment.name)
+    assert.ok(Array.isArray(names) && names.length >= 1)
+    assert.ok(names[0].startsWith(expectedAttachmentPrefix))
+    assert.ok(names.every((name) => name.endsWith('.md')))
+    return { pageRef: request.pageRef, taskId: request.taskId }
+  } finally {
+    database.close()
+  }
+}
+
+async function observeHarnessProviderTurn({ waiting, page, provider, turn, evidence }) {
+  const deadline = Date.now() + 600_000
+  let row = null
+  while (Date.now() <= deadline) {
+    row = readHarnessJob(waiting.jobId)
+    if (row?.status === 'succeeded' || row?.status === 'failed' || row?.status === 'canceled') break
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  assert.equal(row?.provider, provider)
+  assert.equal(row?.status, 'succeeded')
+  assert.equal(typeof row?.provider_submitted_at, 'string', 'Harness attachment delivery must reach delivered')
+  const result = JSON.parse(row.result_json)
+  const responses = result?.responses
+  assert.deepEqual(
+    responses?.map((response) => response.action),
+    ['file.upload', 'prompt.input', 'prompt.submit', 'response.read'],
+  )
+  assert.ok(responses.every((response) => response.ok === true))
+  const attachmentNames = responses[0]?.result?.attachments?.map((attachment) => attachment.name)
+  assert.ok(Array.isArray(attachmentNames) && attachmentNames.length >= 1)
+  assert.equal(
+    await harnessAttachmentVisible(page, provider, attachmentNames[0]),
+    true,
+    `${provider} observer must see the Harness turn ${turn} Markdown attachment`,
+  )
+  assert.ok((responses[3]?.result?.text ?? '').trim().length > 0)
+  const entry = {
+    jobId: waiting.jobId,
+    provider,
+    turn,
+    status: row.status,
+    at: row.updated_at,
+  }
+  assert.deepEqual(Object.keys(entry), ['jobId', 'provider', 'turn', 'status', 'at'])
+  evidence.push(entry)
+  return { status: row.status }
+}
+
+function readHarnessJob(jobId) {
+  const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'), { readOnly: true })
+  try {
+    return database.prepare(
+      'SELECT provider, status, result_json, provider_submitted_at, updated_at FROM jobs WHERE job_id = ?',
+    ).get(jobId)
+  } finally {
+    database.close()
+  }
+}
+
+async function harnessAttachmentVisible(page, provider, name) {
+  const visibleName = provider === 'kimi' || provider === 'meta' ? path.parse(name).name : name
+  return pageContains(page, visibleName)
+}
+
+async function writeHarnessRoundtripEvidence(provider, evidence) {
+  const directory = path.join(root, 'test-results', 'live-provider-e2e', 'harness-attachment-roundtrip')
+  await fs.mkdir(directory, { recursive: true, mode: 0o700 })
+  await fs.writeFile(
+    path.join(directory, `${suiteRunMarker}-${provider}.json`),
+    `${JSON.stringify(evidence, null, 2)}\n`,
+    { mode: 0o600 },
+  )
+}
+
+async function conversationContinuation({ provider, journey }) {
+  const name = markerFor(provider, 'CONVERSATION_CONTINUATION')
+  const firstMarker = markerFor(provider, 'CONTINUATION_TURN_ONE')
+  const contextSecret = markerFor(provider, 'CONTINUATION_SECRET')
+  const first = await journey.run([
+    '--project-name', name,
+    '--workspace-mode', 'conversation',
+    '--prompt', `Reply with exactly ${firstMarker}. Remember ${contextSecret} for the next message but do not include it now.`,
+  ])
+  const firstText = responseResult(first.payload, 'response.read')?.text ?? ''
+  assert.match(firstText, new RegExp(escapeRegExp(firstMarker)))
+  assert.doesNotMatch(firstText, new RegExp(escapeRegExp(contextSecret)))
+  const conversationUrl = assertConversationWorkspaceResult(first)
+  await first.close()
+
+  const second = await journey.run([
+    '--project-name', name,
+    '--workspace-mode', 'conversation',
+    '--capability', 'conversation.continue',
+    '--prompt', 'Reply with exactly the secret from my previous message and no other text.',
+  ])
+  const secondText = responseResult(second.payload, 'response.read')?.text ?? ''
+  assert.match(secondText, new RegExp(escapeRegExp(contextSecret)))
+  assert.doesNotMatch(secondText, new RegExp(escapeRegExp(firstMarker)))
+  assert.equal(canonicalPageUrl(second.page.url()), conversationUrl)
+  await second.close()
+}
+
+async function modelComparison({ provider, journey }) {
+  assert.equal(provider, 'arena')
+  const prompt = [
+    'Compare discriminated-union Result values with typed exceptions and centralized middleware',
+    'for TypeScript JSON API error handling. Give executable advice and a clear recommendation.',
+  ].join(' ')
+  for (const mode of ['battle', 'side-by-side']) {
+    const run = await journey.run([
+      '--capability', 'model.compare',
+      '--arena-mode', mode,
+      '--arena-modality', 'text',
+      '--prompt', prompt,
+    ])
+    const result = responseResult(run.payload, 'response.read')
+    assert.equal(result?.alternatives?.length, 2)
+    assert.equal(result?.text, result.alternatives.map((answer) => `${answer.label}\n\n${answer.text}`).join('\n\n'))
+    assert.ok(result.alternatives.every((answer) => answer.text.length > 0))
+    if (mode === 'battle') {
+      assert.deepEqual(result.alternatives.map((answer) => answer.model), [null, null])
+    } else {
+      assert.ok(result.alternatives.every((answer) => typeof answer.model === 'string' && answer.model.length > 0))
+    }
+    await run.close()
+  }
+}
+
+async function arenaSearch({ provider, journey }) {
+  assert.equal(provider, 'arena')
+  const marker = markerFor(provider, 'SEARCH_GROUNDED_RESPONSE')
+  const run = await journey.run([
+    '--capability', 'search.web',
+    '--capability', 'response.citations',
+    '--project-name', markerFor(provider, 'SEARCH_WORKSPACE'),
+    '--workspace-mode', 'conversation',
+    '--prompt', [
+      'Use official Arena sources to list three Agent Mode tools with one-sentence purposes and visible HTTPS citations.',
+      `End with this exact marker: ${marker}`,
+    ].join(' '),
+  ])
+  const response = responseResult(run.payload, 'response.read')
+  assert.ok((response?.text ?? '').length >= 300, 'Arena Search must return a substantive grounded answer')
+  assert.match(response.text, new RegExp(escapeRegExp(marker)))
+  assert.ok(Array.isArray(response.citations) && response.citations.length > 0)
+  assert.ok(response.citations.every((citation) => citation.href.startsWith('https://')))
+  assert.ok(await visibleCitationCount(run.page, response.citations) > 0)
+  assertConversationWorkspaceResult(run)
+  await run.close()
+}
+
+async function arenaImage({ provider, journey }) {
+  assert.equal(provider, 'arena')
+  const generated = await journey.run([
+    '--capability', 'image.generation',
+    '--capability', 'artifact.download',
+    '--prompt', 'Generate one flat blue paper airplane icon centered on a plain white background, with no text.',
+  ])
+  const generatedResponse = imageGenerationResult(generated.payload, provider)
+  const generatedArtifacts = assertArenaImageArtifacts(generatedResponse)
+  await assertArenaPersistedAssets(journey.session, generated.page, generatedArtifacts)
+  assert.equal(await visibleArenaArtifactCount(generated.page, generatedArtifacts), generatedArtifacts.length)
+  await generated.close()
+
+  const edited = await journey.run([
+    '--capability', 'image.edit',
+    '--capability', 'artifact.download',
+    '--attach-file', path.join(root, 'assets', 'tokenless-mark.png'),
+    '--prompt', 'Edit the attached image so its background is pale yellow. Keep the existing logo shape and colors unchanged, and add no text.',
+  ])
+  const editedResponse = responseResult(edited.payload, 'response.read')
+  const editedArtifacts = assertArenaImageArtifacts(editedResponse)
+  await assertArenaPersistedAssets(journey.session, edited.page, editedArtifacts)
+  assert.equal(editedResponse.text.includes('Edit the attached image so its background is pale yellow.'), false)
+  assert.equal(await visibleArenaArtifactCount(edited.page, editedArtifacts), editedArtifacts.length)
+  const upload = responseResult(edited.payload, 'file.upload')
+  assert.equal(upload?.acceptance, 'accepted')
+  assert.equal(upload?.attachments?.some((attachment) => attachment.name === 'tokenless-mark.png'), true)
+  await assertArenaEditSourceDistinct(edited.page, 'tokenless-mark.png')
+  await edited.close()
+}
+
+async function metaImage({ provider, journey }) {
+  assert.equal(provider, 'meta')
+  const run = await journey.run([
+    '--capability', 'image.generation',
+    '--capability', 'artifact.download',
+    '--prompt', 'Generate one flat blue paper airplane icon centered on a plain white background, with no text.',
+  ], 360_000)
+  try {
+    const response = imageGenerationResult(run.payload, provider)
+    const artifacts = assertMetaImageArtifacts(response)
+    await assertPersistedImageAssets(journey.session, run.page, artifacts)
+    assert.equal(await visibleMetaArtifactCount(run.page, artifacts), artifacts.length)
+    assert.equal(await run.page.locator('[data-testid="composer-stop-button"]').filter({ visible: true }).count(), 0)
+  } finally {
+    await run.close()
+  }
+}
+
+async function chatgptImage({ provider, journey }) {
+  assert.equal(provider, 'chatgpt')
+  const run = await journey.run([
+    '--capability', 'image.generation',
+    '--capability', 'artifact.download',
+    '--prompt', 'Generate one flat blue paper airplane icon centered on a plain white background, with no text.',
+  ], 360_000)
+  try {
+    const response = imageGenerationResult(run.payload, provider)
+    const artifacts = assertChatGptImageArtifacts(response)
+    await assertPersistedImageAssets(journey.session, run.page, artifacts)
+    assert.equal(await visibleChatGptArtifactCount(run.page, artifacts), artifacts.length)
+    assert.equal(await run.page.locator('button[data-testid="stop-button"], button[aria-label*="Stop generating" i]').filter({ visible: true }).count(), 0)
+  } finally {
+    await run.close()
+  }
+}
+
+async function geminiImage({ provider, journey }) {
+  assert.equal(provider, 'gemini')
+  const run = await journey.run([
+    '--capability', 'image.generation',
+    '--capability', 'artifact.download',
+    '--prompt', 'Generate one simple flat blue paper airplane icon on a plain white background, with no text.',
+  ], 360_000)
+  try {
+    const response = imageGenerationResult(run.payload, provider)
+    const artifacts = assertGeminiImageArtifacts(response)
+    assert.equal(artifacts.length, 1)
+    await assertPersistedImageAssets(journey.session, run.page, artifacts)
+    assert.equal(await visibleGeminiArtifactCount(run.page, artifacts), 1)
+    assert.equal(await run.page.locator('button[aria-label="Stop response"]').filter({ visible: true }).count(), 0)
+    assert.ok(await run.page.locator('image-loading-overlay .done-generating').filter({ visible: true }).count() > 0)
+  } finally {
+    await run.close()
+  }
+}
+
+async function dolaImage({ provider, journey }) {
+  assert.equal(provider, 'dola')
+  const run = await journey.run([
+    '--capability', 'image.generation',
+    '--capability', 'artifact.download',
+    '--prompt', 'Generate one simple flat green leaf icon on a plain white background, with no text.',
+  ], 360_000)
+  try {
+    const response = imageGenerationResult(run.payload, provider)
+    const artifacts = assertDolaImageArtifacts(response)
+    assertImageConversationIdentity(run.page, artifacts, provider)
+    await assertPersistedImageAssets(journey.session, run.page, artifacts)
+    assert.equal(await visibleDolaArtifactCount(run.page, artifacts), artifacts.length)
+  } finally {
+    await run.close()
+  }
+}
+
+async function doubaoImage({ provider, journey }) {
+  assert.equal(provider, 'doubao')
+  const run = await journey.run([
+    '--capability', 'image.generation',
+    '--capability', 'artifact.download',
+    '--prompt', '生成一张简洁的蓝色纸飞机图标，白色背景，不要文字。',
+  ], 360_000)
+  try {
+    const response = imageGenerationResult(run.payload, provider)
+    const artifacts = assertDoubaoImageArtifacts(response)
+    assertImageConversationIdentity(run.page, artifacts, provider)
+    await assertPersistedImageAssets(journey.session, run.page, artifacts)
+    assert.equal(await visibleDoubaoArtifactCount(run.page, artifacts), artifacts.length)
+  } finally {
+    await run.close()
+  }
+}
+
+async function grokImage({ provider, journey }) {
+  assert.equal(provider, 'grok')
+  const run = await journey.run([
+    '--capability', 'image.generation',
+    '--capability', 'artifact.download',
+    '--prompt', 'Generate one flat blue paper airplane icon centered on a plain white background, with no text.',
+  ], 360_000)
+  try {
+    const response = imageGenerationResult(run.payload, provider)
+    const artifacts = assertGrokImageArtifacts(response)
+    assert.equal(artifacts.length, 2)
+    await assertPersistedImageAssets(journey.session, run.page, artifacts)
+    await assertGrokVisibleImagePosts(run.page, artifacts)
+    assert.equal(await run.page.locator('button[aria-label="Media generation in progress"]').filter({ visible: true }).count(), 0)
+    assert.equal(new URL(run.page.url()).pathname, `/imagine/post/${artifacts.at(-1).conversationId}`)
+  } finally {
+    await run.close()
+  }
+}
+
+async function qwenImage({ provider, journey }) {
+  assert.equal(provider, 'qwen')
+  const generated = await journey.run([
+    '--capability', 'image.generation',
+    '--capability', 'artifact.download',
+    '--prompt', 'Generate one simple flat green leaf icon on a plain white background, with no text.',
+  ], 360_000)
+  try {
+    const response = imageGenerationResult(generated.payload, provider)
+    const artifacts = assertQwenImageArtifacts(response)
+    await assertPersistedImageAssets(journey.session, generated.page, artifacts)
+    assert.equal(await visibleQwenArtifactCount(generated.page, artifacts), artifacts.length)
+  } finally {
+    await generated.close()
+  }
+  await runImageEdit({
+    provider,
+    journey,
+    prompt: 'Edit the attached image so its background is pale yellow. Preserve the subject and add no text.',
+    assertArtifacts: assertQwenImageArtifacts,
+    visibleArtifacts: visibleQwenArtifactCount,
+  })
+}
+
+async function runImageEdit({
+  provider,
+  journey,
+  prompt,
+  assertArtifacts,
+  visibleArtifacts,
+  assertVisible,
+}) {
+  const run = await journey.run([
+    '--capability', 'image.edit',
+    '--capability', 'artifact.download',
+    '--attach-file', path.join(root, 'assets', 'tokenless-mark.png'),
+    '--prompt', prompt,
+  ], 360_000)
+  try {
+    const response = responseResult(run.payload, 'response.read')
+    const artifacts = assertArtifacts(response)
+    await assertPersistedImageAssets(journey.session, run.page, artifacts)
+    if (visibleArtifacts) assert.equal(await visibleArtifacts(run.page, artifacts), artifacts.length)
+    if (assertVisible) await assertVisible(run.page, artifacts)
+    const upload = responseResult(run.payload, 'file.upload')
+    assert.equal(upload?.acceptance, 'accepted')
+    assert.equal(upload?.attachments?.some((attachment) => attachment.name === 'tokenless-mark.png'), true)
+    assert.equal(response.text?.includes(prompt), false)
+  } finally {
+    await run.close()
+  }
+}
+
+async function arenaCode({ provider, journey }) {
+  assert.equal(provider, 'arena')
+  const prompt = [
+    'Build a single-file accessible HTML counter app with Increment and Reset buttons.',
+    'Use semantic HTML, visible focus styles, an aria-live count, and no external dependencies.',
+    'Briefly explain the generated file.',
+  ].join(' ')
+  const run = await journey.run([
+    '--capability', 'website.generation',
+    '--prompt', prompt,
+  ])
+  const response = responseResult(run.payload, 'response.read')
+  assert.equal(response?.visibleProof, 'visible-arena-current-turn-code-artifact-read')
+  assert.equal(response?.text.includes(prompt), false)
+  assert.equal(response?.artifacts?.length, 1)
+  const artifact = response.artifacts[0]
+  assert.equal(artifact?.kind, 'code')
+  assert.equal(artifact?.visibleProof, 'visible-arena-current-file-code-and-associated-preview')
+  assert.equal(artifact?.files?.length, 1)
+  const file = artifact.files[0]
+  assert.equal(file?.name, 'index.html')
+  assert.equal(file?.language, 'html')
+  assert.equal(file?.mediaType, 'text/html')
+  assert.match(file?.content ?? '', /<!doctype html>/iu)
+  assert.match(file?.content ?? '', /aria-live=["']polite["']/iu)
+  assert.match(file?.content ?? '', /focus-visible/iu)
+  assert.match(file?.content ?? '', />\s*Increment\s*</iu)
+  assert.match(file?.content ?? '', />\s*Reset\s*</iu)
+  assert.equal(typeof artifact.previewUrl, 'string')
+  const previewUrl = new URL(artifact.previewUrl)
+  assert.equal(previewUrl.protocol, 'https:')
+  assert.equal(previewUrl.hostname.endsWith('.arena.site'), true)
+  assert.equal(artifact.downloadAvailable, true)
+
+  const assistant = run.page.locator('ol.flex-col-reverse > :first-child + div').filter({
+    visible: true,
+    has: run.page.getByRole('button', { name: 'Created index.html', exact: true }),
+  }).first()
+  assert.equal(await assistant.isVisible({ timeout: 100 }).catch(() => false), true)
+  const created = assistant.getByRole('button', { name: 'Created index.html', exact: true })
+  const filePanel = created.locator('xpath=..')
+  const visibleCode = filePanel.locator('.shiki.shiki-code-block').filter({ visible: true })
+  assert.equal(await visibleCode.count(), 1)
+  assert.equal((await visibleCode.innerText()).trim(), file.content)
+  const assistantPanel = assistant.locator('xpath=ancestor::*[@data-panel][1]')
+  const workspace = assistantPanel.locator('xpath=parent::*[@data-panel-group-direction][1]')
+  const workspacePanels = workspace.locator(':scope > [data-panel]').filter({ visible: true })
+  assert.equal(await workspacePanels.count(), 2)
+  assert.equal(await assistantPanel.locator('iframe[title="Option A Preview"]').count(), 0)
+  const previewPanel = workspacePanels.filter({
+    has: run.page.locator('iframe[title="Option A Preview"]'),
+  })
+  assert.equal(await previewPanel.count(), 1)
+  assert.match(await previewPanel.innerText(), /arena\.site/u)
+  const preview = previewPanel.locator('iframe[title="Option A Preview"]').filter({ visible: true })
+  assert.equal(await preview.count(), 1)
+  assert.equal(canonicalPageUrl(await preview.getAttribute('src')), canonicalPageUrl(artifact.previewUrl))
+  assert.equal(await previewPanel.getByRole('button', { name: 'Download', exact: true }).filter({ visible: true }).isVisible(), true)
+  await run.close()
+}
+
+async function arenaAgent({ provider, journey }) {
+  assert.equal(provider, 'arena')
+  const marker = markerFor(provider, 'AGENT_TERMINAL_RESPONSE')
+  const run = await journey.run([
+    '--capability', 'agent.execute',
+    '--prompt', [
+      'Using only official Arena sources, summarize exactly three Agent Mode tools in a small Markdown table',
+      'with columns Tool, Purpose, and Official source. Cite one visible official HTTPS source for each row.',
+      'Do not use external integrations or take actions outside web research.',
+      `End with this exact marker: ${marker}`,
+    ].join(' '),
+  ])
+  assert.match(run.page.url(), /^https:\/\/arena\.ai\/agent\/[A-Za-z0-9-]+$/u)
+  const response = responseResult(run.payload, 'response.read')
+  assert.equal(response?.visibleProof, 'visible-arena-current-agent-run-terminal-answer-read')
+  assert.match(response?.text ?? '', new RegExp(escapeRegExp(marker)))
+  assert.equal(response?.agentRun?.status, 'succeeded')
+  assert.equal(response?.agentRun?.visibleProof, 'visible-arena-current-agent-run-tool-steps-and-terminal-review')
+  assert.ok(Array.isArray(response?.agentRun?.steps) && response.agentRun.steps.length > 0)
+  assert.ok(response.agentRun.steps.some((step) => step.label === 'Searched the web'))
+  assert.ok(response.agentRun.steps.every((step) => typeof step.details === 'string' && step.details.length > 0))
+  assert.ok(Array.isArray(response?.citations) && response.citations.length > 0)
+  assert.ok(response.citations.every((citation) => (
+    citation.href.startsWith('https://arena.ai/') || citation.href.startsWith('https://help.arena.ai/')
+  )))
+  assert.equal(response?.artifacts, undefined)
+
+  const log = run.page.getByRole('log').filter({ visible: true })
+  assert.equal(await log.count(), 1)
+  const copy = log.getByRole('button', { name: 'Copy', exact: true }).filter({ visible: true })
+  assert.equal(await copy.count(), 1)
+  const card = copy.locator(
+    'xpath=ancestor::div[.//div[contains(concat(" ", normalize-space(@class), " "), " body-base ")]][1]',
+  )
+  assert.equal(await card.count(), 1)
+  const final = card.locator('.prose.body-base').filter({ visible: true })
+  assert.equal(await final.count(), 1)
+  assert.equal((await final.innerText()).replace(/\s+/gu, ' ').trim(), response.text)
+  const visibleCitations = await final.locator('a[href]').filter({ visible: true }).evaluateAll((anchors) => (
+    [...new Set(anchors.map((anchor) => anchor instanceof HTMLAnchorElement ? anchor.href : '').filter(Boolean))]
+  ))
+  assert.deepEqual(
+    visibleCitations.map(canonicalPageUrl).sort(),
+    response.citations.map((citation) => canonicalPageUrl(citation.href)).sort(),
+  )
+  const toolControls = card.locator('button[aria-expanded]').filter({ visible: true })
+  assert.equal(await toolControls.count(), response.agentRun.steps.length)
+  assert.equal(await run.page.getByText('Was this task successful?', { exact: true }).filter({ visible: true }).count(), 1)
+  await run.close()
+}
+
+async function arenaVideo({ provider, journey }) {
+  assert.equal(provider, 'arena')
+  const run = await journey.run([
+    '--capability', 'video.generation',
+    '--prompt', [
+      'Generate a short seamless loop of a flat blue paper airplane gliding smoothly from left to right',
+      'across a clean white background. Use a minimal flat vector style with steady framing,',
+      'no camera movement, no text, and no audio.',
+    ].join(' '),
+  ], 300_000)
+  assert.match(run.page.url(), /^https:\/\/arena\.ai\/c\/[A-Za-z0-9-]+$/u)
+  const response = responseResult(run.payload, 'response.read')
+  assert.equal(response?.visibleProof, 'visible-arena-current-turn-video-artifacts-read')
+  assert.equal(response?.alternatives?.length, 2)
+  assert.equal(response?.artifacts?.length, 2)
+  const artifacts = response.artifacts
+  assert.deepEqual(artifacts.map((artifact) => artifact.label), ['A', 'B'])
+  assert.deepEqual(response.alternatives.map((alternative) => alternative.label), ['A', 'B'])
+  assert.ok(response.alternatives.every((alternative, index) => (
+    alternative.model === null &&
+    alternative.text === artifacts[index].url &&
+    alternative.citations.length === 0
+  )))
+  assert.equal(new Set(artifacts.map((artifact) => canonicalPageUrl(artifact.url))).size, 2)
+  assert.ok(artifacts.every((artifact) => (
+    artifact.kind === 'video' &&
+    artifact.model === null &&
+    artifact.mediaType === 'video/mp4' &&
+    artifact.url.startsWith('https://') &&
+    new URL(artifact.url).pathname.endsWith('.mp4') &&
+    Number.isFinite(artifact.width) && artifact.width > 0 &&
+    Number.isFinite(artifact.height) && artifact.height > 0 &&
+    Number.isFinite(artifact.durationSeconds) && artifact.durationSeconds > 0 &&
+    artifact.downloadAvailable === false &&
+    artifact.visibleProof === 'visible-arena-current-assistant-video-panel'
+  )))
+  assert.ok(artifacts.every((artifact) => response.text.includes(`${artifact.label}: ${artifact.url}`)))
+  assert.equal(response.text.includes('https://arena.ai/videos/cta/agents-cta.mp4'), false)
+
+  const assistant = run.page.locator('ol.flex-col-reverse > :first-child + div').filter({
+    visible: true,
+    has: run.page.getByText('Assistant A', { exact: true }),
+  }).filter({
+    has: run.page.getByText('Assistant B', { exact: true }),
+  })
+  assert.equal(await assistant.count(), 1)
+  for (const artifact of artifacts) {
+    const label = assistant.getByText(`Assistant ${artifact.label}`, { exact: true }).filter({ visible: true })
+    assert.equal(await label.count(), 1)
+    const panel = label.locator('xpath=ancestor::div[.//video][1]')
+    assert.equal(await panel.count(), 1)
+    const video = panel.locator('video').filter({ visible: true })
+    assert.equal(await video.count(), 1)
+    const metadata = await video.evaluate((element) => ({
+      url: element.currentSrc || element.src,
+      width: element.videoWidth,
+      height: element.videoHeight,
+      durationSeconds: element.duration,
+    }))
+    assert.equal(canonicalPageUrl(metadata.url), canonicalPageUrl(artifact.url))
+    assert.equal(metadata.width, artifact.width)
+    assert.equal(metadata.height, artifact.height)
+    assert.equal(metadata.durationSeconds, artifact.durationSeconds)
+    assert.equal(await panel.getByText(/Download/iu).filter({ visible: true }).count(), 0)
+  }
+  assert.equal(await run.page.locator('button[aria-label*="Stop" i]').filter({ visible: true }).count(), 0)
+  await run.close()
 }
 
 async function conversationWorkflow({ provider, journey }) {
@@ -709,7 +1378,7 @@ async function conversationWorkflow({ provider, journey }) {
     assert.equal(await pageContains(first.page, responseMarker, 2), true)
     assert.ok(Array.isArray(citations) && citations.length > 0, `${provider} must return normalized real citations`)
     assert.ok(await visibleCitationCount(first.page, citations) > 0, `${provider} observer must see a returned citation link`)
-    const firstUrl = assertConversationWorkspaceResult(provider, journey.taskId, first)
+    const firstUrl = assertConversationWorkspaceResult(first)
     await first.close()
 
     const second = await journey.run([
@@ -720,12 +1389,11 @@ async function conversationWorkflow({ provider, journey }) {
         '--deepseek-deepthink', 'off',
         '--deepseek-search', 'on',
       ] : []),
-      '--prompt', 'Reply with exactly the secret from my previous message and no other text.',
+      '--prompt', 'Return a JSON object with the secret from my previous message and its exact character count.',
     ])
     const secondText = responseResult(second.payload, 'response.read')?.text ?? ''
     assert.match(secondText, new RegExp(escapeRegExp(contextSecret)))
     assert.equal(canonicalPageUrl(second.page.url()), firstUrl, `${provider} both CLI processes must share one exact conversation`)
-    assertTaskConversationMapping(provider, journey.taskId, firstUrl, second.payload)
     await second.close()
   } finally {
     await fs.rm(attachment, { force: true })
@@ -811,25 +1479,22 @@ async function workspaceResponseCitations({ provider, journey }) {
   assert.equal(await pageContains(run.page, responseMarker, 2), true)
   assert.ok(Array.isArray(response?.citations) && response.citations.length > 0, `${provider} must return normalized real citations`)
   assert.ok(await visibleCitationCount(run.page, response.citations) > 0, `${provider} observer must see a returned citation link`)
-  assertConversationWorkspaceResult(provider, journey.taskId, run)
+  assertConversationWorkspaceResult(run)
   await run.close()
 }
 
 async function workspaceResponseBaseline({ provider, journey }) {
   const name = markerFor(provider, 'WORKSPACE_RESPONSE')
-  const responseMarker = markerFor(provider, 'WORKSPACE_RESPONSE_MARKER')
-  const prompt = provider === 'doubao'
-    ? `请只在代码块中原样回复：\`${responseMarker}\``
-    : `Reply with this exact marker: ${responseMarker}`
+  const prompt = 'What is the capital of Australia? Answer in one sentence.'
   const run = await journey.run([
     '--project-name', name,
     '--workspace-mode', 'conversation',
     '--prompt', prompt,
   ])
   const response = responseResult(run.payload, 'response.read')
-  assert.match(response?.text ?? '', new RegExp(escapeRegExp(responseMarker)))
-  assert.equal(await pageContains(run.page, responseMarker, 2), true)
-  assertConversationWorkspaceResult(provider, journey.taskId, run)
+  assert.match(response?.text ?? '', /Canberra/i)
+  assert.equal(await pageContains(run.page, 'Canberra'), true)
+  assertConversationWorkspaceResult(run)
   await run.close()
 }
 
@@ -916,20 +1581,6 @@ async function nativeProject({ provider, journey }) {
     assert.match(text, new RegExp(escapeRegExp(instructionMarker)))
     assert.equal(canonicalPageUrl(second.page.url()), conversationUrl)
 
-    const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'), { readOnly: true })
-    try {
-      const project = database.prepare(
-        'SELECT resource_id, canonical_url FROM provider_projects WHERE provider = ? AND profile_id = ? AND name = ?',
-      ).get(provider, createdResult.scope.profileId, projectName)
-      assert.equal(project?.canonical_url, projectUrl)
-      const conversation = database.prepare(
-        `SELECT canonical_url FROM provider_conversations
-         WHERE provider = ? AND profile_id = ? AND project_resource_id = ? AND task_id = ?`,
-      ).get(provider, createdResult.scope.profileId, project.resource_id, journey.taskId)
-      assert.equal(conversation?.canonical_url, conversationUrl)
-    } finally {
-      database.close()
-    }
     await second.close()
   } catch (error) {
     primaryError = error
@@ -1140,16 +1791,41 @@ async function projectChoice(provider, journey, targetUrl, kind) {
   }
 }
 
-function createProviderJourney(session, provider) {
+function createProviderState() {
+  return {
+    authenticated: false,
+    skipReason: null,
+    taskIds: new Set(),
+    targetIds: new Set(),
+    pageRefs: new Set(),
+  }
+}
+
+function createCapabilityJourney(session, provider, caseId, providerState) {
   const journey = {
     session,
     provider,
+    caseId,
+    providerState,
     taskId: markerFor(provider, 'JOURNEY_TASK'),
+    pageRef: `page:${markerFor(provider, 'JOURNEY_PAGE')}`,
     targetId: null,
+    daemonPid: null,
+    pageRefHash: null,
     actionDocumentTimeOrigin: null,
-    authenticated: false,
-    skipReason: null,
   }
+  assert.equal(
+    providerState.taskIds.has(journey.taskId),
+    false,
+    `${provider} capability cases must use distinct task ids`,
+  )
+  providerState.taskIds.add(journey.taskId)
+  assert.equal(
+    providerState.pageRefs.has(journey.pageRef),
+    false,
+    `${provider} capability cases must use distinct page refs`,
+  )
+  providerState.pageRefs.add(journey.pageRef)
   journey.action = (visibleAction, args = [], timeoutMs = 120_000, observeAfterRelease, observeBeforeRelease) => (
     action(journey, visibleAction, args, timeoutMs, observeAfterRelease, observeBeforeRelease)
   )
@@ -1167,11 +1843,13 @@ async function action(
   observeAfterRelease,
   observeBeforeRelease,
 ) {
+  assert.equal(args.includes('--page-ref'), false, 'provider journey owns the stable page ref')
   assert.equal(args.includes('--task-id'), false, 'provider journey owns the stable task id')
   const operation = await journey.session.startCli([
     'provider-action',
     '--provider', journey.provider,
     '--task-id', journey.taskId,
+    '--page-ref', journey.pageRef,
     '--action', visibleAction,
     ...args,
     '--browser-visibility', 'headed',
@@ -1195,6 +1873,7 @@ async function action(
 }
 
 async function cliRun(journey, args, timeoutMs = 300_000, observeAfterRelease) {
+  assert.equal(args.includes('--page-ref'), false, 'provider journey owns the stable page ref')
   assert.equal(args.includes('--task-id'), false, 'provider journey owns the stable task id')
   recordSubmissionAttempt(journey)
   journey.actionDocumentTimeOrigin = null
@@ -1202,6 +1881,7 @@ async function cliRun(journey, args, timeoutMs = 300_000, observeAfterRelease) {
     'run',
     '--provider', journey.provider,
     '--task-id', journey.taskId,
+    '--page-ref', journey.pageRef,
     ...args,
     '--browser-visibility', 'headed',
     '--timeout-ms', String(timeoutMs),
@@ -1225,7 +1905,24 @@ async function cliRun(journey, args, timeoutMs = 300_000, observeAfterRelease) {
 async function assertJourneyPage(journey, waiting, page, preserveActionDocument) {
   assert.equal(waiting.provider, journey.provider)
   assert.equal(canonicalPageUrl(waiting.url), canonicalPageUrl(page.url()))
-  if (journey.targetId === null) journey.targetId = waiting.targetId
+  if (journey.daemonPid === null) journey.daemonPid = waiting.daemonPid
+  assert.equal(waiting.daemonPid, journey.daemonPid, `${journey.provider} capability journey must stay on one daemon`)
+  if (journey.pageRefHash === null) journey.pageRefHash = waiting.pageRefHash
+  assert.equal(waiting.pageRefHash, journey.pageRefHash, `${journey.provider} capability journey must keep one page ref`)
+  assert.equal(
+    waiting.reusedPageBinding,
+    journey.targetId !== null,
+    `${journey.provider} capability journey must reuse its managed page binding after the first action`,
+  )
+  if (journey.targetId === null) {
+    assert.equal(
+      journey.providerState.targetIds.has(waiting.targetId),
+      false,
+      `${journey.provider} capability case ${journey.caseId} must use a distinct Chromium page target`,
+    )
+    journey.providerState.targetIds.add(waiting.targetId)
+    journey.targetId = waiting.targetId
+  }
   assert.equal(
     waiting.targetId,
     journey.targetId,
@@ -1327,43 +2024,26 @@ function responseResult(payload, actionName) {
   return [...responses].reverse().find((response) => response?.ok === true && response.action === actionName)?.result ?? null
 }
 
-function assertConversationWorkspaceResult(provider, taskId, run) {
+function imageGenerationResult(payload, provider) {
+  assert.equal(payload?.tokenless?.provider, provider)
+  assert.equal(payload?.tokenless?.execution_mode, 'browser')
+  assert.equal(typeof payload?.tokenless?.job_id, 'string')
+  assert.ok(Array.isArray(payload?.data) && payload.data.length > 0)
+  assert.ok(payload.data.every((entry) => (
+    typeof entry?.url === 'string' &&
+    entry.url.startsWith('/v1/private/assets/') &&
+    entry?.asset?.provider === provider
+  )))
+  return { artifacts: payload.data.map((entry) => entry.asset) }
+}
+
+function assertConversationWorkspaceResult(run) {
   const result = responseResult(run.payload, 'workspace.ensure')
   assert.equal(result?.mode, 'conversation')
   assert.equal(result?.resource?.kind, 'conversation')
   assert.equal(result?.resource?.native, false)
   assert.equal(result?.resource?.disposition, 'fallback')
-  const conversationUrl = canonicalPageUrl(run.page.url())
-  const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'), { readOnly: true })
-  try {
-    const mapping = database.prepare(
-      `SELECT canonical_url
-       FROM provider_task_conversations
-       WHERE provider = ? AND profile_id = ? AND task_id = ?`,
-    ).get(provider, result.scope.profileId, taskId)
-    assert.equal(typeof mapping?.canonical_url, 'string', `${provider} must persist the conversation Workspace mapping`)
-    assert.equal(canonicalPageUrl(mapping?.canonical_url), conversationUrl)
-  } finally {
-    database.close()
-  }
-  return conversationUrl
-}
-
-function assertTaskConversationMapping(provider, taskId, expectedUrl, payload) {
-  const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'), { readOnly: true })
-  try {
-    const job = database.prepare('SELECT profile_id FROM jobs WHERE job_id = ?').get(payload?.jobId)
-    assert.equal(typeof job?.profile_id, 'string')
-    const mapping = database.prepare(
-      `SELECT canonical_url
-       FROM provider_task_conversations
-       WHERE provider = ? AND profile_id = ? AND task_id = ?`,
-    ).get(provider, job.profile_id, taskId)
-    assert.equal(typeof mapping?.canonical_url, 'string', `${provider} must persist the continuation mapping`)
-    assert.equal(canonicalPageUrl(mapping.canonical_url), expectedUrl)
-  } finally {
-    database.close()
-  }
+  return canonicalPageUrl(run.page.url())
 }
 
 async function composerContains(page, marker) {
@@ -1420,6 +2100,551 @@ async function visibleCitationCount(page, citations) {
     if (expected.has(canonical) && await control.isVisible({ timeout: 100 }).catch(() => false)) count += 1
   }
   return count
+}
+
+function assertArenaImageArtifacts(response) {
+  assert.ok(Array.isArray(response.artifacts) && response.artifacts.length > 0)
+  assert.ok(response.artifacts.every((artifact) => (
+    artifact?.kind === 'image' &&
+    !Object.prototype.hasOwnProperty.call(artifact, 'url') &&
+    typeof artifact.mediaType === 'string' &&
+    artifact.mediaType.startsWith('image/') &&
+    typeof artifact.assetRef === 'string' &&
+    artifact.assetRef.startsWith('assets/') &&
+    artifact.downloadAvailable === true &&
+    Number.isSafeInteger(artifact.byteSize) &&
+    artifact.byteSize > 0 &&
+    /^[a-f0-9]{64}$/u.test(artifact.sha256) &&
+    typeof artifact.createdAt === 'string' &&
+    artifact.provider === 'arena' &&
+    typeof artifact.jobId === 'string' &&
+    (artifact.taskId === null || typeof artifact.taskId === 'string') &&
+    typeof artifact.conversationId === 'string' &&
+    Number.isSafeInteger(artifact.width) &&
+    artifact.width >= 256 &&
+    Number.isSafeInteger(artifact.height) &&
+    artifact.height >= 256
+  )))
+  return response.artifacts
+}
+
+function assertMetaImageArtifacts(response) {
+  assert.ok(Array.isArray(response.artifacts) && response.artifacts.length > 0)
+  assert.ok(response.artifacts.every((artifact) => (
+    artifact?.kind === 'image' &&
+    !Object.prototype.hasOwnProperty.call(artifact, 'url') &&
+    typeof artifact.mediaType === 'string' &&
+    artifact.mediaType.startsWith('image/') &&
+    typeof artifact.assetRef === 'string' &&
+    artifact.assetRef.startsWith('assets/') &&
+    artifact.downloadAvailable === true &&
+    Number.isSafeInteger(artifact.byteSize) &&
+    artifact.byteSize > 0 &&
+    /^[a-f0-9]{64}$/u.test(artifact.sha256) &&
+    typeof artifact.createdAt === 'string' &&
+    artifact.provider === 'meta' &&
+    typeof artifact.jobId === 'string' &&
+    (artifact.taskId === null || typeof artifact.taskId === 'string') &&
+    typeof artifact.conversationId === 'string' &&
+    Number.isSafeInteger(artifact.width) &&
+    artifact.width > 0 &&
+    Number.isSafeInteger(artifact.height) &&
+    artifact.height > 0
+  )))
+  return response.artifacts
+}
+
+function assertChatGptImageArtifacts(response) {
+  assert.ok(Array.isArray(response.artifacts) && response.artifacts.length > 0)
+  assert.ok(response.artifacts.every((artifact) => (
+    artifact?.kind === 'image' &&
+    !Object.prototype.hasOwnProperty.call(artifact, 'url') &&
+    typeof artifact.mediaType === 'string' &&
+    artifact.mediaType.startsWith('image/') &&
+    typeof artifact.assetRef === 'string' &&
+    artifact.assetRef.startsWith('assets/') &&
+    artifact.downloadAvailable === true &&
+    Number.isSafeInteger(artifact.byteSize) &&
+    artifact.byteSize > 0 &&
+    /^[a-f0-9]{64}$/u.test(artifact.sha256) &&
+    typeof artifact.createdAt === 'string' &&
+    artifact.provider === 'chatgpt' &&
+    typeof artifact.jobId === 'string' &&
+    (artifact.taskId === null || typeof artifact.taskId === 'string') &&
+    typeof artifact.conversationId === 'string' &&
+    Number.isSafeInteger(artifact.width) &&
+    artifact.width > 0 &&
+    Number.isSafeInteger(artifact.height) &&
+    artifact.height > 0
+  )))
+  return response.artifacts
+}
+
+function assertGeminiImageArtifacts(response) {
+  assert.ok(Array.isArray(response.artifacts) && response.artifacts.length === 1)
+  assert.ok(response.artifacts.every((artifact) => (
+    artifact?.kind === 'image' &&
+    !Object.prototype.hasOwnProperty.call(artifact, 'url') &&
+    typeof artifact.mediaType === 'string' &&
+    artifact.mediaType.startsWith('image/') &&
+    typeof artifact.assetRef === 'string' &&
+    artifact.assetRef.startsWith('assets/') &&
+    artifact.downloadAvailable === true &&
+    Number.isSafeInteger(artifact.byteSize) &&
+    artifact.byteSize > 0 &&
+    /^[a-f0-9]{64}$/u.test(artifact.sha256) &&
+    typeof artifact.createdAt === 'string' &&
+    artifact.provider === 'gemini' &&
+    typeof artifact.jobId === 'string' &&
+    (artifact.taskId === null || typeof artifact.taskId === 'string') &&
+    typeof artifact.conversationId === 'string' &&
+    Number.isSafeInteger(artifact.width) &&
+    artifact.width > 0 &&
+    Number.isSafeInteger(artifact.height) &&
+    artifact.height > 0
+  )))
+  return response.artifacts
+}
+
+function assertDolaImageArtifacts(response) {
+  assert.ok(Array.isArray(response.artifacts) && response.artifacts.length > 0)
+  assert.ok(response.artifacts.every((artifact) => (
+    artifact?.kind === 'image' &&
+    !Object.prototype.hasOwnProperty.call(artifact, 'url') &&
+    typeof artifact.mediaType === 'string' &&
+    artifact.mediaType.startsWith('image/') &&
+    typeof artifact.assetRef === 'string' &&
+    artifact.assetRef.startsWith('assets/') &&
+    artifact.downloadAvailable === true &&
+    Number.isSafeInteger(artifact.byteSize) &&
+    artifact.byteSize > 0 &&
+    /^[a-f0-9]{64}$/u.test(artifact.sha256) &&
+    artifact.provider === 'dola' &&
+    typeof artifact.conversationId === 'string' &&
+    Number.isSafeInteger(artifact.width) &&
+    artifact.width > 0 &&
+    Number.isSafeInteger(artifact.height) &&
+    artifact.height > 0
+  )))
+  return response.artifacts
+}
+
+function assertDoubaoImageArtifacts(response) {
+  assert.ok(Array.isArray(response.artifacts) && response.artifacts.length > 0)
+  assert.ok(response.artifacts.every((artifact) => (
+    artifact?.kind === 'image' &&
+    !Object.prototype.hasOwnProperty.call(artifact, 'url') &&
+    typeof artifact.mediaType === 'string' &&
+    artifact.mediaType.startsWith('image/') &&
+    typeof artifact.assetRef === 'string' &&
+    artifact.assetRef.startsWith('assets/') &&
+    artifact.downloadAvailable === true &&
+    Number.isSafeInteger(artifact.byteSize) &&
+    artifact.byteSize > 0 &&
+    /^[a-f0-9]{64}$/u.test(artifact.sha256) &&
+    artifact.provider === 'doubao' &&
+    typeof artifact.conversationId === 'string' &&
+    Number.isSafeInteger(artifact.width) &&
+    artifact.width > 0 &&
+    Number.isSafeInteger(artifact.height) &&
+    artifact.height > 0
+  )))
+  return response.artifacts
+}
+
+function assertImageConversationIdentity(page, artifacts, provider) {
+  const current = new URL(page.url())
+  const expectedOrigin = provider === 'dola' ? 'https://www.dola.com' : 'https://www.doubao.com'
+  assert.equal(current.origin, expectedOrigin)
+  const match = current.pathname.match(/^\/chat\/([^/]+)$/u)
+  assert.ok(match?.[1] && match[1] !== 'create-image', `${provider} must reach an exact image conversation URL`)
+  assert.ok(artifacts.every((artifact) => artifact.conversationId === match[1]))
+}
+
+function assertGrokImageArtifacts(response) {
+  assert.ok(Array.isArray(response.artifacts) && response.artifacts.length === 2)
+  assert.ok(response.artifacts.every((artifact) => (
+    artifact?.kind === 'image' &&
+    !Object.prototype.hasOwnProperty.call(artifact, 'url') &&
+    typeof artifact.mediaType === 'string' &&
+    artifact.mediaType === 'image/jpeg' &&
+    typeof artifact.assetRef === 'string' &&
+    artifact.assetRef.startsWith('assets/') &&
+    artifact.downloadAvailable === true &&
+    Number.isSafeInteger(artifact.byteSize) &&
+    artifact.byteSize > 0 &&
+    /^[a-f0-9]{64}$/u.test(artifact.sha256) &&
+    typeof artifact.createdAt === 'string' &&
+    artifact.provider === 'grok' &&
+    typeof artifact.jobId === 'string' &&
+    (artifact.taskId === null || typeof artifact.taskId === 'string') &&
+    /^[A-Za-z0-9_-]+$/u.test(artifact.conversationId) &&
+    Number.isSafeInteger(artifact.width) &&
+    artifact.width === 768 &&
+    Number.isSafeInteger(artifact.height) &&
+    artifact.height === 1152
+  )))
+  assert.equal(new Set(response.artifacts.map((artifact) => artifact.conversationId)).size, 2)
+  return response.artifacts
+}
+
+function assertQwenImageArtifacts(response) {
+  assert.ok(Array.isArray(response.artifacts) && response.artifacts.length > 0)
+  assert.ok(response.artifacts.every((artifact) => (
+    artifact?.kind === 'image' &&
+    !Object.prototype.hasOwnProperty.call(artifact, 'url') &&
+    typeof artifact.mediaType === 'string' &&
+    artifact.mediaType.startsWith('image/') &&
+    typeof artifact.assetRef === 'string' &&
+    artifact.assetRef.startsWith('assets/') &&
+    artifact.downloadAvailable === true &&
+    Number.isSafeInteger(artifact.byteSize) &&
+    artifact.byteSize > 0 &&
+    /^[a-f0-9]{64}$/u.test(artifact.sha256) &&
+    typeof artifact.createdAt === 'string' &&
+    artifact.provider === 'qwen' &&
+    typeof artifact.jobId === 'string' &&
+    (artifact.taskId === null || typeof artifact.taskId === 'string') &&
+    typeof artifact.conversationId === 'string' &&
+    Number.isSafeInteger(artifact.width) &&
+    artifact.width > 0 &&
+    Number.isSafeInteger(artifact.height) &&
+    artifact.height > 0
+  )))
+  return response.artifacts
+}
+
+async function assertArenaPersistedAssets(session, page, artifacts) {
+  const daemonToken = (await fs.readFile(path.join(session.homeDir, 'daemon.token'), 'utf8')).trim()
+  for (const artifact of artifacts) {
+    const file = path.join(session.homeDir, artifact.assetRef)
+    const bytes = await fs.readFile(file)
+    assert.equal(bytes.byteLength, artifact.byteSize)
+    assert.equal(createHash('sha256').update(bytes).digest('hex'), artifact.sha256)
+    const assetRoute = artifact.assetRef.slice('assets/'.length)
+    const response = await fetch(`${session.daemonUrl}/v1/private/assets/${assetRoute}`, {
+      headers: { authorization: `Bearer ${daemonToken}` },
+    })
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get('content-type'), artifact.mediaType)
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes)
+    const decoded = await decodeImageBytesInBrowser(page, bytes, artifact.mediaType)
+    assert.deepEqual([decoded.width, decoded.height], [artifact.width, artifact.height])
+  }
+  const traversal = await fetch(`${session.daemonUrl}/v1/private/assets/${encodeURIComponent('../tokenless.sqlite3')}/unused/unused/0.png`, {
+    headers: { authorization: `Bearer ${daemonToken}` },
+  })
+  assert.equal(traversal.status, 400)
+}
+
+async function assertPersistedImageAssets(session, page, artifacts) {
+  const daemonToken = (await fs.readFile(path.join(session.homeDir, 'daemon.token'), 'utf8')).trim()
+  for (const artifact of artifacts) {
+    const file = path.join(session.homeDir, artifact.assetRef)
+    const bytes = await fs.readFile(file)
+    assert.equal(bytes.byteLength, artifact.byteSize)
+    assert.equal(createHash('sha256').update(bytes).digest('hex'), artifact.sha256)
+    const assetRoute = artifact.assetRef.slice('assets/'.length)
+    const response = await fetch(`${session.daemonUrl}/v1/private/assets/${assetRoute}`, {
+      headers: { authorization: `Bearer ${daemonToken}` },
+    })
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get('content-type'), artifact.mediaType)
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes)
+    const decoded = await decodeImageBytesInBrowser(page, bytes, artifact.mediaType)
+    assert.deepEqual([decoded.width, decoded.height], [artifact.width, artifact.height])
+  }
+}
+
+async function visibleArenaArtifactCount(page, artifacts) {
+  const expected = new Map(artifacts.map((artifact) => [artifact.sha256, artifact]))
+  const assistant = currentArenaImageAssistant(page)
+  assert.equal(await assistant.isVisible({ timeout: 100 }).catch(() => false), true)
+  const images = assistant.locator('img').filter({ visible: true })
+  let count = 0
+  for (let index = 0; index < await images.count(); index += 1) {
+    const image = images.nth(index)
+    const source = await image.getAttribute('src').catch(() => null)
+    if (!source) continue
+    const response = await page.request.get(new URL(source, page.url()).toString(), {
+      timeout: 60_000,
+      failOnStatusCode: false,
+      headers: { referer: page.url() },
+    })
+    assert.equal(response.ok(), true)
+    const bytes = Buffer.from(await response.body())
+    const artifact = expected.get(createHash('sha256').update(bytes).digest('hex'))
+    if (!artifact) continue
+    const decoded = await decodeImageBytesInBrowser(page, bytes, artifact.mediaType)
+    assert.deepEqual([decoded.width, decoded.height], [artifact.width, artifact.height])
+    count += 1
+  }
+  return count
+}
+
+async function visibleMetaArtifactCount(page, artifacts) {
+  const expected = new Map(artifacts.map((artifact) => [artifact.sha256, artifact]))
+  const assistant = currentMetaImageAssistant(page)
+  assert.equal(await assistant.isVisible({ timeout: 100 }).catch(() => false), true)
+  const images = assistant.locator('button[aria-label="View media"] img[data-testid="ur-image-tile"]').filter({ visible: true })
+  let count = 0
+  for (let index = 0; index < await images.count(); index += 1) {
+    const image = images.nth(index)
+    const source = await image.evaluate((element) => element instanceof HTMLImageElement
+      ? element.currentSrc || element.src
+      : '')
+    if (!source) continue
+    const response = await page.request.get(new URL(source, page.url()).toString(), {
+      timeout: 60_000,
+      failOnStatusCode: false,
+      headers: { referer: page.url() },
+    })
+    assert.equal(response.ok(), true)
+    const bytes = Buffer.from(await response.body())
+    const artifact = expected.get(createHash('sha256').update(bytes).digest('hex'))
+    assert.ok(artifact, 'Meta DOM image bytes must match a persisted asset digest')
+    const decoded = await decodeImageBytesInBrowser(page, bytes, artifact.mediaType)
+    assert.deepEqual([decoded.width, decoded.height], [artifact.width, artifact.height])
+    count += 1
+  }
+  return count
+}
+
+async function visibleChatGptArtifactCount(page, artifacts) {
+  const expected = new Map(artifacts.map((artifact) => [artifact.sha256, artifact]))
+  const assistant = currentChatGptImageAssistant(page)
+  assert.equal(await assistant.isVisible({ timeout: 100 }).catch(() => false), true)
+  const images = assistant.locator('[id^="image-"] img').filter({ visible: true })
+  const seen = new Set()
+  let count = 0
+  for (let index = 0; index < await images.count(); index += 1) {
+    const image = images.nth(index)
+    const source = await image.evaluate((element) => element instanceof HTMLImageElement
+      ? element.currentSrc || element.src
+      : '')
+    if (!source) continue
+    const parsed = new URL(source, page.url())
+    parsed.hash = ''
+    const canonical = parsed.toString()
+    if (seen.has(canonical)) continue
+    seen.add(canonical)
+    const response = await page.request.get(canonical, {
+      timeout: 60_000,
+      failOnStatusCode: false,
+      headers: { referer: page.url() },
+    })
+    assert.equal(response.ok(), true)
+    const bytes = Buffer.from(await response.body())
+    const artifact = expected.get(createHash('sha256').update(bytes).digest('hex'))
+    assert.ok(artifact, 'ChatGPT unique DOM image bytes must match a persisted asset digest')
+    const decoded = await decodeImageBytesInBrowser(page, bytes, artifact.mediaType)
+    assert.deepEqual([decoded.width, decoded.height], [artifact.width, artifact.height])
+    count += 1
+  }
+  return count
+}
+
+async function visibleGeminiArtifactCount(page, artifacts) {
+  const expected = new Map(artifacts.map((artifact) => [artifact.sha256, artifact]))
+  const images = page.locator('message-content response-element generated-image single-image img.image.animate.loaded').filter({ visible: true })
+  const seen = new Set()
+  let count = 0
+  for (let index = 0; index < await images.count(); index += 1) {
+    const image = images.nth(index)
+    const source = await image.evaluate((element) => element instanceof HTMLImageElement
+      ? element.currentSrc || element.src
+      : '')
+    if (!source.startsWith('blob:https://gemini.google.com/') || seen.has(source)) continue
+    seen.add(source)
+    const encoded = await image.evaluate(async (element) => {
+      if (!(element instanceof HTMLImageElement)) throw new Error('Gemini image element is invalid')
+      const canvas = document.createElement('canvas')
+      canvas.width = element.naturalWidth
+      canvas.height = element.naturalHeight
+      const context = canvas.getContext('2d')
+      if (!context) throw new Error('Gemini canvas context unavailable')
+      context.drawImage(element, 0, 0)
+      const blob = await new Promise((resolve, reject) => {
+        canvas.toBlob((value) => value ? resolve(value) : reject(new Error('Gemini canvas export failed')), 'image/png')
+      })
+      const bytes = new Uint8Array(await blob.arrayBuffer())
+      let binary = ''
+      for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+        binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + 0x8000, bytes.length)))
+      }
+      return btoa(binary)
+    })
+    const bytes = Buffer.from(encoded, 'base64')
+    const artifact = expected.get(createHash('sha256').update(bytes).digest('hex'))
+    assert.ok(artifact, 'Gemini current-response blob bytes must match a persisted asset digest')
+    assert.equal(bytes.byteLength, artifact.byteSize)
+    const decoded = await decodeImageBytesInBrowser(page, bytes, artifact.mediaType)
+    assert.deepEqual([decoded.width, decoded.height], [artifact.width, artifact.height])
+    count += 1
+  }
+  return count
+}
+
+async function visibleDolaArtifactCount(page, artifacts) {
+  return await visibleProviderImageArtifactCount(
+    page,
+    artifacts,
+    '[data-render-engine="node"]:not(.justify-end) img',
+  )
+}
+
+async function visibleQwenArtifactCount(page, artifacts) {
+  return await visibleProviderImageArtifactCount(
+    page,
+    artifacts,
+    '.qwen-chat-message-assistant img.qwen-image',
+  )
+}
+
+async function visibleDoubaoArtifactCount(page, artifacts) {
+  return await visibleProviderImageArtifactCount(
+    page,
+    artifacts,
+    'div[data-message-id].grid img',
+  )
+}
+
+async function visibleProviderImageArtifactCount(page, artifacts, selector) {
+  const expected = new Map(artifacts.map((artifact) => [artifact.sha256, artifact]))
+  const images = page.locator(selector).filter({ visible: true })
+  let count = 0
+  for (let index = 0; index < await images.count(); index += 1) {
+    const image = images.nth(index)
+    const source = await image.evaluate((element) => element instanceof HTMLImageElement
+      ? element.currentSrc || element.src
+      : '')
+    if (!source.startsWith('https://')) continue
+    const response = await page.request.get(new URL(source, page.url()).toString(), {
+      timeout: 60_000,
+      failOnStatusCode: false,
+      headers: { referer: page.url() },
+    })
+    assert.equal(response.ok(), true)
+    const bytes = Buffer.from(await response.body())
+    const artifact = expected.get(createHash('sha256').update(bytes).digest('hex'))
+    assert.ok(artifact, 'provider DOM image bytes must match a persisted asset digest')
+    const decoded = await decodeImageBytesInBrowser(page, bytes, artifact.mediaType)
+    assert.deepEqual([decoded.width, decoded.height], [artifact.width, artifact.height])
+    count += 1
+  }
+  return count
+}
+
+async function assertGrokVisibleImagePosts(page, artifacts) {
+  const expected = new Map(artifacts.map((artifact) => [artifact.conversationId, artifact]))
+  for (const [postId, artifact] of expected) {
+    await page.goto(`https://grok.com/imagine/post/${encodeURIComponent(postId)}?scope=asset`, {
+      waitUntil: 'commit',
+      timeout: 60_000,
+    })
+    await page.locator(`main img[src*="/generated/${postId}/"]`).filter({ visible: true }).first().waitFor({
+      state: 'visible',
+      timeout: 60_000,
+    })
+    await page.waitForFunction((expectedPostId) => [...document.querySelectorAll('main img')].some((element) => (
+      element instanceof HTMLImageElement &&
+      (element.currentSrc || element.src).includes(`/generated/${expectedPostId}/`) &&
+      element.naturalWidth > 0 &&
+      element.naturalHeight > 0
+    )), postId, { timeout: 60_000 })
+    const source = await page.locator('main img').filter({ visible: true }).evaluateAll((elements, expectedPostId) => {
+      for (const element of elements) {
+        if (!(element instanceof HTMLImageElement)) continue
+        const candidate = element.currentSrc || element.src
+        if (!candidate.startsWith('https://')) continue
+        try {
+          const parsed = new URL(candidate)
+          if (parsed.hostname === 'assets.grok.com' && parsed.pathname.includes(`/generated/${expectedPostId}/`)) {
+            return {
+              url: candidate,
+              width: element.naturalWidth,
+              height: element.naturalHeight,
+            }
+          }
+        } catch {
+          // Ignore malformed visible images and fail closed below.
+        }
+      }
+      return null
+    }, postId)
+    assert.ok(source, `Grok current post ${postId} must expose its matching main image`)
+    assert.equal(source.width, artifact.width)
+    assert.equal(source.height, artifact.height)
+    const response = await page.request.get(source.url, {
+      timeout: 60_000,
+      failOnStatusCode: false,
+      headers: { referer: page.url() },
+    })
+    assert.equal(response.ok(), true)
+    assert.equal(response.headers()['content-type']?.split(';', 1)[0], artifact.mediaType)
+    const bytes = Buffer.from(await response.body())
+    assert.equal(createHash('sha256').update(bytes).digest('hex'), artifact.sha256)
+    const decoded = await decodeImageBytesInBrowser(page, bytes, artifact.mediaType)
+    assert.deepEqual([decoded.width, decoded.height], [artifact.width, artifact.height])
+  }
+}
+
+async function assertArenaEditSourceDistinct(page, sourceName) {
+  const assistant = currentArenaImageAssistant(page)
+  const providerLabels = (await assistant.locator('p.text-xs').filter({ visible: true }).allInnerTexts())
+    .map((value) => value.replace(/\s+/gu, ' ').trim())
+  assert.equal(providerLabels[0], 'Response provided by')
+  assert.ok(providerLabels[1], 'Arena assistant output must expose its visible response provider label')
+
+  const output = await assistant.locator('img').filter({ visible: true }).first().evaluate((image) => ({
+    url: image instanceof HTMLImageElement ? image.currentSrc || image.src : '',
+    width: image instanceof HTMLImageElement ? image.naturalWidth : 0,
+    height: image instanceof HTMLImageElement ? image.naturalHeight : 0,
+  }))
+  const user = page.locator('ol.flex-col-reverse > div.mx-auto.flex.w-full.justify-end').filter({
+    has: page.locator(`img[alt="${sourceName}"]`),
+  }).first()
+  assert.equal(await user.isVisible({ timeout: 100 }).catch(() => false), true)
+  const source = await user.locator(`img[alt="${sourceName}"]`).filter({ visible: true }).first().evaluate((image) => ({
+    url: image instanceof HTMLImageElement ? image.currentSrc || image.src : '',
+    width: image instanceof HTMLImageElement ? image.naturalWidth : 0,
+    height: image instanceof HTMLImageElement ? image.naturalHeight : 0,
+  }))
+
+  assert.notEqual(output.url, source.url)
+  assert.notDeepEqual([output.width, output.height], [source.width, source.height])
+}
+
+async function decodeImageBytesInBrowser(page, bytes, mediaType) {
+  const encodedBytes = Buffer.from(bytes).toString('base64')
+  const decoded = await page.evaluate(async ({ encodedBytes: encoded, type }) => {
+    const binary = atob(encoded)
+    const decodedBytes = new Uint8Array(binary.length)
+    for (let index = 0; index < binary.length; index += 1) decodedBytes[index] = binary.charCodeAt(index)
+    const blob = new Blob([decodedBytes], { type })
+    const bitmap = await createImageBitmap(blob)
+    const dimensions = { width: bitmap.width, height: bitmap.height }
+    bitmap.close()
+    return dimensions
+  }, { encodedBytes, type: mediaType })
+  assert.ok(Number.isSafeInteger(decoded.width) && decoded.width > 0)
+  assert.ok(Number.isSafeInteger(decoded.height) && decoded.height > 0)
+  return decoded
+}
+
+function currentArenaImageAssistant(page) {
+  return page.locator('ol.flex-col-reverse > :first-child + div').filter({
+    visible: true,
+    has: page.locator('p.text-tertiary').filter({ hasText: /^Response provided by$/u }),
+  }).first()
+}
+
+function currentMetaImageAssistant(page) {
+  return page.locator('[data-testid="assistant-message"]').filter({ visible: true }).last()
+}
+
+function currentChatGptImageAssistant(page) {
+  return page.locator('section[data-turn="assistant"]').filter({ visible: true }).last()
 }
 
 async function visibleResearchProgress(page) {

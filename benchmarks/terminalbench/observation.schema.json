@@ -1,0 +1,367 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "tokenless.terminalbench-observation.v1",
+  "title": "Tokenless Terminal-Bench observation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "identity", "timing", "officialOutcome", "trials", "routing", "evidence"],
+  "properties": {
+    "schema": { "const": "tokenless.terminalbench-observation.v1" },
+    "identity": { "$ref": "#/definitions/identity" },
+    "timing": { "$ref": "#/definitions/timing" },
+    "officialOutcome": { "$ref": "#/definitions/officialOutcome" },
+    "trials": { "type": "array", "items": { "$ref": "#/definitions/trial" } },
+    "routing": { "$ref": "#/definitions/routing" },
+    "evidence": { "$ref": "#/definitions/evidence" }
+  },
+  "definitions": {
+    "nullableString": { "type": ["string", "null"] },
+    "sha256": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "hexSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "timestamp": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?(Z|[+-][0-9]{2}:?[0-9]{2})?$"
+    },
+    "count": { "type": "integer", "minimum": 0 },
+    "rate": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+    "duration": { "type": ["integer", "null"], "minimum": 0 },
+    "timing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startedAt", "finishedAt", "durationMs"],
+      "properties": {
+        "startedAt": { "$ref": "#/definitions/timestamp" },
+        "finishedAt": { "$ref": "#/definitions/timestamp" },
+        "durationMs": { "$ref": "#/definitions/duration" }
+      }
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "jobName", "kind", "benchmark", "dataset", "datasetRef", "harborVersion",
+        "deepseekHarnessRevision", "tokenlessRevision", "model", "routingMode", "profile",
+        "taskCount", "attemptsPerTask", "expectedTrials", "executionMode", "executionModeStatus",
+        "executionPath"
+      ],
+      "properties": {
+        "jobName": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+        "kind": { "enum": ["oracle", "wiring", "sweep", "full", "unknown"] },
+        "benchmark": { "type": "string", "minLength": 1 },
+        "dataset": { "type": "string", "minLength": 1 },
+        "datasetRef": { "$ref": "#/definitions/sha256" },
+        "harborVersion": { "type": "string", "minLength": 1 },
+        "deepseekHarnessRevision": { "$ref": "#/definitions/nullableString" },
+        "tokenlessRevision": { "$ref": "#/definitions/nullableString" },
+        "model": { "$ref": "#/definitions/nullableString" },
+        "routingMode": { "$ref": "#/definitions/nullableString" },
+        "profile": { "$ref": "#/definitions/nullableString" },
+        "taskCount": { "$ref": "#/definitions/count" },
+        "attemptsPerTask": { "$ref": "#/definitions/count" },
+        "expectedTrials": { "$ref": "#/definitions/count" },
+        "executionMode": { "enum": ["browser", "direct", null] },
+        "executionModeStatus": { "enum": ["proven", "unavailable"] },
+        "executionPath": {
+          "enum": [
+            "Harbor -> Docker DeepSeek Harness -> loopback HTTP -> Tokenless API -> tokenless/auto -> provider",
+            "Harbor -> Oracle agent"
+          ]
+        }
+      }
+    },
+    "officialOutcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["completedTrials", "erroredTrials", "cancelledTrials", "retries", "rewards"],
+      "properties": {
+        "completedTrials": { "$ref": "#/definitions/count" },
+        "erroredTrials": { "$ref": "#/definitions/count" },
+        "cancelledTrials": { "$ref": "#/definitions/count" },
+        "retries": { "$ref": "#/definitions/count" },
+        "rewards": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["count", "passed", "failed", "passRate"],
+          "properties": {
+            "count": { "$ref": "#/definitions/count" },
+            "passed": { "$ref": "#/definitions/count" },
+            "failed": { "$ref": "#/definitions/count" },
+            "passRate": { "$ref": "#/definitions/rate" }
+          }
+        }
+      }
+    },
+    "trial": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trial", "task", "startedAt", "finishedAt", "durationMs", "stages", "reward", "exceptionType"],
+      "properties": {
+        "trial": { "type": "string", "minLength": 1 },
+        "task": { "type": "string", "minLength": 1 },
+        "startedAt": { "$ref": "#/definitions/timestamp" },
+        "finishedAt": { "$ref": "#/definitions/timestamp" },
+        "durationMs": { "$ref": "#/definitions/duration" },
+        "stages": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["environmentSetup", "agentSetup", "agentExecution", "verifier"],
+          "properties": {
+            "environmentSetup": { "anyOf": [{ "$ref": "#/definitions/timing" }, { "type": "null" }] },
+            "agentSetup": { "anyOf": [{ "$ref": "#/definitions/timing" }, { "type": "null" }] },
+            "agentExecution": { "anyOf": [{ "$ref": "#/definitions/timing" }, { "type": "null" }] },
+            "verifier": { "anyOf": [{ "$ref": "#/definitions/timing" }, { "type": "null" }] }
+          }
+        },
+        "reward": { "type": ["number", "null"] },
+        "exceptionType": { "$ref": "#/definitions/nullableString" }
+      }
+    },
+    "exclusion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "category", "reason"],
+      "properties": {
+        "provider": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+        "category": { "enum": ["access", "runtime", "capability"] },
+        "reason": {
+          "enum": [
+            "provider_not_supported", "provider_mode_disabled", "provider_not_evaluated",
+            "provider_access_unknown", "provider_access_sign_in_required", "provider_access_account_blocked",
+            "provider_access_unavailable", "missing_conversation_capability",
+            "missing_structured_control_capability", "capability_route_unavailable"
+          ]
+        }
+      }
+    },
+    "attempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "outcome", "reason", "observedAt", "providerSubmitted", "visibleProof", "limitWindow", "retryAfterSeconds"],
+      "properties": {
+        "provider": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+        "outcome": { "const": "fallback" },
+        "reason": { "enum": ["rate_limit", "capacity", "auth", "captcha", "unreachable", "unavailable"] },
+        "observedAt": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?(?:Z|[+-][0-9]{2}:?[0-9]{2})?$" },
+        "providerSubmitted": { "type": "boolean" },
+        "visibleProof": { "$ref": "#/definitions/nullableString" },
+        "limitWindow": { "enum": ["minute", "hour", "day", "week", "unknown", null] },
+        "retryAfterSeconds": { "type": ["integer", "null"], "minimum": 1, "maximum": 604800 }
+      }
+    },
+    "estimateInteraction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "outcome", "observedAt", "providerSubmitted", "inputTokens", "outputTokens", "totalTokens"],
+      "properties": {
+        "provider": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+        "outcome": { "enum": ["fallback", "completed", "failed"] },
+        "observedAt": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?(?:Z|[+-][0-9]{2}:?[0-9]{2})?$" },
+        "providerSubmitted": { "type": "boolean" },
+        "inputTokens": { "$ref": "#/definitions/count" },
+        "outputTokens": { "$ref": "#/definitions/count" },
+        "totalTokens": { "$ref": "#/definitions/count" }
+      }
+    },
+    "estimate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["availability", "basis", "estimator", "estimatorRevision", "inputCharacters", "inputTextSha256", "outputCharacters", "outputTextSha256", "interactions", "totalTokens"],
+      "properties": {
+        "availability": { "const": "estimated" },
+        "basis": { "enum": ["normalized_openai_request_and_visible_assistant_text", "provider_turn_prompt_attachments_and_visible_assistant_text"] },
+        "estimator": { "const": "o200k_base" },
+        "estimatorRevision": { "type": "string", "minLength": 1 },
+        "inputCharacters": { "$ref": "#/definitions/count" },
+        "inputTextSha256": { "$ref": "#/definitions/hexSha256" },
+        "outputCharacters": { "$ref": "#/definitions/count" },
+        "outputTextSha256": { "$ref": "#/definitions/hexSha256" },
+        "interactions": { "type": "array", "items": { "$ref": "#/definitions/estimateInteraction" } },
+        "totalTokens": { "$ref": "#/definitions/count" }
+      }
+    },
+    "routeEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trial", "task", "sequence", "scope", "mode", "preferenceRequested", "preferenceHonored", "exclusions", "fallbackProviders", "fallbackUsed", "provider", "outcome", "providerSubmitted", "rateLimited", "visibleProof", "limitWindow", "retryAfterSeconds", "attempts", "observedAt", "tokenEstimate"],
+      "properties": {
+        "trial": { "type": "string", "minLength": 1 },
+        "task": { "type": "string", "minLength": 1 },
+        "sequence": { "$ref": "#/definitions/count" },
+        "scope": { "enum": ["parent", "child"] },
+        "mode": { "enum": ["auto", "explicit"] },
+        "preferenceRequested": { "$ref": "#/definitions/nullableString" },
+        "preferenceHonored": { "type": "boolean" },
+        "exclusions": { "type": "array", "items": { "$ref": "#/definitions/exclusion" } },
+        "fallbackProviders": { "type": "array", "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" } },
+        "fallbackUsed": { "type": "boolean" },
+        "provider": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+        "outcome": { "enum": ["completed", "failed"] },
+        "providerSubmitted": { "type": "boolean" },
+        "rateLimited": { "type": "boolean" },
+        "visibleProof": { "$ref": "#/definitions/nullableString" },
+        "limitWindow": { "enum": ["minute", "hour", "day", "week", "unknown", null] },
+        "retryAfterSeconds": { "type": ["integer", "null"], "minimum": 1, "maximum": 604800 },
+        "attempts": { "type": "array", "items": { "$ref": "#/definitions/attempt" } },
+        "observedAt": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?(?:Z|[+-][0-9]{2}:?[0-9]{2})?$" },
+        "tokenEstimate": { "$ref": "#/definitions/estimate" }
+      }
+    },
+    "routingInteraction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trial", "task", "eventSequence", "scope", "provider", "outcome", "reason", "observedAt", "providerSubmitted", "inputTokens", "outputTokens", "totalTokens"],
+      "properties": {
+        "trial": { "type": "string", "minLength": 1 },
+        "task": { "type": "string", "minLength": 1 },
+        "eventSequence": { "$ref": "#/definitions/count" },
+        "scope": { "enum": ["parent", "child"] },
+        "provider": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+        "outcome": { "enum": ["fallback", "completed", "failed"] },
+        "reason": { "enum": ["rate_limit", "capacity", "auth", "captcha", "unreachable", "unavailable", null] },
+        "observedAt": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?(?:Z|[+-][0-9]{2}:?[0-9]{2})?$" },
+        "providerSubmitted": { "type": "boolean" },
+        "inputTokens": { "$ref": "#/definitions/count" },
+        "outputTokens": { "$ref": "#/definitions/count" },
+        "totalTokens": { "$ref": "#/definitions/count" }
+      }
+    },
+    "limitObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trial", "task", "eventSequence", "scope", "provider", "observedAt", "reason", "providerSubmitted", "visibleProof", "limitWindow", "retryAfterSeconds", "inputTokens", "outputTokens", "totalTokens"],
+      "properties": {
+        "trial": { "type": "string", "minLength": 1 },
+        "task": { "type": "string", "minLength": 1 },
+        "eventSequence": { "$ref": "#/definitions/count" },
+        "scope": { "enum": ["parent", "child"] },
+        "provider": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+        "observedAt": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?(?:Z|[+-][0-9]{2}:?[0-9]{2})?$" },
+        "reason": { "enum": ["rate_limit", "capacity", "auth", "captcha", "unreachable", "unavailable"] },
+        "providerSubmitted": { "type": "boolean" },
+        "visibleProof": { "$ref": "#/definitions/nullableString" },
+        "limitWindow": { "enum": ["minute", "hour", "day", "week", "unknown", null] },
+        "retryAfterSeconds": { "type": ["integer", "null"], "minimum": 1, "maximum": 604800 },
+        "inputTokens": { "$ref": "#/definitions/count" },
+        "outputTokens": { "$ref": "#/definitions/count" },
+        "totalTokens": { "$ref": "#/definitions/count" }
+      }
+    },
+    "providerCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["interactions", "submitted", "submittedRate", "completed", "completedRate", "failed", "failedRate", "fallbacks", "fallbackRate", "rateLimited", "preferenceRequested", "preferenceHonored", "inputTokens", "outputTokens", "totalTokens"],
+      "properties": {
+        "interactions": { "$ref": "#/definitions/count" },
+        "submitted": { "$ref": "#/definitions/count" },
+        "submittedRate": { "$ref": "#/definitions/rate" },
+        "completed": { "$ref": "#/definitions/count" },
+        "completedRate": { "$ref": "#/definitions/rate" },
+        "failed": { "$ref": "#/definitions/count" },
+        "failedRate": { "$ref": "#/definitions/rate" },
+        "fallbacks": { "$ref": "#/definitions/count" },
+        "fallbackRate": { "$ref": "#/definitions/rate" },
+        "rateLimited": { "$ref": "#/definitions/count" },
+        "preferenceRequested": { "$ref": "#/definitions/count" },
+        "preferenceHonored": { "$ref": "#/definitions/count" },
+        "inputTokens": { "$ref": "#/definitions/count" },
+        "outputTokens": { "$ref": "#/definitions/count" },
+        "totalTokens": { "$ref": "#/definitions/count" }
+      }
+    },
+    "providerMap": {
+      "type": "object",
+      "patternProperties": { "^[a-z][a-z0-9-]{0,63}$": { "$ref": "#/definitions/providerCounts" } },
+      "additionalProperties": false
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["providers"],
+      "properties": { "providers": { "$ref": "#/definitions/providerMap" } }
+    },
+    "routingAggregates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["interactions", "submittedInteractions", "submittedRate", "completed", "completedRate", "failed", "failedRate", "fallbacks", "fallbackRate", "inputTokens", "outputTokens", "totalTokens", "estimateStatus", "estimator", "estimatorRevision", "bases"],
+      "properties": {
+        "interactions": { "$ref": "#/definitions/count" },
+        "submittedInteractions": { "$ref": "#/definitions/count" },
+        "submittedRate": { "$ref": "#/definitions/rate" },
+        "completed": { "$ref": "#/definitions/count" },
+        "completedRate": { "$ref": "#/definitions/rate" },
+        "failed": { "$ref": "#/definitions/count" },
+        "failedRate": { "$ref": "#/definitions/rate" },
+        "fallbacks": { "$ref": "#/definitions/count" },
+        "fallbackRate": { "$ref": "#/definitions/rate" },
+        "inputTokens": { "$ref": "#/definitions/count" },
+        "outputTokens": { "$ref": "#/definitions/count" },
+        "totalTokens": { "$ref": "#/definitions/count" },
+        "estimateStatus": { "enum": ["estimated", "not_applicable"] },
+        "estimator": { "$ref": "#/definitions/nullableString" },
+        "estimatorRevision": { "$ref": "#/definitions/nullableString" },
+        "bases": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "normalized_openai_request_and_visible_assistant_text",
+              "provider_turn_prompt_attachments_and_visible_assistant_text"
+            ]
+          }
+        }
+      }
+    },
+    "routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "mode", "events", "interactions", "aggregates", "scopes", "limitObservations"],
+      "properties": {
+        "protocol": { "const": "tokenless.terminalbench-routing.v4" },
+        "mode": { "$ref": "#/definitions/nullableString" },
+        "events": { "type": "array", "items": { "$ref": "#/definitions/routeEvent" } },
+        "interactions": { "type": "array", "items": { "$ref": "#/definitions/routingInteraction" } },
+        "aggregates": { "$ref": "#/definitions/routingAggregates" },
+        "scopes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["parent", "child"],
+          "properties": {
+            "parent": { "$ref": "#/definitions/scope" },
+            "child": { "$ref": "#/definitions/scope" }
+          }
+        },
+        "limitObservations": { "type": "array", "items": { "$ref": "#/definitions/limitObservation" } }
+      }
+    },
+    "evidenceFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "bytes", "lineCount"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/definitions/sha256" },
+        "bytes": { "$ref": "#/definitions/count" },
+        "lineCount": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "evidenceTrial": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trial", "task", "files"],
+      "properties": {
+        "trial": { "type": "string", "minLength": 1 },
+        "task": { "type": "string", "minLength": 1 },
+        "files": { "type": "array", "items": { "$ref": "#/definitions/evidenceFile" } }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root", "trials"],
+      "properties": {
+        "root": { "type": "array", "items": { "$ref": "#/definitions/evidenceFile" } },
+        "trials": { "type": "array", "items": { "$ref": "#/definitions/evidenceTrial" } }
+      }
+    }
+  }
+}

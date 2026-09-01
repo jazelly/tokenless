@@ -1,6 +1,6 @@
 # Tokenless CLI
 
-`tokenless` 让 agent 通过本机 CLI 使用你正在运行的 Google Chrome 或 Brave Browser 中可见的 AI 网站。Provider 凭据和浏览器状态始终保留在本机所选浏览器中。
+`tokenless` 目前让 agent 通过本机 CLI 使用你正在运行的 Google Chrome 或 Brave Browser 中可见的 AI 网站。在该 visible-browser mode 中，provider 凭据和浏览器状态保留在本机所选浏览器中。
 
 [English](README.md) · [命令参考](https://github.com/jazelly/tokenless/blob/main/COMMANDS.zh-CN.md) · [Capability Matrix](https://github.com/jazelly/tokenless/blob/main/docs/capability-matrix.zh-CN.md) · [隐私](https://github.com/jazelly/tokenless/blob/main/PRIVACY.zh-CN.md)
 
@@ -38,6 +38,18 @@ tokenless agents install codex
 
 使用 `tokenless agents status codex --json`、`tokenless agents inspect codex --chat-id <codex-thread-id> --json` 和 `tokenless agents uninstall codex` 进行检查与移除。Harness ledger 只保存有界 ID 与 hash，不保存原始 prompt、transcript、credential 或 browser state。
 
+Codex hooks 不会替换 native subagent execution。Codex workflow 需要显式委托 Tokenless Harness-owned child 时，请使用 `tokenless agent delegate --workspace-root "$PWD" ...`。
+
+使用 internal Codex sub-agent 不会隐藏 Codex UI delegation messages；Tokenless 不能控制 Codex UI，也不能控制 native `spawn_agent` 的行为。只有在用户明确要求 separate tasks，或明确需要 independently visible progress 时，sidebar-visible 的 worker/reviewer 工作才使用 separate Codex tasks；主 task 读取 status 并给出简短 synthesis。不要重复粘贴长 child report：报告只包含 child name、status、at most one blocker 和 coordinator decision。
+
+## DeepSeek Harness Subagent 集成
+
+```bash
+tokenless agents install dsh --provider chatgpt --profile default --dsh-profile headless --json
+```
+
+该命令注册一个 DeepSeek Harness `SubagentProvider`，并把它的普通 one-shot `subagent` tool 路由到 Tokenless Harness。它与 model base URL 路径彼此独立；后者继续使用 DeepSeek Harness 现有的 `llm-deepseek` adapter。
+
 ## 运行
 
 ```bash
@@ -48,9 +60,27 @@ tokenless run \
   --json
 ```
 
+使用 setup 管理的 GPT4Free backend 完成一次 ChatGPT direct 文本聊天：
+
+```bash
+tokenless run \
+  --profile default \
+  --provider chatgpt \
+  --execution-mode direct \
+  --provider-backend g4f \
+  --prompt "Review this proposal." \
+  --json
+```
+
+使用 `--provider-backend native` 可保留现有 Tokenless ChatGPT 或 Perplexity 实现，用于 A/B 测试和回切。
+
+Setup 会安装一个固定版本的私有 `g4f[all]` Python service。Tokenless 继续拥有 browser control 与 profile；G4F 在 authenticated daemon API 后处理 direct provider HTTP、impersonation、Sentinel/PoW、streaming、HAR/Cookie auth 与 media。不传 `--execution-mode direct` 时保持 visible-browser 行为。
+
+Backend flag、标准 API route、provider mapping、版本固定与隔离边界见 [GPT4Free direct provider service](../../docs/g4f-direct-provider-service.zh-CN.md)。
+
 如未显式指定 provider，Tokenless 会使用第一个已配置且有 guest 或 signed-in 观测的 provider；没有可用项时会在创建 job 前失败。
 
-使用 `tokenless capabilities list --json` 查看有证据支持的 task outcome 与 provider route。`--capability` 可重复提供；附件和 workspace intent 也会推导 capability，一个 provider 必须满足合并后的全部要求。
+使用 `tokenless capabilities list --json` 查看有证据支持的 task outcome 与 provider route。`--capability` 可重复提供；附件会推导 `file.upload` 与 MIME 对应的 semantic input（非媒体文件为 `document.input`，图片、音频、视频分别为匹配的 `image.input`、`audio.input`、`video.input`），workspace intent 也会推导 capability；一个 provider 必须满足合并后的全部要求。
 
 ```bash
 tokenless run \
@@ -60,7 +90,7 @@ tokenless run \
   --json
 ```
 
-普通隐式路由会保存兼容的 provider alternatives。在 prompt 提交前遇到 auth、CAPTCHA、capacity 或 plan blocker 时，同一 durable job 可重新排队到下一个满足完整 capability 的 provider；显式 provider、精确 continuation 和不可重建操作会 fail closed。
+普通隐式路由会为当前 execution 保留兼容的 provider alternatives。在 prompt 提交前遇到 auth、CAPTCHA、capacity 或 plan blocker 时，会立即尝试下一个满足完整 capability 的 provider；显式 provider、精确 continuation 和不可重建操作会 fail closed。
 
 ## Providers
 
@@ -75,8 +105,12 @@ tokenless run \
 | Perplexity | 实验性 | 支持 guest |
 | Z.ai / GLM | 实验性 | 支持 guest |
 | Doubao / 豆包 | 实验性 | 需要登录 |
+| Kimi | 实验性 | 需要登录 |
+| Dola | 实验性 | 需要登录 |
+| Arena | 已支持 | 需要登录 |
+| Meta AI | 实验性 | 需要登录 |
 
-Prompt 提交与 response 读取是共同 baseline。File、citation、model/effort control、continuation 和 Workspace 支持取决于 provider、profile 和 account state。不受支持、有歧义或未证明的行为会 fail closed。
+Prompt 提交与 response 读取是共同 baseline。File、citation、model/effort control、continuation 和 Workspace 支持取决于 provider、profile 和 account state。Meta AI 的 chat 与 file upload 已可从选定的登录 profile 实验性路由，并支持 Instant/Thinking 选择；在 CLI 暴露图片 artifact lifecycle 前，image generation 仍不公开。
 
 ## Qwen Modes
 
@@ -113,12 +147,12 @@ tokenless profiles open --profile work --provider claude
 tokenless profiles status --profile work --provider claude --json
 ```
 
-Tokenless profile 只组织 provider tab 与配置，不创建独立 browser identity。Tokenless 不检查或暴露 cookie、token、browser storage、Keychain data 或 authentication value。
+Tokenless profile 只组织 provider tab 与配置，不创建独立 browser identity。当前已发布的 visible-browser mode 不检查单个 cookie、token、browser storage、Keychain data 或 authentication value；任何 mode 都不会把这些值暴露给 agent。
 
 ## Browser 与本地 Runtime
 
 Native mode 只支持 headed，因为它控制用户已打开的 Chrome 或 Brave。停止或重启 daemon 只会断开 Playwright，不会关闭所选浏览器。
 
-每个请求都使用经过认证的 loopback daemon 和所选浏览器中的 Tokenless-owned tab。凭据对 agent 保持 opaque；登录、CAPTCHA、同意、付款、plan 和确认步骤始终由用户控制。
+每个 visible-browser 请求都使用经过认证的 loopback daemon 和所选浏览器中的 Tokenless-owned tab。Provider 凭据绝不会暴露给 agent；登录、CAPTCHA、付款、plan 以及含义不明确或涉及外部授权的确认始终由用户控制。对于用户已选择的 provider，provider adapter 可以接受内容明确且已知的 onboarding Terms/Privacy 对话框。
 
 所有命令和 option 见[命令参考](https://github.com/jazelly/tokenless/blob/main/COMMANDS.zh-CN.md)；完整 capability 语义见 [Capability Matrix](https://github.com/jazelly/tokenless/blob/main/docs/capability-matrix.zh-CN.md)。

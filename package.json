@@ -10,10 +10,13 @@
     "build:link": "node scripts/link-built-cli.mjs",
     "build:scripts": "node -e \"require('node:fs').rmSync('dist/scripts',{recursive:true,force:true})\" && tsc -p tsconfig.scripts.json",
     "docs:capture-readme-dashboard": "npm run build --workspace packages/cli && node scripts/capture-readme-dashboard.mjs",
+    "build:macos-menu": "npm run build && node scripts/build-macos-menu.mjs",
+    "install:macos-menu": "npm run build:macos-menu && node scripts/install-macos-menu.mjs",
     "changeset": "changeset",
     "lint": "npm run api:check && npm run lint --workspaces --if-present && tsc -p tsconfig.scripts.json --noEmit",
     "check": "npm run lint && npm test",
-    "api:check": "node scripts/check-api-contract.mjs",
+    "api:check": "node scripts/check-api-contract.mjs && node scripts/generate-api-docs.mjs --check",
+    "api:docs": "node scripts/generate-api-docs.mjs",
     "release:version": "node scripts/release/version.mjs",
     "prototype:cloakbrowser": "node scripts/prototypes/cloakbrowser-spike.mjs",
     "sync:skill": "npm run build:scripts && node dist/scripts/sync-tokenless-skill.mjs",
@@ -29,7 +32,10 @@
     "test:e2e:project": "npm run build && node test/run-live-provider-e2e.mjs run --gate project",
     "test:e2e:fallback": "npm run build && node test/run-gated-e2e.mjs provider-fallback",
     "test:e2e:output-savings": "npm run build && node --test --test-concurrency=1 test/output-savings-runtime.e2e.mjs",
-    "test:e2e:codex-app-server": "npm run build && node --test --test-concurrency=1 test/codex-app-server.e2e.mjs"
+    "test:e2e:codex-app-server": "npm run build && node --test --test-concurrency=1 test/codex-app-server.e2e.mjs",
+    "benchmark:featurebench": "node scripts/featurebench.mjs",
+    "benchmark:terminalbench": "node benchmarks/terminalbench/run.mjs",
+    "test:e2e:featurebench": "npm run build && node test/run-gated-e2e.mjs featurebench"
   },
   "workspaces": [
     "packages/*"

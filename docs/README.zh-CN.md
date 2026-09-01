@@ -7,12 +7,20 @@
 - [README](../README.zh-CN.md) — 产品概览、安装与首次运行。
 - [CLI 命令](../COMMANDS.zh-CN.md) — 完整 command 与 option reference。
 - [Capability Matrix](capability-matrix.zh-CN.md) — canonical outcomes、当前 provider mappings、support states 与扩展规则。
+- [API Proxy 接入指南](api-proxy-integration.zh-CN.md) — 从既有项目调用 OpenAI/Anthropic 兼容的本地 proxy。
+- [Tokenless Harness Browser Extension](harness-browser-extension.zh-CN.md) — 安装、配对、支持的 input、approval 与实验性真实页面验收流程。
+- [Harness 集成](harness-integrations.zh-CN.md) — model base URL、Tokenless Harness subagent delegation 与当前宿主支持范围。
+- [HTTP API 参考](../packages/contracts/reference.zh-CN.html) — 生成的 OpenAI-compatible、Anthropic-compatible、private、Dashboard 与 readiness interface。
+- [Provider 访客访问](../PROVIDER_GUEST_ACCESS.zh-CN.md) — 已观察的登出行为与认证路由规则。
+- [Provider Rate Limits](provider-rate-limits.zh-CN.md) — 官方 Web provider 限额知识与 runtime 策略。
+- [Provider Tool-Calling Conformance 参考](provider-tool-calling-conformance.zh-CN.md) — 当前官方 provider contract、canonical mapping 与 Tokenless evidence 边界。
 - [隐私政策](../PRIVACY.zh-CN.md) — browser profile、credential、file 与本地数据边界。
 
 ## 概念与架构
 
-- [架构](architecture.md) — daemon、managed browser、provider adapter、routing 与 control-plane 设计。
-- [Provider Capability Census](provider-capability-census.md) — provider 产品调研与 evidence gaps；不代表 support 声明。
+- [架构](architecture.zh-CN.md) — 稳定的两层设计：Universal API、Web Agent Harness、provider runtime、ownership 与 trust boundary。
+- [术语表](glossary.zh-CN.md) — Harness model role、execution、authentication 与 direct provider 的标准术语。
+- [Provider Capability Census](provider-capability-census.zh-CN.md) — provider 产品调研与 evidence gaps；不代表 support 声明。
 - [Roadmaps](roadmaps/README.md) — active、backlog 与 archived delivery plans。
 
 ## Provider 与 Capability 开发
@@ -21,7 +29,7 @@
 - Provider 行为只能通过配置好的浏览器 profile 在真实 provider 网站上开发与验证。
 - 在 [`live-provider-capability-matrix.json`](../test/live-provider-capability-matrix.json) 声明必需的真实 provider cases。
 - 在 [`live-managed-playwright.e2e.mjs`](../test/live-managed-playwright.e2e.mjs) 实现真实 journeys。
-- Provider-specific behavior 应保留在 [`packages/cli/src/providers/`](../packages/cli/src/providers/) 中。
+- Provider-specific behavior 应保留在 [`packages/server/src/providers/`](../packages/server/src/providers/) 中。
 
 ## 新增文档
 

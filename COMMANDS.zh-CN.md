@@ -13,24 +13,24 @@
 | `tokenless install` | 底层本地 runtime provisioning；日常维护请使用 `tokenless upgrade`。 | 否 |
 | `tokenless setup` | 配置 skills、浏览器、profiles、daemon，并执行一次 provider 登录检查。 | 是 |
 | `tokenless agents <install\|status\|inspect\|uninstall> codex` | 管理可选的 Codex guidance、native hooks 和精确 Harness context binding。 | 否 |
-| `tokenless dashboard` | 打开本地 Web 控制台，或输出可直接访问的 loopback URL。 | 否 |
+| `tokenless dashboard` | 打开本地 Web Dashboard，或输出可直接访问的 loopback URL。 | 否 |
+| `tokenless menubar status` | 为原生 macOS 菜单栏客户端输出同一 Tokenless home 的 menu bar snapshot。 | 否 |
 | `tokenless doctor` | 只读检查本地配置和 runtime 健康状态，不刷新 provider。 | 否 |
 | `tokenless config` | 读取或更新 Tokenless 持久化配置。 | 否 |
 | `tokenless upgrade` | 升级全局 CLI、skills、本地 runtime，并运行 doctor。 | 否 |
 | `tokenless profiles add` | 创建用于 tab 与 provider configuration 的逻辑 Tokenless profile。 | 否 |
-| `tokenless profiles list` | 列出 profiles 及其最后保存的 provider 检查结果。 | 否 |
-| `tokenless profiles status` | 实时检查一家 provider，并把结果保存到 profile registry。 | 是 |
+| `tokenless profiles list` | 列出 profiles 及已持久化的 provider 检查结果。 | 否 |
+| `tokenless profiles status` | 实时检查一家 provider，并把结果持久化到共享 Tokenless 数据库。 | 是 |
 | `tokenless profiles open` | 以 headed browser 打开 managed profile，可选择是否导航到 provider。 | 可选 |
 | `tokenless profiles set-default` | 设置默认 managed profile。 | 否 |
 | `tokenless profiles clear` | 作为人工维护操作删除一个或全部 managed profiles。 | 否 |
 | `tokenless profiles remove` | 通过显式确认删除一个 managed profile。 | 否 |
 | `tokenless capabilities list` | 列出 canonical task capabilities 和已有证据闭环的 provider routes。 | 否 |
 | `tokenless limits inspect` | 根据 packaged catalog 和本地 job 历史查看下一次 prompt 的 provider/profile 容量估算。 | 否 |
-| `tokenless savings <status\|enable\|disable\|clear\|uninstall>` | 管理可选的本地输出节省计量及其 lazy-download tokenizer。 | 否 |
+| `tokenless savings <status\|enable\|disable\|clear\|uninstall>` | 管理可选的本地输出节省计量及其在首次成功可见 response 时下载的 tokenizer。 | 否 |
+| `tokenless api-proxy <status\|enable\|disable>` | 管理 OpenAI/Anthropic 兼容的本地 API proxy 及其兼容性 conversation-mode 设置。 | 否 |
 | `tokenless run` | 通过可见 provider session 发送 prompt 和可选文件。 | 是 |
-| `tokenless replay` | 为一个 agent recipient 报告此前未见过的 daemon outcome 摘要。 | 否 |
-| `tokenless state` | 查询 daemon 中持久化的 job 状态。 | 否 |
-| `tokenless resume` | 使用 headed browser 恢复等待用户操作的 job。 | 是 |
+| `tokenless state` | 查询当前 daemon job 状态。 | 否 |
 | `tokenless cancel` | 取消 daemon job，并确认其已进入 canceled 状态。 | 否 |
 | `tokenless provider-status` | 实时执行 provider 认证检查。 | 是 |
 | `tokenless provider-controls` | 检查可见的 model 和 effort 控件。 | 是 |
@@ -88,13 +88,12 @@ Tokenless 使用 native mode：Playwright 直接连接用户已经运行的 Goog
 | `--color` | 强制 human-readable output 使用 ANSI 颜色；对 JSON stdout 无效。 |
 | `--no-color` | 禁用 ANSI 颜色，即使输出连接到 terminal 也不启用。 |
 | `--home <path>` | 使用非默认的 Tokenless 状态目录。 |
-| `--daemon-url <url>` | 设置首选 loopback daemon URL。若其端口被占用，Tokenless 可顺延到下一个空闲端口，并把实际 endpoint 记录到 SQLite。 |
-| `--agent-kind <kind>` | 将 job 或 replay drain 定向到显式 agent kind；必须与 `--agent-session-id` 同时使用。 |
-| `--agent-session-id <id>` | 将 job 或 replay drain 定向到显式 agent session；必须与 `--agent-kind` 同时使用。 |
+| `--daemon-url <url>` | 设置 loopback daemon URL。若其端口被占用，daemon 启动会明确失败。 |
+| `--agent-kind <kind>` | 为当前 invocation 提供 Codex Harness agent kind；必须与 `--agent-session-id` 同时使用。 |
+| `--agent-session-id <id>` | 为当前 invocation 提供 Codex Harness session identity；必须与 `--agent-kind` 同时使用。 |
 | `--browser-visibility <headed>` | Native Chrome 目前只支持 headed。 |
 | `--timeout-ms <ms>` | 覆盖命令或 job 的等待时间。 |
 | `--daemon-start-timeout-ms <ms>` | 覆盖 daemon 启动等待时间。 |
-| `--runner-heartbeat-timeout-ms <ms>` | 为兼容保留；embedded Playwright runtime 会忽略它。 |
 | `--cancel-timeout-ms <ms>` | 覆盖取消确认等待时间。 |
 | `--target-url <url>` | 从所选 provider 域名下允许的 URL 开始执行。 |
 
@@ -167,7 +166,7 @@ tokenless setup --install-codex --codex-home <dir> --profile default --defaults 
 - `--install-codex` 在 setup 中显式安装可选的 Codex guidance、native hooks 和 skills。
 - `--codex-home <dir>` 选择自定义 Codex state root，并且必须与 `--install-codex` 同时使用。
 - `--provider-whitelist <list>` 在非交互 setup 中设置该 profile 的 provider membership。
-- `--no-open` 完成 setup，但不打开控制台。
+- `--no-open` 完成 setup，但不打开 Dashboard。
 - `--defaults` 选择非交互默认值。
 - `--set-default` 将所选 profile 设为默认。
 - `--browser-executable-path <absolute-path>` 可在自动 discovery 失败时提供用户自行安装的 Chrome 或 Brave executable。
@@ -176,7 +175,7 @@ Setup 会先询问是否使用 Anti-Detect mode。若选择不使用，用户再
 
 交互式 `setup` 会列出所有受支持的 provider，默认全部启用，并允许用户回复界面显示的编号移除 provider；直接回车则保留全部。非交互 setup 会使用 `--provider-whitelist`、已有 profile 的 `enabledProviders`，或为新 profile 使用所有受支持 provider。浏览器可解析时，setup 会检查 provider 状态并保留 headed review tabs；找不到浏览器时则跳过这些 browser 检查并打开 dashboard，供用户添加 executable path。
 
-每个新 profile 默认包含所有非 `disabled` provider，包括 Gemini。可通过 `--profile <slug> --provider-whitelist <list>` 或控制台修改其 membership。
+每个新 profile 默认包含所有非 `disabled` provider，包括 Gemini。可通过 `--profile <slug> --provider-whitelist <list>` 或 Dashboard 修改其 membership。
 
 ### `tokenless agents <install|status|inspect|uninstall> codex`
 
@@ -195,6 +194,8 @@ tokenless agents uninstall codex
 
 `status` 会报告准确的 instruction/hook paths，并验证当前 guidance body 与 hook command；它不会创建 Harness state。过期或被修改的 definition 会显示为未安装，再次运行 `install` 即可修复。`inspect` 从独立的 Harness 数据库读取一个精确 chat，包括 local project、turns、invocations、稳定的 provider task identity，以及 provider Project/conversation bindings。Ledger 只保存 prompt hash，不保存原始 prompts、transcripts、assistant messages、credentials 或 browser state。`uninstall` 会从两个全局 instruction filenames 中移除 Tokenless guidance，并且只移除 Tokenless hook groups；已经保留的 Harness history 不会删除。
 
+已安装的 guidance 会区分 internal sub-agent 与 separate Codex task。使用 internal sub-agent 不会隐藏 Codex UI delegation messages；Tokenless 不能控制 Codex UI，也不能控制 native `spawn_agent` 的行为。只有在用户明确要求 separate tasks，或明确需要 independently visible progress 时，sidebar-visible 的 worker/reviewer 工作才使用 separate Codex tasks；主 task 读取 status 并给出简短 synthesis。不要重复粘贴长 child report：报告只包含 child name、status、at most one blocker 和 coordinator decision。
+
 主要选项：
 
 - `--codex-home <dir>` 显式选择 Codex state root，而不是使用 `CODEX_HOME` 或 `~/.codex`。
@@ -202,21 +203,51 @@ tokenless agents uninstall codex
 - `--chat-id <id>` 是 `inspect` 的必填项，必须传精确的 Codex thread ID。
 - `--json` 返回结构化 status 或 context contract。
 
+### `tokenless agents <install|status|uninstall> dsh`
+
+安装一个可逆的 DeepSeek Harness `SubagentProvider`，把普通 one-shot `subagent` tool 委托给 Tokenless Harness：
+
+```bash
+tokenless agents install dsh --provider chatgpt --profile default --dsh-profile headless --json
+tokenless agents status dsh --dsh-profile headless --json
+tokenless agents uninstall dsh --dsh-profile headless --json
+```
+
+`install` 只向所选 profile 的 `cordis.patch.yml` 添加一个带 marker 的区块。它会保留无关 row、注册 `tokenless-harness`，并且只把普通 `subagent` tool 切换到该 provider。它不会修改或删除 DeepSeek Harness 的 `llm-pi-ai` package。
+
+`--dsh-home <dir>` 可覆盖 `DSH_HOME` 或 `~/.dsh`；`--dsh-profile <name>` 默认为 `headless`。安装时必须指定 delegated child 使用的 Tokenless `--provider` 与 `--profile`。
+
+### `tokenless agent delegate`
+
+同步执行一个由 Tokenless Harness 拥有的 child task，并返回 terminal result：
+
+```bash
+tokenless agent delegate --provider chatgpt --profile default --workspace-root "$PWD" --prompt "Inspect this repository." --json
+```
+
+Delegated run 会获得以 `--workspace-root` 为根的有界 `workspace.read` 与 `workspace.search` tools。`--prompt-file` 和 `--prompt-stdin` 可替代 `--prompt`。对于 Codex 这类当前 hooks 无法替换 native subagent execution 的宿主，这个显式 command 才是如实的 integration。
+
 ### `tokenless dashboard`
 
-启动或发现同一 Tokenless home 的 daemon，并在所选 managed profile 中打开一个保留的控制台标签页。也可以直接在浏览器中打开 daemon 的 loopback URL：
+启动或发现同一 Tokenless home 的 daemon，并使用操作系统默认浏览器打开 Dashboard URL。`--profile` 只用于选择 Dashboard 初始显示的 profile，不决定打开 Dashboard 的浏览器。你也可以在任意浏览器中直接打开 daemon 的 loopback URL：
 
 ```bash
 tokenless dashboard
 tokenless dashboard --profile work
 tokenless dashboard --profile work --no-open --json
+tokenless dashboard --job-id <job-id>
+tokenless dashboard --semantic-manifest-output /absolute/path/terminal-bench-semantic-manifest.json
 ```
 
-`--no-open` 不启动浏览器，只输出可直接访问的 loopback 控制台 URL。打开 `/` 会跳转到 `/ui/`，并建立短期有效的 `HttpOnly`、`SameSite=Strict` session cookie；所有 mutation 仍会校验 exact Origin 和 CSRF。控制台不会收到 daemon bearer token、provider cookies、browser storage、Keychain 数据、raw DOM、claim token、checkpoint 或私有文件路径。
+`--no-open` 不启动浏览器，只输出可直接访问的 loopback Dashboard URL。打开 `/` 会跳转到 `/dashboard/overview/`，并建立短期有效的 `HttpOnly`、`SameSite=Strict` session cookie；所有 mutation 仍会校验 exact Origin 和 CSRF。Dashboard 可以在任意浏览器中运行；provider action 仍会在所选 profile 绑定的 browser runtime 中执行。Dashboard 不会收到 daemon bearer token、provider cookies、browser storage、Keychain 数据、raw DOM 或私有文件路径。
 
-控制台包含 Overview、Profiles、Providers、Capabilities、Jobs 和 System/Diagnostics。Provider membership、visibility、role label，以及不带凭据的 HTTP/HTTPS/SOCKS5 proxy 都按 profile 配置。CLI 恢复入口仍然完整保留：
+`--job-id` 会打开 Jobs view，并自动加载该 job 的详情。`tokenless menubar status --json` 会启动或发现同一 Tokenless home 的 daemon，然后返回 daemon/runtime status、Dashboard URL、active job 数量，以及最多十条按 `updatedAt` 降序排列的 conversation 摘要。摘要只包含安全标题和公开标识符，不包含 prompt、transcript、credentials 或私有路径。
 
-Provider 就绪状态刷新会以最多三个一批的方式隐式运行。Profile 空闲时，Tokenless 会启动常驻 headless browser；如果同一 Profile 已有 headed browser，则复用该 runtime，不替换 browser、不关闭现有 tabs，也不把检查带到前台。每项检查只拥有一个临时后台 tab，并在完成、失败、遇到 blocker、超时或取消时关闭它；用户原有 tabs 不受影响。刷新遇到登录或验证时只记录所需操作；只有显式 Provider、browser 或 job 操作才会启动可见 browser interaction。
+`--semantic-manifest-output` 会在已配置的 system Google Chrome 中打开 Providers view，并为 pinned Terminal-Bench semantic-manifest action 创建一个只能使用一次、会过期的 target。在 Google Chrome 148+ 且 Prompt API 可用时，本地 Dashboard 会自动读取 pinned instruction packages，串行运行 production semantic router，并只把 validator 兼容的 external manifest 写入 CLI 明确指定的路径。此 action 不能与 `--no-open` 组合，command output 会脱敏一次性 token。
+
+Dashboard 包含 Overview、Profiles、Providers、Capabilities、Jobs 和 System/Diagnostics。Provider membership、visibility、role label，以及不带凭据的 HTTP/HTTPS/SOCKS5 proxy 都按 profile 配置。CLI 恢复入口仍然完整保留：
+
+Provider 就绪状态刷新会在每个 Profile 内串行运行。Profile 空闲时，Tokenless 会启动常驻 headless browser；如果同一 Profile 已有 headed browser，则复用该 runtime，不替换 browser、不关闭现有 tabs，也不把检查带到前台。每项检查只拥有一个临时后台 tab，并在完成、失败、遇到 blocker、超时或取消时关闭它；用户原有 tabs 不受影响。刷新遇到登录或验证时只记录所需操作；只有显式 Provider、browser 或 job 操作才会启动可见 browser interaction。
 
 ```bash
 tokenless config --profile work --provider-whitelist chatgpt,claude --browser-visibility headed --json
@@ -233,7 +264,7 @@ tokenless state --profile work --json
 tokenless doctor --json
 ```
 
-`doctor` 不会打开 provider 页面、刷新认证状态、启动 daemon 或修复状态。每个 `checks.configuration.issues` 都包含 code、本地化 message 和 next action。`checks.managedProfile.ok` 表示 registry/profile 本身是否健康，`checks.profileRuntime.ok` 则独立表示该 profile 是否具有可解析的 browser binding。Provider readiness 来自 profile 中最后保存的检查结果。`checks.providerReadiness.ok` 表示 configured providers 是否已有 recorded observations；`usableProviders` 列出缓存中可用于隐式路由的 providers。因为 daemon 按需运行，正常停止的 daemon 和 embedded browser runtime 会被报告为健康的 stopped 状态，而不是安装损坏。
+`doctor` 不会打开 provider 页面、刷新认证状态、启动 daemon 或修复状态。每个 `checks.configuration.issues` 都包含 code、本地化 message 和 next action。`checks.managedProfile.ok` 表示 profile/config 本身是否健康，`checks.profileRuntime.ok` 则独立表示该 profile 是否具有可解析的 browser binding。Provider readiness 来自已持久化的 profile observation。`checks.providerReadiness.ok` 表示 configured providers 是否已有当前 observations；`usableProviders` 列出可用于隐式路由的 providers。因为 daemon 按需运行，正常停止的 daemon 和 embedded browser runtime 会被报告为健康的 stopped 状态，而不是安装损坏。
 
 主要选项：`--browser`、`--daemon-url`、`--home` 和 `--json`。
 
@@ -278,7 +309,7 @@ tokenless config \
 
 Provider membership 只属于 `profiles` 中选定的 entry。路由必须读到该 entry，绝不会 fallback 到全局 provider list。
 
-Tokenless 会把具体的旧 per-profile side table 与 `browser/profiles.json` 合并并迁移一次。旧表中缺失的 registered profile 会把旧 root provider list 物化为自己的 `enabledProviders`；canonical config 不再保留任一旧 key。未写入文档的旧 `--preferred-providers` flag 仍作为 CLI alias 接受。
+`config.json` 是唯一的 profile source。Profile slug 就是 profile identity，browser directory 由 `<TOKENLESS_HOME>/browser/profiles/<slug>` 派生；runtime binding、创建时间和更新时间与 profile 的 provider settings 一起保存在 config 中。Provider authentication observation 持久化在共享的 `<TOKENLESS_HOME>/tokenless.sqlite3` 中。
 
 完整 config shape 如下：
 
@@ -286,6 +317,7 @@ Tokenless 会把具体的旧 per-profile side table 与 `browser/profiles.json` 
 {
   "protocol": "tokenless.config.v1",
   "updatedAt": "2026-08-02T02:09:40.254Z",
+  "defaultProfile": "default",
   "profiles": {
     "default": {
       "roleLabel": "Personal",
@@ -305,7 +337,7 @@ Tokenless 会把具体的旧 per-profile side table 与 `browser/profiles.json` 
 
 `browserExecutablePath` 是经过验证的缓存，并不是不可变 override：Tokenless 会执行浏览器的 version command 进行验证；验证失败后会 fallback 到标准路径 discovery，成功时重新写入缓存。如果两种方式都失败，可以使用上面的 CLI flag，或在 dashboard 的 **System → Browser executable path** 中粘贴绝对路径。Dashboard 只会暴露是否已经配置路径，不会把私有路径传回浏览器 JavaScript。
 
-面向用户的命令文案和 provider 默认回复语言都会遵循 `language`；prompt 中明确指定的语言优先。命令名、flags、JSON keys、error codes、status values 和其他 integration terms 保持稳定。`daemonUrl` 是首选启动 endpoint，而不是可变 runtime 状态。首选端口繁忙时 Tokenless 不会改写它；daemon 会把实际绑定 endpoint 记录到 SQLite runtime-state row。
+面向用户的命令文案和 provider 默认回复语言都会遵循 `language`；prompt 中明确指定的语言优先。命令名、flags、JSON keys、error codes、status values 和其他 integration terms 保持稳定。`daemonUrl` 是配置的启动和停止 endpoint，而不是可变 runtime 状态。首选端口繁忙时 Tokenless 不会改写它；客户端通过 `/ready` 验证配置的 endpoint，并通过带认证的 `/shutdown` 停止 daemon。
 
 Tokenless 始终通过 CDP 控制 managed Chromium，内部仍使用 Playwright 的 browser、page 和 locator API。常驻浏览器因此可以在一次 daemon 连接结束后继续运行，并由之后的 daemon 重新接入，不再提供可选的 connection mode。
 
@@ -316,9 +348,10 @@ Tokenless 始终通过 CDP 控制 managed Chromium，内部仍使用 Playwright 
 ```bash
 tokenless upgrade
 tokenless upgrade --json
+tokenless upgrade --check --json
 ```
 
-接受的选项为 `--json`、`--home`、`--daemon-url`、`--browser`、`--browsers` 和 `--daemon-start-timeout-ms`。
+接受的选项为 `--check`、`--json`、`--home`、`--daemon-url`、`--browser`、`--browsers` 和 `--daemon-start-timeout-ms`。`--check` 只查询 npm 最新发布版本，不修改 CLI、runtime 或 daemon。
 
 ### `tokenless daemon stop`
 
@@ -330,7 +363,7 @@ tokenless daemon stop --json
 
 选项：`--home`、`--daemon-url`、`--timeout-ms` 和 `--json`。
 
-该命令会从 SQLite 发现实际 endpoint，也不会因为某个未验证或不兼容的进程占用了首选端口，就直接杀掉该进程。
+该命令会验证配置的 endpoint，也不会因为某个未验证或不兼容的进程占用了首选端口，就直接杀掉该进程。
 
 ## Tokenless Profiles
 
@@ -346,7 +379,9 @@ tokenless profiles add -P work --set-default --json
 
 ### `tokenless profiles list`
 
-读取 profile registry，并返回全部 managed profiles。
+读取 `config.json` 中的 profiles，并返回全部 managed profiles。
+
+共享的 `<TOKENLESS_HOME>/tokenless.sqlite3` 存储 jobs、provider Project 和 conversation mappings、Responses API continuation entries、output-savings events，以及 provider status observations。使用 Tokenless Harness 时，它会把 context table 加到同一个数据库。Provider submission history 从 jobs 推导，profile records 与 configuration 仍保存在 `config.json`。
 
 ```bash
 tokenless profiles list
@@ -357,7 +392,7 @@ tokenless profiles list --json
 
 ### `tokenless profiles status`
 
-对一家 provider 执行实时认证检查，然后将 `auth`、可见 username、可见 subscription，以及新的 `checkedAt` 写入所选 profile。
+对一家 provider 执行实时认证检查，然后在共享 Tokenless 数据库中持久化 `auth`、可见 username、可见 subscription，以及新的 `checkedAt`。
 
 ```bash
 tokenless profiles status -P work -p chatgpt --json
@@ -376,7 +411,7 @@ tokenless profiles open -P work --json
 tokenless profiles open -P work -p claude --json
 ```
 
-无 provider 形式适合用户维护浏览器、切换账号或检查 managed profile。provider 形式适合处理登录、CAPTCHA、MFA、consent 或 provider 相关账号切换。它不能替代 `profiles status`；操作完成后应再次运行 status 命令，保存最新 observation。
+无 provider 形式适合用户维护浏览器、切换账号或检查 managed profile。provider 形式适合处理登录、CAPTCHA、MFA、含义不明确或涉及外部授权的 consent，以及 provider 相关账号切换。内容明确且由 provider 自身提供的 onboarding Terms/Privacy 对话框，可以由所选 provider adapter 处理。它不能替代 `profiles status`；操作完成后应再次运行 status 命令，保存最新 observation。
 
 ### `tokenless profiles set-default`
 
@@ -431,7 +466,7 @@ tokenless capabilities list --json
 tokenless limits inspect --profile default --provider chatgpt --json
 ```
 
-结果会报告匹配的 catalog plan 和 rules、本地 usage、公开与生效 allowance、估算剩余额度、cadence、burst allowance、decision 和 `eligibleAt`。`unknown` 表示 Tokenless 没有可执行的官方数值，因此会放行；它不表示 provider 容量无限。该命令只读且只访问本地状态，不会打开 provider 网站或提交 prompt。
+结果会报告匹配的 catalog plan 和 rules、本地 usage、公开与生效 allowance、估算剩余额度、cadence、burst allowance 与 decision。`unknown` 表示 Tokenless 没有可执行的官方数值，因此会放行；它不表示 provider 容量无限。该命令只读且只访问本地状态，不会打开 provider 网站或提交 prompt。
 
 ### `tokenless savings`
 
@@ -445,9 +480,35 @@ tokenless savings clear --confirm-delete --json
 tokenless savings uninstall --confirm-delete --json
 ```
 
-`enable` 会先下载并验证固定版本的 `o200k_base` WASM tokenizer，再把 `outputSavings.enabled` 设为 `true`。正常的默认开启流程则会等到第一个 provider job 已经完成、并把计量工作持久交接给 daemon 后，才在后台懒安装。`disable` 会丢弃排队文本、阻止进行中的结果被保存，并保留历史和 runtime。`clear` 会丢弃清空前的工作并删除持久化计量历史；`uninstall` 会停用计量、丢弃工作并移除 runtime；这两个破坏性操作都必须提供 `--confirm-delete`。`status` 对配置和 tokenizer 安装状态都是只读的。所有这些命令都不会打开 provider 页面。
+`enable` 会先下载并验证固定版本的 `o200k_base` WASM tokenizer，再把 `outputSavings.enabled` 设为 `true`。正常的默认开启流程会在当前 execution 的首次成功可见 response 期间安装并计量。`disable` 会阻止后续结果保存，但保留历史和 runtime。`clear` 会删除计量历史；`uninstall` 会停用计量、清除历史并移除 runtime；这两个破坏性操作都必须提供 `--confirm-delete`。`status` 对配置和 tokenizer 安装状态都是只读的。所有这些命令都不会打开 provider 页面。
 
-计量范围仅包括经过规范化的可见 assistant 输出，并归属到触发它的 durable job 和 response。它是稳定的跨 provider estimate，不是 provider billing 数值；input token、隐藏推理和私有 backend traffic 都不在范围内。
+计量范围仅包括经过规范化的可见 assistant 输出，并归属到触发它的 job 和 response。它是稳定的跨 provider estimate，不是 provider billing 数值；input token、隐藏推理和私有 backend traffic 都不在范围内。
+
+### `tokenless api-proxy`
+
+管理本地 API proxy：daemon 上一个 OpenAI 与 Anthropic 兼容的接口，把普通 API 调用转换成可见 provider 工作。默认关闭，需要显式开启。
+
+```bash
+tokenless api-proxy status --json
+tokenless api-proxy enable --conversation-mode new-conversation --json
+tokenless api-proxy enable --conversation-mode continue-conversation --json
+tokenless api-proxy disable --json
+```
+
+把客户端指向 daemon，并使用 daemon control token 作为 API key：
+
+| 客户端 | Base URL | 路由 |
+| --- | --- | --- |
+| OpenAI 兼容 | `http://127.0.0.1:7331/v1/openai` | `POST /chat/completions`、`GET /models` |
+| Anthropic 兼容 | `http://127.0.0.1:7331/v1/anthropic` | `POST /messages` |
+
+`model` 必须以 `tokenless/<provider>` 显式指明 provider，例如 `tokenless/chatgpt`。无法映射的 model 会被拒绝，而不会被改写到调用方没有选择的 provider。`GET /v1/openai/models` 会列出全部可用名称。
+
+`--conversation-mode` 仍保留用于配置/status 兼容，但不会覆盖 API contract。Chat Completions 与 Anthropic 始终新建 provider conversation，并发送完整请求历史。Responses 省略 `previous_response_id` 时新建 chat；只有提供有效 `previous_response_id` 且存在 mapping 时才继续既有 provider conversation；mapping 缺失则以重建 transcript 新建 chat。精确 continuation 规则见 [API proxy 集成文档](docs/api-proxy-integration.zh-CN.md#conversation-状态)。
+
+`tools`、`tool_choice`、`functions`、`function_call` 和 `response_format` 会被拒绝，因为可见 provider 页面没有对应控件。`stream: true` 会返回该方言约定的事件序列，但作为一个终态 chunk 一次性下发，因为可见 response 只有渲染完成后才可读。返回的 `usage` 计数恒为 0：Tokenless 不计量 provider token，该 response 由你自己的网页版订阅承担。
+
+Response 中附带一个 `tokenless` 对象，包含 provider、当前 `job_id`、conversation mode 以及可见 citations。
 
 ### `tokenless run`
 
@@ -465,14 +526,14 @@ Provider 选择：
 
 - 显式 `--provider <provider>` 或 `TOKENLESS_PROVIDER` 会保持精确匹配，不会因为缓存可用性而被替换。
 - `--capability <capability>` 可以重复使用，用于请求 canonical caller outcome，而不是 provider 专属控件。
-- Tokenless 会合并显式 capabilities 与结构化推导：普通 `submit_and_read` run 要求 `conversation.chat`，`--attach-file` 要求 `file.upload`，并在适用时增加 `image.input`、`audio.input` 或 `video.input`；`--workspace-mode auto` 或 `native` 要求 `workspace.native`。
+- Tokenless 会合并显式 capabilities 与结构化推导：普通 `submit_and_read` run 要求 `conversation.chat`，`--attach-file` 要求 `file.upload`，非媒体文件增加 `document.input`，图片、音频或视频分别增加匹配的 `image.input`、`audio.input` 或 `video.input`；每个显式 semantic input 都必须有匹配 MIME 的 attachment。`--workspace-mode auto` 或 `native` 要求 `workspace.native`。
 - 未显式指定 provider 时，配置的 provider list 会过滤 membership。Tokenless 会再筛出满足完整 implication-expanded requirement set 的 providers，并按照 fresh cached eligibility 和 evidence maturity（`supported` 优先于 `experimental`）对 routes 排序；配置 list 的 position 仅作为最终 tie-breaker，不能覆盖这些更强的信号。过期但曾可用的 observation 会保持为 `unchecked`，直到 runner 执行实时只读 preflight。
 - 显式 provider 无法满足完整 requirement set 时，会在提交 daemon job 前失败，不会静默切换。
 - Unknown 与 sign-in-required observations 不可用于隐式路由。如果没有可用 cached provider，CLI 会在创建 daemon job 前返回带 provider observation context 的 `provider_unavailable`。
 - 已知 capability 如果没有完整 route，会在 browser mutation 前返回 `task_capability_route_unavailable`。`--capability` 当前只支持正常的 `submit_and_read` action。
 - 成功提交会返回并持久化 `capabilityRoute`，其中包含规范化 requirements、所选 strategies、support level、evidence identifiers 和 runtime eligibility；`tokenless state` 会返回同一 route。
-- 隐式 `submit_and_read` run 可以持久化 automatic fallback plan。每次 attempt 都会在 mutation 前只读复核已知本地 provider capacity、可见 session 和 capability-specific UI，不发送 probe prompt。已分类的 safe pre-submit capacity、登录、CAPTCHA、rate/plan、维护、区域、导航、稳定 surface 和 capability availability failure，只有在下一条 ranked route 满足完全相同的完整 requirements，且此前 mutation 都可重建时，才会让同一个 job 重新排队。精确或已映射 continuation、显式 provider、provider-specific controls、不可重建 mutation、ambiguous external state 和 post-submission failure 都绝不会自动切换。JSON state 包含排序后的 `fallback.routes`、结构化停止原因和 `providerAttempts`。
-- Job validator 会再次根据 actions、attachment MIME types 和 native workspace intent 推导 capabilities，因此 internal 或 agent caller 无法少报 fallback requirement。Routed job 携带 `tokenless.context-envelope.v1`，其中的 instructions、references、output/constraint contract、可选 upstream state 和 delivery hashes 会在每次 attempt 原样重放；JSON state 只公开脱敏后的 envelope 摘要。
+- 隐式 `submit_and_read` run 可以在当前 execution 中保留 automatic fallback plan。每次 attempt 都会在 mutation 前只读复核已知本地 provider capacity、可见 session 和 capability-specific UI，不发送 probe prompt。已分类的 safe pre-submit capacity、登录、CAPTCHA、rate/plan、维护、区域、导航、稳定 surface 和 capability availability failure，只有在下一条 ranked route 满足完全相同的完整 requirements 且尚未完成 external mutation 时，才会立即尝试该 route。精确或已映射 continuation、显式 provider、provider-specific controls、ambiguous external state 和 post-submission failure 都绝不会自动切换。JSON state 包含排序后的 `fallback.routes` 和结构化停止原因。
+- Job validator 会再次根据 actions、attachment MIME types 和 native workspace intent 推导 capabilities，因此 internal 或 agent caller 无法少报 fallback requirement。Routed job 携带 `tokenless.context-envelope.v1`，其中的 instructions、references、output/constraint contract、可选 upstream state 和 delivery hashes 会在每次 fallback attempt 原样复用；JSON state 只公开脱敏后的 envelope 摘要。
 
 Prompt 输入：
 
@@ -500,18 +561,18 @@ Provider 控件：
 
 Identity 与 continuity：
 
-- `--task-id <id>` 提供持久化 task identity。
-- `--idempotency-key <id>` 在没有 task ID 时提供相同 identity。
+- `--task-id <id>` 为当前 daemon execution 提供 task identity。
+- `--page-ref <ref>` 提供由调用方控制的 provider tab identity。只有必须在同一 tab 中继续的工作才复用同一个 Ref；独立工作应使用不同 Ref。省略时会生成独立 Ref。
 - `--project-name <name>` 和 `--chat-name <name>` 会参与推导 task identity，但不会请求 Workspace 处理。
 - `--workspace-mode <auto|native|conversation>` 显式请求 Workspace 处理，并要求同时提供 `--project-name`。
 - `--project-instructions <text>` 或 `--project-instructions-file <path>` 提供可选 Workspace instructions。
-- `--agent-kind <kind>` 和 `--agent-session-id <id>` 将 job 定向到一个 agent recipient。两者必须同时提供，也可通过 `TOKENLESS_AGENT_KIND` 与 `TOKENLESS_AGENT_SESSION_ID` 提供。
+- `--agent-kind <kind>` 和 `--agent-session-id <id>` 提供 Codex Harness context identity。两者必须同时提供，也可通过 `TOKENLESS_AGENT_KIND` 与 `TOKENLESS_AGENT_SESSION_ID` 提供。
 
 执行控制：
 
 - `--no-wait` 提交后立即返回，不等待结果。
 - `--long-running` 使用 long-running wait budget，且不能与 `--no-wait` 同时使用。
-- `--timeout-ms`、`--cancel-timeout-ms` 和 `--daemon-start-timeout-ms` 可覆盖执行时间。`--runner-heartbeat-timeout-ms` 为兼容保留，但不再控制 standalone runner。
+- `--timeout-ms`、`--cancel-timeout-ms` 和 `--daemon-start-timeout-ms` 可覆盖执行时间。
 - `--target-url <url>` 选择 provider 域名下允许的起始 URL。
 
 Workspace modes：
@@ -519,30 +580,13 @@ Workspace modes：
 - 使用 `auto` 或 `native` 的 routed `run` request 都要求 canonical `workspace.native` capability。目前没有 provider route 被公开，因此在 native Project release gate 完成前，这类 request 会在 browser mutation 之前失败。
 - Claude 与 Grok 的 lower-level adapter 已为显式真实 provider acceptance suite 实现实验性的可见原生 Project 创建/复用；仅有 implementation 不构成 router support 声明。
 - `workspace.native` 可路由后，`native` 将强制要求精确创建或复用原生 Project，绝不会降级到 conversation scope；出现重复的精确可见名称时 fail closed。
-- `conversation` 强制使用 conversation-scoped strategy；只有真实 provider capability matrix 已证明的 provider/profile 才支持跨进程恢复。
+- `conversation` 强制使用 conversation-scoped strategy，并且复用共享 Tokenless 数据库中的 mapping。
 - 原生结果会报告 `created` 或 `reused`、canonical provider resource identity、provider/profile scope 和 instruction outcome；conversation 结果会报告 `fallback`。
-- Project 和 task conversation target 会作为精确 SQLite mapping 持久化，不再通过扫描历史 job result 恢复。
-
-### `tokenless replay`
-
-原子报告尚未送达给一个显式 agent recipient 的 outcome 摘要：
-
-```bash
-tokenless replay \
-  --agent-kind codex \
-  --agent-session-id "<stable-session-id>" \
-  --json
-```
-
-该命令会按需探测或启动本地 daemon。SQLite 会在返回响应前把每个 actionable outcome revision 标为已报告，因此同一 revision 永不再次主动报告——即使本次 CLI 响应丢失。同一 job 后续进入新的 parked 或 terminal revision 时，会作为新的 outcome 再报告一次。
-
-Replay 只包含 allowlist metadata，以及 `has_result`、`has_error`、`has_blocker` 标志；不会包含原始 result、error 或 blocker 内容。需要时使用 `tokenless state --job-id "<jobId>" --json` 读取持久化的完整 job。不要仅仅因为漏掉 replay 响应就提交替代 job。
-
-主要选项：`--agent-kind`、`--agent-session-id`、`--limit`、`--daemon-url`、`--daemon-start-timeout-ms`、`--home` 和 `--json`。两个 identity 参数也可由 `TOKENLESS_AGENT_KIND` 与 `TOKENLESS_AGENT_SESSION_ID` 提供。
+- Project 和 task conversation target 是保存在共享 Tokenless 数据库中的精确 mapping。
 
 ### `tokenless state`
 
-读取 daemon 中持久化的 job 状态，不访问 provider。
+读取 daemon 当前 job 状态，不访问 provider。Daemon 重启时未完成的 job 会以 `job_interrupted` 错误标记为 failed，不会恢复。
 
 ```bash
 tokenless state --task-id task-123 -P default --json
@@ -551,21 +595,6 @@ tokenless state -P default -p chatgpt --limit 10 --json
 ```
 
 必须提供 task ID、job ID 或 profile。结果会按 managed Playwright backend、所选 profile 和 provider 过滤。`--limit` 控制返回 job 数量。
-
-### `tokenless resume`
-
-当同一个 daemon job 进入 `waiting_for_user` 后，恢复该 job。
-
-```bash
-tokenless resume \
-  --job-id tlp_... \
-  --browser-visibility headed \
-  --json
-```
-
-必须提供 `--job-id` 和 `--browser-visibility headed`。Resume 会保留原始 job 与 task identity。
-
-当 provider 登录、hCaptcha、MFA 或其他可见人工验证成为必要条件时，Tokenless 会报告 `waiting_for_user`，并明确提示“需要你的协助”。请完成可见步骤，然后查询或恢复同一个 job；不要提交替代 job。
 
 ### `tokenless cancel`
 
@@ -589,7 +618,7 @@ tokenless cancel --job-id tlp_... --json
 tokenless provider-status -P default -p chatgpt --json
 ```
 
-如果需要实时检查并同时更新 profile registry，请使用 `tokenless profiles status`。
+如果需要实时检查并同时更新已持久化的 profile observation，请使用 `tokenless profiles status`。
 
 ### `tokenless provider-controls`
 
@@ -737,7 +766,6 @@ tokenless prompt \
 | `tokenless inspect-chatgpt-controls` | `tokenless chatgpt-controls` |
 | `--turn-context` | `--context` |
 | `--turn-context-file` | `--context-file` |
-| `--conversation-key` | `--idempotency-key` |
 
 ## 状态与副作用总结
 
@@ -745,27 +773,27 @@ tokenless prompt \
 
 ```text
 profiles list
-    只读取已保存的 profile registry
+    只读取 config.json 中已保存的 profiles
 
 profiles status
     访问一家 provider，检查 auth/account controls，
-    并保存 auth、username、subscription 和 checkedAt
+    并在共享 tokenless.sqlite3 中保存 auth、username、subscription 和 checkedAt
 
 provider-status
     访问一家 provider 并返回实时 auth 结果，
-    但不是用于刷新 profile registry 的工作流
+    但不是用于刷新 profile observation 的工作流
 ```
 
-可能打开或操作 provider 页面的命令包括：`setup`、`profiles status`、`profiles open`、`run`、`resume`、所有 provider inspection/configuration/action 命令，以及 `snapshot-dom`。
+可能打开或操作 provider 页面的命令包括：`setup`、`profiles status`、`profiles open`、`run`、所有 provider inspection/configuration/action 命令，以及 `snapshot-dom`。
 
 ## 手动真实浏览器验收
 
-已认证 provider capability harness 会读取 `TOKENLESS_TEST_CONFIG` 指向的完整 config，并且只使用相邻 production registry 的 default profile。每位开发者在 harness 之外选择自己的 default，因此 profile slug 仍是开发者变量。该 config 必须位于所有 repository/worktree 之外；启动 browser automation 前，harness 会验证 profile directory、私有权限、lifecycle、executable 和精确的 runtime binding。
+已认证 provider capability harness 会读取 `TOKENLESS_TEST_HOME` 指向的完整 home，并从根目录派生 `config.json`，只使用其中的 `defaultProfile`。每位开发者在 harness 之外选择自己的 default，因此 profile slug 仍是开发者变量。该 home 必须位于所有 repository/worktree 之外；启动 browser automation 前，harness 会验证派生出的 profile directory、私有权限、executable 和精确的 runtime binding。
 
 先创建 repository-local `.env`，然后手动登录该 config 的 default profile：
 
 ```dotenv
-TOKENLESS_TEST_CONFIG=/absolute/path/to/tokenless-home/config.json
+TOKENLESS_TEST_HOME=/absolute/path/to/tokenless-home
 ```
 
 ```bash

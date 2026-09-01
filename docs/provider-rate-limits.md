@@ -8,7 +8,7 @@ Tokenless maintains its best current knowledge of consumer Web provider limits i
 
 One managed browser profile is one independent provider-capacity scope. Reaching a real provider limit remains an expected recoverable condition.
 
-## Current Schedulable Knowledge
+## Current Runtime Knowledge
 
 | Provider | Official exact numeric rules retained | Runtime interpretation and remaining uncertainty |
 | --- | --- | --- |
@@ -34,22 +34,21 @@ For an exact rule, Tokenless:
 1. reads immutable `provider_submitted_at` facts from the existing SQLite `jobs` table;
 2. derives prompt and attachment units from each structured job request;
 3. isolates provider, profile, model family, mode, action, and matching window;
-4. applies a 90% scheduling allowance only when the published allowance is at least 20 units;
+4. applies a 90% planning allowance only when the published allowance is at least 20 units;
 5. applies GCRA cadence with a bounded 5% burst, clamped to 2–8 units; and
-6. returns `admit` or an explainable `defer` with `eligibleAt`.
+6. returns `admit` or an explainable `defer` without creating a delayed job.
 
 For every non-numeric or unmatched rule, Tokenless returns `unknown` and allows execution. This preserves uncertainty without manufacturing quotas.
 
-Before provider mutation, known deferral first consumes an already-filtered automatic provider fallback plan. If no in-scope fallback remains, the same job returns to `queued` with `eligible_at`. A visible rate or plan blocker before submission receives bounded local backoff. Proven or ambiguous post-submission work is never replayed on another provider or profile.
+Before provider mutation, a known capacity deferral first consumes an already-filtered automatic provider fallback plan in the current execution. If no in-scope fallback remains, the request fails clearly; it is not delayed or requeued. A visible rate or plan blocker before submission remains a current-execution failure. Proven or ambiguous post-submission work is never replayed on another provider or profile.
 
-The configured provider list is a filter only. Its order does not alter capability, subscription, capacity, fairness, or recovery scoring.
+The configured provider list is a filter only. Its order does not alter capability, subscription, capacity, fairness, or route selection.
 
-## Durable Facts and Diagnostics
+## Stored Facts and Diagnostics
 
 Rate-limit state stays in the existing `jobs` table:
 
 - `provider_submitted_at` is nullable, immutable, and written immediately after visible prompt submission succeeds;
-- `eligible_at` prevents an early claim after a capacity deferral;
 - `provider`, `profile_id`, and `request_json` retain the dimensions needed to reconstruct local usage; and
 - `(provider, profile_id, provider_submitted_at)` supports bounded history queries.
 
@@ -61,11 +60,11 @@ Inspect the next prompt projection with:
 tokenless limits inspect --profile <slug> --provider <provider> --json
 ```
 
-The output includes the matched plan, match confidence, catalog revision, applicable rules, published and effective allowances, locally observed usage, remaining estimate, cadence, burst allowance, decision, and next eligible time.
+The output includes the matched plan, match confidence, catalog revision, applicable rules, published and effective allowances, locally observed usage, remaining estimate, cadence, burst allowance, and decision.
 
 ## Validation Boundary
 
-Rate-limit acceptance is algorithmic. The focused integration test uses the built CLI, built daemon, real HTTP boundary, real profile registry, and real SQLite history with controlled timestamps. It verifies subscription matching, exact and non-numeric knowledge, model-pool isolation, sliding windows, remaining capacity, burst cadence, deferral time, and the CLI diagnostic.
+Rate-limit acceptance is algorithmic. The focused integration test uses the built CLI, built daemon, real HTTP boundary, profiles from `config.json`, and real SQLite history with controlled timestamps. It verifies subscription matching, exact and non-numeric knowledge, model-pool isolation, sliding windows, remaining capacity, burst cadence, deferral time, and the CLI diagnostic.
 
 It deliberately does not spam provider websites to discover or exhaust quotas. Real provider blockers remain normal runtime evidence, not a release test load generator.
 

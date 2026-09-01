@@ -10,20 +10,18 @@ import {
   MANAGED_PLAYWRIGHT_JOB_ACTION,
   PLAYWRIGHT_EXECUTION_BACKEND,
   TASK_CAPABILITIES,
-  TASK_CAPABILITY_CATALOG_SCHEMA_ID,
   VISIBLE_ACTIONS,
   ManagedProfileRegistry,
   TaskCapabilityRequestError,
   createManagedPlaywrightJobRequest,
   createE2EInspectionJobId,
   getProviderDescriptorById,
-  listProviderTaskCapabilityRoutes,
   listProviderDescriptors,
   listTaskCapabilityDefinitions,
   normalizeTaskCapabilityRequirements,
+  normalizeSlug as normalizeManagedProfileSlug,
   readManagedProfileRegistryReadOnly,
   resolveTaskCapabilityRoutes,
-  submitManagedPlaywrightJob,
   type ManagedProfileRecord,
   type ProviderAccessClass,
   type ProviderAccountTier,
@@ -31,7 +29,8 @@ import {
   type TaskCapabilityId,
   type TaskCapabilityRoute,
   type VisibleAction,
-} from './playwright/index.js'
+} from '#tokenless-server/browser/index.js'
+import { submitManagedPlaywrightJob } from './http/managed-playwright.js'
 
 import {
   DEFAULT_DAEMON_URL,
@@ -39,47 +38,65 @@ import {
   buildTokenlessPrompt,
   browserRuntimeStatus,
   quiesceBrowserRuntime,
+  cancelAgentRun,
   cancelDaemonJob,
   createDaemonJob,
   daemonUrl,
   deriveTaskId,
-  deleteTokenlessProfileConfig,
-  drainDaemonReplay,
   ensureDaemonReady,
+  generateImage,
+  getMenuBarSnapshot,
   getDaemonJob,
+  getControlState,
+  getControlCapabilities,
   getProviderCapacity,
   inspectManagedRuntime,
   listDaemonJobs,
-  markDaemonJobReported,
   normalizeBrowserId,
   normalizeBrowserVisibility,
   openBrowserRuntimeProfile,
   openBrowserRuntimeProviderTabs,
   openTokenlessDashboard,
+  addControlProfile,
+  clearControlProfiles,
   openProviderUrl,
   persistDaemonSnapshot,
   probeDaemonReady,
   providerWakeUrl,
   readTokenlessConfig,
+  readAgentRun,
   hasConfiguredTokenlessLanguage,
   removeStagedVisibleAttachmentBundle,
   resolveChromiumBrowser,
   resolveProviderConversation,
   resolveProviderMapping,
-  resumeDaemonJob,
+  resolveControlProfile,
+  resolveControlExecution,
+  removeControlProfile,
+  resumeAgentRun,
   semanticVersionMajor,
   stageVisibleAttachments,
+  startAgentRun,
   stopDaemon,
   tokenlessHome,
   upsertTokenlessProfileConfig,
   waitDaemonJobResult,
+  setDefaultControlProfile,
+  updateControlConfig,
+  updateControlProfileConfig,
+  updateControlProfileObservation,
+  updateOutputSavings,
   writeTokenlessConfig,
+  configPath,
+  API_PROXY_CONVERSATION_MODES,
+  type ApiProxyConversationMode,
 } from './index.js'
-import type { TokenlessConfig } from './job-store.js'
+import type { TokenlessConfig } from '#tokenless-server/persistence/config.js'
+import { G4fRuntimeManager } from '#tokenless-server/providers/direct/g4f/runtime-manager.js'
+import { g4fProviderName, nativeDirectProviderAvailable } from '#tokenless-server/providers/direct/g4f-map.js'
 import {
-  OUTPUT_SAVINGS_ESTIMATOR,
   OutputSavingsRuntimeManager,
-} from './output-savings/index.js'
+} from '#tokenless-server/output-savings/index.js'
 import {
   activeTokenlessLanguage,
   detectSystemLanguage,
@@ -89,35 +106,43 @@ import {
   tError,
 } from './localization.js'
 import type { CliErrorMessageKey, LocalizedErrorCode } from './i18n/catalog.js'
-import { paintCliText, resolveCliColorEnabled, type CliColor } from './cli-output.js'
-import { DAEMON_CONTROL_API_REVISION, DAEMON_TASK_STATE_SCHEMA_ID } from './schema-ids.js'
+import { paintCliText, resolveCliColorEnabled, type CliColor } from './output/cli-output.js'
+import { DAEMON_CONTROL_API_REVISION, DAEMON_TASK_STATE_SCHEMA_ID } from '#tokenless-server/schema-ids.js'
 import {
   inspectTokenlessSkills,
-} from './setup-workflow.js'
-import { reconcileTokenlessMaintenance } from './maintenance.js'
-import { DaemonRuntimeState } from './daemon/runtime-state.js'
-import { JobStore } from './daemon/job-store.js'
-import { fetchTokenlessLatestVersion } from './npm-registry.js'
+} from './bootstrap/setup-workflow.js'
+import { reconcileTokenlessMaintenance } from './bootstrap/maintenance.js'
+import { fetchTokenlessLatestVersion } from './http/npm-registry.js'
 import {
-  SETUP_READINESS_DISCLOSURE,
   createSetupPresenter,
   resolveSetupTerminalCapabilities,
   type SetupPresenter,
-} from './setup-presenter.js'
-import { tokenlessPackageVersion } from './platform-package.js'
-import { formatUpgradeProgress, formatUpgradeSummary, runUpgradeCommand, type UpgradeProgressEvent } from './upgrade.js'
+} from './output/setup-presenter.js'
+import { tokenlessPackageVersion } from '#tokenless-server/platform-package.js'
+import { formatUpgradeProgress, formatUpgradeSummary, runUpgradeCommand, type UpgradeProgressEvent } from './commands/upgrade.js'
 import {
   BrowserRuntimeManager,
   normalizeBrowserSelection,
   type ResolvedBrowserRuntime,
-} from './browser-runtime/index.js'
+} from '#tokenless-server/browser/runtime/index.js'
+import { featureBenchCommand } from './commands/featurebench/cli.js'
+import { readBootstrapDaemonUrl, readBootstrapLanguage } from './bootstrap/home.js'
+import {
+  createAgentToolRegistry,
+  createLocalHttpProviderTurnClient,
+  openWebAgentHarness,
+} from '#tokenless-harness/index.js'
 
 const CLI_ARG_FLAGS: unique symbol = Symbol('tokenless.cliArgFlags')
 
 type CliArgs = Record<string, any> & {
+  answers: string[]
+  approvals: string[]
   attachFiles: string[]
+  authenticationCompleted: string[]
   capabilities: string[]
   files: string[]
+  skills: string[]
   [CLI_ARG_FLAGS]?: Record<string, string[]>
 }
 type CliUsageDetails = {
@@ -208,6 +233,12 @@ const PRIORITY_VISIBLE_PROVIDER_ACTIONS = new Set([
   'auth.status',
   'model.inspect',
   'model.select',
+  'arena.surface.inspect',
+  'arena.surface.select',
+  'grok.imagine.inspect',
+  'grok.imagine.select',
+  'gemini.image.inspect',
+  'gemini.image.select',
   'effort.inspect',
   'effort.select',
   'qwen.mode.inspect',
@@ -246,21 +277,28 @@ const COMMAND_CONTRACT_BY_KEY = new Map(COMMAND_CONTRACTS.map((contract) => [com
 const TOP_LEVEL_USAGE = [
   'tokenless <command> [options]',
   'tokenless setup [--install-codex [--codex-home <dir>]]',
-  `tokenless run --provider ${VISIBLE_PROVIDER_USAGE} --prompt <text> --json`,
+  `tokenless run --provider ${VISIBLE_PROVIDER_USAGE} [--execution-mode browser|direct] --prompt <text> --json`,
+  `tokenless agent run --provider ${VISIBLE_PROVIDER_USAGE} [--profile <slug>] --prompt <text> --json`,
+  `tokenless agent delegate --provider ${VISIBLE_PROVIDER_USAGE} [--profile <slug>] --workspace-root <dir> --prompt <text> --json`,
   'tokenless capabilities list --json',
   'tokenless limits inspect --profile <slug> --provider <provider> --json',
-  'tokenless replay --agent-kind <kind> --agent-session-id <id> --json',
+  'tokenless featurebench inspect --json',
   'tokenless profiles <subcommand> [options]',
-  'tokenless agents <install|status|inspect|uninstall> codex [options]',
-  'tokenless dashboard [--no-open] [--json]',
+  'tokenless agents <install|status|inspect|uninstall> <codex|dsh> [options]',
+  'tokenless dashboard [--profile <slug>] [--job-id <id>] [--semantic-manifest-output <absolute-path>] [--no-open] [--json]',
+  'tokenless menubar status --json',
   'tokenless savings <status|enable|disable|uninstall|clear> --json',
   'tokenless daemon stop [--json]',
   'tokenless help',
 ]
 let args: CliArgs = {
+  answers: [],
+  approvals: [],
   attachFiles: [],
+  authenticationCompleted: [],
   capabilities: [],
   files: [],
+  skills: [],
   json: process.argv.includes('--json'),
   verbose: process.argv.includes('--verbose') || process.argv.includes('-v'),
   color: process.argv.includes('--color'),
@@ -283,7 +321,7 @@ try {
   } else {
     command = argv[0]?.startsWith('-') ? 'prompt' : (argv.shift() ?? 'help')
   }
-  const subcommand = (command === 'profiles' || command === 'daemon' || command === 'capabilities' || command === 'limits' || command === 'savings' || command === 'agents') && argv[0] && !argv[0].startsWith('-')
+  const subcommand = (command === 'profiles' || command === 'daemon' || command === 'capabilities' || command === 'limits' || command === 'savings' || command === 'api-proxy' || command === 'agents' || command === 'agent' || command === 'featurebench' || command === 'menubar') && argv[0] && !argv[0].startsWith('-')
     ? argv.shift()
     : undefined
   const agentTarget = command === 'agents' && argv[0] && !argv[0].startsWith('-')
@@ -322,6 +360,10 @@ try {
     await daemonCommand(subcommand, args)
   } else if (command === 'agents') {
     await agentsCommand(subcommand, args)
+  } else if (command === 'agent') {
+    await agentCommand(subcommand, args)
+  } else if (command === 'menubar') {
+    await menubarCommand(subcommand, args)
   } else if (command === 'dashboard') {
     await dashboardCommand(args)
   } else if (command === 'run') {
@@ -332,8 +374,10 @@ try {
     await limitsCommand(subcommand, args)
   } else if (command === 'savings') {
     await savingsCommand(subcommand, args)
-  } else if (command === 'replay') {
-    await replayCommand(args)
+  } else if (command === 'api-proxy') {
+    await apiProxyCommand(subcommand, args)
+  } else if (command === 'featurebench') {
+    printPayload(await featureBenchCommand(subcommand, args), args)
   } else if (command === 'provider-status' || command === 'provider-auth-status') {
     await providerStatusCommand(args)
   } else if (command === 'provider-action') {
@@ -350,8 +394,6 @@ try {
     await snapshotDomCommand(args)
   } else if (command === 'state' || command === 'status') {
     await stateCommand(args)
-  } else if (command === 'resume') {
-    await resumeCommand(args)
   } else if (command === 'cancel') {
     await cancelCommand(args)
   } else if (command === 'setup') {
@@ -359,17 +401,21 @@ try {
   } else if (command === 'install') {
     await installCommand(args)
   } else if (command === 'upgrade') {
-    const humanOutput = args.json !== true
-    if (humanOutput && !args.quiet) console.error(t('cliUpgradeTitle'))
-    const result = await runUpgradeCommand(args, humanOutput && args.verbose
-      ? { onProgress: (event) => console.error(formatUpgradeProgressLine(event, args)) }
-      : undefined)
-    if (humanOutput) {
-    console.log(formatHumanLine(formatUpgradeSummary(result), result.ok === true, args))
-      if (args.verbose) printVerbosePayload(result, args)
+    if (args.check === true) {
+      await upgradeCheckCommand(args)
+    } else {
+      const humanOutput = args.json !== true
+      if (humanOutput && !args.quiet) console.error(t('cliUpgradeTitle'))
+      const result = await runUpgradeCommand(args, humanOutput && args.verbose
+        ? { onProgress: (event) => console.error(formatUpgradeProgressLine(event, args)) }
+        : undefined)
+      if (humanOutput) {
+        console.log(formatHumanLine(formatUpgradeSummary(result), result.ok === true, args))
+        if (args.verbose) printVerbosePayload(result, args)
+      }
+      else printPayload(result, args)
+      if (!result.ok) process.exitCode = 1
     }
-    else printPayload(result, args)
-    if (!result.ok) process.exitCode = 1
   } else if (command === 'doctor') {
     await doctorCommand(args)
   } else if (command === 'config') {
@@ -408,7 +454,7 @@ try {
 
 async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
-  const registry = new ManagedProfileRegistry(homeDir)
+  const control = await ensureControlDaemon(args, homeDir)
 
   if (subcommand === 'add') {
     const slug = requiredAdminValue(args.profile, '--profile')
@@ -419,28 +465,19 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
         'Profiles add supports --browser managed-chromium or --browser cloak; omit --browser for the configured native Chrome or Brave browser.',
       )
     }
-    const runtime = requestedBrowser === null
-      ? null
-      : await new BrowserRuntimeManager({ homeDir }).ensure(requestedBrowser, { allowDownload: false })
-    const record = await registry.addProfile({
-      slug,
+    const added = await addControlProfile({
+      homeDir,
+      daemonUrl: control.daemon.url,
+      profile: slug,
       setDefault: args.setDefault === true,
-      lifecycle: 'ready',
-      ...(runtime === null ? {} : { runtimeBinding: browserRuntimeBinding(runtime) }),
+      browser: requestedBrowser,
+      ...(args.providerWhitelist === undefined
+        ? {}
+        : { providerWhitelist: parseProviderList(args.providerWhitelist) }),
     })
-    const current = await readTokenlessConfig(homeDir)
-    const configured = current.profiles[record.slug]
-    if (!configured) throw usageError('profile_not_configured', `Managed profile '${record.slug}' has no configuration.`)
-    if (args.providerWhitelist !== undefined) {
-      await upsertTokenlessProfileConfig({
-        homeDir,
-        slug: record.slug,
-        profile: { ...configured, enabledProviders: parseProviderList(args.providerWhitelist) },
-      })
-    }
     printPayload({
       ok: true,
-      profile: publicManagedProfile(record, await defaultProfileSlug(registry)),
+      profile: publicManagedProfile(added.profile, added.defaultProfile),
     }, args)
     return
   }
@@ -454,49 +491,43 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
         'Profiles clear requires exactly one of --profile <slug> or --all.'
       )
     }
-    const targets = clearAll
-      ? await registry.listProfiles()
-      : [await registry.resolveProfile(selectedSlug!)]
-    const runner = await quiesceBrowserRuntimeForProfileMutation({ homeDir })
-    if (runner.state === 'unsafe') {
-      throw usageError(
-        'profile_clear_runner_unsafe',
-        'Cannot clear managed profiles while the Playwright runner identity is unverified.'
-      )
-    }
-    const cleared = []
-    for (const profile of targets) {
-      const removed = await registry.removeProfile(profile.slug, { confirmDelete: true })
-      await deleteTokenlessProfileConfig({ homeDir, slug: profile.slug })
-      cleared.push({ slug: removed.slug, id: removed.id })
-    }
+    const result = await clearControlProfiles({
+      homeDir,
+      daemonUrl: control.daemon.url,
+      ...(clearAll ? { all: true } : { profile: selectedSlug! }),
+    })
+    const runner = stoppedRunnerStatus()
+    const cleared = result.cleared
     printPayload({
       ok: true,
       cleared,
-      defaultProfile: (await registry.read()).defaultProfile,
+      defaultProfile: result.defaultProfile,
       runner,
       compactOutput: clearAll
-        ? (cleared.length === 0 ? 'No managed profiles to clear.' : `Cleared ${cleared.length} managed profiles.`)
-        : `Cleared managed profile '${cleared[0]!.slug}'.`,
+        ? (cleared.length === 0 ? t('profilesNothingToClear') : t('profilesCleared', { count: cleared.length }))
+        : t('profileCleared', { profile: cleared[0]!.slug }),
     }, args)
     return
   }
 
   if (subcommand === 'list') {
-    const config = await readTokenlessConfig(homeDir)
-    const defaultSlug = await defaultProfileSlug(registry)
-    const profiles = (await registry.listProfiles())
+    const state = await getControlState({ homeDir, daemonUrl: control.daemon.url })
+    const profiles = state.profiles
       .map((profile) => ({
-        ...publicManagedProfile(profile, defaultSlug),
-        ...requiredProfileConfig(config, profile.slug),
+        ...publicManagedProfile(profile, state.defaultProfile),
+        ...requiredProfileConfig(state.config, profile.slug),
       }))
     printPayload({ ok: true, profiles }, args)
     return
   }
 
   if (subcommand === 'set-default') {
-    const record = await registry.setDefault(requiredAdminValue(args.profile, '--profile'))
-    printPayload({ ok: true, profile: publicManagedProfile(record, record.slug) }, args)
+    const result = await setDefaultControlProfile({
+      homeDir,
+      daemonUrl: control.daemon.url,
+      profile: requiredAdminValue(args.profile, '--profile'),
+    })
+    printPayload({ ok: true, profile: publicManagedProfile(result.profile, result.defaultProfile) }, args)
     return
   }
 
@@ -505,13 +536,16 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
     if (args.confirmDelete !== true) {
       throw usageError('profile_delete_confirmation_required', 'Profile removal requires --confirm-delete.')
     }
-    await registry.resolveProfile(slug)
-    const runner = await quiesceBrowserRuntimeForProfileMutation({ homeDir })
-    const record = await registry.removeProfile(slug, { confirmDelete: true })
-    await deleteTokenlessProfileConfig({ homeDir, slug })
+    const result = await removeControlProfile({
+      homeDir,
+      daemonUrl: control.daemon.url,
+      profile: slug,
+    })
+    const runner = stoppedRunnerStatus()
     printPayload({
       ok: true,
-      profile: publicManagedProfile(record, null),
+      profile: result.profile,
+      defaultProfile: result.defaultProfile,
       runner,
     }, args)
     return
@@ -531,6 +565,7 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
         provider,
         target: { kind: 'provider_home', url: managedProviderExplicitTargetUrl(provider, args.targetUrl) },
         userHandoff: subcommand === 'open',
+        pageRef: args.pageRef,
         actions: [{ action: visibleAction, payload: {} }],
       }),
       taskId: args.taskId || `profile:${subcommand}:${randomUUID()}`,
@@ -541,7 +576,11 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
       ? authObservationFromManagedResult(result.waitResult?.result)
       : null
     const profile = authObservation
-      ? await registry.updateProviderStatus(result.profile.slug, {
+      ? (await updateControlProfileObservation({
+          homeDir,
+          daemonUrl: control.daemon.url,
+          profile: result.profile.slug,
+          observation: {
           provider,
           auth: authObservation.state,
           access: authObservation.access,
@@ -549,14 +588,15 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
           ...(authObservation.state === 'authenticated' && authObservation.account
             ? { account: authObservation.account }
             : {}),
-        })
+          },
+        })).profile
       : result.profile
     printPayload({
       ok: true,
       command: `profiles.${subcommand}`,
       transport: 'daemon',
       backend: PLAYWRIGHT_EXECUTION_BACKEND,
-      profile: publicManagedProfile(profile, await defaultProfileSlug(registry)),
+      profile: publicManagedProfile(profile, (await getControlState({ homeDir, daemonUrl: control.daemon.url })).defaultProfile),
       provider,
       runner: result.runner,
       jobId: result.job.job_id,
@@ -572,15 +612,16 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
     if (args.targetUrl !== undefined) {
       throw usageError('profile_open_provider_required', '--target-url requires --provider for profiles open.')
     }
-    const config = await readTokenlessConfig(homeDir)
-    const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
+    const config = control.state.config
+    const configuredDaemonUrl = control.daemon.url
     const statusReporter = createCliStatusReporter(args)
-    const profile = await registry.resolveProfile(args.profile)
-    const daemon = await ensureDaemonReady({
+    const resolved = await resolveControlProfile({
       homeDir,
       daemonUrl: configuredDaemonUrl,
-      timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
+      profile: args.profile,
     })
+    const profile = resolved.profile
+    const daemon = control.daemon
     const actualDaemonUrl = daemon.url
     statusReporter.report({
       event: daemon.started ? 'daemon_started' : 'daemon_ready',
@@ -589,13 +630,10 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
       daemonPid: daemon.pid,
       backend: PLAYWRIGHT_EXECUTION_BACKEND,
     })
-    if (args.daemonUrl === undefined && config.daemonUrl !== configuredDaemonUrl) {
-      await writeTokenlessConfig({ homeDir, daemonUrl: configuredDaemonUrl })
-    }
     const opened = await openBrowserRuntimeProfile({
       daemonUrl: actualDaemonUrl,
       homeDir,
-      profileId: profile.id,
+      profileId: profile.slug,
       browserVisibility: 'headed',
     })
     const runner = browserRuntimeOpenRunnerStatus(opened.status, daemon.started)
@@ -604,7 +642,7 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
       status: opened.status.status,
       backend: PLAYWRIGHT_EXECUTION_BACKEND,
       action: 'profiles.open',
-      profileId: profile.id,
+      profileId: profile.slug,
       browserVisibility: opened.browserVisibility,
       effectiveBrowserVisibility: opened.effectiveBrowserVisibility,
     })
@@ -613,14 +651,14 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
       command: 'profiles.open',
       transport: 'daemon',
       backend: PLAYWRIGHT_EXECUTION_BACKEND,
-      profile: publicManagedProfile(profile, await defaultProfileSlug(registry)),
+      profile: publicManagedProfile(profile, resolved.defaultProfile),
       runner,
       browser: {
         requestedVisibility: opened.browserVisibility,
         effectiveVisibility: opened.effectiveBrowserVisibility,
         pageCount: opened.pageCount,
       },
-      compactOutput: `Opened managed profile '${profile.slug}' in a headed browser.`,
+      compactOutput: t('profileOpened', { profile: profile.slug }),
       status: opened.status.status,
       statusLog: statusReporter.events,
     }, args)
@@ -632,36 +670,120 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
 
 async function dashboardCommand(args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
-  const config = await readTokenlessConfig(homeDir)
-  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
-  const daemon = await ensureDaemonReady({
-    homeDir,
-    daemonUrl: configuredDaemonUrl,
-    timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
-  })
-  const profile = await new ManagedProfileRegistry(homeDir).resolveProfile(
-    args.profile === undefined ? undefined : String(args.profile),
-  )
+  if (args.semanticManifestOutput !== undefined && args.noOpen === true) {
+    throw usageError(
+      'invalid_option',
+      '--semantic-manifest-output cannot be combined with --no-open.',
+    )
+  }
+  const control = await ensureControlDaemon(args, homeDir)
+  const daemon = control.daemon
+  const semanticManifestBrowser = args.semanticManifestOutput === undefined
+    ? null
+    : await new BrowserRuntimeManager({ homeDir }).ensure('chrome', {
+        allowDownload: false,
+        browserExecutablePath: (await readTokenlessConfig(homeDir)).browserExecutablePath,
+      })
+  const profile = args.profile === undefined
+    ? null
+    : (await resolveControlProfile({
+        homeDir,
+        daemonUrl: daemon.url,
+        profile: String(args.profile),
+      })).profile
   const dashboard = await openTokenlessDashboard({
     homeDir,
     daemonUrl: daemon.url,
-    profileId: profile.id,
+    ...(profile === null ? {} : { profileId: profile.slug }),
+    ...(args.jobId === undefined ? {} : { jobId: String(args.jobId) }),
+    ...(args.semanticManifestOutput === undefined ? {} : { semanticManifestOutput: path.resolve(String(args.semanticManifestOutput)) }),
+    ...(semanticManifestBrowser === null ? {} : { browserExecutablePath: semanticManifestBrowser.executablePath }),
     open: args.noOpen !== true,
   })
   printPayload({
     ok: true,
     command: 'dashboard',
     daemon: { url: daemon.url, started: daemon.started, pid: daemon.pid },
-    profile: { slug: profile.slug, id: profile.id },
+    profile: profile === null ? null : { slug: profile.slug },
     dashboard: {
-      url: dashboard.url,
+      url: args.semanticManifestOutput === undefined ? dashboard.url : redactSemanticManifestToken(dashboard.url),
       opened: dashboard.opened !== null,
       reused: dashboard.opened?.reused ?? false,
     },
     compactOutput: args.noOpen === true
-      ? `Dashboard ready for managed profile '${profile.slug}': ${dashboard.url}`
-      : `Opened the Tokenless dashboard in managed profile '${profile.slug}'.`,
+      ? profile === null
+        ? t('dashboardReady', { url: dashboard.url })
+        : t('dashboardReadyForProfile', { profile: profile.slug, url: dashboard.url })
+      : args.semanticManifestOutput !== undefined
+        ? profile === null
+          ? t('dashboardOpenedInChrome')
+          : t('dashboardOpenedInChromeForProfile', { profile: profile.slug })
+        : profile === null
+          ? t('dashboardOpened')
+          : t('dashboardOpenedForProfile', { profile: profile.slug }),
   }, args)
+}
+
+function redactSemanticManifestToken(value: string) {
+  const url = new URL(value)
+  if (url.searchParams.has('semanticManifestToken')) {
+    url.searchParams.set('semanticManifestToken', 'redacted')
+  }
+  return url.toString()
+}
+
+async function menubarCommand(subcommand: string | undefined, args: CliArgs) {
+  if (subcommand !== 'status') {
+    throw usageError('menubar_command_invalid', 'Menubar subcommand must be status.')
+  }
+  const homeDir = tokenlessHome(args.home)
+  const control = await ensureControlDaemon(args, homeDir)
+  const snapshot = await getMenuBarSnapshot({
+    homeDir,
+    daemonUrl: control.daemon.url,
+  })
+  printPayload({
+    ok: true,
+    command: 'menubar status',
+    ...snapshot,
+  }, args)
+}
+
+async function upgradeCheckCommand(args: CliArgs) {
+  const check = await setupCliVersionCheck()
+  const payload = {
+    ok: check.ok,
+    command: 'upgrade',
+    current: check.currentVersion,
+    latest: check.latestVersion,
+    status: check.status,
+    updateAvailable: check.updateAvailable,
+    ...(check.error === undefined ? {} : { error: check.error }),
+  }
+  printPayload(args.json === true ? payload : {
+    ...payload,
+    compactOutput: setupCliVersionCompact(check),
+  }, args)
+  if (!check.ok) process.exitCode = 1
+}
+
+async function ensureControlDaemon(
+  args: CliArgs,
+  homeDir = tokenlessHome(args.home),
+  requiredProvider?: string,
+) {
+  const bootstrapDaemonUrl = await readBootstrapDaemonUrl(homeDir)
+  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? bootstrapDaemonUrl ?? undefined)
+  const daemon = await ensureDaemonReady({
+    homeDir,
+    daemonUrl: configuredDaemonUrl,
+    timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
+    ...(requiredProvider === undefined ? {} : { requiredProvider }),
+  })
+  return {
+    daemon,
+    state: await getControlState({ homeDir, daemonUrl: daemon.url }),
+  }
 }
 
 async function quiesceBrowserRuntimeForProfileMutation({
@@ -690,7 +812,7 @@ async function quiesceBrowserRuntimeForProfileMutation({
 
 async function profileMutationConfiguredDaemonUrl(homeDir: string) {
   try {
-    return (await readTokenlessConfig(homeDir)).daemonUrl ?? undefined
+    return await readBootstrapDaemonUrl(homeDir) ?? undefined
   } catch {
     return undefined
   }
@@ -702,7 +824,6 @@ function stoppedRunnerStatus() {
     pid: null,
     sessionId: null,
     safeToStop: false,
-    heartbeatAt: null,
   }
 }
 
@@ -719,7 +840,6 @@ async function embeddedRunnerStatus({
     pid: status.pid,
     sessionId: 'embedded',
     safeToStop: false,
-    heartbeatAt: null,
     started: false,
     runtime: 'embedded',
     runtimeStatus: status.status,
@@ -737,7 +857,6 @@ function browserRuntimeOpenRunnerStatus(
     pid: status.pid,
     sessionId: 'embedded',
     safeToStop: false,
-    heartbeatAt: null,
     started,
     runtime: 'embedded',
     runtimeStatus: status.status,
@@ -766,7 +885,6 @@ async function doctorRunnerStatus({
         pid: status.pid,
         sessionId: 'embedded',
         safeToStop: false,
-        heartbeatAt: null,
         runtime: 'embedded',
         runtimeStatus: status.status,
         activeProfileCount: status.activeProfileCount,
@@ -835,6 +953,7 @@ function managedProviderAccess(
   if (
     value === 'guest' ||
     value === 'sign_in_required' ||
+    value === 'account_blocked' ||
     value === 'signed_in_free' ||
     value === 'signed_in_paid' ||
     value === 'signed_in_unknown' ||
@@ -958,7 +1077,15 @@ function setupReportedCompactOutput({
   const classifications = providers
     .map((provider) => `${provider}: ${readiness[provider]?.classification ?? 'unknown'}`)
     .join('; ')
-  return `Tokenless setup checked ${providers.join(', ')} once in profile ${profile.slug}. Provider summary: ${classifications}. Counts: authenticated ${providerSummary.counts.authenticated}, unauthenticated ${providerSummary.counts.unauthenticated}, unknown ${providerSummary.counts.unknown}, failed ${providerSummary.counts.failed}.`
+  return t('setupCompactSummary', {
+    providers: providers.join(', '),
+    profile: profile.slug,
+    classifications,
+    authenticated: providerSummary.counts.authenticated,
+    unauthenticated: providerSummary.counts.unauthenticated,
+    unknown: providerSummary.counts.unknown,
+    failed: providerSummary.counts.failed,
+  })
 }
 
 function setupFailedCompactOutput({
@@ -978,7 +1105,15 @@ function setupFailedCompactOutput({
       return `${provider}: ${result?.classification ?? 'unknown'}${result?.error?.code ? ` (${result.error.code})` : ''}`
     })
     .join('; ')
-  return `Tokenless setup checked ${providers.join(', ')} once in profile ${profile.slug}. Provider summary: ${classifications}. Counts: authenticated ${providerSummary.counts.authenticated}, unauthenticated ${providerSummary.counts.unauthenticated}, unknown ${providerSummary.counts.unknown}, failed ${providerSummary.counts.failed}.`
+  return t('setupCompactSummary', {
+    providers: providers.join(', '),
+    profile: profile.slug,
+    classifications,
+    authenticated: providerSummary.counts.authenticated,
+    unauthenticated: providerSummary.counts.unauthenticated,
+    unknown: providerSummary.counts.unknown,
+    failed: providerSummary.counts.failed,
+  })
 }
 
 async function setupCliVersionCheck(): Promise<SetupCliVersionCheck> {
@@ -1031,19 +1166,22 @@ function noteSetupCliVersion(check: SetupCliVersionCheck, presenter: SetupPresen
 
 function setupCliVersionCompact(check: SetupCliVersionCheck) {
   if (check.status === 'check_unavailable') {
-    return `CLI: tokenless ${check.currentVersion}; npm latest check unavailable (${check.error?.code ?? 'npm_registry_unavailable'}, non-blocking).`
+    return t('setupCliUnavailable', { current: check.currentVersion, code: check.error?.code ?? 'npm_registry_unavailable' })
   }
   if (check.updateAvailable) {
-    return `CLI: tokenless ${check.currentVersion}; npm latest ${check.latestVersion} is available.`
+    return t('setupCliAvailable', { current: check.currentVersion, latest: check.latestVersion ?? 'latest' })
   }
-  return `CLI: tokenless ${check.currentVersion}; npm latest ${check.latestVersion} is up to date.`
+  return t('setupCliCurrent', { current: check.currentVersion, latest: check.latestVersion ?? check.currentVersion })
 }
 
 function setupDaemonCompact(daemon: {
   runningControlApiRevision: number | null
   runningVersion: string | null
 }) {
-  return `Daemon: ready on tokenless ${daemon.runningVersion ?? 'unknown'} / control API r${daemon.runningControlApiRevision ?? 'unknown'} (exact match required).`
+  return t('setupDaemonReady', {
+    version: daemon.runningVersion ?? 'unknown',
+    revision: daemon.runningControlApiRevision ?? 'unknown',
+  })
 }
 
 function compareSemanticVersions(left: string, right: string) {
@@ -1093,14 +1231,10 @@ async function defaultProfileSlug(registry: ManagedProfileRegistry) {
   return (await registry.read()).defaultProfile
 }
 
-function publicManagedProfile(profile: ManagedProfileRecord, defaultSlug: string | null) {
+function publicManagedProfile(profile: Pick<ManagedProfileRecord, 'slug' | 'lastObservedAuth'>, defaultSlug: string | null) {
   return {
     slug: profile.slug,
-    id: profile.id,
-    lifecycle: profile.lifecycle,
     isDefault: profile.slug === defaultSlug,
-    createdAt: profile.createdAt,
-    updatedAt: profile.updatedAt,
     browserMode: 'native',
     lastObservedAuth: profile.lastObservedAuth,
     providers: Object.fromEntries(Object.entries(profile.lastObservedAuth).map(([provider, status]) => [
@@ -1117,17 +1251,42 @@ function publicManagedProfile(profile: ManagedProfileRecord, defaultSlug: string
   }
 }
 
-function resolveDaemonJobCapabilityRoutes({
-  config,
-  profile,
+function requiredProfileConfig(
+  config: { profiles: Record<string, any> },
+  slug: string,
+) {
+  const configured = config.profiles[slug]
+  if (!configured) throw usageError('profile_not_configured', `Managed profile '${slug}' has no configuration.`)
+  return configured
+}
+
+async function preflightControlExecutionBeforeDaemonStart({
+  homeDir,
+  profileSlug,
   explicitProvider,
   requirements,
+  executionMode,
 }: {
-  config: Awaited<ReturnType<typeof readTokenlessConfig>>
-  profile: ManagedProfileRecord
+  homeDir: string
+  profileSlug?: string | undefined
   explicitProvider?: ProviderId | undefined
   requirements: readonly TaskCapabilityId[]
-}): readonly TaskCapabilityRoute[] {
+  executionMode: 'browser' | 'direct'
+}) {
+  const [config, registry] = await Promise.all([
+    readTokenlessConfig(homeDir),
+    readManagedProfileRegistryReadOnly(homeDir),
+  ])
+  const slug = profileSlug === undefined
+    ? registry.defaultProfile
+    : normalizeManagedProfileSlug(profileSlug)
+  if (!slug) {
+    throw usageError('profile_not_configured', 'No managed profile was specified and no default profile is configured.')
+  }
+  const profile = registry.profiles[slug]
+  if (!profile) {
+    throw usageError('profile_not_found' as LocalizedErrorCode, `Managed profile '${slug}' is not registered.`)
+  }
   const enabledProviders = requiredProfileConfig(config, profile.slug).enabledProviders
   if (explicitProvider && !enabledProviders.includes(explicitProvider)) {
     throw usageError('provider_not_enabled', `Provider '${explicitProvider}' is not enabled for profile '${profile.slug}'.`)
@@ -1143,11 +1302,10 @@ function resolveDaemonJobCapabilityRoutes({
         checkedAt: profile.lastObservedAuth?.[explicitProvider]?.checkedAt ?? null,
         tier: profile.lastObservedAuth?.[explicitProvider]?.account?.tier ?? null,
       }]
-    : providerObservationContext(implicitProviderCandidates(
-        enabledProviders,
-      ), profile)
+    : providerObservationContext(enabledProviders.map(normalizeProvider), profile)
   const decision = resolveTaskCapabilityRoutes({
     requirements,
+    executionMode,
     candidates: providers.map((provider, preferenceRank) => ({
       provider: provider.provider,
       runtimeEligibility: explicitProvider ? 'unchecked' : provider.runtimeEligibility,
@@ -1155,9 +1313,7 @@ function resolveDaemonJobCapabilityRoutes({
       preferenceRank,
     })),
   })
-  if (decision.ok) {
-    return decision.routes
-  }
+  if (decision.ok) return decision.routes
 
   const runtimeProviderUnavailable = !explicitProvider && providers.every((provider) => provider.runtimeEligibility === 'ineligible')
   const providerUnavailable = requirements.length === 0 || runtimeProviderUnavailable
@@ -1168,10 +1324,7 @@ function resolveDaemonJobCapabilityRoutes({
       : decision.message,
   )
   error.context = {
-    profile: {
-      slug: profile.slug,
-      id: profile.id,
-    },
+    profile: { slug: profile.slug },
     requirements: decision.requirements,
     providers: providerUnavailable ? providers : decision.evaluated,
     usableProviders: explicitProvider
@@ -1184,22 +1337,9 @@ function resolveDaemonJobCapabilityRoutes({
   throw error
 }
 
-function implicitProviderCandidates(enabledProviders: readonly string[]): ProviderId[] {
-  return enabledProviders.map(normalizeProvider)
-}
-
-function requiredProfileConfig(
-  config: Pick<Awaited<ReturnType<typeof readTokenlessConfig>>, 'profiles'>,
-  slug: string,
-) {
-  const configured = config.profiles[slug]
-  if (!configured) throw usageError('profile_not_configured', `Managed profile '${slug}' has no configuration.`)
-  return configured
-}
-
 function providerObservationContext(
   providers: readonly ProviderId[],
-  profile: ManagedProfileRecord,
+  profile: Pick<ManagedProfileRecord, 'lastObservedAuth'>,
 ) {
   return providers.map((provider) => {
     const observed = profile.lastObservedAuth?.[provider]
@@ -1234,54 +1374,94 @@ async function runCommand(args: CliArgs) {
   args = applyBoundAgentContext(args)
   assertVisibleRunArguments(args)
   const prompt = await promptFromArgs(args)
+  const requirements = taskCapabilityRequirementsForExecution(args, args.action || 'submit_and_read', undefined)
+  if (requirements.includes(TASK_CAPABILITIES.IMAGE_GENERATION)) {
+    await imageGenerationCommand(args, prompt, requirements)
+    return
+  }
   await executeDaemonJob({ args, action: args.action || 'submit_and_read', prompt })
+}
+
+async function imageGenerationCommand(
+  args: CliArgs,
+  prompt: string,
+  requirements: readonly TaskCapabilityId[],
+) {
+  const homeDir = tokenlessHome(args.home)
+  const executionMode = normalizeExecutionMode(args.executionMode)
+  const requestedProvider = String(args.provider || process.env.TOKENLESS_PROVIDER || '').trim().toLowerCase()
+  const provider = requestedProvider || 'auto'
+  if (executionMode === 'browser' && provider !== 'auto') {
+    resolveProviderControls({
+      args,
+      provider: normalizeProvider(provider),
+      action: args.action || 'submit_and_read',
+      requirements,
+    })
+  }
+  const allowed = new Set<TaskCapabilityId>([
+    TASK_CAPABILITIES.CONVERSATION_CHAT,
+    TASK_CAPABILITIES.IMAGE_GENERATION,
+    TASK_CAPABILITIES.ARTIFACT_DOWNLOAD,
+  ])
+  const unsupported = requirements.filter((capability) => !allowed.has(capability))
+  if (unsupported.length > 0) {
+    throw usageError(
+      'task_capability_combination_unsupported',
+      `The image generation HTTP endpoint does not accept additional capabilities: ${unsupported.join(', ')}.`,
+    )
+  }
+  const unsupportedControls = explicitlySelectedArgumentFlags(
+    args,
+    executionMode === 'browser'
+      ? ['model', 'arenaMode', 'arenaModality', 'workspaceMode']
+      : ['arenaMode', 'arenaModality', 'workspaceMode'],
+  )
+  if (unsupportedControls.length > 0) {
+    throw usageError(
+      'controls_unsupported_for_action',
+      `The image generation HTTP endpoint does not support: ${unsupportedControls.join(', ')}.`,
+    )
+  }
+  const control = await ensureControlDaemon(
+    args,
+    homeDir,
+    executionMode === 'browser' && provider !== 'auto' ? provider : undefined,
+  )
+  const daemon = control.daemon
+  const response = await generateImage({
+    homeDir,
+    daemonUrl: daemon.url,
+    model: `tokenless/${provider}${args.model === undefined ? '' : `/${String(args.model).trim()}`}`,
+    prompt,
+    executionMode,
+    ...(args.profile === undefined ? {} : { profile: String(args.profile) }),
+    ...(args.taskId === undefined ? {} : { taskId: String(args.taskId) }),
+    ...(args.pageRef === undefined ? {} : { pageRef: String(args.pageRef) }),
+    ...(args.browserVisibility === undefined ? {} : { browserVisibility: requiredBrowserVisibility(args.browserVisibility) }),
+    ...(args.timeoutMs === undefined ? {} : { timeoutMs: strictPositiveInteger(args.timeoutMs, '--timeout-ms') }),
+  })
+  printPayload({
+    ok: true,
+    status: 'succeeded',
+    transport: 'daemon',
+    jobId: response.tokenless.job_id ?? response.tokenless.request_id,
+    taskId: response.tokenless.task_id,
+    provider: response.tokenless.provider,
+    created: response.created,
+    data: response.data,
+    tokenless: response.tokenless,
+  }, args)
 }
 
 async function capabilitiesCommand(subcommand: string | undefined, args: CliArgs) {
   if (subcommand !== 'list') {
     throw usageError('capabilities_subcommand_required', 'Usage: tokenless capabilities list --json')
   }
-  printPayload({
-    ok: true,
-    schema: TASK_CAPABILITY_CATALOG_SCHEMA_ID,
-    capabilities: listTaskCapabilityDefinitions().map((definition) => {
-      const routes = listProviderTaskCapabilityRoutes(definition.id)
-      return {
-        ...definition,
-        routeable: routes.length > 0,
-        routes,
-      }
-    }),
-  }, args)
-}
-
-async function replayCommand(args: CliArgs) {
-  const recipient = agentRecipientFromArgs(args, true)
   const homeDir = tokenlessHome(args.home)
-  const config = await readTokenlessConfig(homeDir)
-  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
-  const daemon = await ensureDaemonReady({
-    homeDir,
-    daemonUrl: configuredDaemonUrl,
-    timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
-  })
-  const replay = await drainDaemonReplay({
-    homeDir,
-    daemonUrl: daemon.url,
-    agentKind: recipient.agentKind,
-    agentSessionId: recipient.agentSessionId,
-    limit: args.limit === undefined ? undefined : strictPositiveInteger(args.limit, '--limit'),
-  })
-  printPayload({
-    ok: true,
-    transport: 'daemon',
-    agent: {
-      kind: recipient.agentKind,
-      sessionId: recipient.agentSessionId,
-    },
-    count: replay.jobs.length,
-    jobs: replay.jobs,
-  }, args)
+  const control = await ensureControlDaemon(args, homeDir)
+  const catalog = await getControlCapabilities({ homeDir, daemonUrl: control.daemon.url })
+  printPayload({ ok: true, ...catalog }, args)
 }
 
 async function chatGptControlsCommand(args: CliArgs) {
@@ -1319,6 +1499,15 @@ async function visibleProviderActionFromArgs(args: CliArgs) {
   if (action.startsWith('qwen.mode.') && normalizeProvider(args.provider) !== 'qwen') {
     throw usageError('qwen_mode_unsupported', 'qwen.mode actions are available only for the Qwen provider.')
   }
+  if (action.startsWith('arena.') && normalizeProvider(args.provider) !== 'arena') {
+    throw usageError('arena_control_unsupported', 'arena actions are available only for the Arena provider.')
+  }
+  if (action.startsWith('grok.imagine.') && normalizeProvider(args.provider) !== 'grok') {
+    throw usageError('grok_imagine_unsupported', 'grok.imagine actions are available only for the Grok provider.')
+  }
+  if (action.startsWith('gemini.image.') && normalizeProvider(args.provider) !== 'gemini') {
+    throw usageError('gemini_image_unsupported', 'gemini.image actions are available only for the Gemini provider.')
+  }
   if (action.startsWith('deepseek.') && normalizeProvider(args.provider) !== 'deepseek') {
     throw usageError('deepseek_control_unsupported', 'deepseek actions are available only for the DeepSeek provider.')
   }
@@ -1337,6 +1526,9 @@ async function visibleProviderActionFromArgs(args: CliArgs) {
   if (
     action === 'auth.status' ||
     action === 'model.inspect' ||
+    action === 'arena.surface.inspect' ||
+    action === 'grok.imagine.inspect' ||
+    action === 'gemini.image.inspect' ||
     action === 'effort.inspect' ||
     action === 'qwen.mode.inspect' ||
     action === 'deepseek.mode.inspect' ||
@@ -1379,6 +1571,25 @@ async function visibleProviderActionFromArgs(args: CliArgs) {
       throw usageError('model_fallback_unsupported', 'provider-action model.select accepts one exact --model label; --model-fallback is not supported.')
     }
     return { action, payload: { label } }
+  }
+
+  if (action === 'arena.surface.select') {
+    assertProviderActionPayloadOptions(args, new Set(['arenaMode', 'arenaModality']))
+    if (args.arenaMode === undefined || args.arenaModality === undefined) {
+      throw usageError('missing_visible_action_arena_surface', 'arena.surface.select requires --arena-mode and --arena-modality.')
+    }
+    return {
+      action,
+      payload: {
+        mode: normalizeArenaMode(args.arenaMode),
+        modality: normalizeArenaModality(args.arenaModality),
+      },
+    }
+  }
+
+  if (action === 'grok.imagine.select' || action === 'gemini.image.select') {
+    assertProviderActionPayloadOptions(args, new Set())
+    return { action, payload: { modality: 'image' } }
   }
 
   if (action === 'effort.select') {
@@ -1533,6 +1744,8 @@ function assertProviderActionPayloadOptions(args: CliArgs, allowed: Set<string>)
     ['thinkingEffort', '--thinking-effort'],
     ['qwenMode', '--qwen-mode'],
     ['qwenModeVariant', '--qwen-mode-variant'],
+    ['arenaMode', '--arena-mode'],
+    ['arenaModality', '--arena-modality'],
     ['deepSeekMode', '--deepseek-mode'],
     ['deepSeekDeepThink', '--deepseek-deepthink'],
     ['deepSeekSearch', '--deepseek-search'],
@@ -1589,7 +1802,7 @@ async function executeDaemonJob({
   visibleAction?: { action: string; payload: Record<string, unknown> } | undefined
 }) {
   const homeDir = tokenlessHome(args.home)
-  const config = await readTokenlessConfig(homeDir)
+  const executionMode = normalizeExecutionMode(args.executionMode)
   const explicitProvider = args.provider || process.env.TOKENLESS_PROVIDER
   const explicitProviderId = explicitProvider ? normalizeProvider(explicitProvider) : undefined
   const taskCapabilities = taskCapabilityRequirementsForExecution(args, action, visibleAction)
@@ -1602,14 +1815,63 @@ async function executeDaemonJob({
   const explicitProviderControls = explicitProviderId && !visibleAction
     ? resolveProviderControls({ args, provider: explicitProviderId, action, requirements: taskCapabilities })
     : undefined
-  const registry = new ManagedProfileRegistry(homeDir)
-  const profileForTarget = await registry.resolveProfile(args.profile)
-  const capabilityRoutes = resolveDaemonJobCapabilityRoutes({
-    config,
-    profile: profileForTarget,
-    explicitProvider: explicitProviderId,
+  const projectName = executionMode === 'direct'
+    ? undefined
+    : args.projectName || process.env.TOKENLESS_PROJECT_NAME
+  const chatName = executionMode === 'direct'
+    ? undefined
+    : args.chatName || process.env.TOKENLESS_CHAT_NAME || (action === 'snapshot_dom' ? 'DOM snapshot' : undefined)
+  const taskId = executionMode === 'direct'
+    ? undefined
+    : deriveTaskId({
+      projectName,
+      chatName,
+        taskId: args.taskId || process.env.TOKENLESS_TASK_ID,
+      })
+  const workspaceMode = args.workspaceMode === undefined
+    ? undefined
+    : normalizeWorkspaceMode(args.workspaceMode)
+  const bootstrapDaemonUrl = daemonUrl(args.daemonUrl ?? await readBootstrapDaemonUrl(homeDir) ?? undefined)
+  const ready = await probeDaemonReady({ homeDir, daemonUrl: bootstrapDaemonUrl })
+  if (!ready.ok) {
+    const preflightRoutes = await preflightControlExecutionBeforeDaemonStart({
+      homeDir,
+      profileSlug: args.profile === undefined ? undefined : String(args.profile),
+      explicitProvider: explicitProviderId,
+      requirements: taskCapabilities,
+      executionMode,
+    })
+    const preflightRoute = preflightRoutes[0]
+    if (preflightRoute) {
+      assertManagedProviderTargetArguments({
+        provider: preflightRoute.provider,
+        taskCapabilities,
+        explicitTargetUrl: args.targetUrl,
+        workspaceMode,
+        taskId,
+      })
+    }
+  }
+  const control = await ensureControlDaemon(args, homeDir)
+  const config = control.state.config
+  const routeDecision = await resolveControlExecution({
+    homeDir,
+    daemonUrl: control.daemon.url,
+    profile: args.profile,
+    provider: explicitProviderId,
     requirements: taskCapabilities,
+    executionMode,
   })
+  if (!routeDecision.ok || !routeDecision.profile || !routeDecision.routes) {
+    const error = usageError(
+      (routeDecision.code ?? 'task_capability_route_unavailable') as LocalizedErrorCode,
+      routeDecision.message ?? 'No provider capability route is available.',
+    )
+    if (routeDecision.context) error.context = routeDecision.context
+    throw error
+  }
+  const profileForTarget = routeDecision.profile
+  const capabilityRoutes = routeDecision.routes as TaskCapabilityRoute[]
   const capabilityRoute = capabilityRoutes[0]
   if (!capabilityRoute) throw usageError('task_capability_route_unavailable', 'No provider capability route is available.')
   const provider = capabilityRoute.provider
@@ -1617,22 +1879,12 @@ async function executeDaemonJob({
   const providerControls = visibleAction
     ? {}
     : explicitProviderControls ?? resolveProviderControls({ args, provider, action, requirements: taskCapabilities })
-  const projectName = args.projectName || process.env.TOKENLESS_PROJECT_NAME
-  const chatName = args.chatName || process.env.TOKENLESS_CHAT_NAME || (action === 'snapshot_dom' ? 'DOM snapshot' : undefined)
-  const taskId = deriveTaskId({
-    projectName,
-    chatName,
-    idempotencyKey: args.taskId || args.idempotencyKey || process.env.TOKENLESS_TASK_ID || process.env.TOKENLESS_IDEMPOTENCY_KEY,
-  })
   const requestId = visibleRequestId(visibleAction ? (taskId ?? randomUUID()) : (taskId ?? randomUUID()))
   const managedJobId = managedPlaywrightJobId()
-  const workspaceMode = args.workspaceMode === undefined
-    ? undefined
-    : normalizeWorkspaceMode(args.workspaceMode)
   const workspace = visibleAction || workspaceMode === undefined
     ? undefined
     : await workspaceEnsurePayloadFromArgs(args, workspaceMode)
-  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
+  const configuredDaemonUrl = control.daemon.url
   let stagedAttachmentBundleId: string | undefined
   let daemonJobSubmissionStarted = false
 
@@ -1661,7 +1913,7 @@ async function executeDaemonJob({
       homeDir,
       daemonUrl: configuredDaemonUrl,
       daemonStartTimeoutMs: optionalNumber(args.daemonStartTimeoutMs),
-      profileId: profileForTarget.id,
+      profileId: profileForTarget.slug,
     })
     const fallbackAlternatives = automaticProviderFallbackAllowed({
       args,
@@ -1682,7 +1934,7 @@ async function executeDaemonJob({
             homeDir,
             daemonUrl: configuredDaemonUrl,
             daemonStartTimeoutMs: optionalNumber(args.daemonStartTimeoutMs),
-            profileId: profileForTarget.id,
+            profileId: profileForTarget.slug,
           })
           return {
             provider: alternateProvider,
@@ -1701,22 +1953,27 @@ async function executeDaemonJob({
         url: primaryTarget.url,
       },
       taskId: taskId ?? null,
+      pageRef: args.pageRef,
       capabilityRoute: recordedCapabilityRoute,
       contextLanguage: config.language,
       contextUpstream: agentContextEnvelopeFromEnvironment(),
+      executionMode,
+      providerBackend: normalizeProviderBackend(args.providerBackend),
+      authContextId: args.authContextId === undefined ? null : String(args.authContextId),
       fallback: fallbackAlternatives.length === 0 ? null : {
         protocol: 'tokenless.provider-fallback.v1',
         mode: 'automatic',
         replay: 'from_start',
         alternatives: fallbackAlternatives,
       },
-      actions: managedVisibleActions({
+    actions: managedVisibleActions({
         action,
         provider,
         requestId,
         prompt,
         attachments,
         providerControls,
+        requirements: taskCapabilities,
         visibleAction,
         workspace: primaryTarget.resumesConversation ? undefined : workspace,
       }),
@@ -1792,7 +2049,7 @@ async function executeDaemonJob({
       homeDir,
       daemonUrl: submitted.daemonUrl,
       provider: resolvedProvider,
-      profileId: submitted.profile.id,
+      profileId: submitted.profile.slug,
       projectName,
       taskId,
     })
@@ -1816,13 +2073,12 @@ async function executeDaemonJob({
       jobId: job.job_id,
       taskId,
       provider: resolvedProvider,
+      executionMode,
       capabilityRoute: resolvedCapabilityRoute,
-      providerAttempts: resolvedJob.provider_attempts_json ?? [],
       profile: publicManagedProfile(submitted.profile, submitted.profile.slug),
       projectName,
       chatName,
       providerContext,
-      idempotencyKey: taskId,
       result: publicDaemonResult(result),
       compactOutput: result?.compactOutput,
       status: result?.status ?? statusLog.at(-1)?.status,
@@ -1873,6 +2129,8 @@ function automaticProviderFallbackAllowed({
     args.thinkingEffort === undefined &&
     args.qwenMode === undefined &&
     args.qwenModeVariant === undefined &&
+    args.arenaMode === undefined &&
+    args.arenaModality === undefined &&
     args.deepSeekMode === undefined &&
     args.deepSeekDeepThink === undefined &&
     args.deepSeekSearch === undefined &&
@@ -1902,11 +2160,15 @@ async function executeManagedPlaywrightJob({
   jobId?: string | undefined
 }) {
   const homeDir = tokenlessHome(args.home)
-  const config = await readTokenlessConfig(homeDir)
+  const control = await ensureControlDaemon(args, homeDir, provider)
+  const config = control.state.config
   const browserVisibility = requiredBrowserVisibility(args.browserVisibility ?? config.browserVisibility)
-  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
   const statusReporter = createCliStatusReporter(args)
-  const profile = await new ManagedProfileRegistry(homeDir).resolveProfile(args.profile)
+  const profile = (await resolveControlProfile({
+    homeDir,
+    daemonUrl: control.daemon.url,
+    profile: args.profile,
+  })).profile
   if (!requiredProfileConfig(config, profile.slug).enabledProviders.includes(normalizeProvider(provider))) {
     throw usageError('provider_not_enabled', `Provider '${provider}' is not enabled for profile '${profile.slug}'.`)
   }
@@ -1917,23 +2179,20 @@ async function executeManagedPlaywrightJob({
         provider: request.provider,
         target: request.target,
         taskId: effectiveTaskId,
+        pageRef: request.pageRef,
         capabilityRoute: request.capabilityRoute,
         fallback: request.fallback,
         context: {
           ...request.context,
           taskId: effectiveTaskId,
         },
+        executionMode: request.executionMode,
         browserVisibility: request.browserVisibility,
         userHandoff: request.userHandoff,
         ...(request.pagePolicy === undefined ? {} : { pagePolicy: request.pagePolicy }),
         actions: request.actions,
       })
-  const daemon = await ensureDaemonReady({
-    homeDir,
-    daemonUrl: configuredDaemonUrl,
-    timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
-    requiredProvider: provider,
-  })
+  const daemon = control.daemon
   const actualDaemonUrl = daemon.url
   statusReporter.report({
     event: daemon.started ? 'daemon_started' : 'daemon_ready',
@@ -1942,9 +2201,6 @@ async function executeManagedPlaywrightJob({
     daemonPid: daemon.pid,
     backend: PLAYWRIGHT_EXECUTION_BACKEND,
   })
-  if (args.daemonUrl === undefined && config.daemonUrl !== configuredDaemonUrl) {
-    await writeTokenlessConfig({ homeDir, daemonUrl: configuredDaemonUrl })
-  }
   const runner = await embeddedRunnerStatus({ homeDir, daemonUrl: actualDaemonUrl })
   statusReporter.report({
     event: 'playwright_runner_ready',
@@ -1956,8 +2212,7 @@ async function executeManagedPlaywrightJob({
   const job = await submitManagedPlaywrightJob({
     daemonUrl: actualDaemonUrl,
     homeDir,
-    profileId: profile.id,
-    ...agentRecipientFromArgs(args),
+    profileId: profile.slug,
     request: {
       ...alignedRequest,
       browserVisibility,
@@ -1971,7 +2226,7 @@ async function executeManagedPlaywrightJob({
     jobId: job.job_id,
     taskId: effectiveTaskId,
     provider,
-    action: job.action,
+    action: statusEventAction,
   })
   const waitResult = noWait
     ? (statusReporter.report({
@@ -1981,7 +2236,7 @@ async function executeManagedPlaywrightJob({
         jobId: job.job_id,
         taskId: effectiveTaskId,
         provider,
-        action: job.action,
+        action: statusEventAction,
       }), null)
     : await waitForJobWithInterruptCancellation({
         homeDir,
@@ -1990,7 +2245,6 @@ async function executeManagedPlaywrightJob({
         timeoutMs,
         cancelTimeoutMs: optionalNumber(args.cancelTimeoutMs),
         statusReporter,
-        ...agentRecipientFromArgs(args),
       })
   return {
     daemonUrl: actualDaemonUrl,
@@ -2041,6 +2295,7 @@ function managedVisibleActions({
   prompt,
   attachments,
   providerControls,
+  requirements,
   visibleAction,
   workspace,
 }: {
@@ -2050,6 +2305,7 @@ function managedVisibleActions({
   prompt?: string | undefined
   attachments?: readonly Record<string, unknown>[] | undefined
   providerControls: Record<string, any>
+  requirements: readonly TaskCapabilityId[]
   visibleAction?: { action: string; payload: Record<string, unknown> } | undefined
   workspace?: Record<string, unknown> | undefined
 }) {
@@ -2131,6 +2387,36 @@ function managedVisibleActions({
   if (workspace !== undefined) {
     actions.push({ requestId: `${requestId}:workspace`, action: VISIBLE_ACTIONS.WORKSPACE_ENSURE, payload: workspace })
   }
+  if (providerControls.arenaMode !== undefined && providerControls.arenaModality !== undefined) {
+    actions.push({
+      requestId: `${requestId}:arena-surface`,
+      action: VISIBLE_ACTIONS.ARENA_SURFACE_SELECT,
+      payload: {
+        mode: providerControls.arenaMode,
+        modality: providerControls.arenaModality,
+      },
+    })
+  }
+  if (providerControls.geminiImageSurface === true) {
+    actions.push({
+      requestId: `${requestId}:gemini-image-surface`,
+      action: VISIBLE_ACTIONS.GEMINI_IMAGE_SELECT,
+      payload: { modality: 'image' },
+    })
+  }
+  if (
+    provider === 'grok' &&
+    requirements.some((capability) => (
+      capability === TASK_CAPABILITIES.IMAGE_GENERATION ||
+      capability === TASK_CAPABILITIES.ARTIFACT_DOWNLOAD
+    ))
+  ) {
+    actions.push({
+      requestId: `${requestId}:grok-imagine`,
+      action: VISIBLE_ACTIONS.GROK_IMAGINE_SELECT,
+      payload: { modality: 'image' },
+    })
+  }
   if (providerControls.qwenMode !== undefined) {
     actions.push({
       requestId: `${requestId}:qwen-mode`,
@@ -2185,6 +2471,55 @@ function managedVisibleActions({
   return actions
 }
 
+function assertManagedProviderTargetArguments({
+  provider,
+  taskCapabilities,
+  explicitTargetUrl,
+  workspaceMode,
+  taskId,
+}: {
+  provider: string
+  taskCapabilities: readonly TaskCapabilityId[]
+  explicitTargetUrl: unknown
+  workspaceMode?: string | undefined
+  taskId?: string | null | undefined
+}) {
+  if (
+    provider === 'arena' &&
+    explicitTargetUrl !== undefined &&
+    taskCapabilities.includes(TASK_CAPABILITIES.AGENT_EXECUTE)
+  ) {
+    throw usageError(
+      'arena_agent_explicit_target_unavailable',
+      'Arena agent.execute selects its fixed /agent surface and does not accept --target-url.',
+    )
+  }
+  if (
+    provider === 'arena' &&
+    explicitTargetUrl !== undefined &&
+    taskCapabilities.includes(TASK_CAPABILITIES.VIDEO_GENERATION)
+  ) {
+    throw usageError(
+      'arena_video_explicit_target_unavailable',
+      'Arena video.generation selects its fixed /video surface and does not accept --target-url.',
+    )
+  }
+  if (taskCapabilities.includes(TASK_CAPABILITIES.CONVERSATION_CONTINUE)) {
+    if (workspaceMode !== 'conversation') {
+      throw usageError(
+        'conversation_continue_workspace_required',
+        'conversation.continue requires --workspace-mode conversation.',
+      )
+    }
+    if (!taskId) {
+      throw usageError(
+        'conversation_continue_task_identity_required',
+        'conversation.continue requires a stable task identity.',
+      )
+    }
+  }
+}
+
 async function managedProviderTarget({
   provider,
   taskCapabilities,
@@ -2208,12 +2543,60 @@ async function managedProviderTarget({
   daemonStartTimeoutMs?: number | undefined
   profileId: string
 }) {
+  assertManagedProviderTargetArguments({
+    provider,
+    taskCapabilities,
+    explicitTargetUrl,
+    workspaceMode,
+    taskId,
+  })
+  if (taskCapabilities.includes(TASK_CAPABILITIES.CONVERSATION_CONTINUE)) {
+    const daemon = await ensureDaemonReady({
+      homeDir,
+      daemonUrl,
+      timeoutMs: daemonStartTimeoutMs,
+      requiredProvider: provider,
+    })
+    const resolved = await resolveProviderConversation({
+      homeDir,
+      daemonUrl: daemon.url,
+      provider,
+      profileId,
+      taskId: taskId!,
+    })
+    const mapped = resolved.mapping?.canonical_url
+    if (!mapped) {
+      throw usageError(
+        'conversation_continue_mapping_required',
+        'conversation.continue requires an existing exact provider conversation mapping for this task.',
+      )
+    }
+    const mappedUrl = providerWakeUrl(provider, mapped)
+    if (explicitTargetUrl !== undefined) {
+      const explicitUrl = new URL(providerWakeUrl(provider, explicitTargetUrl))
+      explicitUrl.search = ''
+      explicitUrl.hash = ''
+      if (explicitUrl.toString() !== mappedUrl) {
+        throw usageError(
+          'conversation_continue_target_mismatch',
+          'conversation.continue target must match the existing exact provider conversation mapping.',
+        )
+      }
+    }
+    return { url: mappedUrl, resumesConversation: true }
+  }
   if (explicitTargetUrl !== undefined) {
     const candidate = providerWakeUrl(provider, explicitTargetUrl)
     const parsed = new URL(candidate)
     parsed.search = ''
     parsed.hash = ''
     return { url: parsed.toString(), resumesConversation: false }
+  }
+  if (provider === 'arena' && taskCapabilities.includes(TASK_CAPABILITIES.AGENT_EXECUTE)) {
+    return { url: 'https://arena.ai/agent', resumesConversation: false }
+  }
+  if (provider === 'arena' && taskCapabilities.includes(TASK_CAPABILITIES.VIDEO_GENERATION)) {
+    return { url: 'https://arena.ai/video', resumesConversation: false }
   }
   const kimiSurface = provider === 'kimi' ? kimiCapabilitySurface(taskCapabilities) : null
   if (kimiSurface) return { url: new URL(kimiSurface, 'https://www.kimi.com').toString(), resumesConversation: false }
@@ -2278,15 +2661,11 @@ function visibleRequestId(value: string) {
 
 async function stateCommand(args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
-  const config = await readTokenlessConfig(homeDir)
-  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
-  const daemon = await ensureDaemonReady({
-    homeDir,
-    daemonUrl: configuredDaemonUrl,
-    timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
-  })
+  const control = await ensureControlDaemon(args, homeDir)
+  const config = control.state.config
+  const daemon = control.daemon
   const actualDaemonUrl = daemon.url
-  const requestedTaskId = args.taskId || args.idempotencyKey || (args.jobId ? undefined : deriveTaskId({
+  const requestedTaskId = args.taskId || (args.jobId ? undefined : deriveTaskId({
     projectName: args.projectName || process.env.TOKENLESS_PROJECT_NAME,
     chatName: args.chatName || process.env.TOKENLESS_CHAT_NAME,
   }))
@@ -2296,13 +2675,12 @@ async function stateCommand(args: CliArgs) {
     }
   }
   const explicitProviderValue = args.provider || process.env.TOKENLESS_PROVIDER
-  const registry = new ManagedProfileRegistry(homeDir)
   const daemonJobs = args.jobId
     ? [await getDaemonJob({ daemonUrl: actualDaemonUrl, homeDir, jobId: args.jobId })]
     : null
   const profile = daemonJobs
-    ? await resolveProfileForDaemonJob(registry, daemonJobs[0]!, args.profile)
-    : await registry.resolveProfile(args.profile)
+    ? await resolveProfileForDaemonJob(control.state.profiles, daemonJobs[0]!, args.profile)
+    : (await resolveControlProfile({ homeDir, daemonUrl: actualDaemonUrl, profile: args.profile })).profile
   const providerValue = explicitProviderValue || (args.jobId
     ? undefined
     : requiredProfileConfig(config, profile.slug).enabledProviders[0] || defaultVisibleProviderId())
@@ -2312,8 +2690,7 @@ async function stateCommand(args: CliArgs) {
         homeDir,
         taskId: requestedTaskId,
         provider,
-        executionBackend: PLAYWRIGHT_EXECUTION_BACKEND,
-        profileId: profile.id,
+        profileId: profile.slug,
         limit: Math.max(1, Number(args.limit) || 10),
       })
   const jobs = listedDaemonJobs
@@ -2322,7 +2699,7 @@ async function stateCommand(args: CliArgs) {
       if (job.backend !== PLAYWRIGHT_EXECUTION_BACKEND) return false
       if (requestedTaskId && job.taskId !== requestedTaskId) return false
       if (provider && job.provider !== provider) return false
-      if (job.profile?.id !== profile.id) return false
+      if (job.profile?.slug !== profile.slug) return false
       return true
     })
     .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
@@ -2333,19 +2710,6 @@ async function stateCommand(args: CliArgs) {
     )
   }
   const latest = jobs[0]!
-  const recipient = agentRecipientFromArgs(args)
-  if (recipient.agentKind !== undefined && recipient.agentSessionId !== undefined) {
-    const displayedJobIds = new Set(jobs.map((job) => job.jobId))
-    await Promise.all(listedDaemonJobs
-      .filter((job) => displayedJobIds.has(job.job_id) && isReplayActionableStatus(job.status))
-      .map((job) => markDaemonJobReported({
-        homeDir,
-        daemonUrl: actualDaemonUrl,
-        jobId: job.job_id,
-        agentKind: recipient.agentKind!,
-        agentSessionId: recipient.agentSessionId!,
-      })))
-  }
   printPayload({
     ok: true,
     protocol: DAEMON_TASK_STATE_SCHEMA_ID,
@@ -2363,36 +2727,33 @@ async function limitsCommand(subcommand: string | undefined, args: CliArgs) {
   if (subcommand !== 'inspect') throw usageError('invalid_limits_command', 'Usage: tokenless limits inspect --profile <slug> --provider <provider> --json')
   const homeDir = tokenlessHome(args.home)
   const provider = normalizeProvider(requiredAdminValue(args.provider, '--provider'))
-  const registry = new ManagedProfileRegistry(homeDir)
-  const profile = await registry.resolveProfile(args.profile)
-  const observation = profile.lastObservedAuth[provider]
-  const config = await readTokenlessConfig(homeDir)
-  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
-  const daemon = await ensureDaemonReady({
+  const control = await ensureControlDaemon(args, homeDir)
+  const profile = (await resolveControlProfile({
     homeDir,
-    daemonUrl: configuredDaemonUrl,
-    timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
-  })
+    daemonUrl: control.daemon.url,
+    profile: args.profile,
+  })).profile
+  const observation = profile.lastObservedAuth[provider]
+  const daemon = control.daemon
   const capacity = await getProviderCapacity({
     homeDir,
     daemonUrl: daemon.url,
     provider,
-    profileId: profile.id,
+    profileId: profile.slug,
     accessClass: observation?.account?.tier.class ?? observation?.access ?? 'unknown',
     tierLabel: observation?.account?.tier.label ?? null,
     subscriptionLabel: observation?.account?.subscription ?? null,
   })
-  const eligible = capacity.eligibleAt ? `; next eligible ${capacity.eligibleAt}` : ''
   printPayload({
     ok: true,
     profile: publicManagedProfile(profile, profile.slug),
     capacity,
-    compactOutput: `Provider capacity for ${provider} / ${profile.slug}: ${capacity.decision}${eligible}.`,
+    compactOutput: t('providerCapacity', { provider, profile: profile.slug, decision: capacity.decision }),
   }, args)
 }
 
 async function resolveProfileForDaemonJob(
-  registry: ManagedProfileRegistry,
+  profiles: Array<Pick<ManagedProfileRecord, 'slug' | 'lastObservedAuth'>>,
   job: Awaited<ReturnType<typeof getDaemonJob>>,
   requestedProfile: string | undefined
 ) {
@@ -2400,107 +2761,26 @@ async function resolveProfileForDaemonJob(
     throw usageError('task_state_profile_not_found', 'The daemon job does not have a managed Playwright profile.')
   }
   if (requestedProfile !== undefined) {
-    const explicitProfile = await registry.resolveProfile(requestedProfile)
-    if (explicitProfile.id !== job.profile_id) {
+    const explicitProfile = profiles.find((candidate) => candidate.slug === requestedProfile)
+    if (!explicitProfile) {
+      throw usageError('task_state_profile_not_found', 'The managed profile for this Tokenless job is not available.')
+    }
+    if (explicitProfile.slug !== job.profile_id) {
       throw usageError('task_state_not_found', `No daemon-backed Tokenless task state found for ${job.job_id}.`)
     }
     return explicitProfile
   }
-  const profile = (await registry.listProfiles()).find((candidate) => candidate.id === job.profile_id)
+  const profile = profiles.find((candidate) => candidate.slug === job.profile_id)
   if (!profile) {
     throw usageError('task_state_profile_not_found', 'The managed profile for this Tokenless job is not available.')
   }
   return profile
 }
 
-async function resumeCommand(args: CliArgs) {
-  if (!args.jobId) {
-    throw usageError('missing_job_id', 'Usage: tokenless resume --job-id <job-id> --browser-visibility headed.')
-  }
-  const browserVisibility = requiredBrowserVisibility(args.browserVisibility)
-  if (browserVisibility !== 'headed') {
-    throw usageError('invalid_resume_browser_visibility', 'tokenless resume requires --browser-visibility headed.')
-  }
-  const homeDir = tokenlessHome(args.home)
-  const config = await readTokenlessConfig(homeDir)
-  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
-  const daemon = await ensureDaemonReady({
-    homeDir,
-    daemonUrl: configuredDaemonUrl,
-    timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
-  })
-  const actualDaemonUrl = daemon.url
-  const existing = await getDaemonJob({ homeDir, daemonUrl: actualDaemonUrl, jobId: args.jobId })
-  if (existing.execution_backend !== PLAYWRIGHT_EXECUTION_BACKEND || !existing.profile_id) {
-    throw usageError('invalid_resume_job', 'tokenless resume accepts only a managed Playwright job with a profile.')
-  }
-  const registry = new ManagedProfileRegistry(homeDir)
-  const profile = (await registry.listProfiles()).find((candidate) => candidate.id === existing.profile_id)
-  if (!profile) throw usageError('resume_profile_not_found', 'The managed profile for this Tokenless job is not available.')
-
-  const runner = await embeddedRunnerStatus({ homeDir, daemonUrl: actualDaemonUrl })
-  const resumed = await resumeDaemonJob({
-    homeDir,
-    daemonUrl: actualDaemonUrl,
-    jobId: args.jobId,
-    browserVisibility: 'headed',
-  })
-  const statusReporter = createCliStatusReporter(args)
-  statusReporter.report({
-    event: 'playwright_job_resumed',
-    status: resumed.status,
-    backend: PLAYWRIGHT_EXECUTION_BACKEND,
-    jobId: resumed.job_id,
-    provider: resumed.provider,
-    browserVisibility: 'headed',
-  })
-  const result = await waitForJobWithInterruptCancellation({
-    homeDir,
-    daemonUrl: actualDaemonUrl,
-    jobId: resumed.job_id,
-    timeoutMs: args.timeoutMs === undefined ? undefined : Number(args.timeoutMs),
-    cancelTimeoutMs: optionalNumber(args.cancelTimeoutMs),
-    statusReporter,
-    ...agentRecipientFromArgs(args),
-  })
-  if (result?.status === 'waiting_for_user') {
-    printPayload(waitingForUserPayload({
-      job: resumed,
-      taskId: daemonTaskId(resumed),
-      provider: resumed.provider,
-      profile,
-      waitResult: result,
-      statusLog: statusReporter.events,
-    }), args)
-    return
-  }
-  assertDaemonJobSucceeded(result, statusReporter)
-  printPayload({
-    ok: true,
-    transport: 'daemon',
-    backend: PLAYWRIGHT_EXECUTION_BACKEND,
-    jobId: resumed.job_id,
-    taskId: daemonTaskId(resumed),
-    provider: resumed.provider,
-    profile: publicManagedProfile(profile, profile.slug),
-    runner,
-    result: publicDaemonResult(result),
-    compactOutput: result?.compactOutput,
-    status: result?.status,
-    statusLog: statusReporter.events,
-  }, args)
-}
-
 async function cancelCommand(args: CliArgs) {
   if (!args.jobId) throw usageError('missing_job_id', 'Usage: tokenless cancel --job-id <job-id>.')
   const homeDir = tokenlessHome(args.home)
-  const config = await readTokenlessConfig(homeDir)
-  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
-  const daemon = await ensureDaemonReady({
-    homeDir,
-    daemonUrl: configuredDaemonUrl,
-    timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
-  })
+  const daemon = (await ensureControlDaemon(args, homeDir)).daemon
   const actualDaemonUrl = daemon.url
   let job: Record<string, any>
   try {
@@ -2517,16 +2797,6 @@ async function cancelCommand(args: CliArgs) {
   if (job.status !== 'canceled') {
     throw cancelFailure(args.jobId, new Error(`daemon returned status ${String(job.status)}`))
   }
-  const recipient = agentRecipientFromArgs(args)
-  if (recipient.agentKind !== undefined && recipient.agentSessionId !== undefined) {
-    await markDaemonJobReported({
-      homeDir,
-      daemonUrl: actualDaemonUrl,
-      jobId: job.job_id,
-      agentKind: recipient.agentKind,
-      agentSessionId: recipient.agentSessionId,
-    })
-  }
   printPayload({
     ok: true,
     transport: 'daemon',
@@ -2538,22 +2808,387 @@ async function cancelCommand(args: CliArgs) {
 
 async function daemonCommand(subcommand: string | undefined, args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
-  const config = await readTokenlessConfig(homeDir)
-  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
+  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? await readBootstrapDaemonUrl(homeDir) ?? undefined)
   const result = await stopDaemon({
     homeDir,
     daemonUrl: configuredDaemonUrl,
     timeoutMs: args.timeoutMs === undefined ? undefined : strictPositiveInteger(args.timeoutMs, '--timeout-ms'),
   })
-  printPayload(result, args)
+  const compactOutput = result.status === 'not_running'
+    ? t('daemonNotRunning', { url: result.url })
+    : result.pid === undefined
+      ? t('daemonStopped', { url: result.url })
+      : t('daemonStoppedWithPid', { url: result.url, pid: result.pid })
+  printPayload({ ...result, compactOutput }, args)
+}
+
+async function agentCommand(subcommand: string | undefined, args: CliArgs) {
+  const homeDir = tokenlessHome(args.home)
+  if (subcommand === 'delegate' && benchmarkHarnessChannelConfigured()) {
+    await runBenchmarkHarnessDelegation({ homeDir, args })
+    return
+  }
+  const control = await ensureControlDaemon(args, homeDir)
+  const ready = control.daemon
+  const client = {
+    homeDir,
+    daemonUrl: ready.url,
+    requestTimeoutMs: args.timeoutMs === undefined ? undefined : strictPositiveInteger(args.timeoutMs, '--timeout-ms'),
+  }
+
+  if (subcommand === 'run' || subcommand === 'delegate') {
+    const provider = requiredAdminValue(args.provider, '--provider')
+    const profile = (await resolveControlProfile({
+      homeDir,
+      daemonUrl: ready.url,
+      profile: args.profile,
+    })).profile
+    const taskPrompt = await agentTaskPrompt(args)
+    const mcpServers = args.mcpConfig === undefined ? undefined : await readAgentMcpServers(String(args.mcpConfig))
+    const view = await startAgentRun({
+      ...client,
+      body: {
+        provider,
+        profileId: profile.slug,
+        taskPrompt,
+        ...(subcommand === 'delegate'
+          ? { workspaceRoot: requiredWorkspaceRoot(args.workspaceRoot) }
+          : {}),
+        ...(args.skills.length > 0
+          ? { selectedSkills: args.skills.map((name) => ({ name, selectedBy: 'explicit_user' })) }
+          : {}),
+        ...(mcpServers ? { mcpServers } : {}),
+        ...(args.maxTurns === undefined
+          ? {}
+          : { maxTurns: strictPositiveInteger(args.maxTurns, '--max-turns') }),
+      },
+    })
+    if (subcommand === 'delegate') await waitForDelegatedAgentRun(view, client, args)
+    else printAgentRunView(view, args)
+    return
+  }
+
+  if (subcommand === 'read') {
+    printAgentRunView(await readAgentRun({ ...client, runId: requiredAgentRunId(args.runId) }), args)
+    return
+  }
+  const runId = requiredAgentRunId(args.runId)
+  if (subcommand === 'cancel') {
+    printAgentRunView(await cancelAgentRun({ ...client, runId }), args)
+    return
+  }
+  if (subcommand === 'resume') {
+    const body = agentIntervention(args)
+    printAgentRunView(await resumeAgentRun({ ...client, runId, body }), args)
+    return
+  }
+  throw usageError('agent_command_invalid', 'Usage: tokenless agent <run|delegate|read|resume|cancel>.')
+}
+
+/**
+ * Harbor's DSH lane supplies a task-scoped local HTTP channel instead of a
+ * Tokenless daemon home. The Harness therefore runs in this process, while
+ * provider turns still cross the channel and are handled by the host daemon.
+ */
+async function runBenchmarkHarnessDelegation({ homeDir, args }: { homeDir: string; args: CliArgs }) {
+  const provider = requiredAdminValue(args.provider, '--provider')
+  const profileId = requiredAdminValue(args.profile, '--profile')
+  const workspaceRoot = requiredWorkspaceRoot(args.workspaceRoot)
+  const taskPrompt = await agentTaskPrompt(args)
+  const channel = benchmarkHarnessChannel()
+  const harness = openWebAgentHarness({
+    providerClient: createLocalHttpProviderTurnClient({ baseUrl: channel.baseUrl, token: channel.token }),
+    toolRegistry: createAgentToolRegistry(),
+  })
+  const started = await harness.start({
+    provider,
+    profileId,
+    taskPrompt,
+    workspaceRoot,
+    stagingRoot: path.join(homeDir, 'harness-staging'),
+    ...(args.maxTurns === undefined ? {} : { maxTurns: strictPositiveInteger(args.maxTurns, '--max-turns') }),
+  })
+  const protocol = 'tokenless.harness.delegation.v1'
+  const emit = (event: Record<string, unknown>) => process.stdout.write(`${JSON.stringify({ protocol, ...event })}\n`)
+  if (args.adapterStream === true) emit({ type: 'started', runId: started.runId })
+  let view = started
+  const timeoutMs = args.timeoutMs === undefined ? 600_000 : strictPositiveInteger(args.timeoutMs, '--timeout-ms')
+  const deadline = Date.now() + timeoutMs
+  try {
+    while (!['succeeded', 'failed', 'cancelled'].includes(view.status)) {
+      if (Date.now() >= deadline) {
+        view = await harness.cancel(view.runId)
+        break
+      }
+      if (view.status === 'waiting_for_approval' || view.status === 'waiting_for_input' || view.status === 'waiting_for_authentication') {
+        throw new Error(`Tokenless Harness benchmark delegation stopped for unsupported intervention: ${view.status}`)
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      const next = await harness.read(view.runId)
+      if (!next) throw new Error('Tokenless Harness benchmark delegation disappeared before settlement.')
+      view = next
+    }
+    if (args.adapterStream === true) emit({ type: 'settled', run: view })
+    else printPayload({ ok: view.status === 'succeeded', ...view, compactOutput: view.final?.output ?? view.error?.message }, args)
+  } finally {
+    harness.close()
+  }
+  if (view.status !== 'succeeded') process.exitCode = 1
+}
+
+function benchmarkHarnessChannelConfigured() {
+  return process.env.TOKENLESS_BENCHMARK_LOCAL_HTTP_BASE_URL !== undefined || process.env.TOKENLESS_BENCHMARK_CHANNEL_TOKEN !== undefined
+}
+
+function benchmarkHarnessChannel() {
+  const baseUrl = process.env.TOKENLESS_BENCHMARK_LOCAL_HTTP_BASE_URL
+  const token = process.env.TOKENLESS_BENCHMARK_CHANNEL_TOKEN
+  if (typeof baseUrl !== 'string' || typeof token !== 'string') {
+    throw new Error('Tokenless Harness benchmark channel requires both TOKENLESS_BENCHMARK_LOCAL_HTTP_BASE_URL and TOKENLESS_BENCHMARK_CHANNEL_TOKEN.')
+  }
+  const parsed = new URL(baseUrl)
+  if (parsed.protocol !== 'http:' || parsed.hostname !== '127.0.0.1' || parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) {
+    throw new Error('Tokenless Harness benchmark channel must use a loopback HTTP origin.')
+  }
+  if (!/^[A-Za-z0-9_-]{32,256}$/.test(token)) throw new Error('Tokenless Harness benchmark channel token is invalid.')
+  return { baseUrl: parsed.origin, token }
+}
+
+async function agentTaskPrompt(args: CliArgs) {
+  const sources = [args.prompt !== undefined, args.promptFile !== undefined, args.promptStdin === true].filter(Boolean).length
+  if (sources > 1) {
+    throw usageError('duplicate_prompt', 'Use one of --prompt, --prompt-file, or --prompt-stdin.')
+  }
+  const value = args.promptStdin === true
+    ? await readBoundedStdin(MAX_DAEMON_REQUEST_BYTES)
+    : args.promptFile === undefined
+      ? args.prompt
+      : await fs.readFile(String(args.promptFile), 'utf8')
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw usageError('missing_prompt', 'Agent run requires --prompt <text>, --prompt-file <path>, or --prompt-stdin.')
+  }
+  return value
+}
+
+function requiredWorkspaceRoot(value: unknown) {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw usageError('missing_argument_value', 'Delegation requires --workspace-root <dir>.')
+  }
+  return path.resolve(value)
+}
+
+async function waitForDelegatedAgentRun(started: Record<string, any>, client: {
+  homeDir: string
+  daemonUrl: string
+  requestTimeoutMs?: number | undefined
+}, args: CliArgs) {
+  let view = started
+  const runId = requiredAgentRunId(view.runId)
+  const protocol = 'tokenless.harness.delegation.v1'
+  const emit = (event: Record<string, unknown>) => process.stdout.write(`${JSON.stringify({ protocol, ...event })}\n`)
+  if (args.adapterStream === true) emit({ type: 'started', runId })
+
+  let interrupted = false
+  const deadline = Date.now() + (args.timeoutMs === undefined ? 600_000 : strictPositiveInteger(args.timeoutMs, '--timeout-ms'))
+  const onSignal = () => { interrupted = true }
+  process.once('SIGINT', onSignal)
+  process.once('SIGTERM', onSignal)
+  try {
+    while (!delegationSettled(view)) {
+      if (interrupted || Date.now() >= deadline) {
+        view = await cancelAgentRun({ ...client, runId })
+        break
+      }
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      view = await readAgentRun({ ...client, runId })
+    }
+    if (delegationRequiresIntervention(view)) {
+      view = await cancelAgentRun({ ...client, runId })
+    }
+  } finally {
+    process.off('SIGINT', onSignal)
+    process.off('SIGTERM', onSignal)
+  }
+
+  if (args.adapterStream === true) emit({ type: 'settled', run: view })
+  else printPayload({
+    ok: view.status === 'succeeded',
+    ...view,
+    compactOutput: formatAgentRunView(view),
+  }, args)
+  if (view.status !== 'succeeded') process.exitCode = 1
+}
+
+function delegationSettled(view: Record<string, any>) {
+  if ([
+    'succeeded',
+    'failed',
+    'cancelled',
+    'waiting_for_approval',
+    'waiting_for_input',
+    'waiting_for_authentication',
+  ].includes(String(view.status))) return true
+  return view.waiting && typeof view.waiting === 'object' && view.waiting.kind === 'provider'
+}
+
+function delegationRequiresIntervention(view: Record<string, any>) {
+  if ([
+    'waiting_for_approval',
+    'waiting_for_input',
+    'waiting_for_authentication',
+  ].includes(String(view.status))) return true
+  return view.waiting && typeof view.waiting === 'object' && view.waiting.kind === 'provider'
+}
+
+async function readAgentMcpServers(file: string) {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(await fs.readFile(path.resolve(file), 'utf8'))
+  } catch {
+    throw usageError('agent_mcp_config_invalid', 'The MCP config must be a readable JSON file.')
+  }
+  const root = objectRecord(parsed)
+  if (Object.keys(root).length !== 1 || !Array.isArray(root.mcpServers)) {
+    throw usageError('agent_mcp_config_invalid', 'The MCP config must contain only an mcpServers array.')
+  }
+  const allowed = new Set(['name', 'command', 'args', 'envKeys', 'timeoutMs', 'enabledTools'])
+  for (const server of root.mcpServers) {
+    const record = objectRecord(server)
+    if (
+      Object.keys(record).length === 0 ||
+      Object.keys(record).some((key) => !allowed.has(key)) ||
+      typeof record.name !== 'string' || record.name.trim() === '' ||
+      typeof record.command !== 'string' || record.command.trim() === '' ||
+      !optionalStringArray(record.args) ||
+      !optionalStringArray(record.envKeys) ||
+      !optionalStringArray(record.enabledTools) ||
+      (record.timeoutMs !== undefined && (!Number.isInteger(record.timeoutMs) || record.timeoutMs <= 0))
+    ) {
+      throw usageError('agent_mcp_config_invalid', 'Each MCP server must use the bounded local stdio server shape.')
+    }
+  }
+  return root.mcpServers
+}
+
+function optionalStringArray(value: unknown) {
+  return value === undefined || (Array.isArray(value) && value.every((item) => typeof item === 'string' && item.length > 0))
+}
+
+function requiredAgentRunId(value: unknown) {
+  if (typeof value !== 'string' || !/^run_[a-f0-9]{32}$/u.test(value)) {
+    throw usageError('agent_run_id_required', '--run-id must be a Harness run ID returned by tokenless agent run.')
+  }
+  return value
+}
+
+function agentIntervention(args: CliArgs) {
+  const approvals = args.approvals.map((value) => digestBoundIntervention(value, '--approve'))
+  const authenticationCompleted = args.authenticationCompleted.map((value) => digestBoundIntervention(value, '--auth-completed'))
+  const answers = Object.fromEntries(args.answers.map(answerIntervention))
+  if (approvals.length === 0 && authenticationCompleted.length === 0 && Object.keys(answers).length === 0) {
+    throw usageError('agent_intervention_required', 'Agent resume requires an approval, authentication completion, or answer.')
+  }
+  return {
+    ...(approvals.length > 0 ? { approvals } : {}),
+    ...(authenticationCompleted.length > 0 ? { authenticationCompleted } : {}),
+    ...(Object.keys(answers).length > 0 ? { answers } : {}),
+  }
+}
+
+function digestBoundIntervention(value: string, flag: string) {
+  const match = /^([^:\s]+):([a-f0-9]{64})$/u.exec(value)
+  if (!match) throw usageError('agent_intervention_invalid', `${flag} must be <call-id>:<64-character-arguments-digest>.`)
+  return { callId: match[1]!, argumentsDigest: match[2]! }
+}
+
+function answerIntervention(value: string): [string, unknown] {
+  const separator = value.indexOf('=')
+  if (separator <= 0) throw usageError('agent_intervention_invalid', '--answer must be <need-id>=<json>.')
+  try {
+    return [value.slice(0, separator), JSON.parse(value.slice(separator + 1))]
+  } catch {
+    throw usageError('agent_intervention_invalid', '--answer must contain valid JSON.')
+  }
+}
+
+function printAgentRunView(view: Record<string, any>, args: CliArgs) {
+  printPayload({ ok: view.status !== 'failed', ...view, compactOutput: formatAgentRunView(view) }, args)
+}
+
+function formatAgentRunView(view: Record<string, any>) {
+  const runId = String(view.runId ?? '')
+  const status = String(view.status ?? 'unknown')
+  const lines = [t('agentRunSummary', { runId, status })]
+  const waiting = objectRecord(view.waiting)
+  if (waiting.kind === 'approval' && Array.isArray(waiting.calls)) {
+    for (const callValue of waiting.calls) {
+      const call = objectRecord(callValue)
+      lines.push(t('agentApprovalCall', {
+        tool: String(call.tool ?? ''),
+        arguments: JSON.stringify(call.arguments ?? {}),
+        digest: String(call.argumentsDigest ?? ''),
+      }))
+      lines.push(t('agentApprovalResume', {
+        runId,
+        callId: String(call.id ?? ''),
+        digest: String(call.argumentsDigest ?? ''),
+      }))
+    }
+  } else if (waiting.kind === 'authentication' && Array.isArray(waiting.calls)) {
+    for (const callValue of waiting.calls) {
+      const call = objectRecord(callValue)
+      lines.push(t('agentAuthenticationCall', {
+        tool: String(call.tool ?? ''),
+        arguments: JSON.stringify(call.arguments ?? {}),
+      }))
+      lines.push(t('agentAuthenticationResume', {
+        runId,
+        callId: String(call.id ?? ''),
+        digest: String(call.argumentsDigest ?? ''),
+      }))
+    }
+  } else if (waiting.kind === 'user_input' && Array.isArray(waiting.needs)) {
+    for (const needValue of waiting.needs) {
+      const need = objectRecord(needValue)
+      lines.push(t('agentInputNeed', { needId: String(need.id ?? ''), prompt: String(need.prompt ?? '') }))
+      lines.push(t('agentInputResume', { runId, needId: String(need.id ?? '') }))
+    }
+  } else if (waiting.kind === 'provider') {
+    lines.push(t('agentProviderRestart'))
+  }
+  const final = objectRecord(view.final)
+  if (typeof final.output === 'string') lines.push(final.output)
+  const error = objectRecord(view.error)
+  if (typeof error.message === 'string') lines.push(error.message)
+  return lines.join('\n')
 }
 
 async function agentsCommand(subcommand: string | undefined, args: CliArgs) {
   const agent = String(args.agent ?? '').trim().toLowerCase()
-  if (agent !== 'codex') {
-    throw usageError('agent_integration_unsupported', 'Tokenless agent integration currently supports codex.')
-  }
   const harness = await loadWebAgentHarness()
+
+  if (agent === 'dsh') {
+    const input = dshIntegrationInput(args, subcommand === 'install')
+    if (subcommand === 'install') {
+      const status = await harness.installDshIntegration(input)
+      printPayload({ ok: true, status, nextStep: t('agentsDshInstallNextStep'), compactOutput: t('agentsDshInstalled') }, args)
+      return
+    }
+    if (subcommand === 'uninstall') {
+      const status = await harness.uninstallDshIntegration(input)
+      printPayload({ ok: true, status, compactOutput: t('agentsDshRemoved') }, args)
+      return
+    }
+    if (subcommand === 'status') {
+      const status = await harness.inspectDshIntegration(input)
+      printPayload({ ok: true, status }, args)
+      return
+    }
+    throw usageError('agents_subcommand_required', 'Usage: tokenless agents <install|status|uninstall> dsh.')
+  }
+  if (agent !== 'codex') {
+    throw usageError('agent_integration_unsupported', 'Tokenless agent integration supports codex and dsh.')
+  }
   const input = codexIntegrationInput(args)
 
   if (subcommand === 'hook') {
@@ -2624,6 +3259,23 @@ function codexIntegrationInput(args: CliArgs, homeDir = tokenlessHome(args.home)
   }
 }
 
+function dshIntegrationInput(args: CliArgs, requireRoute: boolean) {
+  const provider = requireRoute
+    ? requiredAdminValue(args.provider, '--provider')
+    : String(args.provider || 'chatgpt')
+  const profile = requireRoute
+    ? requiredAdminValue(args.profile, '--profile')
+    : String(args.profile || 'default')
+  return {
+    dshHome: path.resolve(String(args.dshHome || process.env.DSH_HOME || path.join(os.homedir(), '.dsh'))),
+    dshProfile: String(args.dshProfile || 'headless'),
+    tokenlessHome: tokenlessHome(args.home),
+    provider,
+    profile,
+    command: { executable: process.execPath, script: fileURLToPath(import.meta.url) },
+  }
+}
+
 function applyBoundAgentContext(args: CliArgs): CliArgs {
   const bindingId = process.env.TOKENLESS_CONTEXT_BINDING_ID
   if (!bindingId) return args
@@ -2653,7 +3305,7 @@ function applyBoundAgentContext(args: CliArgs): CliArgs {
       )
     }
   }
-  return {
+  const boundArgs: CliArgs = {
     ...args,
     taskId: required.taskId,
     projectName: required.projectName,
@@ -2663,6 +3315,11 @@ function applyBoundAgentContext(args: CliArgs): CliArgs {
     agentKind: required.agentKind,
     agentSessionId: required.agentSessionId,
   }
+  Object.defineProperty(boundArgs, CLI_ARG_FLAGS, {
+    value: args[CLI_ARG_FLAGS] ?? {},
+    enumerable: false,
+  })
+  return boundArgs
 }
 
 async function applyCodexInvocationContext(args: CliArgs): Promise<CliArgs> {
@@ -2754,8 +3411,11 @@ async function loadWebAgentHarness(): Promise<{
   inspectCodexIntegration(input: Record<string, unknown>): Promise<Record<string, unknown>>
   installCodexIntegration(input: Record<string, unknown>): Promise<Record<string, unknown>>
   uninstallCodexIntegration(input: Record<string, unknown>): Promise<Record<string, unknown>>
+  inspectDshIntegration(input: Record<string, unknown>): Promise<Record<string, unknown>>
+  installDshIntegration(input: Record<string, unknown>): Promise<Record<string, unknown>>
+  uninstallDshIntegration(input: Record<string, unknown>): Promise<Record<string, unknown>>
 }> {
-  const moduleUrl = new URL('../web-agent-harness/src/index.js', import.meta.url)
+  const moduleUrl = new URL('../harness/src/index.js', import.meta.url)
   return await import(moduleUrl.href)
 }
 
@@ -2799,6 +3459,7 @@ async function installCommand(args: CliArgs) {
     ok: true,
     runtime: 'typescript',
     skills: provisioned.skills,
+    g4f: provisioned.g4f,
     browser: {
       id: provisioned.browser.browserId,
       runtimeId: provisioned.browser.runtimeId,
@@ -2976,12 +3637,12 @@ async function setupCommand(args: CliArgs) {
     } | null
     if (selectedRuntime) {
       presenter.explain({
-        title: 'Anti-Detect mode',
+        title: t('setupAntiDetectTitle'),
         lines: [
-          'CloakBrowser project: https://github.com/CloakHQ/CloakBrowser',
-          `Supported CloakBrowser on this platform: artifact ${selectedRuntime.artifactVersion} (Chromium ${selectedRuntime.actualVersion}).`,
-          'Tokenless downloads the verified, platform-pinned CloakBrowser from its official release and does not redistribute it.',
-          'CloakBrowser profiles must already be bound to the exact runtime; Tokenless does not copy or rebind native Chrome profiles.',
+          t('setupCloakProject'),
+          t('setupCloakSupported', { artifactVersion: String(selectedRuntime.artifactVersion), actualVersion: String(selectedRuntime.actualVersion) }),
+          t('setupCloakDownload'),
+          t('setupCloakBinding'),
         ],
       })
     }
@@ -3011,6 +3672,7 @@ async function setupCommand(args: CliArgs) {
       prompt,
       presenter,
     })
+    const apiProxy = await selectSetupApiProxy({ args, config, prompt })
     await presenter.withProgress(t('setupSavingConfiguration'), async () => {
       const current = await readTokenlessConfig(homeDir)
       await upsertTokenlessProfileConfig({
@@ -3030,6 +3692,12 @@ async function setupCommand(args: CliArgs) {
         browserVisibility: 'headed',
         daemonUrl: configuredDaemonUrl,
         language: config.language,
+        apiProxy,
+        g4f: { enabled: true },
+        directProvider: {
+          defaultBackend: 'g4f',
+          providerBackends: current.directProvider.providerBackends,
+        },
       })
     })
     const codexIntegration = await setupCodexIntegration({ args, homeDir, presenter })
@@ -3065,7 +3733,7 @@ async function setupCommand(args: CliArgs) {
     if (browserReady) {
       presenter.explain({
         title: t('cliSetupProviderSignIn'),
-        lines: SETUP_READINESS_DISCLOSURE,
+        lines: [t('setupReadinessDisclosure')],
       })
       for (const provider of providers) {
         let result: Awaited<ReturnType<typeof runSetupAuthCheck>>
@@ -3136,7 +3804,7 @@ async function setupCommand(args: CliArgs) {
       ? await openTokenlessDashboard({
           homeDir,
           daemonUrl: localRuntime.url,
-          profileId: updatedProfile.id,
+          profileId: updatedProfile.slug,
           open: true,
         }).then((value) => ({
           opened: value.opened !== null,
@@ -3170,6 +3838,7 @@ async function setupCommand(args: CliArgs) {
       transport: 'daemon',
       backend: PLAYWRIGHT_EXECUTION_BACKEND,
       skills,
+      g4f: maintenance.g4f,
       codexIntegration: codexIntegrationStatus,
       nextStep,
       ...(setupBrowserWarning === null ? {} : { warning: setupBrowserWarning }),
@@ -3333,13 +4002,13 @@ async function ensureSetupManagedProfile({
     return await ensureSetupRuntimeBoundProfile({ args, homeDir, runtime, prompt, presenter })
   }
   presenter.explain({
-    title: nativeBrowser === 'brave' ? 'Native Brave Browser' : 'Native Google Chrome',
+    title: t('setupNativeBrowserTitle', { browser: nativeBrowser === 'brave' ? 'Brave Browser' : 'Google Chrome' }),
     lines: [
-      `Tokenless connects to the ${nativeBrowser === 'brave' ? 'Brave Browser' : 'Google Chrome'} you installed and already run on this computer.`,
-      'Tokenless does not bundle or download Chrome or Brave. If discovery fails, setup still finishes and tells you how to add an executable path before browser use.',
-      `Enable remote debugging at ${nativeBrowser === 'brave' ? 'brave' : 'chrome'}://inspect/#remote-debugging and approve the connection request.`,
-      'The browser manages the underlying CDP endpoint and Tokenless discovers it automatically; no --remote-debugging-port launch flag or fixed-port setting is required.',
-      'Native mode is headed-only. Tokenless does not copy your browser profile or own the browser process.',
+      t('setupNativeConnect', { browser: nativeBrowser === 'brave' ? 'Brave Browser' : 'Google Chrome' }),
+      t('setupNativeNoBundle'),
+      t('setupNativeRemoteDebugging', { scheme: nativeBrowser === 'brave' ? 'brave' : 'chrome' }),
+      t('setupNativeCdp'),
+      t('setupNativeHeaded'),
     ],
   })
   const registry = new ManagedProfileRegistry(homeDir)
@@ -3355,10 +4024,10 @@ async function ensureSetupManagedProfile({
         label: profile.slug,
         value: profile.slug,
       })),
-      { label: 'Create a new Tokenless profile', value: '__new__' },
+      { label: t('setupCreateNewProfile'), value: '__new__' },
     ]
     const chosen = await prompt.select(
-      'Choose a Tokenless profile',
+      t('setupChooseProfile'),
       choices,
       Math.max(0, choices.findIndex((choice) => choice.value === configuredDefaultProfile))
     )
@@ -3376,22 +4045,20 @@ async function ensureSetupManagedProfile({
   }
 
   if (selected) {
-    if (selected.lifecycle !== 'ready') selected = await registry.updateLifecycle(selected.slug, 'ready')
     const selectedSlug = selected.slug
     if (args.setDefault === true || prompt) {
-      await presenter.withProgress(`Setting Tokenless profile ${selectedSlug} as default`, () => registry.setDefault(selectedSlug))
+      await presenter.withProgress(t('setupSetDefaultProfile', { profile: selectedSlug }), () => registry.setDefault(selectedSlug))
     }
     return selected
   }
 
-  if (!slug && prompt) slug = await prompt.text('Profile name', existing.length === 0 ? 'default' : 'primary')
+  if (!slug && prompt) slug = await prompt.text(t('setupProfileName'), existing.length === 0 ? 'default' : 'primary')
   slug ??= 'default'
   return await presenter.withProgress(
-    `Creating Tokenless profile ${slug}`,
+    t('setupCreatingProfile', { profile: slug }),
     () => registry.addProfile({
       slug,
       setDefault: true,
-      lifecycle: 'ready',
     }),
   )
 }
@@ -3410,10 +4077,10 @@ async function ensureSetupRuntimeBoundProfile({
   presenter: SetupPresenter
 }) {
   presenter.explain({
-    title: 'Managed browser profile',
+    title: t('setupManagedProfileTitle'),
     lines: [
-      `This profile will be bound to ${runtime.runtimeId}.`,
-      'Existing native or differently bound profiles cannot be reused, copied, or rebound.',
+      t('setupManagedProfileBinding', { runtime: runtime.runtimeId }),
+      t('setupManagedProfileIsolation'),
     ],
   })
   const registry = new ManagedProfileRegistry(homeDir)
@@ -3432,10 +4099,10 @@ async function ensureSetupRuntimeBoundProfile({
   if (!slug && prompt && existing.length > 0) {
     const choices = [
       ...compatible.map((profile) => ({ label: profile.slug, value: profile.slug })),
-      { label: 'Create a new managed profile', value: '__new__' },
+      { label: t('setupCreateNewManagedProfile'), value: '__new__' },
     ]
     const chosen = await prompt.select(
-      'Choose a managed profile',
+      t('setupChooseManagedProfile'),
       choices,
       Math.max(0, choices.findIndex((choice) => choice.value === configuredDefaultProfile)),
     )
@@ -3454,26 +4121,19 @@ async function ensureSetupRuntimeBoundProfile({
   }
 
   if (selected) {
-    if (selected.lifecycle !== 'ready') {
-      throw usageError(
-        'setup_profile_not_ready',
-        `Managed profile '${selected.slug}' is ${selected.lifecycle}; choose another ready profile or create a clean profile.`,
-      )
-    }
     if (args.setDefault === true || prompt) {
-      await presenter.withProgress(`Setting managed profile ${selected.slug} as default`, () => registry.setDefault(selected.slug))
+      await presenter.withProgress(t('setupSetDefaultManagedProfile', { profile: selected.slug }), () => registry.setDefault(selected.slug))
     }
     return selected
   }
 
-  if (!slug && prompt) slug = await prompt.text('Profile name', existing.length === 0 ? 'default' : `${runtime.browserId}-default`)
+  if (!slug && prompt) slug = await prompt.text(t('setupProfileName'), existing.length === 0 ? 'default' : `${runtime.browserId}-default`)
   slug ??= existing.length === 0 ? 'default' : availableRuntimeProfileSlug(runtime.browserId, existing)
   return await presenter.withProgress(
-    `Creating clean managed profile ${slug}`,
+    t('setupCreatingManagedProfile', { profile: slug }),
     () => registry.addProfile({
       slug,
       setDefault: true,
-      lifecycle: 'ready',
       runtimeBinding: browserRuntimeBinding(runtime),
     }),
   )
@@ -3483,7 +4143,8 @@ function profileRuntimeMatches(profile: ManagedProfileRecord, runtime: ResolvedB
   const binding = profile.runtimeBinding
   return binding?.runtimeId === runtime.runtimeId &&
     binding.family === runtime.family &&
-    binding.browserId === runtime.browserId
+    binding.browserId === runtime.browserId &&
+    binding.executablePath === runtime.executablePath
 }
 
 function availableRuntimeProfileSlug(browserId: string, existing: readonly ManagedProfileRecord[]) {
@@ -3502,6 +4163,7 @@ function browserRuntimeBinding(runtime: ResolvedBrowserRuntime) {
     runtimeId: runtime.runtimeId,
     family: runtime.family,
     browserId: runtime.browserId,
+    executablePath: runtime.executablePath,
     createdWithVersion: runtime.actualVersion,
     profileFormat: 1 as const,
   }
@@ -3563,6 +4225,37 @@ function createSetupPrompt(colorEnabled = false) {
   }
 }
 
+/**
+ * The API proxy stays off unless a person turns it on here or through
+ * `tokenless api-proxy enable`: it accepts local API traffic, so enabling it by
+ * default would widen what the daemon answers without anyone asking.
+ */
+async function selectSetupApiProxy({
+  args,
+  config,
+  prompt,
+}: {
+  args: CliArgs
+  config: Awaited<ReturnType<typeof readTokenlessConfig>>
+  prompt: ReturnType<typeof createSetupPrompt> | null
+}) {
+  if (args.conversationMode !== undefined) {
+    return { enabled: true, conversationMode: requiredApiProxyConversationMode(args.conversationMode), executionMode: 'direct' as const }
+  }
+  if (!prompt || args.setupDefaults === true) return config.apiProxy
+  const enabled = await prompt.confirm(t('setupApiProxyPrompt'), config.apiProxy.enabled)
+  if (!enabled) return { enabled: false, conversationMode: config.apiProxy.conversationMode, executionMode: config.apiProxy.executionMode }
+  const conversationMode = await prompt.select<ApiProxyConversationMode>(
+    t('setupApiProxyModePrompt'),
+    [
+      { label: t('setupApiProxyNewConversation'), value: 'new-conversation' },
+      { label: t('setupApiProxyContinueConversation'), value: 'continue-conversation' },
+    ],
+    config.apiProxy.conversationMode === 'continue-conversation' ? 1 : 0,
+  )
+  return { enabled: true, conversationMode, executionMode: 'direct' as const }
+}
+
 async function selectSetupProviders({
   args,
   config,
@@ -3579,25 +4272,25 @@ async function selectSetupProviders({
   const available = setupVisibleProviders()
   if (args.providerWhitelist !== undefined) {
     const providers = requireSetupProviders(parseProviderList(args.providerWhitelist) as ProviderId[])
-    presenter.success(`Checking providers: ${providers.join(', ')}.`)
+    presenter.success(t('setupCheckingProviders', { providers: providers.join(', ') }))
     return providers
   }
   if (!prompt) {
     const configuredScope = await setupConfiguredProviderScope({ args, config, homeDir })
-    const configured = configuredScope.filter((provider): provider is ProviderId => available.includes(provider as ProviderId))
+    const configured = configuredScope.filter((provider: unknown): provider is ProviderId => available.includes(provider as ProviderId))
     const providers = requireSetupProviders(configured)
-    presenter.success(`Checking providers: ${providers.join(', ')}.`)
+    presenter.success(t('setupCheckingProviders', { providers: providers.join(', ') }))
     return providers
   }
   const providers = await prompt.removeByIndex(
-    'Supported providers (all are enabled by default):',
+    t('setupSupportedProviders'),
     available.map((provider) => {
       const descriptor = getProviderDescriptorById(provider)
       return { label: `${descriptor?.label ?? provider} (${provider})`, value: provider }
     }),
   )
   requireSetupProviders(providers)
-  presenter.success(`Checking providers: ${providers.join(', ')}.`)
+  presenter.success(t('setupCheckingProviders', { providers: providers.join(', ') }))
   return providers
 }
 
@@ -3657,6 +4350,7 @@ async function runSetupAuthCheck({
         provider,
         target: { kind: 'provider_home', url: managedProviderExplicitTargetUrl(provider, args.targetUrl) },
         actions: [{ action: VISIBLE_ACTIONS.AUTH_STATUS, payload: {} }],
+        pageRef: `page:setup-review:${reviewSessionId}:${provider}`,
       }),
       taskId: `setup-review:${reviewSessionId}:${provider}`,
       statusEventAction: 'setup.auth',
@@ -3679,19 +4373,19 @@ async function ensureSetupProviderReviewTabs({
   presenter: SetupPresenter
 }) {
   try {
-    const result = await presenter.withProgress('Opening provider review tabs', () => openBrowserRuntimeProviderTabs({
+    const result = await presenter.withProgress(t('setupOpeningProviderTabs'), () => openBrowserRuntimeProviderTabs({
       daemonUrl: actualDaemonUrl,
       homeDir,
-      profileId: profile.id,
+      profileId: profile.slug,
       providers,
       browserVisibility: 'headed',
     }))
     const opened = result.tabs.map((tab) => tab.provider as ProviderId)
     const failures = result.failures.map((failure) => ({ ...failure, provider: failure.provider as ProviderId }))
     if (failures.length === 0) {
-      presenter.success(`Opened ${opened.length} provider review tab(s).`)
+      presenter.success(t('setupOpenedProviderTabs', { count: opened.length }))
     } else {
-      presenter.note(`Could not open ${failures.length} provider review tab(s).`)
+      presenter.note(t('setupProviderTabsFailed', { count: failures.length }))
     }
     return {
       opened,
@@ -3705,7 +4399,7 @@ async function ensureSetupProviderReviewTabs({
       code: (error as CliError).code ?? 'setup_review_tabs_failed',
       message: error instanceof Error ? error.message : String(error),
     }
-    presenter.note('Could not keep the provider review browser open.')
+    presenter.note(t('setupProviderTabsKeepOpenFailed'))
     return {
       opened: [],
       failures: [],
@@ -3745,6 +4439,11 @@ async function provisionRuntime(args: CliArgs) {
     browser: primaryBrowser.selection,
     browserExecutablePath: primaryBrowser.executablePath,
     daemonUrl: configuredDaemonUrl,
+    g4f: { enabled: true },
+    directProvider: {
+      defaultBackend: 'g4f',
+      providerBackends: config.directProvider.providerBackends,
+    },
   })
   const maintenance = await reconcileTokenlessMaintenance({
     homeDir,
@@ -3756,6 +4455,7 @@ async function provisionRuntime(args: CliArgs) {
     homeDir,
     config,
     skills: maintenance.skills,
+    g4f: maintenance.g4f,
     browsers: resolvedBrowsers.map((browser) => browser.runtimeId),
     browser: primaryBrowser,
     installed: {
@@ -3772,7 +4472,7 @@ async function doctorCommand(args: CliArgs) {
   let config: Pick<TokenlessConfig, 'profiles'> & Record<string, any> = { profiles: {}, browser: null, daemonUrl: null }
   let configCheck: Record<string, any>
   try {
-    config = await readTokenlessConfig(homeDir, { persistMigrations: false })
+    config = await readTokenlessConfig(homeDir)
     configCheck = { ok: true, path: `${homeDir}/config.json`, value: config }
   } catch (error) {
     configCheck = {
@@ -3839,28 +4539,14 @@ async function doctorCommand(args: CliArgs) {
       : 'disabled',
     runtime: outputSavingsRuntime,
   }
+  const g4fEnabled = config.g4f?.enabled === true
+  const g4fRuntime = await new G4fRuntimeManager(homeDir).inspect()
   let daemon: Record<string, any>
   const daemonLogPath = path.join(homeDir, 'daemon.log')
   const daemonLogExists = await fileExists(daemonLogPath)
-  const runtimeEndpoint = await DaemonRuntimeState.readEndpointIfExists(homeDir)
-  const daemonProbeUrls = [...new Set([
-    runtimeEndpoint?.origin,
-    configuredDaemonUrl,
-  ].filter((value): value is string => typeof value === 'string' && value.length > 0))]
   let daemonStatusUrl = configuredDaemonUrl
   try {
-    let ready: Awaited<ReturnType<typeof probeDaemonReady>> | null = null
-    for (const candidateUrl of daemonProbeUrls) {
-      const candidate = await probeDaemonReady({
-        homeDir,
-        daemonUrl: candidateUrl,
-      })
-      ready = candidate
-      if (candidate.ok) break
-    }
-    if (!ready) {
-      ready = await probeDaemonReady({ homeDir, daemonUrl: configuredDaemonUrl })
-    }
+    const ready = await probeDaemonReady({ homeDir, daemonUrl: configuredDaemonUrl })
     daemonStatusUrl = ready.ok ? ready.url : configuredDaemonUrl
     const expectedVersion = tokenlessPackageVersion()
     const runningVersion = typeof ready.body?.version === 'string' ? ready.body.version : null
@@ -3894,6 +4580,7 @@ async function doctorCommand(args: CliArgs) {
         expectedControlApiRevision: DAEMON_CONTROL_API_REVISION,
         runningControlApiRevision,
         controlApiCompatible,
+        g4fReady: false,
       }
     } else {
       daemon = {
@@ -3913,6 +4600,7 @@ async function doctorCommand(args: CliArgs) {
         expectedControlApiRevision: DAEMON_CONTROL_API_REVISION,
         runningControlApiRevision,
         controlApiCompatible,
+        g4fReady: ready.body?.g4f_ready === true,
         pid: ready.body?.pid ?? null,
       }
     }
@@ -3929,10 +4617,8 @@ async function doctorCommand(args: CliArgs) {
     } else {
       const profile = profileReport.profile
       managedProfile = {
-        ok: profile.lifecycle === 'ready',
+        ok: true,
         slug: profile.slug,
-        id: profile.id,
-        lifecycle: profile.lifecycle,
         browserMode: 'native',
         runtime: await runtimeManager.inspect(profile, {
           browserExecutablePath: profile.runtimeBinding?.browserId === config.browser
@@ -3998,6 +4684,13 @@ async function doctorCommand(args: CliArgs) {
     profileRuntime,
     providerReadiness,
     outputSavings,
+    g4f: {
+      ok: !g4fEnabled || (g4fRuntime.installed && (daemon.running !== true || daemon.g4fReady === true)),
+      enabled: g4fEnabled,
+      installed: g4fRuntime.installed,
+      daemonReady: daemon.g4fReady === true,
+      runtime: g4fRuntime,
+    },
   }
   const ok = Object.values(checks).every((check) => check.ok === true)
   printPayload({
@@ -4114,39 +4807,43 @@ async function sameExistingPath(left: string, right: string | null) {
 }
 
 async function readManagedProfileReadOnly(homeDir: string) {
-  const registry = new ManagedProfileRegistry(homeDir)
   const data = await readManagedProfileRegistryReadOnly(homeDir)
   const defaultSlug = data.defaultProfile
   const profile = defaultSlug ? data.profiles[defaultSlug] : undefined
-  if (!profile || profile.lifecycle === 'removed') {
+  if (!profile) {
     return {
       ok: false,
-      path: registry.paths.registryFile,
+      path: configPath(homeDir),
       profile: null,
       message: defaultSlug ? 'Default managed profile is not available.' : 'No default managed profile is configured.',
     }
   }
   return {
     ok: true,
-    path: registry.paths.registryFile,
+    path: configPath(homeDir),
     profile,
   }
 }
 
 async function configCommand(args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
+  const control = await ensureControlDaemon(args, homeDir)
   if (args.profile !== undefined) {
     if (
       args.browser !== undefined ||
       args.browserExecutablePath !== undefined ||
       args.clearBrowserExecutablePath === true ||
-      args.daemonUrl !== undefined ||
       args.language !== undefined
     ) {
       throw usageError('profile_config_scope_invalid', '--profile can scope only provider membership and headed browser visibility.')
     }
-    const profile = await new ManagedProfileRegistry(homeDir).resolveProfile(String(args.profile))
-    const current = await readTokenlessConfig(homeDir)
+    const resolved = await resolveControlProfile({
+      homeDir,
+      daemonUrl: control.daemon.url,
+      profile: String(args.profile),
+    })
+    const profile = resolved.profile
+    const current = resolved.config
     const existing = requiredProfileConfig(current, profile.slug)
     const browserVisibility = args.browserVisibility === undefined
       ? 'headed'
@@ -4154,10 +4851,11 @@ async function configCommand(args: CliArgs) {
     if (browserVisibility !== 'headed') {
       throw usageError('native_chrome_headless_unsupported', 'Native Chrome supports headed mode only.')
     }
-    const config = await upsertTokenlessProfileConfig({
+    const updated = await updateControlProfileConfig({
       homeDir,
-      slug: profile.slug,
-      profile: {
+      daemonUrl: control.daemon.url,
+      profile: profile.slug,
+      config: {
         ...existing,
         enabledProviders: args.providerWhitelist === undefined
           ? existing.enabledProviders
@@ -4166,6 +4864,7 @@ async function configCommand(args: CliArgs) {
         proxy: null,
       },
     })
+    const config = updated.config
     printPayload({
       ok: true,
       configPath: `${homeDir}/config.json`,
@@ -4185,7 +4884,7 @@ async function configCommand(args: CliArgs) {
     args.daemonUrl !== undefined ||
     args.language !== undefined
   ) {
-    const current = await readTokenlessConfig(homeDir)
+    const current = control.state.config
     const requestedBrowser = args.browser === undefined ? current.browser : normalizeCliBrowser(args.browser)
     if (requestedBrowser !== 'chrome' && requestedBrowser !== 'brave') {
       throw usageError('native_chrome_required', 'Tokenless native mode supports a running Google Chrome or Brave Browser.')
@@ -4207,27 +4906,26 @@ async function configCommand(args: CliArgs) {
     if (args.clearBrowserExecutablePath === true) {
       browserExecutablePath = null
     } else if (args.browserExecutablePath !== undefined) {
-      const runtime = await new BrowserRuntimeManager({ homeDir }).ensure(requestedBrowser, {
-        allowDownload: false,
-        browserExecutablePath: String(args.browserExecutablePath),
-      })
-      browserExecutablePath = runtime.executablePath
+      browserExecutablePath = String(args.browserExecutablePath)
     } else if (args.browser !== undefined && requestedBrowser !== current.browser) {
       browserExecutablePath = null
     }
-    const config = await writeTokenlessConfig({
+    const config = await updateControlConfig({
       homeDir,
-      browser: requestedBrowser,
-      browserExecutablePath,
-      browserVisibility: 'headed',
-      daemonUrl: args.daemonUrl === undefined ? undefined : daemonUrl(args.daemonUrl),
-      language: args.language,
+      daemonUrl: control.daemon.url,
+      config: {
+        browser: requestedBrowser,
+        browserExecutablePath,
+        browserVisibility: 'headed',
+        daemonUrl: args.daemonUrl === undefined ? undefined : daemonUrl(args.daemonUrl),
+        language: args.language,
+      },
     })
     setActiveLanguage(config.language)
     printPayload({ ok: true, configPath: `${homeDir}/config.json`, config }, args)
     return
   }
-  const config = await readTokenlessConfig(homeDir)
+  const config = control.state.config
   printPayload({ ok: true, configPath: `${homeDir}/config.json`, config }, args)
 }
 
@@ -4249,21 +4947,13 @@ async function promptCommand(args: CliArgs) {
 
 async function savingsCommand(subcommand: string | undefined, args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
-  const manager = new OutputSavingsRuntimeManager(homeDir)
-  if (subcommand === 'enable') {
-    await manager.ensureInstalled()
-    await writeTokenlessConfig({ homeDir, outputSavings: { enabled: true } })
-  } else if (subcommand === 'disable') {
-    await writeTokenlessConfig({ homeDir, outputSavings: { enabled: false } })
-  } else if (subcommand === 'uninstall') {
+  if (subcommand === 'uninstall') {
     if (args.confirmDelete !== true) {
       throw usageError(
         'output_savings_uninstall_confirmation_required',
         'Output savings runtime removal requires --confirm-delete.',
       )
     }
-    await writeTokenlessConfig({ homeDir, outputSavings: { enabled: false } })
-    await manager.remove()
   } else if (subcommand === 'clear') {
     if (args.confirmDelete !== true) {
       throw usageError(
@@ -4271,38 +4961,93 @@ async function savingsCommand(subcommand: string | undefined, args: CliArgs) {
         'Output savings history removal requires --confirm-delete.',
       )
     }
-  } else if (subcommand !== 'status') {
+  } else if (subcommand !== 'status' && subcommand !== 'enable' && subcommand !== 'disable') {
     throw usageError('invalid_savings_command', 'Usage: tokenless savings <status|enable|disable|uninstall|clear> --json')
   }
-  const store = await JobStore.open(homeDir)
-  let summary
-  let cleared: number | undefined
-  try {
-    if (subcommand === 'disable' || subcommand === 'uninstall') {
-      store.discardOutputSavingsWork()
-    }
-    if (subcommand === 'clear') cleared = store.clearOutputSavings().cleared
-    summary = store.reconcileOutputSavings()
-  } finally {
-    store.close()
-  }
-  const [config, runtime] = await Promise.all([
-    readTokenlessConfig(homeDir),
-    manager.inspect(),
-  ])
+  const control = await ensureControlDaemon(args, homeDir)
+  const state = await updateOutputSavings({
+    homeDir,
+    daemonUrl: control.daemon.url,
+    action: subcommand,
+  })
+  const { basis: _basis, ...outputSavings } = state
   printPayload({
     ok: true,
-    outputSavings: {
-      enabled: config.outputSavings.enabled,
-      collection: config.outputSavings.enabled
-        ? runtime.state === 'ready' ? 'enabled' : 'unavailable'
-        : 'disabled',
-      estimator: OUTPUT_SAVINGS_ESTIMATOR,
-      runtime,
-      summary,
-      ...(cleared === undefined ? {} : { cleared }),
+    outputSavings,
+  }, args)
+}
+
+async function apiProxyCommand(subcommand: string | undefined, args: CliArgs) {
+  const homeDir = tokenlessHome(args.home)
+  const control = await ensureControlDaemon(args, homeDir)
+  let config = control.state.config
+  if (subcommand === 'enable') {
+    config = await updateControlConfig({
+      homeDir,
+      daemonUrl: control.daemon.url,
+      config: { apiProxy: {
+          enabled: true,
+          conversationMode: args.conversationMode === undefined
+            ? config.apiProxy.conversationMode
+            : requiredApiProxyConversationMode(args.conversationMode),
+          executionMode: config.apiProxy.executionMode,
+        } },
+    })
+  } else if (subcommand === 'disable') {
+    config = await updateControlConfig({
+      homeDir,
+      daemonUrl: control.daemon.url,
+      config: { apiProxy: {
+          enabled: false,
+          conversationMode: config.apiProxy.conversationMode,
+          executionMode: config.apiProxy.executionMode,
+        } },
+    })
+  } else if (subcommand !== 'status') {
+    throw usageError(
+      'invalid_api_proxy_command',
+      'Usage: tokenless api-proxy <status|enable|disable> [--conversation-mode <new-conversation|continue-conversation>] --json',
+    )
+  }
+  const baseUrl = config.daemonUrl ?? DEFAULT_DAEMON_URL
+  // Provider enablement is per managed profile, so report the profile the proxy
+  // will actually resolve rather than an installation-wide list.
+  const profile = await resolveControlProfile({
+      homeDir,
+      daemonUrl: control.daemon.url,
+      profile: args.profile === undefined ? undefined : String(args.profile),
+    })
+    .then((result) => result.profile)
+    .catch(() => null)
+  printPayload({
+    ok: true,
+    apiProxy: {
+      enabled: config.apiProxy.enabled,
+      conversationMode: config.apiProxy.conversationMode,
+      endpoints: {
+        openai: `${baseUrl}/v1/openai`,
+        anthropic: `${baseUrl}/v1/anthropic`,
+        images: `${baseUrl}/v1/images/generations`,
+        // An unmodified OpenAI client can point at the bare /v1 base, so report
+        // it alongside the prefixed routes rather than leaving callers to guess.
+        openaiDefault: `${baseUrl}/v1`,
+      },
+      modelNaming: 'tokenless/<provider>',
+      profile: profile?.slug ?? null,
+      providers: profile ? config.profiles[profile.slug]?.enabledProviders ?? [] : [],
     },
   }, args)
+}
+
+function requiredApiProxyConversationMode(value: unknown): ApiProxyConversationMode {
+  const normalized = typeof value === 'string' ? value.trim() : ''
+  if (!API_PROXY_CONVERSATION_MODES.includes(normalized as ApiProxyConversationMode)) {
+    throw usageError(
+      'invalid_api_proxy_conversation_mode',
+      'Conversation mode must be new-conversation or continue-conversation.',
+    )
+  }
+  return normalized as ApiProxyConversationMode
 }
 
 async function promptFromArgs(args: CliArgs) {
@@ -4313,13 +5058,13 @@ async function promptFromArgs(args: CliArgs) {
   const turnContext = args.contextFile || args.turnContextFile
     ? await fs.readFile(args.contextFile || args.turnContextFile, 'utf8')
     : args.context
-  const config = await readTokenlessConfig(tokenlessHome(args.home))
+  const language = await readBootstrapLanguage(tokenlessHome(args.home)) ?? 'en'
   return buildTokenlessPrompt({
     userPrompt,
     projectRoot: args.projectRoot,
     files: args.files,
     turnContext,
-    responseLanguage: config.language,
+    responseLanguage: language,
   })
 }
 
@@ -4406,7 +5151,7 @@ async function resolveProviderContextForOutput({
       })
       conversation = resolved.mapping
     } catch {
-      // A completed job can precede durable conversation observation.
+      // A completed job can precede stored conversation observation.
     }
   }
   return { project, conversation }
@@ -4418,18 +5163,17 @@ function publicDaemonJobState(job: Record<string, any>) {
   return {
     jobId: job.job_id,
     taskId: daemonTaskId(job),
-    backend: job.execution_backend ?? 'playwright',
+    pageRef: request.pageRef ?? null,
+    backend: PLAYWRIGHT_EXECUTION_BACKEND,
     profile: job.profile_id === undefined || job.profile_id === null
       ? null
-      : { id: job.profile_id },
+      : { slug: job.profile_id },
     provider: job.provider,
     action: job.action,
     capabilityRoute: request.capabilityRoute ?? null,
     fallback: fallbackState(request.fallback),
     context: contextEnvelopeState(request.context),
-    providerAttempts: job.provider_attempts_json ?? [],
     providerSubmittedAt: job.provider_submitted_at ?? null,
-    eligibleAt: job.eligible_at ?? null,
     browserVisibility: request.browserVisibility,
     projectName: metadata.projectName,
     chatName: metadata.chatName,
@@ -4533,9 +5277,6 @@ function waitingForUserPayload({
   const blocker = waitResult?.blocker ?? job.blocker_json ?? null
   const browser = blockerBrowserState(blocker)
   const windowOpen = browser.windowOpen !== false
-  const resumeCommand = windowOpen
-    ? `tokenless state --job-id '${String(job.job_id).replace(/'/g, `'\\''`)}' --json`
-    : `tokenless resume --job-id '${String(job.job_id).replace(/'/g, `'\\''`)}' --browser-visibility headed --json`
   return {
     ok: true,
     completed: false,
@@ -4548,7 +5289,6 @@ function waitingForUserPayload({
     taskId,
     provider,
     capabilityRoute,
-    providerAttempts: waitResult?.job?.provider_attempts_json ?? job.provider_attempts_json ?? [],
     profile: publicManagedProfile(profile, profile.slug),
     projectName,
     chatName,
@@ -4557,10 +5297,9 @@ function waitingForUserPayload({
     userAction: {
       ...(waitResult?.userAction ?? {}),
       message: t(windowOpen ? 'cliWaitingForUser' : 'cliWaitingNoWindow'),
-      resumeCommand,
       queryGuidance: windowOpen
-        ? t('cliWaitingCheckpoint')
-        : t('cliWaitingNoWindow'),
+        ? 'The current daemon execution will continue after the visible check is complete.'
+        : 'This execution cannot continue without a visible browser; start a new job if the daemon cannot open one.',
     },
     result: publicDaemonResult(waitResult),
     statusLog,
@@ -4579,7 +5318,7 @@ function blockerBrowserState(value: unknown) {
 function daemonTaskId(job: Record<string, any>) {
   const request = objectRecord(job.request_json)
   const metadata = objectRecord(request.metadata)
-  const value = request.taskId ?? request.idempotencyKey ?? request.requestId ?? metadata.taskId ?? metadata.idempotencyKey
+  const value = request.taskId ?? request.requestId ?? metadata.taskId
   if (typeof value === 'string') return value
   const fromJobId = taskIdFromManagedPlaywrightJobId(job.job_id)
   return fromJobId ?? undefined
@@ -4619,8 +5358,6 @@ async function waitForJobWithInterruptCancellation({
   timeoutMs,
   cancelTimeoutMs,
   statusReporter,
-  agentKind,
-  agentSessionId,
 }: Record<string, any>) {
   let interrupted = false
   let interruptReject: ((error: Error) => void) | undefined
@@ -4660,8 +5397,6 @@ async function waitForJobWithInterruptCancellation({
       jobId,
       timeoutMs,
       signal: waitAbort.signal,
-      agentKind,
-      agentSessionId,
       onStatus: (event) => statusReporter.report(event),
     }).then(
       (result) => interrupted ? neverSettles : result,
@@ -4722,9 +5457,11 @@ function assertDaemonRequestSize(value: unknown) {
 function createCommandContracts(): CommandContract[] {
   const visibleJobOptions = [
     'home', 'json', 'quiet', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'browserVisibility',
-    'runnerHeartbeatTimeoutMs', 'timeoutMs', 'cancelTimeoutMs', 'targetUrl', 'taskId', 'idempotencyKey',
+    'executionMode', 'providerBackend', 'authContextId',
+    'timeoutMs', 'cancelTimeoutMs', 'targetUrl', 'taskId', 'pageRef',
     'projectName', 'chatName', 'workspaceMode', 'projectInstructions', 'projectInstructionsFile',
     'model', 'modelFallbacks', 'effort', 'thinkingEffort', 'qwenMode', 'qwenModeVariant',
+    'arenaMode', 'arenaModality',
     'deepSeekMode', 'deepSeekDeepThink', 'deepSeekSearch', 'kimiSearch', 'kimiPlugin', 'kimiSkill',
     'chatSurface', 'noWait',
     'agentKind', 'agentSessionId',
@@ -4735,8 +5472,8 @@ function createCommandContracts(): CommandContract[] {
   ] as const
   const providerInspectOptions = [
     'home', 'json', 'quiet', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs',
-    'browserVisibility', 'runnerHeartbeatTimeoutMs', 'timeoutMs', 'cancelTimeoutMs', 'targetUrl',
-    'taskId', 'idempotencyKey', 'noWait', 'agentKind', 'agentSessionId',
+    'browserVisibility', 'timeoutMs', 'cancelTimeoutMs', 'targetUrl',
+    'taskId', 'pageRef', 'noWait', 'agentKind', 'agentSessionId',
   ] as const
   const providerConfigureOptions = [
     ...providerInspectOptions, 'model', 'modelFallbacks', 'effort', 'thinkingEffort', 'chatSurface',
@@ -4746,7 +5483,12 @@ function createCommandContracts(): CommandContract[] {
   const contracts: CommandContract[] = [
     { command: 'help', usage: ['tokenless help'], options: [] },
     { command: 'version', usage: ['tokenless --version', 'tokenless -V', 'tokenless version'], options: [] },
-    { command: 'run', usage: [`tokenless run [--capability <capability>] --provider ${VISIBLE_PROVIDER_USAGE} --prompt <text> --json`], options: runOptions },
+    { command: 'run', usage: [`tokenless run [--capability <capability>] --provider ${VISIBLE_PROVIDER_USAGE} [--execution-mode browser|direct] --prompt <text> --json`], options: runOptions },
+    { command: 'agent', subcommand: 'run', usage: [`tokenless agent run --provider ${VISIBLE_PROVIDER_USAGE} [--profile <slug>] (--prompt <text>|--prompt-file <path>) [--skill <name>] [--mcp-config <path>] [--max-turns <count>] --json`], options: ['home', 'json', 'profile', 'provider', 'prompt', 'promptFile', 'skills', 'mcpConfig', 'maxTurns', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
+    { command: 'agent', subcommand: 'delegate', usage: [`tokenless agent delegate --provider ${VISIBLE_PROVIDER_USAGE} [--profile <slug>] --workspace-root <dir> (--prompt <text>|--prompt-file <path>|--prompt-stdin) [--skill <name>] [--mcp-config <path>] [--max-turns <count>] --json`], options: ['home', 'json', 'profile', 'provider', 'prompt', 'promptFile', 'promptStdin', 'workspaceRoot', 'adapterStream', 'skills', 'mcpConfig', 'maxTurns', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
+    { command: 'agent', subcommand: 'read', usage: ['tokenless agent read --run-id <run-id> --json'], options: ['home', 'json', 'runId', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
+    { command: 'agent', subcommand: 'resume', usage: ['tokenless agent resume --run-id <run-id> (--approve <call-id:digest>|--auth-completed <call-id:digest>|--answer <need-id=json>) --json'], options: ['home', 'json', 'runId', 'approvals', 'authenticationCompleted', 'answers', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
+    { command: 'agent', subcommand: 'cancel', usage: ['tokenless agent cancel --run-id <run-id> --json'], options: ['home', 'json', 'runId', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
     { command: 'capabilities', subcommand: 'list', usage: ['tokenless capabilities list --json'], options: ['json'] },
     { command: 'limits', subcommand: 'inspect', usage: ['tokenless limits inspect --profile <slug> --provider <provider> --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'savings', subcommand: 'status', usage: ['tokenless savings status --json'], options: ['home', 'json'] },
@@ -4754,7 +5496,12 @@ function createCommandContracts(): CommandContract[] {
     { command: 'savings', subcommand: 'disable', usage: ['tokenless savings disable --json'], options: ['home', 'json'] },
     { command: 'savings', subcommand: 'uninstall', usage: ['tokenless savings uninstall --confirm-delete --json'], options: ['home', 'json', 'confirmDelete'] },
     { command: 'savings', subcommand: 'clear', usage: ['tokenless savings clear --confirm-delete --json'], options: ['home', 'json', 'confirmDelete'] },
-    { command: 'replay', usage: ['tokenless replay --agent-kind <kind> --agent-session-id <id> [--limit <count>] --json'], options: ['home', 'json', 'daemonUrl', 'daemonStartTimeoutMs', 'agentKind', 'agentSessionId', 'limit'] },
+    { command: 'api-proxy', subcommand: 'status', usage: ['tokenless api-proxy status [--profile <slug>] --json'], options: ['home', 'json', 'profile', 'daemonUrl'] },
+    { command: 'api-proxy', subcommand: 'enable', usage: ['tokenless api-proxy enable [--conversation-mode <new-conversation|continue-conversation>] --json'], options: ['home', 'json', 'conversationMode', 'daemonUrl'] },
+    { command: 'api-proxy', subcommand: 'disable', usage: ['tokenless api-proxy disable --json'], options: ['home', 'json'] },
+    { command: 'featurebench', subcommand: 'inspect', usage: ['tokenless featurebench inspect --json'], options: ['json'] },
+    { command: 'featurebench', subcommand: 'issue-channel', usage: ['tokenless featurebench issue-channel --instance-id <id> --benchmark-run-id <id> --provider <provider> [--profile <slug>] [--execution-mode browser|direct] [--model <label>] --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'executionMode', 'model', 'effort', 'instanceId', 'benchmarkRunId', 'maxSteps', 'expiresInMs', 'providerTurnTimeoutMs'] },
+    { command: 'featurebench', subcommand: 'run', usage: ['tokenless featurebench run --channel-file <path> --instruction-file <path> [--workspace /testbed] [--events-file <path>] [--max-steps <count>] --json'], options: ['json', 'channelFile', 'instructionFile', 'workspace', 'eventsFile', 'maxSteps', 'toolTimeoutMs'] },
     { command: 'provider-status', usage: ['tokenless provider-status --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
     { command: 'provider-auth-status', usage: ['tokenless provider-auth-status --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
     { command: 'provider-controls', usage: ['tokenless provider-controls --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
@@ -4763,31 +5510,31 @@ function createCommandContracts(): CommandContract[] {
     { command: 'inspect-chatgpt-controls', usage: ['tokenless inspect-chatgpt-controls --profile <slug> --json'], options: providerInspectOptions },
     { command: 'provider-configure', usage: ['tokenless provider-configure --profile <slug> --provider <provider> [--model <label>] [--effort <label>] --json'], options: providerConfigureOptions },
     { command: 'chatgpt-configure', usage: ['tokenless chatgpt-configure --profile <slug> [--model <label>] [--effort <label>] --json'], options: providerConfigureOptions },
-    { command: 'provider-action', usage: [`tokenless provider-action --profile <slug> --provider <provider> --action <${PRIORITY_VISIBLE_PROVIDER_ACTION_LIST.replace(/, /g, '|')}> --json`], options: [...providerInspectOptions, 'action', 'prompt', 'promptFile', 'attachFiles', 'projectName', 'projectInstructions', 'projectInstructionsFile', 'workspaceMode', 'model', 'modelFallbacks', 'effort', 'thinkingEffort', 'qwenMode', 'qwenModeVariant', 'deepSeekMode', 'deepSeekDeepThink', 'deepSeekSearch', 'doubaoMode', 'doubaoSkill', 'kimiSearch', 'kimiPlugin', 'kimiSkill'] },
+    { command: 'provider-action', usage: [`tokenless provider-action --profile <slug> --provider <provider> --action <${PRIORITY_VISIBLE_PROVIDER_ACTION_LIST.replace(/, /g, '|')}> --json`], options: [...providerInspectOptions, 'action', 'prompt', 'promptFile', 'attachFiles', 'projectName', 'projectInstructions', 'projectInstructionsFile', 'workspaceMode', 'model', 'modelFallbacks', 'effort', 'thinkingEffort', 'qwenMode', 'qwenModeVariant', 'arenaMode', 'arenaModality', 'deepSeekMode', 'deepSeekDeepThink', 'deepSeekSearch', 'doubaoMode', 'doubaoSkill', 'kimiSearch', 'kimiPlugin', 'kimiSkill'] },
     { command: 'snapshot-dom', usage: ['tokenless snapshot-dom --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
-    { command: 'state', usage: ['tokenless state (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'idempotencyKey', 'jobId', 'projectName', 'chatName', 'limit', 'agentKind', 'agentSessionId'] },
-    { command: 'status', usage: ['tokenless status (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'idempotencyKey', 'jobId', 'projectName', 'chatName', 'limit', 'agentKind', 'agentSessionId'] },
-    { command: 'resume', usage: ['tokenless resume --job-id <job-id> --browser-visibility headed --json'], options: ['home', 'json', 'quiet', 'jobId', 'browserVisibility', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'timeoutMs', 'cancelTimeoutMs', 'agentKind', 'agentSessionId'] },
-    { command: 'cancel', usage: ['tokenless cancel --job-id <job-id> --json'], options: ['home', 'json', 'jobId', 'daemonUrl', 'daemonStartTimeoutMs', 'cancelTimeoutMs', 'agentKind', 'agentSessionId'] },
-    { command: 'setup', usage: ['tokenless setup [--browser <chrome|brave|cloak>|--anti-detect] [--browser-executable-path <absolute-path>] [--install-codex [--codex-home <dir>]] [--profile <slug>] [--provider-whitelist <list>] [--no-open] [--defaults] --json'], options: ['home', 'json', 'quiet', 'browser', 'browserExecutablePath', 'antiDetect', 'profile', 'providerWhitelist', 'noOpen', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'cancelTimeoutMs', 'timeoutMs', 'targetUrl', 'setDefault', 'setupDefaults', 'installCodex', 'codexHome'] },
+    { command: 'state', usage: ['tokenless state (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'jobId', 'projectName', 'chatName', 'limit', 'agentKind', 'agentSessionId'] },
+    { command: 'status', usage: ['tokenless status (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'jobId', 'projectName', 'chatName', 'limit', 'agentKind', 'agentSessionId'] },
+    { command: 'cancel', usage: ['tokenless cancel --job-id <job-id> --json'], options: ['home', 'json', 'jobId', 'daemonUrl', 'daemonStartTimeoutMs', 'cancelTimeoutMs'] },
+    { command: 'setup', usage: ['tokenless setup [--browser <chrome|brave|cloak>|--anti-detect] [--browser-executable-path <absolute-path>] [--install-codex [--codex-home <dir>]] [--profile <slug>] [--provider-whitelist <list>] [--no-open] [--defaults] --json'], options: ['home', 'json', 'quiet', 'browser', 'browserExecutablePath', 'antiDetect', 'profile', 'providerWhitelist', 'noOpen', 'daemonUrl', 'daemonStartTimeoutMs', 'cancelTimeoutMs', 'timeoutMs', 'targetUrl', 'setDefault', 'setupDefaults', 'installCodex', 'codexHome'] },
     { command: 'install', usage: ['tokenless install [--browser <browser>|--browsers <list>] [--repair-browser] --json'], options: ['home', 'json', 'browser', 'browsers', 'repairBrowser', 'daemonUrl', 'daemonStartTimeoutMs'] },
-    { command: 'upgrade', usage: ['tokenless upgrade [--json] [--home <dir>] [--daemon-url <url>] [--browser <browser>|--browsers <list>]'], options: ['json', 'home', 'daemonUrl', 'browser', 'browsers', 'daemonStartTimeoutMs'] },
+    { command: 'upgrade', usage: ['tokenless upgrade [--check] [--json] [--home <dir>] [--daemon-url <url>] [--browser <browser>|--browsers <list>]'], options: ['check', 'json', 'home', 'daemonUrl', 'browser', 'browsers', 'daemonStartTimeoutMs'] },
     { command: 'doctor', usage: ['tokenless doctor --json'], options: ['home', 'json', 'browser', 'daemonUrl'] },
     { command: 'config', usage: ['tokenless config [--language <en|zh-CN>] [--browser <chrome|brave>] [--browser-executable-path <absolute-path>|--clear-browser-executable-path] [--daemon-url <url>] --json', 'tokenless config --profile <slug> [--provider-whitelist <list>] [--browser-visibility headed] --json'], options: ['home', 'json', 'profile', 'language', 'providerWhitelist', 'browser', 'browserExecutablePath', 'clearBrowserExecutablePath', 'browserVisibility', 'daemonUrl'] },
-    { command: 'dashboard', usage: ['tokenless dashboard [--profile <slug>] [--no-open] [--json]'], options: ['home', 'json', 'profile', 'noOpen', 'daemonUrl', 'daemonStartTimeoutMs'] },
+    { command: 'dashboard', usage: ['tokenless dashboard [--profile <slug>] [--job-id <id>] [--semantic-manifest-output <absolute-path>] [--no-open] [--json]'], options: ['home', 'json', 'profile', 'jobId', 'semanticManifestOutput', 'noOpen', 'daemonUrl', 'daemonStartTimeoutMs'] },
+    { command: 'menubar', subcommand: 'status', usage: ['tokenless menubar status --json'], options: ['home', 'json', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'prompt', usage: ['tokenless --prompt <text> [--context <text>] [--file <path>]'], options: ['json', 'prompt', 'promptFile', 'context', 'contextFile', 'turnContextFile', 'projectRoot', 'files', 'output'] },
     { command: 'profiles', subcommand: 'add', usage: ['tokenless profiles add --profile <slug> [--browser <managed-chromium|cloak>] [--set-default] --json'], options: ['home', 'json', 'profile', 'browser', 'providerWhitelist', 'setDefault'] },
     { command: 'profiles', subcommand: 'clear', usage: ['tokenless profiles clear (--profile <slug>|--all)'], options: ['home', 'profile', 'allProfiles'] },
     { command: 'profiles', subcommand: 'list', usage: ['tokenless profiles list --json'], options: ['home', 'json'] },
-    { command: 'profiles', subcommand: 'status', usage: ['tokenless profiles status [--profile <slug>] [--provider <provider>] --json'], options: ['home', 'json', 'quiet', 'profile', 'provider', 'browserVisibility', 'daemonStartTimeoutMs', 'daemonUrl', 'runnerHeartbeatTimeoutMs', 'targetUrl', 'taskId', 'timeoutMs', 'cancelTimeoutMs'] },
-    { command: 'profiles', subcommand: 'open', usage: ['tokenless profiles open [--profile <slug>] [--provider <provider>] --json'], options: ['home', 'json', 'quiet', 'profile', 'provider', 'daemonStartTimeoutMs', 'daemonUrl', 'runnerHeartbeatTimeoutMs', 'targetUrl', 'taskId', 'timeoutMs', 'cancelTimeoutMs'] },
+    { command: 'profiles', subcommand: 'status', usage: ['tokenless profiles status [--profile <slug>] [--provider <provider>] --json'], options: ['home', 'json', 'quiet', 'profile', 'provider', 'browserVisibility', 'daemonStartTimeoutMs', 'daemonUrl', 'targetUrl', 'taskId', 'pageRef', 'timeoutMs', 'cancelTimeoutMs'] },
+    { command: 'profiles', subcommand: 'open', usage: ['tokenless profiles open [--profile <slug>] [--provider <provider>] --json'], options: ['home', 'json', 'quiet', 'profile', 'provider', 'daemonStartTimeoutMs', 'daemonUrl', 'targetUrl', 'taskId', 'pageRef', 'timeoutMs', 'cancelTimeoutMs'] },
     { command: 'profiles', subcommand: 'set-default', usage: ['tokenless profiles set-default --profile <slug> --json'], options: ['home', 'json', 'profile'] },
     { command: 'profiles', subcommand: 'remove', usage: ['tokenless profiles remove --profile <slug> --confirm-delete --json'], options: ['home', 'json', 'profile', 'confirmDelete'] },
     { command: 'daemon', subcommand: 'stop', usage: ['tokenless daemon stop [--daemon-url <loopback-url>] [--timeout-ms <ms>] --json'], options: ['home', 'json', 'daemonUrl', 'timeoutMs'] },
-    { command: 'agents', subcommand: 'install', usage: ['tokenless agents install codex [--codex-home <dir>] [--home <dir>] --json'], options: ['agent', 'codexHome', 'home', 'json'] },
-    { command: 'agents', subcommand: 'status', usage: ['tokenless agents status codex [--codex-home <dir>] [--home <dir>] --json'], options: ['agent', 'codexHome', 'home', 'json'] },
+    { command: 'agents', subcommand: 'install', usage: ['tokenless agents install codex [--codex-home <dir>] [--home <dir>] --json', 'tokenless agents install dsh --provider <provider> --profile <profile> [--dsh-home <dir>] [--dsh-profile <name>] [--home <dir>] --json'], options: ['agent', 'codexHome', 'dshHome', 'dshProfile', 'home', 'json', 'provider', 'profile'] },
+    { command: 'agents', subcommand: 'status', usage: ['tokenless agents status codex [--codex-home <dir>] [--home <dir>] --json', 'tokenless agents status dsh [--dsh-home <dir>] [--dsh-profile <name>] [--home <dir>] --json'], options: ['agent', 'codexHome', 'dshHome', 'dshProfile', 'home', 'json', 'provider', 'profile'] },
     { command: 'agents', subcommand: 'inspect', usage: ['tokenless agents inspect codex --chat-id <id> [--home <dir>] --json'], options: ['agent', 'chatId', 'codexHome', 'home', 'json'] },
-    { command: 'agents', subcommand: 'uninstall', usage: ['tokenless agents uninstall codex [--codex-home <dir>] [--home <dir>] --json'], options: ['agent', 'codexHome', 'home', 'json'] },
+    { command: 'agents', subcommand: 'uninstall', usage: ['tokenless agents uninstall codex [--codex-home <dir>] [--home <dir>] --json', 'tokenless agents uninstall dsh [--dsh-home <dir>] [--dsh-profile <name>] [--home <dir>] --json'], options: ['agent', 'codexHome', 'dshHome', 'dshProfile', 'home', 'json', 'provider', 'profile'] },
     { command: 'agents', subcommand: 'hook', usage: ['tokenless agents hook codex --integration-id <id> [--codex-home <dir>] [--home <dir>]'], options: ['agent', 'codexHome', 'home', 'integrationId'] },
   ]
   return contracts.map((contract) => ({
@@ -4805,7 +5552,9 @@ function commandDisplayName(context: CommandContext) {
 }
 
 function parseArgs(argv: string[], context: CommandContext): CliArgs {
-  const parsed: CliArgs = { attachFiles: [], capabilities: [], files: [] }
+  const parsed: CliArgs = {
+    answers: [], approvals: [], attachFiles: [], authenticationCompleted: [], capabilities: [], files: [], skills: [],
+  }
   Object.defineProperty(parsed, CLI_ARG_FLAGS, {
     value: {},
     enumerable: false,
@@ -4818,6 +5567,7 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--project-instructions': 'projectInstructions',
     '--project-instructions-file': 'projectInstructionsFile',
     '--workspace-mode': 'workspaceMode',
+    '--conversation-mode': 'conversationMode',
     '--chat-name': 'chatName',
     '--context': 'context',
     '--context-file': 'contextFile',
@@ -4832,16 +5582,20 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--provider-whitelist': 'providerWhitelist',
     '--action': 'action',
     '--target-url': 'targetUrl',
-    '--idempotency-key': 'idempotencyKey',
-    '--conversation-key': 'idempotencyKey',
     '--task-id': 'taskId',
     '--job-id': 'jobId',
+    '--semantic-manifest-output': 'semanticManifestOutput',
+    '--run-id': 'runId',
     '--agent-kind': 'agentKind',
     '--agent-session-id': 'agentSessionId',
     '--limit': 'limit',
+    '--page-ref': 'pageRef',
     '--browser': 'browser',
     '--browser-executable-path': 'browserExecutablePath',
     '--browser-visibility': 'browserVisibility',
+    '--execution-mode': 'executionMode',
+    '--provider-backend': 'providerBackend',
+    '--auth-context-id': 'authContextId',
     '--proxy-server': 'proxyServer',
     '--proxy-bypass': 'proxyBypass',
     '--browsers': 'browsers',
@@ -4852,7 +5606,6 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--daemon-start-timeout-ms': 'daemonStartTimeoutMs',
     '--cancel-timeout-ms': 'cancelTimeoutMs',
     '--bridge-timeout-ms': 'bridgeTimeoutMs',
-    '--runner-heartbeat-timeout-ms': 'runnerHeartbeatTimeoutMs',
     '--read-delay-ms': 'readDelayMs',
     '--read-timeout-ms': 'readTimeoutMs',
     '--max-text-chars': 'maxTextChars',
@@ -4862,6 +5615,8 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--thinking-effort': 'thinkingEffort',
     '--qwen-mode': 'qwenMode',
     '--qwen-mode-variant': 'qwenModeVariant',
+    '--arena-mode': 'arenaMode',
+    '--arena-modality': 'arenaModality',
     '--deepseek-mode': 'deepSeekMode',
     '--deepseek-deepthink': 'deepSeekDeepThink',
     '--deepseek-search': 'deepSeekSearch',
@@ -4872,8 +5627,23 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--kimi-skill': 'kimiSkill',
     '--chat-surface': 'chatSurface',
     '--codex-home': 'codexHome',
+    '--dsh-home': 'dshHome',
+    '--dsh-profile': 'dshProfile',
     '--chat-id': 'chatId',
     '--integration-id': 'integrationId',
+    '--instance-id': 'instanceId',
+    '--benchmark-run-id': 'benchmarkRunId',
+    '--channel-file': 'channelFile',
+    '--instruction-file': 'instructionFile',
+    '--workspace': 'workspace',
+    '--workspace-root': 'workspaceRoot',
+    '--events-file': 'eventsFile',
+    '--max-steps': 'maxSteps',
+    '--max-turns': 'maxTurns',
+    '--mcp-config': 'mcpConfig',
+    '--tool-timeout-ms': 'toolTimeoutMs',
+    '--expires-in-ms': 'expiresInMs',
+    '--provider-turn-timeout-ms': 'providerTurnTimeoutMs',
   }
   const booleanFlags: Record<string, string> = {
     '--include-text': 'includeText',
@@ -4898,6 +5668,15 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--confirm-delete': 'confirmDelete',
     '--defaults': 'setupDefaults',
     '--all': 'allProfiles',
+    '--prompt-stdin': 'promptStdin',
+    '--adapter-stream': 'adapterStream',
+    '--check': 'check',
+  }
+  const repeatedValueFlags: Record<string, keyof Pick<CliArgs, 'answers' | 'approvals' | 'authenticationCompleted' | 'skills'>> = {
+    '--answer': 'answers',
+    '--approve': 'approvals',
+    '--auth-completed': 'authenticationCompleted',
+    '--skill': 'skills',
   }
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index] as string
@@ -4919,6 +5698,13 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
       const value = requireFlagValue(argv, index, arg, context)
       parsed.capabilities.push(value)
       rememberArgFlag(parsed, 'capabilities', arg)
+      index += 1
+      continue
+    }
+    const repeatedKey = repeatedValueFlags[arg]
+    if (repeatedKey) {
+      parsed[repeatedKey].push(requireFlagValue(argv, index, arg, context))
+      rememberArgFlag(parsed, repeatedKey, arg)
       index += 1
       continue
     }
@@ -4981,54 +5767,6 @@ function requiredBrowserVisibility(value: unknown) {
   return visibility
 }
 
-function agentRecipientFromArgs(
-  args: CliArgs,
-  required: true
-): { agentKind: string; agentSessionId: string }
-function agentRecipientFromArgs(
-  args: CliArgs,
-  required?: false
-): { agentKind?: string; agentSessionId?: string }
-function agentRecipientFromArgs(
-  args: CliArgs,
-  required = false
-): { agentKind?: string; agentSessionId?: string } {
-  const rawKind = args.agentKind ?? process.env.TOKENLESS_AGENT_KIND
-  const rawSessionId = args.agentSessionId ?? process.env.TOKENLESS_AGENT_SESSION_ID
-  if (rawKind === undefined && rawSessionId === undefined) {
-    if (required) {
-      throw usageError(
-        'missing_agent_recipient',
-        'Agent replay requires --agent-kind and --agent-session-id, or TOKENLESS_AGENT_KIND and TOKENLESS_AGENT_SESSION_ID.'
-      )
-    }
-    return {}
-  }
-  if (rawKind === undefined || rawSessionId === undefined) {
-    throw usageError(
-      'incomplete_agent_recipient',
-      '--agent-kind and --agent-session-id must be provided together.'
-    )
-  }
-  const agentKind = String(rawKind).trim()
-  const agentSessionId = String(rawSessionId).trim()
-  if (!agentKind || Array.from(agentKind).length > 128) {
-    throw usageError('invalid_agent_kind', '--agent-kind must be a non-empty string of at most 128 characters.')
-  }
-  if (!agentSessionId || Array.from(agentSessionId).length > 256) {
-    throw usageError('invalid_agent_session_id', '--agent-session-id must be a non-empty string of at most 256 characters.')
-  }
-  return { agentKind, agentSessionId }
-}
-
-function isReplayActionableStatus(status: string) {
-  return status === 'waiting_for_user' ||
-    status === 'succeeded' ||
-    status === 'failed' ||
-    status === 'canceled' ||
-    status === 'timed_out'
-}
-
 function normalizeProvider(provider: unknown): ProviderId {
   const normalized = String(provider).trim().toLowerCase()
   const resolved = getProviderDescriptorById(normalized)
@@ -5085,12 +5823,13 @@ function providerSupportsChatSurface(providerId: string) {
 
 function unsupportedArgumentFlags(args: CliArgs, allowed: Set<string>) {
   const flags = args[CLI_ARG_FLAGS] ?? {}
+  const repeatable = ['answers', 'approvals', 'attachFiles', 'authenticationCompleted', 'capabilities', 'files', 'skills']
   const unsupported = Object.entries(args)
-    .filter(([key, value]) => !['attachFiles', 'capabilities', 'files'].includes(key) && value !== undefined && !allowed.has(key))
+    .filter(([key, value]) => !repeatable.includes(key) && value !== undefined && !allowed.has(key))
     .flatMap(([key]) => flags[key] ?? [optionUsageLabel(key)])
-  if (args.files.length > 0 && !allowed.has('files')) unsupported.push(...(flags.files ?? ['--file']))
-  if (args.attachFiles.length > 0 && !allowed.has('attachFiles')) unsupported.push(...(flags.attachFiles ?? ['--attach-file']))
-  if (args.capabilities.length > 0 && !allowed.has('capabilities')) unsupported.push(...(flags.capabilities ?? ['--capability']))
+  for (const key of repeatable) {
+    if (args[key].length > 0 && !allowed.has(key)) unsupported.push(...(flags[key] ?? [optionUsageLabel(key)]))
+  }
   return [...new Set(unsupported)]
 }
 
@@ -5176,6 +5915,11 @@ function selectedArgumentFlags(args: CliArgs, keys: string[]) {
   ))
 }
 
+function explicitlySelectedArgumentFlags(args: CliArgs, keys: string[]) {
+  const flags = args[CLI_ARG_FLAGS] ?? {}
+  return keys.flatMap((key) => flags[key] ?? [])
+}
+
 function assertVisibleRunArguments(args: CliArgs) {
   if (args.attachFiles.length > 100) {
     throw usageError('too_many_attachments', '--attach-file accepts at most 100 files per visible request.')
@@ -5184,6 +5928,88 @@ function assertVisibleRunArguments(args: CliArgs) {
   if (args.attachFiles.length > 0 && !['submit', 'submit_and_read'].includes(action)) {
     throw usageError('attachment_action_unsupported', '--attach-file requires the submit or submit_and_read visible action.')
   }
+  const executionMode = normalizeExecutionMode(args.executionMode)
+  if (args.capabilities.includes(TASK_CAPABILITIES.IMAGE_GENERATION)) {
+    if (action !== 'submit_and_read') {
+      throw usageError('unsupported_visible_action', 'image.generation requires the default submit_and_read action.')
+    }
+    if (args.attachFiles.length > 0) {
+      throw usageError('attachment_action_unsupported', 'The image generation endpoint does not accept attachments; use image.edit for source images.')
+    }
+    const provider = String(args.provider || process.env.TOKENLESS_PROVIDER || '').trim().toLowerCase()
+    if (executionMode === 'direct' && provider && provider !== 'pollinations' && provider !== 'chatgpt') {
+      throw usageError('unsupported_provider', '--execution-mode direct image generation supports --provider pollinations, chatgpt, or automatic routing.')
+    }
+    if (executionMode === 'browser' && provider) normalizeProvider(provider)
+    if (args.providerBackend !== undefined) {
+      throw usageError('controls_unsupported_for_action', 'Image generation selects its implementation through --execution-mode; --provider-backend is not exposed.')
+    }
+    const unsupported = explicitlySelectedArgumentFlags(args, [
+      'targetUrl', 'projectName', 'chatName',
+      'projectInstructions', 'projectInstructionsFile', 'modelFallbacks', 'effort',
+      'thinkingEffort', 'qwenMode', 'qwenModeVariant',
+      'deepSeekMode', 'deepSeekDeepThink', 'deepSeekSearch', 'kimiSearch', 'kimiPlugin',
+      'kimiSkill', 'chatSurface', 'longRunning', 'noWait',
+    ])
+    if (unsupported.length > 0) {
+      throw usageError(
+        'controls_unsupported_for_action',
+        `The image generation endpoint does not support: ${unsupported.join(', ')}.`,
+      )
+    }
+    return
+  }
+  if (executionMode !== 'direct') return
+
+  const provider = args.provider ?? process.env.TOKENLESS_PROVIDER
+  const directProvider = provider === undefined ? undefined : normalizeProvider(provider)
+  const backend = normalizeProviderBackend(args.providerBackend)
+  if (
+    !directProvider ||
+    backend === 'native' && !nativeDirectProviderAvailable(directProvider) ||
+    backend === 'g4f' && !g4fProviderName(directProvider) ||
+    backend === null && !nativeDirectProviderAvailable(directProvider) && !g4fProviderName(directProvider)
+  ) {
+    throw usageError('unsupported_provider', '--execution-mode direct requires a provider supported by the selected native or g4f backend.')
+  }
+  if (action !== 'submit_and_read') {
+    throw usageError('unsupported_visible_action', '--execution-mode direct currently supports only the default submit_and_read action.')
+  }
+  if (args.attachFiles.length > 0) {
+    throw usageError('attachment_action_unsupported', '--execution-mode direct does not support attachments.')
+  }
+  if (args.capabilities.some((capability) => capability !== TASK_CAPABILITIES.CONVERSATION_CHAT)) {
+    throw usageError('task_capability_action_unsupported', '--execution-mode direct currently supports only conversation.chat.')
+  }
+  const unsupported = explicitlySelectedArgumentFlags(args, [
+    'targetUrl', 'taskId', 'projectName', 'chatName', 'workspaceMode',
+    'projectInstructions', 'projectInstructionsFile', 'model', 'modelFallbacks', 'effort',
+    'thinkingEffort', 'qwenMode', 'qwenModeVariant', 'arenaMode', 'arenaModality', 'deepSeekMode', 'deepSeekDeepThink',
+    'deepSeekSearch', 'kimiSearch', 'kimiPlugin', 'kimiSkill', 'chatSurface', 'longRunning',
+  ])
+  if (unsupported.length > 0) {
+    throw usageError(
+      'controls_unsupported_for_action',
+      `--execution-mode direct does not support: ${unsupported.join(', ')}.`,
+    )
+  }
+}
+
+function normalizeExecutionMode(value: unknown): 'browser' | 'direct' {
+  const normalized = value === undefined ? 'browser' : String(value).trim().toLowerCase()
+  if (normalized !== 'browser' && normalized !== 'direct') {
+    throw usageError('unsupported_visible_action', '--execution-mode must be browser or direct.')
+  }
+  return normalized
+}
+
+function normalizeProviderBackend(value: unknown): 'native' | 'g4f' | null {
+  if (value === undefined || value === null || value === '') return null
+  const normalized = String(value).trim().toLowerCase()
+  if (normalized !== 'native' && normalized !== 'g4f') {
+    throw usageError('invalid_argument', '--provider-backend must be native or g4f.')
+  }
+  return normalized
 }
 
 function taskCapabilityRequirementsForExecution(
@@ -5212,8 +6038,70 @@ function taskCapabilityRequirementsForExecution(
     throw cliError
   }
 
+  if (
+    explicit.includes(TASK_CAPABILITIES.ARTIFACT_DOWNLOAD) &&
+    !explicit.includes(TASK_CAPABILITIES.IMAGE_GENERATION) &&
+    !explicit.includes(TASK_CAPABILITIES.IMAGE_EDIT)
+  ) {
+    throw usageError(
+      'task_capability_combination_unsupported',
+      'artifact.download currently requires image.generation or image.edit so Tokenless can download a generated image result.',
+    )
+  }
+
   if (explicit.includes(TASK_CAPABILITIES.FILE_UPLOAD) && args.attachFiles.length === 0) {
     throw usageError('task_capability_input_required', 'file.upload requires at least one --attach-file <path>.')
+  }
+  if (
+    (
+      explicit.includes(TASK_CAPABILITIES.IMAGE_INPUT) ||
+      explicit.includes(TASK_CAPABILITIES.IMAGE_EDIT)
+    ) &&
+    args.attachFiles.length === 0
+  ) {
+    throw usageError(
+      'task_capability_input_required',
+      'image.input and image.edit require at least one --attach-file <image-path>.',
+    )
+  }
+  if (
+    (explicit.includes(TASK_CAPABILITIES.IMAGE_INPUT) || explicit.includes(TASK_CAPABILITIES.IMAGE_EDIT)) &&
+    !args.attachFiles.some((sourcePath) => visibleAttachmentMediaType(sourcePath).startsWith('image/'))
+  ) {
+    throw usageError(
+      'task_capability_input_required',
+      'image.input and image.edit require at least one image --attach-file <path>.',
+    )
+  }
+  if (
+    explicit.includes(TASK_CAPABILITIES.DOCUMENT_INPUT) &&
+    !args.attachFiles.some((sourcePath) => {
+      const mediaType = visibleAttachmentMediaType(sourcePath)
+      return !mediaType.startsWith('image/') && !mediaType.startsWith('audio/') && !mediaType.startsWith('video/')
+    })
+  ) {
+    throw usageError(
+      'task_capability_input_required',
+      'document.input requires at least one document --attach-file <path>.',
+    )
+  }
+  if (
+    explicit.includes(TASK_CAPABILITIES.AUDIO_INPUT) &&
+    !args.attachFiles.some((sourcePath) => visibleAttachmentMediaType(sourcePath).startsWith('audio/'))
+  ) {
+    throw usageError(
+      'task_capability_input_required',
+      'audio.input requires at least one audio --attach-file <path>.',
+    )
+  }
+  if (
+    explicit.includes(TASK_CAPABILITIES.VIDEO_INPUT) &&
+    !args.attachFiles.some((sourcePath) => visibleAttachmentMediaType(sourcePath).startsWith('video/'))
+  ) {
+    throw usageError(
+      'task_capability_input_required',
+      'video.input requires at least one video --attach-file <path>.',
+    )
   }
   if (explicit.includes(TASK_CAPABILITIES.WORKSPACE_KNOWLEDGE) && args.attachFiles.length === 0) {
     throw usageError('task_capability_input_required', 'workspace.knowledge requires at least one --attach-file <path>.')
@@ -5235,8 +6123,9 @@ function taskCapabilityRequirementsForExecution(
     for (const sourcePath of args.attachFiles) {
       const mediaType = visibleAttachmentMediaType(sourcePath)
       if (mediaType.startsWith('image/')) inferred.push(TASK_CAPABILITIES.IMAGE_INPUT)
-      if (mediaType.startsWith('audio/')) inferred.push(TASK_CAPABILITIES.AUDIO_INPUT)
-      if (mediaType.startsWith('video/')) inferred.push(TASK_CAPABILITIES.VIDEO_INPUT)
+      else if (mediaType.startsWith('audio/')) inferred.push(TASK_CAPABILITIES.AUDIO_INPUT)
+      else if (mediaType.startsWith('video/')) inferred.push(TASK_CAPABILITIES.VIDEO_INPUT)
+      else inferred.push(TASK_CAPABILITIES.DOCUMENT_INPUT)
     }
   }
   if (
@@ -5293,6 +6182,7 @@ function resolveProviderControls({
   const hasRequestedModelControl = args.model !== undefined || args.modelFallbacks !== undefined
   const hasRequestedEffortControl = args.effort !== undefined || args.thinkingEffort !== undefined
   const hasRequestedQwenMode = args.qwenMode !== undefined || args.qwenModeVariant !== undefined
+  const hasRequestedArenaSurface = args.arenaMode !== undefined || args.arenaModality !== undefined
   const hasRequestedDeepSeekControl = (
     args.deepSeekMode !== undefined ||
     args.deepSeekDeepThink !== undefined ||
@@ -5307,7 +6197,7 @@ function resolveProviderControls({
     action === 'inspect_controls' ||
     action === 'inspect_chatgpt_controls'
   )
-  if (inspectionAction && (hasRequestedModelControl || hasRequestedEffortControl || hasRequestedQwenMode || hasRequestedDeepSeekControl || hasRequestedKimiControl || hasRequestedChatGptControl)) {
+  if (inspectionAction && (hasRequestedModelControl || hasRequestedEffortControl || hasRequestedQwenMode || hasRequestedArenaSurface || hasRequestedDeepSeekControl || hasRequestedKimiControl || hasRequestedChatGptControl)) {
     throw usageError(
       'controls_unsupported_for_action',
       'Control selection options are not accepted by provider-controls or chatgpt-controls; use a configure command.'
@@ -5325,6 +6215,9 @@ function resolveProviderControls({
       '--qwen-mode and --qwen-mode-variant are available only for the Qwen provider.'
     )
   }
+  if (provider !== 'arena' && hasRequestedArenaSurface) {
+    throw usageError('arena_control_unsupported', '--arena-mode and --arena-modality are available only for Arena.')
+  }
   if (provider !== 'deepseek' && hasRequestedDeepSeekControl) {
     throw usageError(
       'deepseek_control_unsupported',
@@ -5335,6 +6228,124 @@ function resolveProviderControls({
     throw usageError('kimi_control_unsupported', '--kimi-search, --kimi-plugin, and --kimi-skill are available only for the Kimi provider.')
   }
   if (inspectionAction) return {}
+
+  const requestedCapabilities = new Set(requirements)
+  const requiresArenaAgent = provider === 'arena' && requestedCapabilities.has(TASK_CAPABILITIES.AGENT_EXECUTE)
+  const requiresArenaComparison = provider === 'arena' && requestedCapabilities.has(TASK_CAPABILITIES.MODEL_COMPARE)
+  const requiresArenaSearch = provider === 'arena' && (
+    requestedCapabilities.has(TASK_CAPABILITIES.SEARCH_WEB) ||
+    requestedCapabilities.has(TASK_CAPABILITIES.RESPONSE_CITATIONS)
+  ) && !requiresArenaAgent
+  const requiresArenaImage = provider === 'arena' && (
+    requestedCapabilities.has(TASK_CAPABILITIES.IMAGE_GENERATION) ||
+    requestedCapabilities.has(TASK_CAPABILITIES.IMAGE_EDIT) ||
+    requestedCapabilities.has(TASK_CAPABILITIES.IMAGE_INPUT)
+  )
+  const requiresArenaCode = provider === 'arena' && requestedCapabilities.has(TASK_CAPABILITIES.WEBSITE_GENERATION)
+  const requiresArenaVideo = provider === 'arena' && requestedCapabilities.has(TASK_CAPABILITIES.VIDEO_GENERATION)
+  const requiresGeminiImage = provider === 'gemini' && (
+    requestedCapabilities.has(TASK_CAPABILITIES.IMAGE_GENERATION) ||
+    requestedCapabilities.has(TASK_CAPABILITIES.ARTIFACT_DOWNLOAD)
+  )
+  if (requiresArenaAgent && hasRequestedModelControl) {
+    throw usageError(
+      'arena_agent_model_control_unavailable',
+      'Arena agent.execute cannot be combined with --model or --model-fallback.',
+    )
+  }
+  if (requiresArenaAgent && hasRequestedArenaSurface) {
+    throw usageError(
+      'arena_agent_surface_control_unavailable',
+      'Arena Agent is an independent surface and cannot be combined with --arena-mode or --arena-modality.',
+    )
+  }
+  if (requiresArenaAgent && args.attachFiles.length > 0) {
+    throw usageError(
+      'arena_agent_file_upload_unavailable',
+      'Arena agent.execute does not support file input until its Agent attachment lifecycle is proven.',
+    )
+  }
+  if (
+    requiresArenaAgent &&
+    (
+      requestedCapabilities.has(TASK_CAPABILITIES.MODEL_COMPARE) ||
+      requestedCapabilities.has(TASK_CAPABILITIES.IMAGE_GENERATION) ||
+      requestedCapabilities.has(TASK_CAPABILITIES.IMAGE_EDIT) ||
+      requestedCapabilities.has(TASK_CAPABILITIES.IMAGE_INPUT) ||
+      requestedCapabilities.has(TASK_CAPABILITIES.WEBSITE_GENERATION)
+    )
+  ) {
+    throw usageError(
+      'arena_agent_capability_combination_unavailable',
+      'Arena agent.execute cannot be combined with comparison, image, or Code outcomes.',
+    )
+  }
+  if (requiresArenaAgent && requestedCapabilities.has(TASK_CAPABILITIES.CONVERSATION_CONTINUE)) {
+    throw usageError(
+      'arena_agent_continuation_unavailable',
+      'Arena agent.execute cannot be combined with conversation.continue until Agent continuation is proven.',
+    )
+  }
+  if (requiresArenaComparison && hasRequestedModelControl) {
+    throw usageError(
+      'arena_comparison_model_control_unavailable',
+      'model.compare on Arena cannot be combined with --model or --model-fallback.',
+    )
+  }
+  if (requiresArenaImage && hasRequestedModelControl) {
+    throw usageError(
+      'arena_image_model_control_unavailable',
+      'Arena image generation and editing cannot be combined with --model or --model-fallback.',
+    )
+  }
+  if (requiresArenaCode && hasRequestedModelControl) {
+    throw usageError(
+      'arena_code_model_control_unavailable',
+      'Arena website generation cannot be combined with --model or --model-fallback.',
+    )
+  }
+  if (requiresArenaVideo && hasRequestedModelControl) {
+    throw usageError(
+      'arena_video_model_control_unavailable',
+      'Arena video.generation cannot be combined with --model or --model-fallback.',
+    )
+  }
+  if (requiresArenaVideo && hasRequestedArenaSurface) {
+    throw usageError(
+      'arena_video_surface_control_unavailable',
+      'Arena Video is an independent Battle-only surface and cannot be combined with --arena-mode or --arena-modality.',
+    )
+  }
+  if (requiresArenaVideo && args.attachFiles.length > 0) {
+    throw usageError(
+      'arena_video_file_upload_unavailable',
+      'Arena video.generation does not support file input until its image-to-video lifecycle is proven.',
+    )
+  }
+  if (
+    requiresArenaVideo &&
+    (
+      requestedCapabilities.has(TASK_CAPABILITIES.MODEL_COMPARE) ||
+      requestedCapabilities.has(TASK_CAPABILITIES.SEARCH_WEB) ||
+      requestedCapabilities.has(TASK_CAPABILITIES.RESPONSE_CITATIONS) ||
+      requestedCapabilities.has(TASK_CAPABILITIES.IMAGE_GENERATION) ||
+      requestedCapabilities.has(TASK_CAPABILITIES.IMAGE_EDIT) ||
+      requestedCapabilities.has(TASK_CAPABILITIES.IMAGE_INPUT) ||
+      requestedCapabilities.has(TASK_CAPABILITIES.WEBSITE_GENERATION) ||
+      requestedCapabilities.has(TASK_CAPABILITIES.AGENT_EXECUTE)
+    )
+  ) {
+    throw usageError(
+      'arena_video_capability_combination_unavailable',
+      'Arena video.generation cannot be combined with comparison, Search, Image, Code, or Agent outcomes.',
+    )
+  }
+  if (requiresArenaVideo && requestedCapabilities.has(TASK_CAPABILITIES.CONVERSATION_CONTINUE)) {
+    throw usageError(
+      'arena_video_continuation_unavailable',
+      'Arena video.generation cannot be combined with conversation.continue until Video continuation is proven.',
+    )
+  }
 
   const model = args.model === undefined
     ? undefined
@@ -5361,7 +6372,92 @@ function resolveProviderControls({
     throw usageError('qwen_mode_variant_requires_mode', '--qwen-mode-variant requires --qwen-mode.')
   }
 
-  const requestedCapabilities = new Set(requirements)
+  const arenaMode = args.arenaMode === undefined
+    ? (requiresArenaComparison || requiresArenaSearch || requiresArenaImage || requiresArenaCode
+        ? (requiresArenaComparison ? 'battle' as const : 'direct' as const)
+        : args.arenaModality === undefined ? undefined : 'direct' as const)
+    : normalizeArenaMode(args.arenaMode)
+  const arenaModality = args.arenaModality === undefined
+    ? (requiresArenaSearch
+        ? 'search' as const
+        : requiresArenaImage
+          ? 'image' as const
+          : requiresArenaCode
+            ? 'code' as const
+          : arenaMode === undefined ? undefined : 'text' as const)
+    : normalizeArenaModality(args.arenaModality)
+  if (requiresArenaComparison && arenaMode === 'direct') {
+    throw usageError(
+      'arena_comparison_mode_unavailable',
+      'model.compare on Arena requires --arena-mode battle or --arena-mode side-by-side.',
+    )
+  }
+  if (requiresArenaComparison && arenaModality !== 'text') {
+    throw usageError(
+      'arena_comparison_modality_unavailable',
+      'model.compare on Arena currently supports only --arena-modality text.',
+    )
+  }
+  if (requiresArenaComparison && requestedCapabilities.has(TASK_CAPABILITIES.CONVERSATION_CONTINUE)) {
+    throw usageError(
+      'arena_comparison_continuation_unavailable',
+      'model.compare cannot be combined with conversation.continue until comparison continuation is proven.',
+    )
+  }
+  if (requiresArenaSearch && arenaMode !== 'direct') {
+    throw usageError(
+      'arena_search_mode_unavailable',
+      'search.web and response.citations on Arena require --arena-mode direct.',
+    )
+  }
+  if (requiresArenaSearch && arenaModality !== 'search') {
+    throw usageError(
+      'arena_search_modality_unavailable',
+      'search.web and response.citations on Arena require --arena-modality search.',
+    )
+  }
+  if (requiresArenaSearch && requestedCapabilities.has(TASK_CAPABILITIES.CONVERSATION_CONTINUE)) {
+    throw usageError(
+      'arena_search_continuation_unavailable',
+      'Arena Search cannot be combined with conversation.continue until Search continuation is proven.',
+    )
+  }
+  if (requiresArenaImage && arenaMode !== 'direct') {
+    throw usageError(
+      'arena_image_mode_unavailable',
+      'Arena image generation and editing require --arena-mode direct.',
+    )
+  }
+  if (requiresArenaImage && arenaModality !== 'image') {
+    throw usageError(
+      'arena_image_modality_unavailable',
+      'Arena image generation and editing require --arena-modality image.',
+    )
+  }
+  if (requiresArenaImage && requestedCapabilities.has(TASK_CAPABILITIES.CONVERSATION_CONTINUE)) {
+    throw usageError(
+      'arena_image_continuation_unavailable',
+      'Arena image generation and editing cannot be combined with conversation.continue until image continuation is proven.',
+    )
+  }
+  if (requiresArenaCode && arenaMode !== 'direct') {
+    throw usageError(
+      'arena_code_mode_unavailable',
+      'Arena website generation requires --arena-mode direct.',
+    )
+  }
+  if (requiresArenaCode && arenaModality !== 'code') {
+    throw usageError(
+      'arena_code_modality_unavailable',
+      'Arena website generation requires --arena-modality code.',
+    )
+  }
+  if (requiresArenaCode && requestedCapabilities.has(TASK_CAPABILITIES.CONVERSATION_CONTINUE)) {
+    throw usageError(
+      'arena_code_continuation_unavailable',
+      'Arena website generation cannot be combined with conversation.continue until Code continuation is proven.',
+    )
+  }
   const requiresDeepSeekSearch = provider === 'deepseek' && requestedCapabilities.has(TASK_CAPABILITIES.SEARCH_WEB)
   const requiresDeepSeekVision = provider === 'deepseek' && requestedCapabilities.has(TASK_CAPABILITIES.IMAGE_INPUT)
   const requiresDeepSeekReasoning = provider === 'deepseek' && requestedCapabilities.has(TASK_CAPABILITIES.REASONING_EXTENDED)
@@ -5429,12 +6525,15 @@ function resolveProviderControls({
       effort,
       qwenMode,
       qwenModeVariant,
+      arenaMode,
+      arenaModality,
       deepSeekMode,
       deepSeekDeepThink,
       deepSeekSearch,
       kimiSearch,
       kimiPlugin,
       kimiSkill,
+      geminiImageSurface: requiresGeminiImage,
     }
   }
 
@@ -5467,6 +6566,18 @@ function normalizeDeepSeekMode(value: unknown) {
   if (normalized === 'expert') return 'Expert' as const
   if (normalized === 'vision') return 'Vision' as const
   throw usageError('invalid_deepseek_mode', '--deepseek-mode must be Instant, Expert, or Vision.')
+}
+
+function normalizeArenaMode(value: unknown) {
+  const normalized = String(value).trim().toLowerCase()
+  if (normalized === 'battle' || normalized === 'side-by-side' || normalized === 'direct') return normalized
+  throw usageError('invalid_arena_mode', '--arena-mode must be battle, side-by-side, or direct.')
+}
+
+function normalizeArenaModality(value: unknown) {
+  const normalized = String(value).trim().toLowerCase()
+  if (normalized === 'text' || normalized === 'search' || normalized === 'image' || normalized === 'code') return normalized
+  throw usageError('invalid_arena_modality', '--arena-modality must be text, search, image, or code.')
 }
 
 function normalizeKimiSearch(value: unknown) {
@@ -5621,7 +6732,7 @@ function normalizeStatusEvent(event: StatusEvent, startedAt: number) {
 
 function formatStatusEvent(event: StatusEvent, args: CliArgs) {
   const colorEnabled = !args.json && cliColorEnabled(args, process.stderr)
-  const eventColor: CliColor = event.status === 'failed' || event.status === 'timed_out' || event.status === 'canceled'
+  const eventColor: CliColor = event.status === 'failed' || event.status === 'canceled'
     ? 'red'
     : event.status === 'waiting_for_user'
       ? 'yellow'
@@ -5682,10 +6793,7 @@ function formatCompactPayload(payload: Record<string, any>) {
     const message = typeof userAction.message === 'string'
       ? userAction.message
       : t('cliWaitingForUser')
-    const resumeCommand = typeof userAction.resumeCommand === 'string'
-      ? ` ${t('cliResume')} ${userAction.resumeCommand}`
-      : ''
-    return `${message}${resumeCommand}`
+    return message
   }
 
   const command = typeof payload.command === 'string'
@@ -5723,7 +6831,6 @@ function formatCompactPayload(payload: Record<string, any>) {
     ['roots', 'browser-roots'],
     ['browsers', 'browsers'],
     ['cleared', 'cleared'],
-    ['providerAttempts', 'provider-attempts'],
   ] as const) {
     if (Array.isArray(payload[key])) details.push(`${label}=${payload[key].length}`)
   }
@@ -5741,7 +6848,7 @@ function formatIdentifier(value: string) {
 }
 
 function formatHumanLine(message: string, ok: boolean, args: CliArgs, status?: unknown) {
-  const waiting = status === 'waiting_for_user'
+  const waiting = typeof status === 'string' && status.startsWith('waiting_')
   const label = waiting ? 'Waiting for user' : ok ? 'Completed' : 'Failed'
   const color: CliColor = waiting ? 'yellow' : ok ? 'green' : 'red'
   return `${paintCliText(t(waiting ? 'cliWaitingLabel' : ok ? 'cliCompleted' : 'cliFailedLabel'), color, cliColorEnabled(args, process.stdout))}: ${message}`
@@ -5787,6 +6894,7 @@ function usage(args: CliArgs) {
       commands: [
         'tokenless capabilities list --json',
         `tokenless run --provider ${VISIBLE_PROVIDER_USAGE} --prompt <text> --json`,
+        `tokenless agent run --provider ${VISIBLE_PROVIDER_USAGE} --prompt <text> --json`,
         'tokenless run --capability <capability> --prompt <text> --json',
       ],
     },
@@ -5842,7 +6950,6 @@ function usage(args: CliArgs) {
         `tokenless run --provider ${VISIBLE_PROVIDER_USAGE} --attach-file <path> [--attach-file <path>] --prompt <text> --json`,
         'tokenless run --long-running --provider chatgpt --prompt <text> --json',
         'tokenless state --task-id <task-id> [--profile <slug>] --json',
-        'tokenless resume --job-id <job-id> --browser-visibility headed --json',
         'tokenless cancel --job-id <job-id> --json',
       ],
     },
@@ -6007,7 +7114,10 @@ function optionUsageLabel(option: string) {
   return ({
     action: '--action <action>',
     allProfiles: '--all',
+    answers: '--answer <need-id=json>',
+    approvals: '--approve <call-id:digest>',
     attachFiles: '--attach-file <path>',
+    authenticationCompleted: '--auth-completed <call-id:digest>',
     browser: '--browser <browser>',
     browserExecutablePath: '--browser-executable-path <absolute-path>',
     browsers: '--browsers <list>',
@@ -6015,28 +7125,34 @@ function optionUsageLabel(option: string) {
     capabilities: '--capability <capability>',
     bridgeTimeoutMs: '--bridge-timeout-ms <ms>',
     cancelTimeoutMs: '--cancel-timeout-ms <ms>',
+    check: '--check',
     color: '--color',
     chatName: '--chat-name <name>',
     chatId: '--chat-id <id>',
     chatSurface: '--chat-surface <surface>',
     confirmDelete: '--confirm-delete',
+    conversationMode: '--conversation-mode <new-conversation|continue-conversation>',
     context: '--context <text>',
     contextFile: '--context-file <path>',
     codexHome: '--codex-home <dir>',
+    dshHome: '--dsh-home <dir>',
+    dshProfile: '--dsh-profile <name>',
     daemonStartTimeoutMs: '--daemon-start-timeout-ms <ms>',
     daemonUrl: '--daemon-url <url>',
     effort: '--effort <label>',
     files: '--file <path>',
     help: '-h, --help',
     home: '--home <dir>',
-    idempotencyKey: '--idempotency-key <key>',
     integrationId: '--integration-id <id>',
     installCodex: '--install-codex',
     json: '--json',
     jobId: '--job-id <job-id>',
+    semanticManifestOutput: '--semantic-manifest-output <absolute-path>',
     language: '--language <en|zh-CN>',
     limit: '--limit <n>',
     longRunning: '--long-running',
+    maxTurns: '--max-turns <count>',
+    mcpConfig: '--mcp-config <path>',
     model: '--model <label>',
     modelFallbacks: '--model-fallback <label>',
     noColor: '--no-color',
@@ -6057,19 +7173,26 @@ function optionUsageLabel(option: string) {
     projectRoot: '--project-root <path>',
     prompt: '--prompt <text>',
     promptFile: '--prompt-file <path>',
+    promptStdin: '--prompt-stdin',
     provider: '-p, --provider <provider>',
     quiet: '--quiet',
     repairBrowser: '--repair-browser',
-    runnerHeartbeatTimeoutMs: '--runner-heartbeat-timeout-ms <ms>',
+    runId: '--run-id <run-id>',
     setDefault: '--set-default',
     setupDefaults: '--defaults',
+    skills: '--skill <name>',
     targetUrl: '--target-url <url>',
     taskId: '--task-id <task-id>',
     thinkingEffort: '--thinking-effort <label>',
+    arenaMode: '--arena-mode <battle|side-by-side|direct>',
+    arenaModality: '--arena-modality <text|search|image|code>',
     timeoutMs: '--timeout-ms <ms>',
     turnContextFile: '--turn-context-file <path>',
     verbose: '-v, --verbose',
+    pageRef: '--page-ref <page-ref>',
     workspaceMode: '--workspace-mode <auto|native|conversation>',
+    workspaceRoot: '--workspace-root <dir>',
+    adapterStream: '--adapter-stream',
   } as Record<string, string>)[option] ?? `--${option.replace(/[A-Z]/g, (character) => `-${character.toLowerCase()}`)}`
 }
 
@@ -6142,11 +7265,12 @@ async function initializeCliLanguage(argv: string[]) {
     : undefined
   const homeDir = tokenlessHome(explicitHome)
   try {
-    if (!await hasConfiguredTokenlessLanguage(homeDir)) {
+    const language = await readBootstrapLanguage(homeDir)
+    if (!language) {
       setActiveLanguage(detectSystemLanguage())
       return
     }
-    setActiveLanguage((await readTokenlessConfig(homeDir)).language)
+    setActiveLanguage(language)
   } catch {
     setActiveLanguage(detectSystemLanguage())
   }

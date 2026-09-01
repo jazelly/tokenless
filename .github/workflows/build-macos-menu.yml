@@ -1,0 +1,27 @@
+name: Build macOS menu bar app
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-macos-menu:
+    runs-on: [self-hosted, tokenless-macos]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build macOS menu bar app
+        run: npm run build:macos-menu
+      - name: Upload macOS menu bar app
+        uses: actions/upload-artifact@v4
+        with:
+          name: tokenless-macos-menu
+          path: dist/macos/*.zip
+          if-no-files-found: error

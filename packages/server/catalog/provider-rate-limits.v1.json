@@ -1,0 +1,2553 @@
+{
+  "schema": "tokenless.provider-rate-limit-catalog.v1",
+  "catalogVersion": 1,
+  "revision": "2026-08-31",
+  "reviewedAt": "2026-08-31",
+  "reviewAfter": "2026-09-30",
+  "scope": {
+    "productSurface": "consumer_web",
+    "capacityScope": "provider_profile",
+    "excludes": [
+      "provider_api_rate_limits",
+      "provider_account_correlation_across_profiles",
+      "storage_and_context_window_limits_unless_they_affect_rate_limit_interpretation"
+    ]
+  },
+  "factPolicy": {
+    "unknownValues": "preserve_unknown",
+    "numericValues": "require_official_exact_evidence",
+    "relativeValues": "require_named_reference_allowance",
+    "runtimeUse": "best_effort_only"
+  },
+  "runtimePolicy": {
+    "exactAllowanceHeadroomRatio": 0.9,
+    "headroomMinimumAllowance": 20,
+    "burstRatio": 0.05,
+    "minimumBurstUnits": 2,
+    "maximumBurstUnits": 8,
+    "providerDefaults": {
+      "arena": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "chatgpt": {
+        "modelFamily": "gpt-5.5-instant",
+        "promptAction": "prompt.submit"
+      },
+      "claude": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "gemini": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "grok": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "qwen": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "deepseek": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "perplexity": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "zai": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "doubao": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "kimi": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "dola": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "meta": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "black-forest-labs": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "blackbox": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "cerebras": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "cloudflare": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "cohere": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "deepinfra": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "elevenlabs": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "fenay-ai": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "github-copilot": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "glhf": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "groq": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "hugging-face": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "microsoft-copilot": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "minimax": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "nvidia": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "ollama": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "openrouter": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "opera-aria": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "phind": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "pi": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "pollinations": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "puter": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "replicate": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "gigachat": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "stability-ai": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "teach-anything": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "theb-ai": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "together": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "whiterabbitneo": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "yqcloud": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      }
+    }
+  },
+  "sources": {
+    "arena-consumer-web": {
+      "publisher": "Arena",
+      "title": "Arena AI consumer web chat",
+      "url": "https://arena.ai/",
+      "authority": "official",
+      "retrievedAt": "2026-08-10"
+    },
+    "dola-consumer-web": {
+      "publisher": "Dola",
+      "title": "Dola consumer web chat",
+      "url": "https://www.dola.com/chat",
+      "authority": "official",
+      "retrievedAt": "2026-08-09"
+    },
+    "meta-consumer-web": {
+      "publisher": "Meta",
+      "title": "Meta AI consumer web chat",
+      "url": "https://meta.ai/",
+      "authority": "official",
+      "retrievedAt": "2026-08-10"
+    },
+    "openai-gpt55-chatgpt": {
+      "publisher": "OpenAI",
+      "title": "GPT-5.5 in ChatGPT",
+      "url": "https://help.openai.com/en/articles/11909943-gpt-5-3-and-gpt-55-in-chatgpt",
+      "authority": "official",
+      "retrievedAt": "2026-07-31"
+    },
+    "openai-file-uploads": {
+      "publisher": "OpenAI",
+      "title": "File Uploads FAQ",
+      "url": "https://help.openai.com/en/articles/8555545-file-uploads-faq",
+      "authority": "official",
+      "retrievedAt": "2026-07-31"
+    },
+    "openai-free-tier": {
+      "publisher": "OpenAI",
+      "title": "ChatGPT Free Tier FAQ",
+      "url": "https://help.openai.com/en/articles/9275245",
+      "authority": "official",
+      "retrievedAt": "2026-07-31"
+    },
+    "anthropic-free": {
+      "publisher": "Anthropic",
+      "title": "Get started with Claude",
+      "url": "https://support.claude.com/en/articles/8114491-get-started-with-claude",
+      "authority": "official",
+      "retrievedAt": "2026-07-31"
+    },
+    "anthropic-pro": {
+      "publisher": "Anthropic",
+      "title": "What is the Pro plan?",
+      "url": "https://support.claude.com/en/articles/8325606-what-is-the-pro-plan",
+      "authority": "official",
+      "retrievedAt": "2026-07-31"
+    },
+    "anthropic-max": {
+      "publisher": "Anthropic",
+      "title": "What is the Max plan?",
+      "url": "https://support.claude.com/en/articles/11049741-what-is-the-max-plan",
+      "authority": "official",
+      "retrievedAt": "2026-07-31"
+    },
+    "anthropic-team": {
+      "publisher": "Anthropic",
+      "title": "What is the Team plan?",
+      "url": "https://support.claude.com/en/articles/9266767-what-is-the-team-plan",
+      "authority": "official",
+      "retrievedAt": "2026-07-31"
+    },
+    "anthropic-usage": {
+      "publisher": "Anthropic",
+      "title": "How do usage and length limits work?",
+      "url": "https://support.claude.com/en/articles/11647753-how-do-usage-and-length-limits-work",
+      "authority": "official",
+      "retrievedAt": "2026-07-31"
+    },
+    "anthropic-credits": {
+      "publisher": "Anthropic",
+      "title": "Manage usage credits for paid Claude plans",
+      "url": "https://support.claude.com/en/articles/12429409-manage-usage-credits-for-paid-claude-plans",
+      "authority": "official",
+      "retrievedAt": "2026-07-31"
+    },
+    "google-gemini-limits": {
+      "publisher": "Google",
+      "title": "Gemini Apps limits and upgrades for Google AI subscribers",
+      "url": "https://support.google.com/gemini/answer/16275805?hl=en",
+      "authority": "official",
+      "retrievedAt": "2026-07-31"
+    },
+    "xai-pricing": {
+      "publisher": "xAI",
+      "title": "Pricing: Compare Grok Plans",
+      "url": "https://x.ai/pricing",
+      "authority": "official",
+      "retrievedAt": "2026-07-31"
+    },
+    "qwen-usage-policy": {
+      "publisher": "Qwen",
+      "title": "Usage Policy",
+      "url": "https://qwen.ai/usagepolicy",
+      "authority": "official",
+      "retrievedAt": "2026-07-31"
+    },
+    "deepseek-user-agreement": {
+      "publisher": "DeepSeek",
+      "title": "DeepSeek User Agreement",
+      "url": "https://chat.deepseek.com/downloads/DeepSeek%20User%20Agreement.pdf",
+      "authority": "official",
+      "retrievedAt": "2026-08-01"
+    },
+    "perplexity-plan-comparison": {
+      "publisher": "Perplexity",
+      "title": "Which Perplexity Subscription Plan is right for you?",
+      "url": "https://www.perplexity.ai/help-center/en/articles/11187416-which-perplexity-subscription-plan-is-right-for-you",
+      "authority": "official",
+      "retrievedAt": "2026-08-01"
+    },
+    "perplexity-pro": {
+      "publisher": "Perplexity",
+      "title": "What is Perplexity Pro?",
+      "url": "https://www.perplexity.ai/help-center/en/articles/10352901-what-is-perplexity-pro",
+      "authority": "official",
+      "retrievedAt": "2026-08-01"
+    },
+    "perplexity-account-tiers": {
+      "publisher": "Perplexity",
+      "title": "Account Management and Security",
+      "url": "https://www.perplexity.ai/help-center/en/articles/10352998-account-management-and-security",
+      "authority": "official",
+      "retrievedAt": "2026-08-31"
+    },
+    "perplexity-enterprise-file-limits": {
+      "publisher": "Perplexity",
+      "title": "Enterprise file limits",
+      "url": "https://www.perplexity.ai/help-center/en/articles/12009761-enterprise-file-limits",
+      "authority": "official",
+      "retrievedAt": "2026-08-31"
+    },
+    "zai-glm52": {
+      "publisher": "Z.ai",
+      "title": "GLM-5.2: Built for Long-Horizon Tasks",
+      "url": "https://z.ai/blog/glm-5.2",
+      "authority": "official",
+      "retrievedAt": "2026-08-02"
+    },
+    "doubao-feature-intro": {
+      "publisher": "Doubao",
+      "title": "Feature Introduction",
+      "url": "https://www.doubao.com/legal/feature_intro",
+      "authority": "official",
+      "retrievedAt": "2026-08-02"
+    },
+    "kimi-consumer-web": {
+      "publisher": "Moonshot AI",
+      "title": "Kimi",
+      "url": "https://www.kimi.com/",
+      "authority": "official",
+      "retrievedAt": "2026-08-04"
+    }
+  },
+  "providers": {
+    "chatgpt": {
+      "label": "ChatGPT",
+      "plans": [
+        {
+          "id": "free",
+          "family": "free",
+          "labels": ["Free"]
+        },
+        {
+          "id": "go",
+          "family": "individual_paid",
+          "labels": ["Go"]
+        },
+        {
+          "id": "plus",
+          "family": "individual_paid",
+          "labels": ["Plus"]
+        },
+        {
+          "id": "pro",
+          "family": "individual_paid",
+          "labels": ["Pro"]
+        },
+        {
+          "id": "business",
+          "family": "organization_paid",
+          "labels": ["Business", "Team"]
+        },
+        {
+          "id": "enterprise",
+          "family": "organization_paid",
+          "labels": ["Enterprise"]
+        },
+        {
+          "id": "edu",
+          "family": "organization_paid",
+          "labels": ["Edu", "Education"]
+        },
+        {
+          "id": "unknown",
+          "family": "unknown",
+          "labels": []
+        }
+      ],
+      "usageDrivers": [
+        "selected_model",
+        "manual_thinking_selection",
+        "tool_or_feature",
+        "system_capacity",
+        "abuse_prevention_guardrails"
+      ],
+      "runtimeSignals": [
+        {
+          "kind": "reset_time_shown_at_limit",
+          "appliesTo": ["free"],
+          "sourceIds": ["openai-free-tier"]
+        },
+        {
+          "kind": "rolling_file_quota_remaining_not_shown",
+          "appliesTo": ["free", "go", "plus", "pro", "business", "enterprise", "edu"],
+          "sourceIds": ["openai-file-uploads"]
+        }
+      ],
+      "rules": [
+        {
+          "id": "chatgpt.gpt-5.5.free.messages",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["free"],
+            "accessClasses": ["signed_in_free"],
+            "modelFamilies": ["gpt-5.5-instant"],
+            "actions": ["prompt.submit"]
+          },
+          "meter": {
+            "kind": "count",
+            "unit": "message"
+          },
+          "window": {
+            "kind": "provider_managed",
+            "durationSeconds": 18000
+          },
+          "allowance": {
+            "kind": "dynamic"
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "official_dynamic",
+              "sourceIds": ["openai-gpt55-chatgpt"]
+            }
+          ],
+          "notes": [
+            "The allowance may vary with market, system conditions, guardrails, and individual usage."
+          ]
+        },
+        {
+          "id": "chatgpt.gpt-5.5.go-plus.messages",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["go", "plus"],
+            "accessClasses": ["signed_in_paid"],
+            "modelFamilies": ["gpt-5.5-instant"],
+            "actions": ["prompt.submit"]
+          },
+          "meter": {
+            "kind": "count",
+            "unit": "message"
+          },
+          "window": {
+            "kind": "provider_managed",
+            "durationSeconds": 10800
+          },
+          "allowance": {
+            "kind": "exact",
+            "count": 160
+          },
+          "limitBehavior": {
+            "kind": "provider_native_fallback",
+            "targetModelFamily": "gpt-5.5-mini"
+          },
+          "evidence": [
+            {
+              "kind": "official_exact",
+              "sourceIds": ["openai-gpt55-chatgpt"]
+            }
+          ],
+          "notes": []
+        },
+        {
+          "id": "chatgpt.gpt-5.5.go.manual-thinking.messages",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["go"],
+            "accessClasses": ["signed_in_paid"],
+            "modelFamilies": ["gpt-5.5-thinking"],
+            "modes": ["manual_thinking"],
+            "actions": ["prompt.submit"]
+          },
+          "meter": {
+            "kind": "count",
+            "unit": "message"
+          },
+          "window": {
+            "kind": "provider_managed",
+            "durationSeconds": 18000
+          },
+          "allowance": {
+            "kind": "exact",
+            "count": 10
+          },
+          "limitBehavior": {
+            "kind": "block_until_reset"
+          },
+          "evidence": [
+            {
+              "kind": "official_exact",
+              "sourceIds": ["openai-gpt55-chatgpt"]
+            }
+          ],
+          "notes": [
+            "Automatic switching from Instant to Thinking does not count toward this manual Thinking allowance."
+          ]
+        },
+        {
+          "id": "chatgpt.gpt-5.pro-business.messages",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["pro", "business"],
+            "accessClasses": ["signed_in_paid"],
+            "modelFamilies": ["gpt-5-family"],
+            "actions": ["prompt.submit"]
+          },
+          "meter": {
+            "kind": "guardrail",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "none"
+          },
+          "allowance": {
+            "kind": "guardrailed_unlimited"
+          },
+          "limitBehavior": {
+            "kind": "temporary_restriction_possible"
+          },
+          "evidence": [
+            {
+              "kind": "official_qualitative",
+              "sourceIds": ["openai-gpt55-chatgpt"]
+            }
+          ],
+          "notes": [
+            "Unlimited access remains subject to abuse guardrails and can be temporarily restricted."
+          ]
+        },
+        {
+          "id": "chatgpt.files.all-signed-in.rolling",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["free", "go", "plus", "pro", "business", "enterprise", "edu", "unknown"],
+            "accessClasses": ["signed_in_free", "signed_in_paid", "signed_in_unknown"],
+            "modelFamilies": ["*"],
+            "actions": ["file.upload"]
+          },
+          "meter": {
+            "kind": "count",
+            "unit": "file"
+          },
+          "window": {
+            "kind": "rolling",
+            "durationSeconds": 10800
+          },
+          "allowance": {
+            "kind": "exact",
+            "count": 80
+          },
+          "limitBehavior": {
+            "kind": "block_until_reset"
+          },
+          "evidence": [
+            {
+              "kind": "official_exact",
+              "sourceIds": ["openai-file-uploads"]
+            }
+          ],
+          "notes": [
+            "OpenAI may lower this limit during peak hours.",
+            "Failed upload attempts can sometimes count toward the rolling cap.",
+            "Shared storage caps are separate and are not represented as rate limits here."
+          ]
+        },
+        {
+          "id": "chatgpt.files.free.daily",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["free"],
+            "accessClasses": ["signed_in_free"],
+            "modelFamilies": ["*"],
+            "actions": ["file.upload"]
+          },
+          "meter": {
+            "kind": "count",
+            "unit": "file"
+          },
+          "window": {
+            "kind": "provider_daily",
+            "durationSeconds": 86400
+          },
+          "allowance": {
+            "kind": "exact",
+            "count": 3
+          },
+          "limitBehavior": {
+            "kind": "block_until_reset"
+          },
+          "evidence": [
+            {
+              "kind": "official_exact",
+              "sourceIds": ["openai-file-uploads"]
+            }
+          ],
+          "notes": [
+            "This plan-specific daily cap applies in addition to the general rolling upload cap."
+          ]
+        },
+        {
+          "id": "chatgpt.guest.numeric-limits-unknown",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["unknown"],
+            "accessClasses": ["guest"],
+            "modelFamilies": ["*"],
+            "actions": ["prompt.submit", "file.upload"]
+          },
+          "meter": {
+            "kind": "unknown",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "unknown"
+          },
+          "allowance": {
+            "kind": "unknown"
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "unknown",
+              "sourceIds": ["openai-free-tier"]
+            }
+          ],
+          "notes": [
+            "Signed-in Free limits are not assumed to apply to guest sessions."
+          ]
+        },
+        {
+          "id": "chatgpt.enterprise-edu.numeric-messages-unknown",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["enterprise", "edu", "unknown"],
+            "accessClasses": ["signed_in_paid", "signed_in_unknown"],
+            "modelFamilies": ["*"],
+            "actions": ["prompt.submit"]
+          },
+          "meter": {
+            "kind": "unknown",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "unknown"
+          },
+          "allowance": {
+            "kind": "unknown"
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "unknown",
+              "sourceIds": ["openai-gpt55-chatgpt"]
+            }
+          ],
+          "notes": [
+            "No single exact consumer Web message allowance is encoded for these plans."
+          ]
+        }
+      ]
+    },
+    "claude": {
+      "label": "Claude",
+      "plans": [
+        {
+          "id": "free",
+          "family": "free",
+          "labels": ["Free"]
+        },
+        {
+          "id": "pro",
+          "family": "individual_paid",
+          "labels": ["Pro"]
+        },
+        {
+          "id": "max_5x",
+          "family": "individual_paid",
+          "labels": ["Max 5x"]
+        },
+        {
+          "id": "max_20x",
+          "family": "individual_paid",
+          "labels": ["Max 20x"]
+        },
+        {
+          "id": "max_unknown",
+          "family": "individual_paid",
+          "labels": ["Max"]
+        },
+        {
+          "id": "team_standard",
+          "family": "organization_paid",
+          "labels": ["Team Standard"]
+        },
+        {
+          "id": "team_premium",
+          "family": "organization_paid",
+          "labels": ["Team Premium"]
+        },
+        {
+          "id": "team_unknown",
+          "family": "organization_paid",
+          "labels": ["Team"]
+        },
+        {
+          "id": "enterprise_seat",
+          "family": "organization_paid",
+          "labels": ["Enterprise"]
+        },
+        {
+          "id": "enterprise_usage_based",
+          "family": "organization_paid",
+          "labels": ["Enterprise Usage-Based"]
+        },
+        {
+          "id": "unknown",
+          "family": "unknown",
+          "labels": []
+        }
+      ],
+      "usageDrivers": [
+        "message_length",
+        "attachment_size",
+        "conversation_length",
+        "selected_model",
+        "effort_level",
+        "tools_and_connectors",
+        "research",
+        "artifact_creation"
+      ],
+      "sharedConsumption": {
+        "kind": "shared_across_product_surfaces",
+        "surfaces": ["claude.ai", "claude_code", "claude_desktop"],
+        "sourceIds": ["anthropic-usage"]
+      },
+      "runtimeSignals": [
+        {
+          "kind": "usage_progress_and_reset_visible",
+          "appliesTo": ["pro", "max_5x", "max_20x", "team_standard", "team_premium", "enterprise_seat"],
+          "sourceIds": ["anthropic-pro", "anthropic-max", "anthropic-team"]
+        }
+      ],
+      "rules": [
+        {
+          "id": "claude.free.session",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["free"],
+            "accessClasses": ["signed_in_free"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "compute",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "session",
+            "durationSeconds": 18000
+          },
+          "allowance": {
+            "kind": "dynamic"
+          },
+          "limitBehavior": {
+            "kind": "block_until_reset"
+          },
+          "evidence": [
+            {
+              "kind": "official_dynamic",
+              "sourceIds": ["anthropic-free", "anthropic-usage"]
+            }
+          ],
+          "notes": [
+            "The number of messages varies with demand and usage drivers."
+          ]
+        },
+        {
+          "id": "claude.pro.session",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["pro"],
+            "accessClasses": ["signed_in_paid"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "compute",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "session",
+            "durationSeconds": 18000
+          },
+          "allowance": {
+            "kind": "relative",
+            "basisRuleId": "claude.free.session",
+            "minimumMultiplier": 5
+          },
+          "limitBehavior": {
+            "kind": "block_or_optional_paid_overage"
+          },
+          "evidence": [
+            {
+              "kind": "official_relative",
+              "sourceIds": ["anthropic-pro", "anthropic-credits"]
+            }
+          ],
+          "notes": [
+            "Anthropic describes Pro as at least five times Free usage per session during peak hours.",
+            "Usage credits are user-enabled paid overage and must never be assumed or enabled automatically."
+          ]
+        },
+        {
+          "id": "claude.pro.weekly-all-models",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["pro"],
+            "accessClasses": ["signed_in_paid"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "compute",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "account_fixed_weekly",
+            "durationSeconds": 604800
+          },
+          "allowance": {
+            "kind": "dynamic"
+          },
+          "limitBehavior": {
+            "kind": "block_or_optional_paid_overage"
+          },
+          "evidence": [
+            {
+              "kind": "official_dynamic",
+              "sourceIds": ["anthropic-pro"]
+            }
+          ],
+          "notes": [
+            "The account receives a fixed weekly reset day and time visible in Settings > Usage."
+          ]
+        },
+        {
+          "id": "claude.max-5x.session",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["max_5x"],
+            "accessClasses": ["signed_in_paid"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "compute",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "session",
+            "durationSeconds": 18000
+          },
+          "allowance": {
+            "kind": "relative",
+            "basisRuleId": "claude.pro.session",
+            "multiplier": 5
+          },
+          "limitBehavior": {
+            "kind": "block_or_optional_paid_overage"
+          },
+          "evidence": [
+            {
+              "kind": "official_relative",
+              "sourceIds": ["anthropic-max", "anthropic-credits"]
+            }
+          ],
+          "notes": []
+        },
+        {
+          "id": "claude.max-unknown.session",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["max_unknown"],
+            "accessClasses": ["signed_in_paid"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "compute",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "session",
+            "durationSeconds": 18000
+          },
+          "allowance": {
+            "kind": "relative_range",
+            "basisRuleId": "claude.pro.session",
+            "minimumMultiplier": 5,
+            "maximumMultiplier": 20
+          },
+          "limitBehavior": {
+            "kind": "block_or_optional_paid_overage"
+          },
+          "evidence": [
+            {
+              "kind": "official_relative",
+              "sourceIds": ["anthropic-max", "anthropic-credits"]
+            }
+          ],
+          "notes": [
+            "Use this range when the visible account label says Max but does not distinguish Max 5x from Max 20x."
+          ]
+        },
+        {
+          "id": "claude.max-20x.session",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["max_20x"],
+            "accessClasses": ["signed_in_paid"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "compute",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "session",
+            "durationSeconds": 18000
+          },
+          "allowance": {
+            "kind": "relative",
+            "basisRuleId": "claude.pro.session",
+            "multiplier": 20
+          },
+          "limitBehavior": {
+            "kind": "block_or_optional_paid_overage"
+          },
+          "evidence": [
+            {
+              "kind": "official_relative",
+              "sourceIds": ["anthropic-max", "anthropic-credits"]
+            }
+          ],
+          "notes": []
+        },
+        {
+          "id": "claude.max.weekly-all-models",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["max_5x", "max_20x", "max_unknown"],
+            "accessClasses": ["signed_in_paid"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "compute",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "account_fixed_weekly",
+            "durationSeconds": 604800
+          },
+          "allowance": {
+            "kind": "dynamic"
+          },
+          "limitBehavior": {
+            "kind": "block_or_optional_paid_overage"
+          },
+          "evidence": [
+            {
+              "kind": "official_dynamic",
+              "sourceIds": ["anthropic-max"]
+            }
+          ],
+          "notes": []
+        },
+        {
+          "id": "claude.max.weekly-sonnet",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["max_5x", "max_20x", "max_unknown"],
+            "accessClasses": ["signed_in_paid"],
+            "modelFamilies": ["claude-sonnet"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "compute",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "account_fixed_weekly",
+            "durationSeconds": 604800
+          },
+          "allowance": {
+            "kind": "dynamic"
+          },
+          "limitBehavior": {
+            "kind": "block_or_optional_paid_overage"
+          },
+          "evidence": [
+            {
+              "kind": "official_dynamic",
+              "sourceIds": ["anthropic-max"]
+            }
+          ],
+          "notes": [
+            "This model-specific pool exists in addition to the all-model weekly pool."
+          ]
+        },
+        {
+          "id": "claude.team-standard.session",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["team_standard"],
+            "accessClasses": ["signed_in_paid"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "compute",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "session",
+            "durationSeconds": 18000
+          },
+          "allowance": {
+            "kind": "relative",
+            "basisRuleId": "claude.pro.session",
+            "multiplier": 1.25
+          },
+          "limitBehavior": {
+            "kind": "block_or_optional_paid_overage"
+          },
+          "evidence": [
+            {
+              "kind": "official_relative",
+              "sourceIds": ["anthropic-team"]
+            }
+          ],
+          "notes": [
+            "Team usage limits are per member rather than pooled across the organization."
+          ]
+        },
+        {
+          "id": "claude.team-unknown.session",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["team_unknown"],
+            "accessClasses": ["signed_in_paid"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "compute",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "session",
+            "durationSeconds": 18000
+          },
+          "allowance": {
+            "kind": "relative_range",
+            "basisRuleId": "claude.pro.session",
+            "minimumMultiplier": 1.25,
+            "maximumMultiplier": 6.25
+          },
+          "limitBehavior": {
+            "kind": "block_or_optional_paid_overage"
+          },
+          "evidence": [
+            {
+              "kind": "official_relative",
+              "sourceIds": ["anthropic-team"]
+            }
+          ],
+          "notes": [
+            "Use this range when the visible account label says Team but does not distinguish Standard from Premium."
+          ]
+        },
+        {
+          "id": "claude.team-premium.session",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["team_premium"],
+            "accessClasses": ["signed_in_paid"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "compute",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "session",
+            "durationSeconds": 18000
+          },
+          "allowance": {
+            "kind": "relative",
+            "basisRuleId": "claude.pro.session",
+            "multiplier": 6.25
+          },
+          "limitBehavior": {
+            "kind": "block_or_optional_paid_overage"
+          },
+          "evidence": [
+            {
+              "kind": "official_relative",
+              "sourceIds": ["anthropic-team"]
+            }
+          ],
+          "notes": [
+            "Team usage limits are per member rather than pooled across the organization."
+          ]
+        },
+        {
+          "id": "claude.team.weekly",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["team_standard", "team_premium", "team_unknown"],
+            "accessClasses": ["signed_in_paid"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "compute",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "account_fixed_weekly",
+            "durationSeconds": 604800
+          },
+          "allowance": {
+            "kind": "dynamic"
+          },
+          "limitBehavior": {
+            "kind": "block_or_optional_paid_overage"
+          },
+          "evidence": [
+            {
+              "kind": "official_dynamic",
+              "sourceIds": ["anthropic-team"]
+            }
+          ],
+          "notes": [
+            "Standard seats have an all-model weekly pool; Premium seats also have a second model-specific weekly pool."
+          ]
+        },
+        {
+          "id": "claude.enterprise-unknown.numeric-limits",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["enterprise_seat", "unknown"],
+            "accessClasses": ["signed_in_paid", "signed_in_unknown"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "compute",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "unknown"
+          },
+          "allowance": {
+            "kind": "unknown"
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "unknown",
+              "sourceIds": ["anthropic-usage"]
+            }
+          ],
+          "notes": []
+        },
+        {
+          "id": "claude.enterprise-usage-based.consumption",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["enterprise_usage_based"],
+            "accessClasses": ["signed_in_paid"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "compute",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "none"
+          },
+          "allowance": {
+            "kind": "consumption_based"
+          },
+          "limitBehavior": {
+            "kind": "billing_and_provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "official_qualitative",
+              "sourceIds": ["anthropic-usage"]
+            }
+          ],
+          "notes": []
+        }
+      ]
+    },
+    "gemini": {
+      "label": "Gemini",
+      "plans": [
+        {
+          "id": "no_google_ai_plan",
+          "family": "free",
+          "labels": ["No Google AI plan", "Standard"]
+        },
+        {
+          "id": "ai_plus",
+          "family": "individual_paid",
+          "labels": ["Google AI Plus", "AI Plus"]
+        },
+        {
+          "id": "ai_pro",
+          "family": "individual_paid",
+          "labels": ["Google AI Pro", "AI Pro"]
+        },
+        {
+          "id": "ai_ultra_5x",
+          "family": "individual_paid",
+          "labels": ["Google AI Ultra 5x", "AI Ultra 5x"]
+        },
+        {
+          "id": "ai_ultra_20x",
+          "family": "individual_paid",
+          "labels": ["Google AI Ultra 20x", "AI Ultra 20x"]
+        },
+        {
+          "id": "ai_ultra_unknown",
+          "family": "individual_paid",
+          "labels": ["Google AI Ultra", "AI Ultra"]
+        },
+        {
+          "id": "workspace",
+          "family": "organization_paid",
+          "labels": ["Google Workspace"]
+        },
+        {
+          "id": "unknown",
+          "family": "unknown",
+          "labels": []
+        }
+      ],
+      "usageDrivers": [
+        "prompt_complexity",
+        "selected_model",
+        "feature",
+        "conversation_length",
+        "system_capacity"
+      ],
+      "runtimeSignals": [
+        {
+          "kind": "near_limit_and_reset_time_notifications",
+          "appliesTo": ["no_google_ai_plan", "ai_plus", "ai_pro", "ai_ultra_5x", "ai_ultra_20x", "ai_ultra_unknown"],
+          "sourceIds": ["google-gemini-limits"]
+        }
+      ],
+      "rules": [
+        {
+          "id": "gemini.personal.standard.five-hour",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["no_google_ai_plan"],
+            "accessClasses": ["signed_in_free", "signed_in_unknown"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "compute",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "provider_managed",
+            "durationSeconds": 18000
+          },
+          "allowance": {
+            "kind": "dynamic"
+          },
+          "limitBehavior": {
+            "kind": "block_or_feature_unavailable"
+          },
+          "evidence": [
+            {
+              "kind": "official_dynamic",
+              "sourceIds": ["google-gemini-limits"]
+            }
+          ],
+          "notes": [
+            "Limits may change without notice and free access may be reduced first during high demand."
+          ]
+        },
+        {
+          "id": "gemini.guest.numeric-limits-unknown",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["unknown"],
+            "accessClasses": ["guest"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "compute",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "unknown"
+          },
+          "allowance": {
+            "kind": "unknown"
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "unknown",
+              "sourceIds": ["google-gemini-limits"]
+            }
+          ],
+          "notes": [
+            "The cited personal-account plan limits are not assumed to apply to guest sessions."
+          ]
+        },
+        {
+          "id": "gemini.personal.ai-plus.five-hour",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["ai_plus"],
+            "accessClasses": ["signed_in_paid"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "compute",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "provider_managed",
+            "durationSeconds": 18000
+          },
+          "allowance": {
+            "kind": "relative",
+            "basisRuleId": "gemini.personal.standard.five-hour",
+            "multiplier": 2
+          },
+          "limitBehavior": {
+            "kind": "provider_native_fallback",
+            "targetModelFamily": "gemini-flash-lite"
+          },
+          "evidence": [
+            {
+              "kind": "official_relative",
+              "sourceIds": ["google-gemini-limits"]
+            }
+          ],
+          "notes": []
+        },
+        {
+          "id": "gemini.personal.ai-pro.five-hour",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["ai_pro"],
+            "accessClasses": ["signed_in_paid"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "compute",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "provider_managed",
+            "durationSeconds": 18000
+          },
+          "allowance": {
+            "kind": "relative",
+            "basisRuleId": "gemini.personal.standard.five-hour",
+            "multiplier": 4
+          },
+          "limitBehavior": {
+            "kind": "provider_native_fallback",
+            "targetModelFamily": "gemini-flash-lite"
+          },
+          "evidence": [
+            {
+              "kind": "official_relative",
+              "sourceIds": ["google-gemini-limits"]
+            }
+          ],
+          "notes": []
+        },
+        {
+          "id": "gemini.personal.ai-ultra-5x.five-hour",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["ai_ultra_5x"],
+            "accessClasses": ["signed_in_paid"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "compute",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "provider_managed",
+            "durationSeconds": 18000
+          },
+          "allowance": {
+            "kind": "relative",
+            "basisRuleId": "gemini.personal.ai-pro.five-hour",
+            "multiplier": 5
+          },
+          "limitBehavior": {
+            "kind": "provider_native_fallback",
+            "targetModelFamily": "gemini-flash-lite"
+          },
+          "evidence": [
+            {
+              "kind": "official_relative",
+              "sourceIds": ["google-gemini-limits"]
+            }
+          ],
+          "notes": []
+        },
+        {
+          "id": "gemini.personal.ai-ultra-20x.five-hour",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["ai_ultra_20x"],
+            "accessClasses": ["signed_in_paid"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "compute",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "provider_managed",
+            "durationSeconds": 18000
+          },
+          "allowance": {
+            "kind": "relative",
+            "basisRuleId": "gemini.personal.ai-pro.five-hour",
+            "multiplier": 20
+          },
+          "limitBehavior": {
+            "kind": "provider_native_fallback",
+            "targetModelFamily": "gemini-flash-lite"
+          },
+          "evidence": [
+            {
+              "kind": "official_relative",
+              "sourceIds": ["google-gemini-limits"]
+            }
+          ],
+          "notes": []
+        },
+        {
+          "id": "gemini.personal.weekly",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["no_google_ai_plan", "ai_plus", "ai_pro", "ai_ultra_5x", "ai_ultra_20x", "ai_ultra_unknown"],
+            "accessClasses": ["signed_in_free", "signed_in_paid", "signed_in_unknown"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "compute",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "provider_managed_weekly",
+            "durationSeconds": 604800
+          },
+          "allowance": {
+            "kind": "dynamic"
+          },
+          "limitBehavior": {
+            "kind": "block_or_native_fallback"
+          },
+          "evidence": [
+            {
+              "kind": "official_dynamic",
+              "sourceIds": ["google-gemini-limits"]
+            }
+          ],
+          "notes": [
+            "The five-hour allowance refreshes until the weekly cap is reached."
+          ]
+        },
+        {
+          "id": "gemini.workspace-and-unknown.numeric-limits",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["workspace", "ai_ultra_unknown", "unknown"],
+            "accessClasses": ["signed_in_paid", "signed_in_unknown"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "compute",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "unknown"
+          },
+          "allowance": {
+            "kind": "unknown"
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "unknown",
+              "sourceIds": ["google-gemini-limits"]
+            }
+          ],
+          "notes": [
+            "The cited personal-account article does not define a single exact Workspace allowance."
+          ]
+        }
+      ]
+    },
+    "grok": {
+      "label": "Grok",
+      "plans": [
+        {
+          "id": "free",
+          "family": "free",
+          "labels": ["Free"]
+        },
+        {
+          "id": "supergrok_lite",
+          "family": "individual_paid",
+          "labels": ["SuperGrok Lite"]
+        },
+        {
+          "id": "supergrok",
+          "family": "individual_paid",
+          "labels": ["SuperGrok"]
+        },
+        {
+          "id": "supergrok_heavy",
+          "family": "individual_paid",
+          "labels": ["SuperGrok Heavy"]
+        },
+        {
+          "id": "business",
+          "family": "organization_paid",
+          "labels": ["Business"]
+        },
+        {
+          "id": "enterprise",
+          "family": "organization_paid",
+          "labels": ["Enterprise"]
+        },
+        {
+          "id": "unknown",
+          "family": "unknown",
+          "labels": []
+        }
+      ],
+      "usageDrivers": [],
+      "runtimeSignals": [],
+      "rules": [
+        {
+          "id": "grok.supergrok.qualitative-higher-limits",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["supergrok"],
+            "accessClasses": ["signed_in_paid"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "unknown",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "unknown"
+          },
+          "allowance": {
+            "kind": "qualitative",
+            "statement": "higher_rate_limits_across_all_features"
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "official_qualitative",
+              "sourceIds": ["xai-pricing"]
+            }
+          ],
+          "notes": [
+            "No numeric consumer Web allowance or reset window is published on the cited pricing page."
+          ]
+        },
+        {
+          "id": "grok.consumer-web.numeric-limits-unknown",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["free", "supergrok_lite", "supergrok", "supergrok_heavy", "business", "enterprise", "unknown"],
+            "accessClasses": ["signed_in_free", "signed_in_paid", "signed_in_unknown"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "unknown",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "unknown"
+          },
+          "allowance": {
+            "kind": "unknown"
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "unknown",
+              "sourceIds": ["xai-pricing"]
+            }
+          ],
+          "notes": [
+            "Organization plans may negotiate custom rate limits, but no numeric default is encoded."
+          ]
+        }
+      ]
+    },
+    "qwen": {
+      "label": "Qwen / 千问",
+      "plans": [
+        {
+          "id": "guest",
+          "family": "guest",
+          "labels": []
+        },
+        {
+          "id": "signed_in_unknown",
+          "family": "unknown",
+          "labels": []
+        },
+        {
+          "id": "unknown",
+          "family": "unknown",
+          "labels": []
+        }
+      ],
+      "usageDrivers": [],
+      "runtimeSignals": [],
+      "rules": [
+        {
+          "id": "qwen.consumer-web.numeric-limits-unknown",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["guest", "signed_in_unknown", "unknown"],
+            "accessClasses": ["guest", "signed_in_unknown", "unknown"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "unknown",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "unknown"
+          },
+          "allowance": {
+            "kind": "unknown"
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "unknown",
+              "sourceIds": ["qwen-usage-policy"]
+            }
+          ],
+          "notes": [
+            "No official numeric Qwen consumer Web allowance was found in the cited policy.",
+            "Qwen policy prohibits creating multiple accounts to evade restrictions."
+          ]
+        }
+      ]
+    },
+    "deepseek": {
+      "label": "DeepSeek",
+      "plans": [
+        {
+          "id": "free",
+          "family": "free",
+          "labels": ["Free"]
+        },
+        {
+          "id": "signed_in_unknown",
+          "family": "unknown",
+          "labels": []
+        },
+        {
+          "id": "unknown",
+          "family": "unknown",
+          "labels": []
+        }
+      ],
+      "usageDrivers": [
+        "selected_mode",
+        "deepthink",
+        "search",
+        "system_capacity"
+      ],
+      "runtimeSignals": [],
+      "rules": [
+        {
+          "id": "deepseek.consumer-web.numeric-limits-unknown",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["free", "signed_in_unknown", "unknown"],
+            "accessClasses": ["signed_in_free", "signed_in_unknown", "unknown"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage", "file.upload"]
+          },
+          "meter": {
+            "kind": "unknown",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "unknown"
+          },
+          "allowance": {
+            "kind": "unknown"
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "unknown",
+              "sourceIds": ["deepseek-user-agreement"]
+            }
+          ],
+          "notes": [
+            "No official numeric consumer Web allowance was found.",
+            "DeepSeek API concurrency documentation is intentionally excluded from this consumer Web rule."
+          ]
+        }
+      ]
+    },
+    "perplexity": {
+      "label": "Perplexity",
+      "plans": [
+        {
+          "id": "standard",
+          "family": "free",
+          "labels": ["Standard", "Free"]
+        },
+        {
+          "id": "pro",
+          "family": "individual_paid",
+          "labels": ["Pro", "Perplexity Pro"]
+        },
+        {
+          "id": "education_pro",
+          "family": "individual_paid",
+          "labels": ["Education Pro"]
+        },
+        {
+          "id": "max",
+          "family": "individual_paid",
+          "labels": ["Max", "Perplexity Max"]
+        },
+        {
+          "id": "enterprise_pro",
+          "family": "organization_paid",
+          "labels": ["Enterprise Pro"]
+        },
+        {
+          "id": "enterprise_max",
+          "family": "organization_paid",
+          "labels": ["Enterprise Max"]
+        },
+        {
+          "id": "unknown",
+          "family": "unknown",
+          "labels": []
+        }
+      ],
+      "usageDrivers": [
+        "search_mode",
+        "selected_model",
+        "feature",
+        "system_capacity"
+      ],
+      "runtimeSignals": [
+        {
+          "kind": "advanced_model_access_may_tighten_during_heavy_usage",
+          "appliesTo": ["pro", "education_pro", "max", "enterprise_pro", "enterprise_max"],
+          "sourceIds": ["perplexity-pro"]
+        }
+      ],
+      "rules": [
+        {
+          "id": "perplexity.standard.pro-search.daily",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["standard"],
+            "accessClasses": ["signed_in_free"],
+            "modelFamilies": ["*"],
+            "modes": ["pro_search"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "count",
+            "unit": "search"
+          },
+          "window": {
+            "kind": "provider_managed",
+            "durationSeconds": 86400
+          },
+          "allowance": {
+            "kind": "exact",
+            "count": 3
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "official_exact",
+              "sourceIds": ["perplexity-plan-comparison"]
+            }
+          ],
+          "notes": [
+            "This rule applies to Pro Search, not practically unlimited basic searches or Best mode."
+          ]
+        },
+        {
+          "id": "perplexity.standard.file-upload.daily",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["standard"],
+            "accessClasses": ["signed_in_free"],
+            "modelFamilies": ["*"],
+            "actions": ["file.upload"]
+          },
+          "meter": {
+            "kind": "count",
+            "unit": "file"
+          },
+          "window": {
+            "kind": "provider_managed",
+            "durationSeconds": 86400
+          },
+          "allowance": {
+            "kind": "exact",
+            "count": 3
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "official_exact",
+              "sourceIds": ["perplexity-account-tiers"]
+            }
+          ],
+          "notes": [
+            "The official account-tier page states that a Free account includes three file uploads per day."
+          ]
+        },
+        {
+          "id": "perplexity.enterprise-pro.file-upload.weekly",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["enterprise_pro"],
+            "accessClasses": ["signed_in_paid"],
+            "modelFamilies": ["*"],
+            "actions": ["file.upload"]
+          },
+          "meter": {
+            "kind": "count",
+            "unit": "file"
+          },
+          "window": {
+            "kind": "provider_managed",
+            "durationSeconds": 604800
+          },
+          "allowance": {
+            "kind": "exact",
+            "count": 100
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "official_exact",
+              "sourceIds": ["perplexity-enterprise-file-limits"]
+            }
+          ],
+          "notes": [
+            "Enterprise Pro session uploads are also limited to 30 files per upload."
+          ]
+        },
+        {
+          "id": "perplexity.enterprise-max.file-upload.weekly",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["enterprise_max"],
+            "accessClasses": ["signed_in_paid"],
+            "modelFamilies": ["*"],
+            "actions": ["file.upload"]
+          },
+          "meter": {
+            "kind": "count",
+            "unit": "file"
+          },
+          "window": {
+            "kind": "provider_managed",
+            "durationSeconds": 604800
+          },
+          "allowance": {
+            "kind": "exact",
+            "count": 1000
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "official_exact",
+              "sourceIds": ["perplexity-enterprise-file-limits"]
+            }
+          ],
+          "notes": [
+            "Enterprise Max session uploads are also limited to 30 files per upload."
+          ]
+        },
+        {
+          "id": "perplexity.enterprise-pro.file-upload.request",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["enterprise_pro"],
+            "accessClasses": ["signed_in_paid"],
+            "modelFamilies": ["*"],
+            "actions": ["file.upload"]
+          },
+          "meter": {
+            "kind": "count",
+            "unit": "file"
+          },
+          "window": {
+            "kind": "request"
+          },
+          "allowance": {
+            "kind": "exact",
+            "count": 30
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "official_exact",
+              "sourceIds": ["perplexity-enterprise-file-limits"]
+            }
+          ],
+          "notes": []
+        },
+        {
+          "id": "perplexity.enterprise-max.file-upload.request",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["enterprise_max"],
+            "accessClasses": ["signed_in_paid"],
+            "modelFamilies": ["*"],
+            "actions": ["file.upload"]
+          },
+          "meter": {
+            "kind": "count",
+            "unit": "file"
+          },
+          "window": {
+            "kind": "request"
+          },
+          "allowance": {
+            "kind": "exact",
+            "count": 30
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "official_exact",
+              "sourceIds": ["perplexity-enterprise-file-limits"]
+            }
+          ],
+          "notes": []
+        },
+        {
+          "id": "perplexity.enterprise-pro.pro-search.weekly",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["enterprise_pro"],
+            "accessClasses": ["signed_in_paid"],
+            "modelFamilies": ["*"],
+            "modes": ["pro_search"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "count",
+            "unit": "search"
+          },
+          "window": {
+            "kind": "provider_managed",
+            "durationSeconds": 604800
+          },
+          "allowance": {
+            "kind": "exact",
+            "count": 400
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "official_exact",
+              "sourceIds": ["perplexity-plan-comparison"]
+            }
+          ],
+          "notes": []
+        },
+        {
+          "id": "perplexity.enterprise-max.pro-search.weekly",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["enterprise_max"],
+            "accessClasses": ["signed_in_paid"],
+            "modelFamilies": ["*"],
+            "modes": ["pro_search"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "count",
+            "unit": "search"
+          },
+          "window": {
+            "kind": "provider_managed",
+            "durationSeconds": 604800
+          },
+          "allowance": {
+            "kind": "exact",
+            "count": 4000
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "official_exact",
+              "sourceIds": ["perplexity-plan-comparison"]
+            }
+          ],
+          "notes": []
+        },
+        {
+          "id": "perplexity.consumer-web.general-usage",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["standard", "pro", "education_pro", "max", "enterprise_pro", "enterprise_max", "unknown"],
+            "accessClasses": ["guest", "signed_in_free", "signed_in_paid", "signed_in_unknown", "unknown"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage", "file.upload"]
+          },
+          "meter": {
+            "kind": "unknown",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "unknown"
+          },
+          "allowance": {
+            "kind": "unknown"
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "official_dynamic",
+              "sourceIds": ["perplexity-plan-comparison", "perplexity-pro"]
+            }
+          ],
+          "notes": [
+            "Consumer Pro, Education Pro, and Max are described with average or advanced weekly limits but no single exact allowance.",
+            "Best mode is described as available without quota limits, while advanced-model access can tighten during heavy usage."
+          ]
+        }
+      ]
+    },
+    "zai": {
+      "label": "Z.ai / GLM",
+      "plans": [
+        {
+          "id": "guest",
+          "family": "guest",
+          "labels": []
+        },
+        {
+          "id": "signed_in_unknown",
+          "family": "unknown",
+          "labels": []
+        },
+        {
+          "id": "unknown",
+          "family": "unknown",
+          "labels": []
+        }
+      ],
+      "usageDrivers": [
+        "selected_model",
+        "selected_mode",
+        "system_capacity"
+      ],
+      "runtimeSignals": [],
+      "rules": [
+        {
+          "id": "zai.consumer-web.numeric-limits-unknown",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["guest", "signed_in_unknown", "unknown"],
+            "accessClasses": ["guest", "signed_in_unknown", "unknown"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "unknown",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "unknown"
+          },
+          "allowance": {
+            "kind": "unknown"
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "unknown",
+              "sourceIds": ["zai-glm52"]
+            }
+          ],
+          "notes": [
+            "The official product announcement confirms consumer Web availability but publishes no numeric Web allowance or reset window.",
+            "GLM Coding Plan quotas are intentionally excluded because they are separate from Z.ai consumer Web chat."
+          ]
+        }
+      ]
+    },
+    "kimi": {
+      "label": "Kimi",
+      "plans": [
+        {
+          "id": "signed_in_unknown",
+          "family": "unknown",
+          "labels": []
+        },
+        {
+          "id": "unknown",
+          "family": "unknown",
+          "labels": []
+        }
+      ],
+      "usageDrivers": [
+        "selected_model",
+        "selected_mode",
+        "system_capacity"
+      ],
+      "runtimeSignals": [],
+      "rules": [
+        {
+          "id": "kimi.consumer-web.numeric-limits-unknown",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["signed_in_unknown", "unknown"],
+            "accessClasses": ["signed_in_unknown", "unknown"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage", "file.upload"]
+          },
+          "meter": {
+            "kind": "unknown",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "unknown"
+          },
+          "allowance": {
+            "kind": "unknown"
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "unknown",
+              "sourceIds": ["kimi-consumer-web"]
+            }
+          ],
+          "notes": [
+            "The official consumer Web surface publishes no exact numeric allowance or reset window in the cited source.",
+            "Runtime visible limits remain authoritative and fail closed."
+          ]
+        }
+      ]
+    },
+    "doubao": {
+      "label": "Doubao / 豆包",
+      "plans": [
+        {
+          "id": "signed_in_unknown",
+          "family": "unknown",
+          "labels": []
+        },
+        {
+          "id": "unknown",
+          "family": "unknown",
+          "labels": []
+        }
+      ],
+      "usageDrivers": [
+        "selected_model",
+        "selected_mode",
+        "system_capacity"
+      ],
+      "runtimeSignals": [],
+      "rules": [
+        {
+          "id": "doubao.consumer-web.numeric-limits-unknown",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["signed_in_unknown", "unknown"],
+            "accessClasses": ["signed_in_unknown", "unknown"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "unknown",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "unknown"
+          },
+          "allowance": {
+            "kind": "unknown"
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "unknown",
+              "sourceIds": ["doubao-feature-intro"]
+            }
+          ],
+          "notes": [
+            "The official consumer Web feature page publishes no numeric allowance or reset window.",
+            "API and enterprise product quotas are intentionally excluded from this consumer Web rule."
+          ]
+        }
+      ]
+    },
+    "dola": {
+      "label": "Dola",
+      "plans": [
+        {
+          "id": "signed_in_unknown",
+          "family": "unknown",
+          "labels": []
+        },
+        {
+          "id": "signed_in_paid",
+          "family": "paid",
+          "labels": ["Pro"]
+        },
+        {
+          "id": "unknown",
+          "family": "unknown",
+          "labels": []
+        }
+      ],
+      "usageDrivers": [
+        "selected_model",
+        "selected_mode",
+        "system_capacity"
+      ],
+      "runtimeSignals": [],
+      "rules": [
+        {
+          "id": "dola.consumer-web.numeric-limits-unknown",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["signed_in_unknown", "signed_in_paid", "unknown"],
+            "accessClasses": ["signed_in_unknown", "signed_in_paid", "unknown"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage", "file.upload"]
+          },
+          "meter": {
+            "kind": "unknown",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "unknown"
+          },
+          "allowance": {
+            "kind": "unknown"
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "unknown",
+              "sourceIds": ["dola-consumer-web"]
+            }
+          ],
+          "notes": [
+            "The observed signed-in consumer Web surface did not publish an exact numeric allowance or reset window.",
+            "Runtime visible limits remain authoritative and fail closed."
+          ]
+        }
+      ]
+    },
+    "arena": {
+      "label": "Arena",
+      "plans": [
+        {
+          "id": "signed_in_unknown",
+          "family": "unknown",
+          "labels": []
+        },
+        {
+          "id": "unknown",
+          "family": "unknown",
+          "labels": []
+        }
+      ],
+      "usageDrivers": [
+        "selected_mode",
+        "system_capacity"
+      ],
+      "runtimeSignals": [],
+      "rules": [
+        {
+          "id": "arena.consumer-web.numeric-limits-unknown",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["signed_in_unknown", "unknown"],
+            "accessClasses": ["signed_in_unknown", "unknown"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "unknown",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "unknown"
+          },
+          "allowance": {
+            "kind": "unknown"
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "unknown",
+              "sourceIds": ["arena-consumer-web"]
+            }
+          ],
+          "notes": [
+            "The observed signed-in consumer Web surface did not publish an exact numeric allowance or reset window.",
+            "Runtime visible limits remain authoritative and fail closed."
+          ]
+        }
+      ]
+    },
+    "meta": {
+      "label": "Meta AI",
+      "plans": [
+        {
+          "id": "signed_in_unknown",
+          "family": "unknown",
+          "labels": []
+        },
+        {
+          "id": "unknown",
+          "family": "unknown",
+          "labels": []
+        }
+      ],
+      "usageDrivers": [
+        "selected_mode",
+        "system_capacity"
+      ],
+      "runtimeSignals": [],
+      "rules": [
+        {
+          "id": "meta.consumer-web.numeric-limits-unknown",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["signed_in_unknown", "unknown"],
+            "accessClasses": ["signed_in_unknown", "unknown"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage", "file.upload"]
+          },
+          "meter": {
+            "kind": "unknown",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "unknown"
+          },
+          "allowance": {
+            "kind": "unknown"
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "unknown",
+              "sourceIds": ["meta-consumer-web"]
+            }
+          ],
+          "notes": [
+            "The observed signed-in consumer Web surface did not publish an exact numeric allowance or reset window.",
+            "Runtime visible limits remain authoritative and fail closed."
+          ]
+        }
+      ]
+    }
+  }
+}

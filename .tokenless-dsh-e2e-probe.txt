@@ -1,0 +1,2 @@
+DELEGATION_PROBE_LABEL=amber-cascade-8174
+DELEGATION_PROBE_VALUE=integration-path-verified-5f2c9a

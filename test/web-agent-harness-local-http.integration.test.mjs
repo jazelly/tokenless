@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test, { after, before } from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+
+import { execDeclaredNpmSync } from './helpers/declared-npm.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliDirectory = path.join(root, 'packages/cli')
@@ -16,10 +17,10 @@ let packedFixture
 
 before(async () => {
   packedFixture = await createPackedCliFixture()
-  daemonServer = pathToFileURL(path.join(packedFixture.cliDirectory, 'dist/src/daemon/server.js')).href
-  daemonStore = pathToFileURL(path.join(packedFixture.cliDirectory, 'dist/src/daemon/job-store.js')).href
-  profileRegistry = pathToFileURL(path.join(packedFixture.cliDirectory, 'dist/src/playwright/profiles/registry.js')).href
-  harnessModule = pathToFileURL(path.join(packedFixture.cliDirectory, 'dist/web-agent-harness/src/index.js')).href
+  daemonServer = pathToFileURL(path.join(packedFixture.cliDirectory, 'dist/server/src/http/server.js')).href
+  daemonStore = pathToFileURL(path.join(packedFixture.cliDirectory, 'dist/server/src/jobs/store.js')).href
+  profileRegistry = pathToFileURL(path.join(packedFixture.cliDirectory, 'dist/server/src/browser/profiles/registry.js')).href
+  harnessModule = pathToFileURL(path.join(packedFixture.cliDirectory, 'dist/harness/src/index.js')).href
 })
 
 after(async () => {
@@ -32,7 +33,7 @@ test('built Harness bootstraps exact System Prompt bytes through real local HTTP
     const fixture = await createHarnessFixture(homeDir)
     try {
       const { ManagedProfileRegistry } = await import(profileRegistry)
-      const profile = await new ManagedProfileRegistry(homeDir).addProfile({ slug: 'harness-chatgpt', lifecycle: 'ready' })
+      const profile = await new ManagedProfileRegistry(homeDir).addProfile({ slug: 'harness-chatgpt' })
       const token = (await fs.readFile(path.join(homeDir, 'daemon.token'), 'utf8')).trim()
       const {
         cancelHarnessLocalHttpTurn,
@@ -45,7 +46,7 @@ test('built Harness bootstraps exact System Prompt bytes through real local HTTP
         baseUrl: daemon.origin,
         token,
         provider: 'chatgpt',
-        profileId: profile.id,
+        profileId: profile.slug,
         runId: 'local-http-bootstrap',
         stagingRoot: fixture.stagingRoot,
         skillRoot: fixture.skillRoot,
@@ -55,7 +56,6 @@ test('built Harness bootstraps exact System Prompt bytes through real local HTTP
       })
 
       assert.equal(queued.lifecycle, 'queued')
-      assert.equal(queued.dispatchCertainty, 'not_dispatched')
       assert.equal(queued.attachmentDelivery.status, 'pending')
       assert.equal((await fs.stat(path.join(homeDir, 'tokenless.sqlite3'))).isFile(), true)
 
@@ -109,7 +109,6 @@ test('built Harness bootstraps exact System Prompt bytes through real local HTTP
       const cancelled = await cancelHarnessLocalHttpTurn({ baseUrl: daemon.origin, token, turnRef: queued.turnRef })
       assert.equal(cancelled.turnRef, queued.turnRef)
       assert.equal(cancelled.lifecycle, 'cancelled')
-      assert.equal(cancelled.dispatchCertainty, 'not_dispatched')
       assert.equal(cancelled.attachmentDelivery.status, 'pending')
 
       const publicResult = JSON.stringify({ queued, read, cancelled })
@@ -124,36 +123,16 @@ test('built Harness bootstraps exact System Prompt bytes through real local HTTP
   })
 })
 
-test('built Harness rejects a static-ineligible route before it stages a bootstrap or creates a turn', async () => {
+test('built Harness rejects a static-ineligible provider before it stages a bootstrap or creates a turn', async () => {
   await withHome(async (homeDir) => {
     const daemon = await startControlPlane(homeDir)
     const fixture = await createHarnessFixture(homeDir)
     try {
       const { ManagedProfileRegistry } = await import(profileRegistry)
-      const profile = await new ManagedProfileRegistry(homeDir).addProfile({ slug: 'harness-perplexity', lifecycle: 'ready' })
+      const profile = await new ManagedProfileRegistry(homeDir).addProfile({ slug: 'harness-perplexity' })
       const token = (await fs.readFile(path.join(homeDir, 'daemon.token'), 'utf8')).trim()
       const { startHarnessLocalHttpBootstrap } = await import(harnessModule)
 
-      for (const [runId, extra, code] of [
-        ['tools-bootstrap', { tools: [] }, 'harness_bootstrap_tools_unsupported'],
-      ]) {
-        await assert.rejects(
-          startHarnessLocalHttpBootstrap({
-            baseUrl: daemon.origin,
-            token,
-            provider: 'chatgpt',
-            profileId: profile.id,
-            runId,
-            stagingRoot: fixture.stagingRoot,
-            skillRoot: fixture.skillRoot,
-            taskPrompt: 'Static unsupported input must not create durable state.',
-            nonce: `${runId}-nonce`,
-            ...extra,
-          }),
-          (error) => error?.code === code,
-        )
-        await assert.rejects(fs.stat(path.join(fixture.stagingRoot, runId)))
-      }
       assert.deepEqual(daemon.store.webAiCounts(), { bindings: 0, stagedAttachments: 0, turns: 0 })
 
       await assert.rejects(
@@ -161,7 +140,7 @@ test('built Harness rejects a static-ineligible route before it stages a bootstr
           baseUrl: daemon.origin,
           token,
           provider: 'perplexity',
-          profileId: profile.id,
+          profileId: profile.slug,
           runId: 'ineligible-bootstrap',
           stagingRoot: fixture.stagingRoot,
           skillRoot: fixture.skillRoot,
@@ -210,27 +189,28 @@ async function createPackedCliFixture() {
   const installDirectory = path.join(rootDirectory, 'install')
   await fs.mkdir(packDirectory)
   try {
-    const cliPack = parsePackOutput(execFileSync('npm', ['pack', '--json', '--pack-destination', packDirectory], {
+    const cliPack = parsePackOutput(execDeclaredNpmSync(['pack', '--json', '--pack-destination', packDirectory], {
       cwd: cliDirectory,
       encoding: 'utf8',
     }))
-    assert.ok(cliPack.files.some((file) => file.path === 'dist/schemas/v0/common.schema.json'))
+    assert.ok(cliPack.files.some((file) => file.path === 'dist/schemas/provider-turn/v0/common.schema.json'))
     assert.equal(cliPack.files.some((file) => file.path.startsWith('schemas/')), false)
     assert.equal(cliPack.files.some((file) => file.path.startsWith('spec/')), false)
     assert.equal(cliPack.files.some((file) => file.path.startsWith('examples/')), false)
     assert.equal(cliPack.files.some((file) => file.path.startsWith('packages/')), false)
     assert.equal(cliPack.files.some((file) => file.path.startsWith('test/')), false)
     assert.equal(cliPack.files.some((file) => file.path.startsWith('docs/')), false)
-    const playwrightPack = parsePackOutput(execFileSync('npm', ['pack', '--json', '--pack-destination', packDirectory], {
+    const playwrightPack = parsePackOutput(execDeclaredNpmSync(['pack', '--json', '--pack-destination', packDirectory], {
       cwd: path.join(root, 'node_modules', 'playwright-core'),
       encoding: 'utf8',
     }))
-    execFileSync('npm', [
+    execDeclaredNpmSync([
       'install',
       path.join(packDirectory, cliPack.filename),
       path.join(packDirectory, playwrightPack.filename),
       '--prefix', installDirectory,
       '--omit=optional',
+      '--ignore-scripts',
       '--offline',
       '--no-audit',
       '--no-fund',

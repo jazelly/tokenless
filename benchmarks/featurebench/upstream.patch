@@ -1,0 +1,108 @@
+diff --git a/featurebench/harness/run_evaluation.py b/featurebench/harness/run_evaluation.py
+index beb48fb..4567c25 100644
+--- a/featurebench/harness/run_evaluation.py
++++ b/featurebench/harness/run_evaluation.py
+@@ -767,9 +767,11 @@ def load_dataset_from_hf(
+         config_loader = InferConfigLoader(resolved_path)
+         env_vars = config_loader.env_vars
+         hf_token = env_vars.get("HF_TOKEN")
++        dataset_revision = env_vars.get("FEATUREBENCH_DATASET_REVISION")
+     except FileNotFoundError:
+         console.print("[yellow]Warning: config.toml not found, using defaults[/]")
+         hf_token = os.environ.get('HF_TOKEN', None)
++        dataset_revision = os.environ.get('FEATUREBENCH_DATASET_REVISION', None)
+ 
+     console.print(f"[bold blue]Loading dataset from HuggingFace...[/]")
+     console.print(f"[dim]Repository: {dataset}[/]")
+@@ -780,7 +782,12 @@ def load_dataset_from_hf(
+ 
+     try:
+         # Load the specified split
+-        hf_dataset = load_dataset(dataset, split=split, token=hf_token)
++        hf_dataset = load_dataset(
++            dataset,
++            split=split,
++            token=hf_token,
++            revision=dataset_revision or None,
++        )
+         df = pd.DataFrame(hf_dataset)
+ 
+         # Determine level from instance_id's last segment (e.g., "xxx.lv1" -> level 1)
+diff --git a/featurebench/infer/agents/__init__.py b/featurebench/infer/agents/__init__.py
+index fda9981..ab6e992 100644
+--- a/featurebench/infer/agents/__init__.py
++++ b/featurebench/infer/agents/__init__.py
+@@ -8,6 +8,7 @@ from featurebench.infer.agents.claude_code import ClaudeCodeAgent
+ from featurebench.infer.agents.gemini_cli import GeminiCliAgent
+ from featurebench.infer.agents.mini_swe_agent import MiniSweAgent
+ from featurebench.infer.agents.openhands import OpenHandsAgent
++from featurebench.infer.agents.tokenless import TokenlessAgent
+ 
+ __all__ = [
+     "BaseAgent",
+@@ -15,7 +16,8 @@ __all__ = [
+     "ClaudeCodeAgent",
+     "GeminiCliAgent",
+     "MiniSweAgent",
+-    "OpenHandsAgent"
++    "OpenHandsAgent",
++    "TokenlessAgent",
+ ]
+ 
+ 
+@@ -35,7 +37,8 @@ def get_agent(agent_name: str, **kwargs) -> BaseAgent:
+         "claude_code": ClaudeCodeAgent,
+         "gemini_cli": GeminiCliAgent,
+         "mini_swe_agent": MiniSweAgent,
+-        "openhands": OpenHandsAgent
++        "openhands": OpenHandsAgent,
++        "tokenless": TokenlessAgent,
+     }
+     
+     agent_class = agents.get(agent_name.lower())
+diff --git a/featurebench/infer/config.py b/featurebench/infer/config.py
+index 796c784..75d1ee0 100644
+--- a/featurebench/infer/config.py
++++ b/featurebench/infer/config.py
+@@ -194,6 +194,7 @@ class DatasetLoader:
+         
+         env_vars = self.config.env_vars
+         hf_token = env_vars.get("HF_TOKEN")
++        dataset_revision = env_vars.get("FEATUREBENCH_DATASET_REVISION")
+ 
+         dataset_name = str(dataset or "").strip()
+         if not dataset_name:
+@@ -208,7 +209,8 @@ class DatasetLoader:
+             dataset = load_dataset(
+                 dataset_name,
+                 split=split,
+-                token=hf_token
++                token=hf_token,
++                revision=dataset_revision or None,
+             )
+             
+             for item in dataset:
+diff --git a/featurebench/infer/models.py b/featurebench/infer/models.py
+index 754e1dd..288de44 100644
+--- a/featurebench/infer/models.py
++++ b/featurebench/infer/models.py
+@@ -17,6 +17,7 @@ class AgentName(str, Enum):
+     MINI_SWE_AGENT = "mini_swe_agent"
+     OPENHANDS = "openhands"
+     CODEX = "codex"
++    TOKENLESS = "tokenless"
+ 
+ 
+ @dataclass
+diff --git a/featurebench/infer/run_infer.py b/featurebench/infer/run_infer.py
+index 594e8f6..833236f 100644
+--- a/featurebench/infer/run_infer.py
++++ b/featurebench/infer/run_infer.py
+@@ -1431,6 +1431,7 @@ def parse_args() -> argparse.Namespace:
+             "openhands",
+             "codex",
+             "mini_swe_agent",
++            "tokenless",
+         ],
+         help="Agent to use for inference (required unless --resume is used)"
+     )

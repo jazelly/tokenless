@@ -4,8 +4,13 @@
     "composite": true,
     "rootDir": ".",
     "outDir": "dist",
-    "types": ["node"]
+    "types": ["node"],
+    "paths": {
+      "#tokenless-shared/*": ["../shared/dist/src/*"],
+      "#tokenless-server/*": ["../server/dist/src/*"],
+      "#tokenless-harness/*": ["../harness/dist/src/*"]
+    }
   },
   "include": ["src/**/*.ts", "src/**/*.mts"],
-  "exclude": ["src/daemon/ui/**/*.ts"]
+  "references": [{ "path": "../shared" }]
 }
