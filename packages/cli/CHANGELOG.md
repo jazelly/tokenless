@@ -150,6 +150,10 @@
 
 ### Patch Changes
 
+- 893b2c9: Guide Terminal-Bench Git recovery through existing Git metadata and make benchmark Harness delegation distinguish workspace content searches from shell commands.
+
+  引导 Terminal-Bench Git recovery 使用现有 Git metadata，并让 benchmark Harness delegation 明确区分 workspace content search 与 shell command。
+
 - 0029040: Accept valid strict JSON tool-protocol finals whose text contains Markdown code fences, while continuing to reject multiple outer response fences.
 
   接受 final text 含 Markdown code fence 的有效 strict JSON tool-protocol response，同时继续拒绝多个 outer response fences。
