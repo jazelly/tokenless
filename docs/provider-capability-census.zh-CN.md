@@ -7,7 +7,7 @@
 提交到仓库的 runtime catalog 与 provider routing matrix 位于 `packages/server/src/providers/task-capabilities.ts`。`tokenless capabilities list --json` 无需打开浏览器即可公开这个带版本的 catalog。当前 V3 可路由 outcome 为：
 
 - `conversation.chat`：ChatGPT、Claude、Gemini、Grok、Arena，以及实验性 Qwen、DeepSeek、Perplexity、Z.ai、Doubao、Kimi、Dola 和 Meta AI；
-- `image.generation` 与 `artifact.download`：实验性 ChatGPT、Gemini、Grok、Doubao、Dola、Arena 和 Meta AI；
+- `image.generation` 与 `artifact.download`：实验性 ChatGPT、Gemini、Grok、Doubao、Arena 和 Meta AI；
 - `file.upload`（transport）：支持的 ChatGPT、Claude 与 Grok；实验性 Gemini、Qwen、DeepSeek、Perplexity、Z.ai、Doubao、Kimi、Dola 与 Meta AI，另有仅限图片的 Arena route；
 - `document.input`（Markdown/PDF 等文档）：与 generic-document `file.upload` 相同的 evidence-backed provider 集合，不包括 Arena 的 image-only route；Harness Markdown 与其他非媒体 attachment 默认使用此 semantic input；
 - `search.web`：实验性 Kimi；以及
@@ -17,7 +17,7 @@
 
 Harness attachment gate 比 generic file upload 更严格：它要求 bootstrap Markdown、framed tool call、真实只读工具执行、同 conversation tool-result Markdown，以及无 fallback 的 succeeded child run。ChatGPT、Gemini、DeepSeek、Z.ai、Doubao、Kimi 与 Dola 已于 2026-08-31 通过；Qwen 已于 2026-09-01 在 74,595ms 内通过，完成两次 submission、可见 attachment/submission/response proof、同一 conversation 的两个可见 turn、durable state，且无 fallback。Claude、Grok、Perplexity 与 Meta AI 保留 generic Markdown document route，但不进入 Harness V0/Auto。Arena 接受图片而不接受 Markdown；其 experimental `file.upload` transport 与 `image.input` 配对，且没有 `document.input` route。具体当前原因记录在 [Capability Matrix](capability-matrix.zh-CN.md#harness-附件准入)。
 
-统一的 `POST /v1/images/generations` endpoint 将 browser 与 direct result 持久化到同一个 scoped asset store。Browser auto routing 只选择同时具备 `image.generation` 和 `artifact.download`、已启用且可用的 provider；Gemini、Dola 与 Doubao gate 均已完成一次可见提交、terminal artifact、local digest 与 authenticated readback。Direct V1 包含逻辑 `tokenless/pollinations/sana` route 与显式 `tokenless/chatgpt/gpt-image` route；二者都不会在 public model ID、response 或 capability evidence 中暴露 private implementation name。Pollinations direct gate 生成并读回一个 768×768 JPEG；ChatGPT direct 在持久化已验证 image bytes 前使用 ephemeral browser-scoped auth bridge。
+统一的 `POST /v1/images/generations` endpoint 将 browser 与 direct result 持久化到同一个 scoped asset store。Browser auto routing 只选择同时具备 `image.generation` 和 `artifact.download`、已启用且可用的 provider；Gemini 与 Doubao gate 均已完成一次可见提交、terminal artifact、local digest 与 authenticated readback。Dola image routing 当前不可用：2026-09-01 的 focused run 在 300 秒后遇到 `daemon_unavailable`。Direct V1 包含逻辑 `tokenless/pollinations/sana` route 与显式 `tokenless/chatgpt/gpt-image` route；二者都不会在 public model ID、response 或 capability evidence 中暴露 private implementation name。Pollinations direct gate 生成并读回一个 768×768 JPEG；ChatGPT direct 在持久化已验证 image bytes 前使用 ephemeral browser-scoped auth bridge。
 
 ## Evidence Ladder
 
@@ -47,7 +47,7 @@ Product surface 比当前 Tokenless evidence 更广。中间一列结合官方�
 | Z.ai / GLM | GLM-5.2 Web chat、1M context、灵活 effort level、coding 与 long-horizon agent strengths | 实验性 chat 与 Harness-verified Markdown `file.upload` transport、`document.input`；点击无 transition 后的普通 Enter 提交和 conversation 页 composer 已闭合两轮 |
 | Doubao / 豆包 | 已登录中文 Web chat；可见 free-account 判别；Fast、Expert 与 Work Task mode；writing、presentation、image、video、deep-research、podcast、music、problem-solving 与 spreadsheet Web skill；广泛 file input；仅 desktop 可用的 recording transcription 入口 | 实验性 chat、image 与 Harness-verified Markdown `file.upload` transport、`document.input`；adapter 会在提交前精确关闭 provider desktop-promotion dialog |
 | Kimi | 已登录 Web chat；Instant、K3 与 K3 Swarm model；Standard/High thinking effort；file、Web search、Plugins、Skills、Projects 与更广泛的 research/agent/artifact surface | 实验性 chat、search 与 Harness-verified Markdown `file.upload` transport、`document.input`；选定的 `web-ai` Cloak profile 已登录 `kimi.ai` 并完成两轮 |
-| Dola | 已登录 Web chat；Fast 与 Pro 选择；file input；Create Image、Writing、Create Video、Translate 与 Homework 入口；独立 Seedream image-creation surface；未观察到 Project、file library 或 persistent knowledge-management surface | 实验性 chat 与 Harness-verified `file.upload` transport、`document.input`；两轮 Markdown 均被逐个可见观察并使用。Image generation 独立保持 experimental |
+| Dola | 已登录 Web chat；Fast 与 Pro 选择；file input；Create Image、Writing、Create Video、Translate 与 Homework 入口；独立 Seedream image-creation surface；未观察到 Project、file library 或 persistent knowledge-management surface | 实验性 chat 与 Harness-verified `file.upload` transport、`document.input`；两轮 Markdown 均被逐个可见观察并使用。Image generation 当前不可用：2026-09-01 的 focused run 在 300 秒后遇到 `daemon_unavailable` |
 | Arena | 已登录 Battle、Direct 与 Side-by-Side chat；model selection；file input；Search、Code、Agent、Image 与 Video surface | 支持 Direct chat，独立 generated-image route 保持 experimental；实验性 image-scoped `file.upload` transport 与 `image.input` 接受 PNG、JPEG 与 WebP，但没有 `document.input` 或 Markdown route |
 | Meta AI | 已登录 Web chat；Instant 与 Thinking mode；广泛 file input；可见 image generation；research-progress 与 assistant-response surface | 实验性 chat、image 与 generic Markdown `file.upload` transport、`document.input` 保留；精确 Harness bytes 可上传，但组合 attachment instruction 被静默拒绝且不创建 conversation |
 

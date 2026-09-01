@@ -60,9 +60,9 @@ Provider selection 前会展开所有 implication。同一家 provider 必须满
 | `image.input` | — | — | — | — | — | — | — | — | — | — | — | Experimental | — |
 | `audio.input` | — | — | — | — | — | — | — | — | — | — | — | — | — |
 | `video.input` | — | — | — | — | — | — | — | — | — | — | — | — | — |
-| `image.generation` | Experimental | — | Experimental | Experimental | — | — | — | — | Experimental | — | Experimental | Experimental | Experimental |
+| `image.generation` | Experimental | — | Experimental | Experimental | — | — | — | — | Experimental | — | — | Experimental | Experimental |
 | `image.edit` | — | — | — | — | — | — | — | — | — | — | — | Experimental | — |
-| `artifact.download` | Experimental | — | Experimental | Experimental | — | — | — | — | Experimental | — | Experimental | Experimental | Experimental |
+| `artifact.download` | Experimental | — | Experimental | Experimental | — | — | — | — | Experimental | — | — | Experimental | Experimental |
 | `website.generation` | — | — | — | — | — | — | — | — | — | — | — | — | — |
 | `video.generation` | — | — | — | — | — | — | — | — | — | — | — | Experimental | — |
 | `search.web` | — | — | — | — | — | — | — | — | — | Experimental | — | Experimental | — |
@@ -96,7 +96,7 @@ Route 会按完整 requirement set 评估。例如 image attachment 同时要求
 
 Claude、Grok、Perplexity 与 Meta AI 的 generic document input 继续单独公开，因为 Markdown 上传证据与 Harness protocol compliance 相互独立。Qwen 现在已有 Harness-verified 的 `file.upload` 与 `document.input` evidence。Private provider-turn V0、Harness Auto 与 semantic router 必须看到 `harness-attachment-roundtrip` evidence；Arena 的 experimental `file.upload` route 仅限图片、与 `image.input` 配对，且没有 `document.input` route。
 
-ChatGPT、Gemini、Grok、豆包、Dola、Arena 与 Meta AI Image artifact 会通过选定的 Playwright browser session 下载到按 task、conversation、job 与时间划分的 `assets` 目录。公开 response 只包含 relative asset reference、media type、尺寸、byte size 与 SHA-256 digest；带签名的 provider URL 仅在内存中使用。authenticated daemon 的 `GET /v1/private/assets/{taskId}/{conversationId}/{assetBatch}/{assetFile}` endpoint 会以实际图片 media type 返回已验证 bytes；路径越界、损坏或缺失 asset 会 fail closed。
+ChatGPT、Gemini、Grok、豆包、Arena 与 Meta AI Image artifact 会通过选定的 Playwright browser session 下载到按 task、conversation、job 与时间划分的 `assets` 目录。公开 response 只包含 relative asset reference、media type、尺寸、byte size 与 SHA-256 digest；带签名的 provider URL 仅在内存中使用。authenticated daemon 的 `GET /v1/private/assets/{taskId}/{conversationId}/{assetBatch}/{assetFile}` endpoint 会以实际图片 media type 返回已验证 bytes；路径越界、损坏或缺失 asset 会 fail closed。
 
 ChatGPT 的 `image.generation` 与 `artifact.download` 已作为 experimental routes 实现。Image reader 只读取最新可见的 `section[data-turn="assistant"]`，按 canonical URL 对重复的 `[id^="image-"] img` 去重，等待 stop control 消失，通过选定 browser session 下载 provider/CDN HTTPS bytes，使用 browser decoder 校验尺寸，并且不会把带签名 URL 放进 response。真实 asset run 生成了一张去重后的 1254×1254 PNG，并验证 DOM bytes、本地 digest、browser decode 与 authenticated daemon readback。
 
@@ -104,7 +104,7 @@ Grok 的 `image.generation` 与 `artifact.download` 已在独立 Imagine Image s
 
 Arena `conversation.chat`、`conversation.continue` 与 `model.compare` 已支持选定的已登录 profile，其中 `conversation.chat` route 由更强的 `conversation-continuation` evidence 覆盖。新建文字会话前，adapter 会精确选择 **Direct** mode；`model.inspect` 与 `model.select` 可在提交前精确选择一个可见 Direct model，并恢复原始 **Max** router。Built CLI 与 packaged daemon 已证明实质性的 selected-model 回复、已持久化的 `/c/:conversationId` mapping，以及第二个 CLI 进程通过同一 daemon 在同一 URL 只返回最新回答。Battle 会返回两份匿名回答，并将 `model` 明确设为 `null`；Side-by-Side 会返回两份回答与两个可见 selected model 标签。Generic client 会收到完整 A/B 文本，结构化 client 还会收到 `alternatives`。Arena `search.web` 与 `response.citations` 保持 experimental。Arena `image.generation` 与 `artifact.download` 仍用于无附件的 Direct Image；其 experimental `file.upload` transport 与 `image.input` 配对，仅接受 PNG、JPEG 与 WebP，不接受 Harness Markdown。Arena 没有 `document.input` route。Arena 的 `website.generation` 与 `agent.execute` 当前不可用：2026-09-01 的多次 focused real-provider run 均在 300 秒后遇到 daemon job timeout，因此在稳定的 completed-response evidence 恢复前不公开这些 route。Arena 的 `video.generation` 仍在独立 surface 上保持 experimental。Adapter 也会处理 provider 自身提供、内容精确的 **Terms of Use & Privacy Policy** → **Agree** onboarding 对话框；由于当前所选账号已经接受过条款，新账号重复验证仍待完成。
 
-Authenticated `POST /v1/images/generations` endpoint 是 browser 与 direct execution 共用的 canonical image input。Browser auto routing 只把 enabled、usable provider 与 `image.generation`、`artifact.download` 两条 route 取交集，再由已选 provider 组装自己的 image action；Gemini、豆包与 Dola 已加入此前闭环的 browser image routes。Direct V1 保留 logical `tokenless/pollinations/sana` model，并增加显式的 `tokenless/chatgpt/gpt-image`；两者使用同一个 scoped asset contract，同时不在 public model ID、response 或 capability evidence 中暴露 private backend name。ChatGPT direct image 会从选定的 managed browser bootstrap 一个短生命周期 provider-scoped session，经 private adapter 提交，最终只返回已验证的本地 asset。两种 mode 都返回共有 authenticated asset URL 与 metadata。真实 Pollinations direct gate 已生成并回读一张 768×768 JPEG；Gemini、Dola 与豆包的 focused gate 也分别完成了一次可见提交、终态 artifact、本地 digest 与 authenticated readback。
+Authenticated `POST /v1/images/generations` endpoint 是 browser 与 direct execution 共用的 canonical image input。Browser auto routing 只把 enabled、usable provider 与 `image.generation`、`artifact.download` 两条 route 取交集，再由已选 provider 组装自己的 image action；Gemini 与豆包已加入此前闭环的 browser image routes。Direct V1 保留 logical `tokenless/pollinations/sana` model，并增加显式的 `tokenless/chatgpt/gpt-image`；两者使用同一个 scoped asset contract，同时不在 public model ID、response 或 capability evidence 中暴露 private backend name。ChatGPT direct image 会从选定的 managed browser bootstrap 一个短生命周期 provider-scoped session，经 private adapter 提交，最终只返回已验证的本地 asset。两种 mode 都返回共有 authenticated asset URL 与 metadata。真实 Pollinations direct gate 已生成并回读一张 768×768 JPEG；Gemini 与豆包的 focused gate 也分别完成了一次可见提交、终态 artifact、本地 digest 与 authenticated readback。
 
 Browser image 请求可携带一个不超过 8 MiB 的 PNG、JPEG 或 WebP `reference_image` data URL。此类请求要求 `image.edit`、`image.input`、`file.upload` 与 `artifact.download` 的完整 route；remote URL 与 direct-mode reference image 会在 provider submission 前失败。Arena 的 experimental image-only route 会为其接受的 PNG、JPEG 与 WebP 格式满足这组完整 Browser 要求；它的 `arena-image` evidence 不能推广为 `document.input` 或 Harness Markdown support。
 
@@ -150,14 +150,14 @@ Doubao `conversation.chat` 与 Markdown `file.upload` 已在选定登录 profile
 
 Kimi `conversation.chat`、Markdown `file.upload`、`search.web` 与基于搜索的 `response.citations` 继续保持 experimental。产品已从 `kimi.com` 迁移到 `kimi.ai`；用户在选定的 `web-ai` Cloak profile 登录后，新的 origin 已通过完整 bootstrap 与 continuation Harness round-trip。
 
-Dola 已注册为需要登录的 experimental provider。其 general `conversation.chat` 与 Markdown `file.upload` 已完成 Harness 验证；`image.generation` 与 `artifact.download` 继续在 Create Image surface 独立保持 experimental。
+Dola 已注册为需要登录的 experimental provider。其 general `conversation.chat` 与 Markdown `file.upload` 已完成 Harness 验证。其 Create Image 的 `image.generation` 与 `artifact.download` 当前不可用：2026-09-01 的 focused real run 在 300 秒后遇到 `daemon_unavailable`，因此在完整 image 与 artifact evidence 恢复前不公开这些 image routes。
 
 | Dola 控件或界面 | Canonical outcome candidates | 当前证据与 route 状态 |
 | --- | --- | --- |
 | Chat 与同 conversation 续聊 | `conversation.chat`, `conversation.continue` | Harness bootstrap 与 tool-result 两轮已在同一 conversation 完成；`conversation.chat` experimental routeable |
 | Fast / Pro | `conversation.chat`；provider control `model.choice` | 两个选项均已 live-observed；exact selection 与 restoration gate 待完成 |
 | 添加文件 | `file.upload` | Bootstrap 与 continuation Markdown card 均被逐个观察并使用；experimental routeable |
-| Create Image / AI Creation | `image.generation`、`artifact.download` | Experimental routeable image surface；built CLI 与 packaged daemon 已完成一次可见提交、terminal image artifact、本地 digest 与 authenticated readback |
+| Create Image / AI Creation | `image.generation`、`artifact.download` | 当前不可用：2026-09-01 的 focused real run 在 300 秒后遇到 `daemon_unavailable`，因此不公开完整 image 或 artifact closure |
 | Writing | `document.generation` 或 `conversation.chat` | 已 live-observed `write_assistant` 入口；尚未证明输出形态，因此不声明 document 或 downloadable file |
 | Create Video | `video.generation` | 已 live-observed `video_generation` 入口；progress、terminal video 与 bounded artifact reference 待完成 |
 | Translate | `conversation.chat`；provider workflow `dola.translate` | 已 live-observed `translate` 入口；关联翻译结果待完成 |

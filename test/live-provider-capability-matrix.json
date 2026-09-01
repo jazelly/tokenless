@@ -1176,10 +1176,10 @@
       "required": [
         "session-readiness",
         "prompt-draft",
-        "harness-attachment-roundtrip",
-        "dola-image"
+        "harness-attachment-roundtrip"
       ],
       "unavailable": {
+        "dola-image": "dola_image_daemon_unavailable_after_300s_2026_09_01",
         "qwen-image": "provider_specific_capability",
         "arena-search": "provider_specific_capability",
         "arena-image": "provider_specific_capability",

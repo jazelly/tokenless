@@ -505,8 +505,6 @@ const PROVIDER_TASK_CAPABILITY_ROUTES = Object.freeze([
   route('arena', TASK_CAPABILITIES.IMAGE_GENERATION, 'experimental', 'arena-image-generation', ['arena-image']),
   route('arena', TASK_CAPABILITIES.IMAGE_EDIT, 'experimental', 'arena-image-edit', ['arena-image']),
   route('arena', TASK_CAPABILITIES.ARTIFACT_DOWNLOAD, 'experimental', 'arena-image', ['arena-image']),
-  route('dola', TASK_CAPABILITIES.IMAGE_GENERATION, 'experimental', 'dola-seedream-image-generation', ['dola-image']),
-  route('dola', TASK_CAPABILITIES.ARTIFACT_DOWNLOAD, 'experimental', 'dola-seedream-image', ['dola-image']),
   route('dola', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['harness-attachment-roundtrip']),
   route('dola', TASK_CAPABILITIES.FILE_UPLOAD, 'experimental', 'visible-file-attachment', ['harness-attachment-roundtrip']),
   route('dola', TASK_CAPABILITIES.DOCUMENT_INPUT, 'experimental', 'visible-document-attachment', ['harness-attachment-roundtrip']),

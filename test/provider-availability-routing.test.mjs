@@ -72,13 +72,13 @@ test('capabilities list exposes canonical outcomes and only evidence-backed rout
     byId.get('image.generation').routes
       .filter((route) => route.executionMode === 'browser')
       .map((route) => route.provider),
-    ['gemini', 'grok', 'doubao', 'chatgpt', 'meta', 'arena', 'dola'],
+    ['gemini', 'grok', 'doubao', 'chatgpt', 'meta', 'arena'],
   )
   assert.deepEqual(
     byId.get('artifact.download').routes
       .filter((route) => route.executionMode === 'browser')
       .map((route) => route.provider),
-    ['gemini', 'grok', 'doubao', 'chatgpt', 'meta', 'arena', 'dola'],
+    ['gemini', 'grok', 'doubao', 'chatgpt', 'meta', 'arena'],
   )
   assert.equal(
     byId.get('image.generation').routes.find((route) => route.provider === 'chatgpt').executionMode,
