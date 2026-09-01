@@ -150,6 +150,10 @@
 
 ### Patch Changes
 
+- fbd9d59: Resolve Terminal-Bench Git recovery conflicts with the recovered cherry-pick version.
+
+  使用 recovered cherry-pick version 解决 Terminal-Bench Git recovery 冲突。
+
 - e78f317: Require Terminal-Bench Git recovery to finish cherry-pick conflict resolution before completing.
 
   要求 Terminal-Bench Git recovery 在完成前彻底解决 cherry-pick 冲突。
