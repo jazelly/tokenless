@@ -1132,7 +1132,6 @@
       "required": [
         "session-readiness",
         "prompt-draft",
-        "effort-choice",
         "file-selection",
         "harness-attachment-roundtrip",
         "conversation-workflow",
@@ -1159,6 +1158,7 @@
         "workspace-response-citations": "covered_by_conversation_workflow",
         "workspace-response-baseline": "covered_by_conversation_workflow",
         "qwen-mode-workspace": "provider_specific_capability",
+        "effort-choice": "no_visible_effort_control_in_selected_kimi_model_2026_09_01",
         "doubao-controls": "provider_specific_capability",
         "model-choice": "instant_selection_not_returned_in_repeated_real_runs_2026_08_10",
         "native-project": "exact_project_name_not_visibly_confirmed_in_repeated_real_runs_2026_08_10",
@@ -1176,7 +1176,6 @@
       "required": [
         "session-readiness",
         "prompt-draft",
-        "model-choice",
         "harness-attachment-roundtrip",
         "dola-image"
       ],
@@ -1194,6 +1193,7 @@
         "arena-video": "provider_specific_capability",
         "model-comparison": "provider_specific_capability",
         "conversation-continuation": "real_two_process_continuation_not_proven",
+        "model-choice": "model_inspect_selector_not_available_in_selected_dola_profile_2026_09_01",
         "effort-choice": "no_independent_effort_control_declared",
         "file-selection": "selected_setup_profile_multi_document_and_sequential_selection_only_one_visible_card_2026_08_09",
         "conversation-workflow": "no_real_submitted_response_closure",

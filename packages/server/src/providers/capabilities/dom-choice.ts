@@ -193,6 +193,8 @@ async function selectChoice(
   if (provider.id === 'claude') {
     await option.focus()
     await option.press('Enter')
+  } else if (provider.id === 'arena') {
+    await option.evaluate((element) => (element as HTMLElement).click())
   } else {
     await option.click({ timeout: 5000 })
   }
@@ -209,18 +211,24 @@ async function exactVisibleChoiceLocator(
   provider: ProviderDomDefinition,
   label: string,
 ): Promise<Locator | null> {
-  const candidates = page.locator([
+  const selectors = [
     '[role="menuitem"]',
     '[role="menuitemradio"]',
     '[role="menuitemcheckbox"]',
     '[role="option"]',
     '[cmdk-item]',
     '.ant-select-item-option',
-  ].join(',')).filter({ visible: true })
+  ]
+  if (provider.id === 'arena') selectors.push('button')
+  const surface = provider.id === 'arena'
+    ? page.locator('[role="dialog"]').filter({ visible: true }).last()
+    : page
+  const candidates = surface.locator(selectors.join(',')).filter({ visible: true })
   const count = Math.min(await candidates.count(), 80)
   for (let index = 0; index < count; index += 1) {
     const candidate = candidates.nth(index)
     const text = await candidate.evaluate((element, providerId) => (
+      (providerId === 'arena' && element.closest('[data-arena-buttons]') !== null ? '' : null) ??
       (providerId === 'arena'
         ? element.querySelector('.text-lg, .font-mono')?.textContent
         : null) ??
@@ -284,6 +292,9 @@ async function collectVisibleChoices(page: Page, provider: ProviderDomDefinition
         return /unlock extended capabilities/i.test(candidateText) && /upgrade/i.test(candidateText)
       })
       return elements.slice(0, 80).map((element) => {
+        if (options.providerId === 'arena' && element.closest('[data-arena-buttons]') !== null) {
+          return { label: '', selected: false, enabled: false }
+        }
         const labelElement = (options.providerId === 'arena'
           ? element.querySelector('.text-lg, .font-mono')
           : null) ?? element.querySelector('.label') ??
