@@ -495,7 +495,7 @@ const PROVIDER_TASK_CAPABILITY_ROUTES = Object.freeze([
   route('meta', TASK_CAPABILITIES.DOCUMENT_INPUT, 'experimental', 'visible-document-attachment', ['file-selection']),
   route('meta', TASK_CAPABILITIES.IMAGE_GENERATION, 'experimental', 'meta-image-generation', ['meta-image']),
   route('meta', TASK_CAPABILITIES.ARTIFACT_DOWNLOAD, 'experimental', 'meta-image', ['meta-image']),
-  route('arena', TASK_CAPABILITIES.CONVERSATION_CHAT, 'supported', 'visible-conversation', ['workspace-response-baseline']),
+  route('arena', TASK_CAPABILITIES.CONVERSATION_CHAT, 'supported', 'visible-conversation', ['conversation-continuation']),
   route('arena', TASK_CAPABILITIES.CONVERSATION_CONTINUE, 'supported', 'visible-conversation-continuation', ['conversation-continuation']),
   route('arena', TASK_CAPABILITIES.MODEL_COMPARE, 'supported', 'visible-two-model-comparison', ['model-comparison']),
   route('arena', TASK_CAPABILITIES.SEARCH_WEB, 'experimental', 'arena-search-direct', ['arena-search']),
@@ -510,8 +510,6 @@ const PROVIDER_TASK_CAPABILITY_ROUTES = Object.freeze([
   route('dola', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['harness-attachment-roundtrip']),
   route('dola', TASK_CAPABILITIES.FILE_UPLOAD, 'experimental', 'visible-file-attachment', ['harness-attachment-roundtrip']),
   route('dola', TASK_CAPABILITIES.DOCUMENT_INPUT, 'experimental', 'visible-document-attachment', ['harness-attachment-roundtrip']),
-  route('arena', TASK_CAPABILITIES.WEBSITE_GENERATION, 'experimental', 'arena-code-website-generation', ['arena-code']),
-  route('arena', TASK_CAPABILITIES.AGENT_EXECUTE, 'experimental', 'arena-agent-execution', ['arena-agent']),
   route('arena', TASK_CAPABILITIES.VIDEO_GENERATION, 'experimental', 'arena-video-generation', ['arena-video']),
 ] satisfies readonly ProviderTaskCapabilityRoute[])
 

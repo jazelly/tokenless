@@ -698,10 +698,7 @@
         "model-comparison",
         "arena-search",
         "arena-image",
-        "arena-code",
-        "arena-agent",
-        "arena-video",
-        "workspace-response-baseline"
+        "arena-video"
       ],
       "unavailable": {
         "file-selection": "image_upload_requires_arena_image_lifecycle",
@@ -714,6 +711,9 @@
         "doubao-image": "provider_specific_capability",
         "grok-image": "provider_specific_capability",
         "effort-choice": "no_real_selection_closure",
+        "arena-code": "arena_code_daemon_job_timeout_after_300s_2026_09_01",
+        "arena-agent": "arena_agent_daemon_job_timeout_after_300s_2026_09_01",
+        "workspace-response-baseline": "covered_by_conversation_continuation",
         "conversation-workflow": "file_and_citation_closure_not_proven",
         "workspace-response-citations": "real_visible_citation_closure_not_proven",
         "qwen-mode-workspace": "provider_specific_capability",

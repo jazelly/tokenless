@@ -64,7 +64,7 @@ test('capabilities list exposes canonical outcomes and only evidence-backed rout
   assert.equal(byId.get('document.input').routes.some((route) => route.provider === 'arena'), false)
   assert.deepEqual(byId.get('conversation.continue').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), ['arena'])
   assert.deepEqual(byId.get('model.compare').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), ['arena'])
-  assert.deepEqual(byId.get('agent.execute').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), ['arena'])
+  assert.deepEqual(byId.get('agent.execute').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), [])
   assert.deepEqual(byId.get('search.web').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), ['kimi', 'arena'])
   assert.deepEqual(byId.get('response.citations').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), ['kimi', 'arena'])
   assert.deepEqual(byId.get('image.input').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), ['arena'])
@@ -107,7 +107,7 @@ test('capabilities list exposes canonical outcomes and only evidence-backed rout
     'browser',
   )
   assert.deepEqual(byId.get('image.edit').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), ['arena'])
-  assert.deepEqual(byId.get('website.generation').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), ['arena'])
+  assert.deepEqual(byId.get('website.generation').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), [])
   assert.deepEqual(byId.get('video.generation').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), ['arena'])
   assert.equal(byId.get('workspace.native').routeable, true)
   assert.deepEqual(
@@ -611,7 +611,7 @@ test('Arena agent execution rejects unsupported controls and capability combinat
       {
         capabilities: ['agent.execute'],
         args: ['--target-url', 'https://arena.ai/text/direct'],
-        code: 'arena_agent_explicit_target_unavailable',
+        code: 'task_capability_route_unavailable',
       },
       {
         capabilities: ['agent.execute', 'model.compare'],

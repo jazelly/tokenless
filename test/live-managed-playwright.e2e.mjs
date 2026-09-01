@@ -1493,7 +1493,7 @@ async function workspaceResponseBaseline({ provider, journey }) {
   ])
   const response = responseResult(run.payload, 'response.read')
   assert.match(response?.text ?? '', /Canberra/i)
-  assert.equal(await pageContains(run.page, 'Canberra', 2), true)
+  assert.equal(await pageContains(run.page, 'Canberra'), true)
   assertConversationWorkspaceResult(run)
   await run.close()
 }
