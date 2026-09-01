@@ -150,6 +150,10 @@
 
 ### Patch Changes
 
+- ffbcadd: Make the Terminal-Bench Git recovery parent perform and verify the recovered change instead of returning instructions.
+
+  让 Terminal-Bench Git recovery parent 实际执行并验证恢复操作，而不是只返回操作说明。
+
 - 91a7345: Keep Terminal-Bench Harness child terminal results inside the required JSON response envelope.
 
   确保 Terminal-Bench Harness child terminal result 保持在所需的 JSON response envelope 内。
