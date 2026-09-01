@@ -150,6 +150,10 @@
 
 ### Patch Changes
 
+- e78f317: Require Terminal-Bench Git recovery to finish cherry-pick conflict resolution before completing.
+
+  要求 Terminal-Bench Git recovery 在完成前彻底解决 cherry-pick 冲突。
+
 - c541f6d: Require the Terminal-Bench Git recovery parent to execute recovery through its bash tool before returning a final response.
 
   要求 Terminal-Bench Git recovery parent 在返回最终响应前通过 bash tool 执行恢复操作。
