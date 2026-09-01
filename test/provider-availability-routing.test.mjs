@@ -44,14 +44,24 @@ test('capabilities list exposes canonical outcomes and only evidence-backed rout
     byId.get('conversation.chat').routes
       .filter((route) => route.executionMode === 'browser')
       .map((route) => route.provider),
-    ['chatgpt', 'claude', 'gemini', 'grok', 'deepseek', 'perplexity', 'zai', 'doubao', 'kimi', 'meta', 'arena', 'dola'],
+    ['chatgpt', 'claude', 'gemini', 'grok', 'deepseek', 'perplexity', 'qwen', 'zai', 'doubao', 'kimi', 'meta', 'arena', 'dola'],
   )
   assert.deepEqual(
     byId.get('file.upload').routes
       .filter((route) => route.executionMode === 'browser')
       .map((route) => route.provider),
+    ['chatgpt', 'claude', 'gemini', 'grok', 'deepseek', 'perplexity', 'qwen', 'zai', 'doubao', 'kimi', 'meta', 'arena', 'dola'],
+  )
+  assert.deepEqual(
+    byId.get('document.input').routes
+      .filter((route) => route.executionMode === 'browser')
+      .map((route) => route.provider),
     ['chatgpt', 'claude', 'gemini', 'grok', 'deepseek', 'perplexity', 'qwen', 'zai', 'doubao', 'kimi', 'meta', 'dola'],
   )
+  const arenaImageUpload = byId.get('file.upload').routes.find((route) => route.provider === 'arena')
+  assert.equal(arenaImageUpload.support, 'experimental')
+  assert.deepEqual(arenaImageUpload.evidence, ['arena-image'])
+  assert.equal(byId.get('document.input').routes.some((route) => route.provider === 'arena'), false)
   assert.deepEqual(byId.get('conversation.continue').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), ['arena'])
   assert.deepEqual(byId.get('model.compare').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), ['arena'])
   assert.deepEqual(byId.get('agent.execute').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), ['arena'])
@@ -203,10 +213,10 @@ test('explicit attachment run uses a provider with file acceptance closure', asy
     assert.equal(result.status, 0, result.stderr || result.stdout)
     const payload = JSON.parse(result.stdout)
     assert.equal(payload.provider, 'gemini')
-    assert.deepEqual(payload.capabilityRoute.requirements, ['conversation.chat', 'file.upload'])
+    assert.deepEqual(payload.capabilityRoute.requirements, ['conversation.chat', 'file.upload', 'document.input'])
     assert.deepEqual(
       payload.capabilityRoute.strategies,
-      ['visible-conversation', 'visible-file-attachment'],
+      ['visible-conversation', 'visible-file-attachment', 'visible-document-attachment'],
     )
     const state = runCli([
       'state',
@@ -259,8 +269,8 @@ test('explicit provider fails before daemon submission when required capability 
     assert.equal(result.status, 1, result.stderr || result.stdout)
     const payload = JSON.parse(result.stdout)
     assert.equal(payload.error.code, 'task_capability_route_unavailable')
-    assert.deepEqual(payload.error.context.requirements, ['file.upload', 'conversation.chat'])
-    assert.deepEqual(payload.error.context.providers[0].missingCapabilities, ['file.upload'])
+    assert.deepEqual(payload.error.context.requirements, ['file.upload', 'conversation.chat', 'document.input'])
+    assert.deepEqual(payload.error.context.providers[0].missingCapabilities, ['document.input'])
     assert.equal(fs.existsSync(path.join(homeDir, 'daemon.token')), false)
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
@@ -804,6 +814,48 @@ test('attachment media infers its semantic input capability', async () => {
       ['conversation.chat', 'file.upload', 'image.input'],
     )
     assert.deepEqual(payload.error.context.providers[0].missingCapabilities, ['image.input'])
+    assert.equal(jobCount(homeDir), 0)
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('explicit semantic input requires a matching attachment MIME', async () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-capability-input-mime-')))
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
+  const files = {
+    document: path.join(homeDir, 'evidence.md'),
+    image: path.join(homeDir, 'evidence.png'),
+    audio: path.join(homeDir, 'evidence.mp3'),
+    video: path.join(homeDir, 'evidence.mp4'),
+  }
+  for (const sourcePath of Object.values(files)) fs.writeFileSync(sourcePath, 'mime validation')
+  try {
+    await seedManagedProfile(homeDir, {
+      deepseek: observedProvider('deepseek', 'authenticated', 'signed_in_free'),
+    })
+    await writeConfig(homeDir, ['deepseek'], daemonUrl)
+
+    const cases = [
+      ['document.input', files.image],
+      ['image.input', files.document],
+      ['audio.input', files.video],
+      ['video.input', files.audio],
+    ]
+    for (const [capability, sourcePath] of cases) {
+      const result = runCliUnbound([
+        'run',
+        '--home', homeDir,
+        '--daemon-url', daemonUrl,
+        '--provider', 'deepseek',
+        '--capability', capability,
+        '--attach-file', sourcePath,
+        '--prompt', `Tokenless ${capability} MIME validation test`,
+        '--json',
+      ])
+      assert.equal(result.status, 1, result.stderr || result.stdout)
+      assert.equal(JSON.parse(result.stdout).error.code, 'task_capability_input_required', capability)
+    }
     assert.equal(jobCount(homeDir), 0)
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })

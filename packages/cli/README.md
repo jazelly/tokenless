@@ -86,7 +86,7 @@ tokenless capabilities list --json
 
 The public [Capability Matrix](https://github.com/jazelly/tokenless/blob/main/docs/capability-matrix.md) explains the outcome vocabulary, current provider mappings, evidence ladder, and extension process.
 
-`--capability` is repeatable. Tokenless also infers `conversation.chat` for a normal run, `file.upload` plus the media-specific input capability from attachments, and `workspace.native` from native Workspace intent. One provider must satisfy the entire merged requirement set:
+`--capability` is repeatable. Tokenless also infers `conversation.chat` for a normal run, `file.upload` plus a MIME-specific input capability from attachments (`document.input` for non-media files and `image.input`, `audio.input`, or `video.input` for the matching media type), and `workspace.native` from native Workspace intent. One provider must satisfy the entire merged requirement set:
 
 ```bash
 tokenless run \

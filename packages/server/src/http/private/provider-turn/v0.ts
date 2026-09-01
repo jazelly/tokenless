@@ -37,7 +37,7 @@ import {
 import { routingFromJob, type ApiProxyRouting } from '../../../universal-api/api-proxy.js'
 
 const SYSTEM_PROMPT_LIMIT_BYTES = 1024 * 1024
-const REQUIRED_CAPABILITIES = ['conversation.chat', 'file.upload'] as const
+const REQUIRED_CAPABILITIES = ['conversation.chat', 'file.upload', 'document.input'] as const
 const HARNESS_ATTACHMENT_EVIDENCE = 'harness-attachment-roundtrip'
 const WEB_AI_INTERACTION_PROTOCOL_V0 = 'tokenless.internal.web-ai-interaction-protocol/v0' as const
 const AUTO_PROVIDER = 'auto'
@@ -51,7 +51,7 @@ type StartTurnRequest = {
   requestRef: string
   providerRef: string
   providerBindingRef: string
-  requiredCapabilities: readonly ['conversation.chat', 'file.upload']
+  requiredCapabilities: readonly ['conversation.chat', 'file.upload', 'document.input']
   semanticPreference?: string
   conversation: { mode: 'new' } | { mode: 'continue'; conversationRef: string }
   bootstrap?: { text: string; attachments: readonly [{ kind: 'system_prompt'; name: string; attachmentRef: string; mediaType: 'text/markdown'; byteLength: number; sha256: string }, ...Array<{ kind: 'skill'; name: string; attachmentRef: string; mediaType: 'text/markdown'; byteLength: number; sha256: string }>] }
@@ -579,7 +579,7 @@ function parseStartTurnRequest(value: unknown): StartTurnRequest {
   )
   if (request.protocol !== WEB_AI_INTERACTION_PROTOCOL_V0 || !/^request:[a-f0-9]{32}$/.test(String(request.requestRef)) ||
     !/^provider:[a-f0-9]{32}$/.test(String(request.providerRef)) || !/^binding:[a-f0-9]{32}$/.test(String(request.providerBindingRef)) ||
-    !Array.isArray(request.requiredCapabilities) || request.requiredCapabilities.length !== 2 || request.requiredCapabilities[0] !== 'conversation.chat' || request.requiredCapabilities[1] !== 'file.upload' ||
+    !Array.isArray(request.requiredCapabilities) || request.requiredCapabilities.length !== 3 || request.requiredCapabilities[0] !== 'conversation.chat' || request.requiredCapabilities[1] !== 'file.upload' || request.requiredCapabilities[2] !== 'document.input' ||
     !isPlainRecord(request.conversation) || (request.conversation.mode !== 'new' && request.conversation.mode !== 'continue')) {
     throw new Error('start_turn_request is invalid')
   }

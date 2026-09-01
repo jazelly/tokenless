@@ -1,5 +1,5 @@
 {
   "protocol": "tokenless.internal.web-ai-interaction-protocol/v0",
   "providerRef": "provider:11111111111111111111111111111111",
-  "supportedCapabilities": ["conversation.chat", "file.upload"]
+  "supportedCapabilities": ["conversation.chat", "file.upload", "document.input"]
 }

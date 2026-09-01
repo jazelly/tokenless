@@ -3,7 +3,7 @@
   "requestRef": "request:00000000000000000000000000000000",
   "providerRef": "provider:11111111111111111111111111111111",
   "providerBindingRef": "binding:22222222222222222222222222222222",
-  "requiredCapabilities": ["conversation.chat", "file.upload"],
+  "requiredCapabilities": ["conversation.chat", "file.upload", "document.input"],
   "conversation": { "mode": "new" },
   "bootstrap": {
     "text": "Summarize the supplied material.",

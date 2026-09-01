@@ -8819,12 +8819,13 @@
           "supportedCapabilities": {
             "type": "array",
             "minItems": 1,
-            "maxItems": 2,
+            "maxItems": 3,
             "uniqueItems": true,
             "items": {
               "enum": [
                 "conversation.chat",
-                "file.upload"
+                "file.upload",
+                "document.input"
               ]
             }
           }
@@ -8965,11 +8966,14 @@
               },
               {
                 "const": "file.upload"
+              },
+              {
+                "const": "document.input"
               }
             ],
             "items": false,
-            "minItems": 2,
-            "maxItems": 2
+            "minItems": 3,
+            "maxItems": 3
           },
           "conversation": {
             "type": "object",

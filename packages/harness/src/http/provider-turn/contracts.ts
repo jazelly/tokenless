@@ -1,6 +1,6 @@
 import { WEB_AI_INTERACTION_PROTOCOL_V0 } from './version.js'
 
-export const REQUIRED_PROVIDER_CAPABILITIES = ['conversation.chat', 'file.upload'] as const
+export const REQUIRED_PROVIDER_CAPABILITIES = ['conversation.chat', 'file.upload', 'document.input'] as const
 export type ProviderCapability = (typeof REQUIRED_PROVIDER_CAPABILITIES)[number]
 
 // Runtime parsers and protocol adapters create these opaque values; TypeScript does not validate their hex payloads.
@@ -81,8 +81,8 @@ export type CapabilityDocument = {
   supportedCapabilities:
     | readonly ['conversation.chat']
     | readonly ['file.upload']
-    | readonly ['conversation.chat', 'file.upload']
-    | readonly ['file.upload', 'conversation.chat']
+    | readonly ['conversation.chat', 'file.upload', 'document.input']
+    | readonly ['file.upload', 'conversation.chat', 'document.input']
 }
 
 export type NewTurnRequest = {
@@ -90,7 +90,7 @@ export type NewTurnRequest = {
   requestRef: RequestRef
   providerRef: ProviderRef
   providerBindingRef: ProviderBindingRef
-  requiredCapabilities: readonly ['conversation.chat', 'file.upload']
+  requiredCapabilities: readonly ['conversation.chat', 'file.upload', 'document.input']
   semanticPreference?: string | undefined
   conversation: { mode: 'new' }
   bootstrap: BootstrapStartMessage
@@ -101,7 +101,7 @@ export type ContinueTurnRequest = {
   requestRef: RequestRef
   providerRef: ProviderRef
   providerBindingRef: ProviderBindingRef
-  requiredCapabilities: readonly ['conversation.chat', 'file.upload']
+  requiredCapabilities: readonly ['conversation.chat', 'file.upload', 'document.input']
   conversation: { mode: 'continue'; conversationRef: ConversationRef }
   continuation: {
     text: string

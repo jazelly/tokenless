@@ -23,7 +23,7 @@ Skill preparation 与 visible response control：
 
 该 package 只读取 `SKILL.md`，绝不会读取或执行 `references/`、`assets/` 或 `scripts/`。System Prompt 是必需 attachment；单独的 Skill attachment 使用 soft omission result。
 
-Provider transport 位于该 package 之外：所选 adapter 必须同时支持 `conversation.chat` 与 `file.upload`。用户自有 Skill 是 context input，不是 provider capability。Adapter 必须在调用 `finalizeHarnessBootstrapTurn` 前可见地接受 context；被拒绝的 Skill 会成为 soft `provider_upload_failed` omission，而被拒绝的 System Prompt 不会产生 prompt 或 task submission。一个 run 只有一个 writer；caller 不得并发 prepare 同一个 turn。
+Provider transport 位于该 package 之外：Harness Markdown 与其他非媒体 attachment 默认使用 `document.input`，因此所选 adapter 必须支持 `conversation.chat`、`file.upload` 与 `document.input`。用户自有 Skill 是 context input，不是 provider capability。Adapter 必须在调用 `finalizeHarnessBootstrapTurn` 前可见地接受 context；被拒绝的 Skill 会成为 soft `provider_upload_failed` omission，而被拒绝的 System Prompt 不会产生 prompt 或 task submission。一个 run 只有一个 writer；caller 不得并发 prepare 同一个 turn。
 
 ### Local HTTP V0 bootstrap
 
@@ -84,7 +84,7 @@ const preparation = await prepareHarnessBootstrapTurn({
   nonce: 'first-turn-nonce',
 })
 
-// 通过支持 conversation.chat 与 file.upload 的 Provider route 按顺序上传
+// 通过支持 conversation.chat、file.upload 与 document.input 的 Provider route 按顺序上传
 // preparation.attachments，然后按名称与 SHA-256 收集每个 attachment 的准确 acceptance outcome。
 const bootstrap = await finalizeHarnessBootstrapTurn({
   runId: 'run-123',

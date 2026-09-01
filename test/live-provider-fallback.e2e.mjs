@@ -153,6 +153,7 @@ test('real visible provider blocker falls back under one current job', { timeout
   assert.deepEqual(completed.job.request_json.capabilityRoute.requirements, [
     playwright.TASK_CAPABILITIES.CONVERSATION_CHAT,
     playwright.TASK_CAPABILITIES.FILE_UPLOAD,
+    playwright.TASK_CAPABILITIES.DOCUMENT_INPUT,
   ])
   assert.deepEqual(completed.job.request_json.context, request.context)
   const upload = responseResult(completed.result, playwright.VISIBLE_ACTIONS.FILE_UPLOAD)
@@ -190,6 +191,7 @@ function requiredRoute(playwright, provider) {
     requirements: [
       playwright.TASK_CAPABILITIES.CONVERSATION_CHAT,
       playwright.TASK_CAPABILITIES.FILE_UPLOAD,
+      playwright.TASK_CAPABILITIES.DOCUMENT_INPUT,
     ],
     candidates: [{ provider, runtimeEligibility: 'unchecked' }],
   })

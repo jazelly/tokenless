@@ -8,13 +8,14 @@
 
 - `conversation.chat`：ChatGPT、Claude、Gemini、Grok、Arena，以及实验性 Qwen、DeepSeek、Perplexity、Z.ai、Doubao、Kimi、Dola 和 Meta AI；
 - `image.generation` 与 `artifact.download`：实验性 ChatGPT、Gemini、Grok、Doubao、Dola、Arena 和 Meta AI；
-- `file.upload`：支持的 ChatGPT、Claude 与 Grok；实验性 Gemini、Qwen、DeepSeek、Perplexity、Z.ai、Doubao、Kimi、Dola 与 Meta AI；
+- `file.upload`（transport）：支持的 ChatGPT、Claude 与 Grok；实验性 Gemini、Qwen、DeepSeek、Perplexity、Z.ai、Doubao、Kimi、Dola 与 Meta AI，另有仅限图片的 Arena route；
+- `document.input`（Markdown/PDF 等文档）：与 generic-document `file.upload` 相同的 evidence-backed provider 集合，不包括 Arena 的 image-only route；Harness Markdown 与其他非媒体 attachment 默认使用此 semantic input；
 - `search.web`：实验性 Kimi；以及
 - `response.citations`：实验性 Kimi search。
 
 下面其他条目仍是待发现 candidate。特别是 `research.deep`、作为必需 production postcondition 的 citation、作为显式 capability 的 continuation、其他 generated media 与 generated work artifact，在完整 execution contract 得到实现并通过真实 provider E2E 闭合前均不可路由。
 
-Harness attachment gate 比 generic file upload 更严格：它要求 bootstrap Markdown、framed tool call、真实只读工具执行、同 conversation tool-result Markdown，以及无 fallback 的 succeeded child run。ChatGPT、Gemini、DeepSeek、Z.ai、Doubao、Kimi 与 Dola 已于 2026-08-31 通过。Claude、Grok、Qwen、Perplexity 与 Meta AI 保留 generic Markdown upload route，但不进入 Harness V0/Auto；Arena 接受图片而不接受 Markdown。具体当前原因记录在 [Capability Matrix](capability-matrix.zh-CN.md#harness-附件准入)。
+Harness attachment gate 比 generic file upload 更严格：它要求 bootstrap Markdown、framed tool call、真实只读工具执行、同 conversation tool-result Markdown，以及无 fallback 的 succeeded child run。ChatGPT、Gemini、DeepSeek、Z.ai、Doubao、Kimi 与 Dola 已于 2026-08-31 通过；Qwen 已于 2026-09-01 在 74,595ms 内通过，完成两次 submission、可见 attachment/submission/response proof、同一 conversation 的两个可见 turn、durable state，且无 fallback。Claude、Grok、Perplexity 与 Meta AI 保留 generic Markdown document route，但不进入 Harness V0/Auto。Arena 接受图片而不接受 Markdown；其 experimental `file.upload` transport 与 `image.input` 配对，且没有 `document.input` route。具体当前原因记录在 [Capability Matrix](capability-matrix.zh-CN.md#harness-附件准入)。
 
 统一的 `POST /v1/images/generations` endpoint 将 browser 与 direct result 持久化到同一个 scoped asset store。Browser auto routing 只选择同时具备 `image.generation` 和 `artifact.download`、已启用且可用的 provider；Gemini、Dola 与 Doubao gate 均已完成一次可见提交、terminal artifact、local digest 与 authenticated readback。Direct V1 包含逻辑 `tokenless/pollinations/sana` route 与显式 `tokenless/chatgpt/gpt-image` route；二者都不会在 public model ID、response 或 capability evidence 中暴露 private implementation name。Pollinations direct gate 生成并读回一个 768×768 JPEG；ChatGPT direct 在持久化已验证 image bytes 前使用 ephemeral browser-scoped auth bridge。
 
@@ -36,19 +37,19 @@ Product surface 比当前 Tokenless evidence 更广。中间一列结合官方�
 
 | Provider | 已记录或已真实观察、与 Tokenless 相关的 Web product capability | 当前 Tokenless 证据 |
 | --- | --- | --- |
-| ChatGPT | Chat、带 citation 的 Web search、Deep Research、file 与 image input、image generation/editing、data analysis、Canvas、agent mode，以及带 file 和 instruction 的 Projects | 支持 chat 与 Harness-verified `file.upload`；live gate 已闭环 bootstrap、工具执行、continuation 上传与无 fallback 的精确 final proof。独立 image 与 Project evidence 继续分别约束 |
-| Claude | Chat、Web search、Research、file 与 image、Projects 与 project knowledge、Artifacts、model selection、extended thinking 与 connector | 支持 chat、generic Markdown `file.upload` 与 native Project route；上传、提交和回复均通过，但 Harness attachment instruction 被拒绝为 prompt injection |
-| Gemini | Chat、Web-grounded answer、Deep Research、file 与 image input、Deep Think、image/video/music generation、Canvas、Gems、notebook、connected source 与 GitHub repository import | 支持 chat，加 experimental Harness-verified `file.upload`；upload control 页面重绘由既有 interaction timeout 观察。Image generation 独立保持 experimental |
-| Grok | Chat、带 citation 的 X 与 Web search、reasoning mode、image input 与 image generation | 支持 chat 与 generic Markdown `file.upload`；选定 profile 的可见周限额持续到 2026-09-02 06:47:22 UTC，因此当前不进入 Harness。Imagine image generation 独立保持 experimental |
-| Qwen | Chat、Web search、Deep Research Normal/Advanced、file-assisted research、image generation/editing、video generation、Web Dev、Artifacts、Slides、Learn 与 travel planning mode | Focused byte、size 与 filename probe 通过后，generic Markdown `file.upload` 保持 experimental；完整 Harness job 在卡片可见性与提交 transition 上仍不稳定 |
-| DeepSeek | 已登录 Web chat、Instant/Expert/Vision mode、DeepThink、Web search、广泛 file/image input 与同步 chat history | 实验性 chat 与 Harness-verified `file.upload`；bootstrap、framed 只读工具调用、同 conversation tool-result 上传与精确 final proof 已无 fallback 通过 |
-| Perplexity | 带 citation 的 Web search、Pro Search、Advanced Deep Research、file-aware research、Spaces、model selection、image generation/editing 与 multi-format asset creation | 实验性 chat 与 generic Markdown `file.upload` 保留；选定 Free profile 的官方每天 3 次额度已用完，API capacity guard 会在 browser work 前排除需要 2 次上传的 Harness request |
-| Z.ai / GLM | GLM-5.2 Web chat、1M context、灵活 effort level、coding 与 long-horizon agent strengths | 实验性 chat 与 Harness-verified Markdown `file.upload`；点击无 transition 后的普通 Enter 提交和 conversation 页 composer 已闭合两轮 |
-| Doubao / 豆包 | 已登录中文 Web chat；可见 free-account 判别；Fast、Expert 与 Work Task mode；writing、presentation、image、video、deep-research、podcast、music、problem-solving 与 spreadsheet Web skill；广泛 file input；仅 desktop 可用的 recording transcription 入口 | 实验性 chat、image 与 Harness-verified Markdown `file.upload`；adapter 会在提交前精确关闭 provider desktop-promotion dialog |
-| Kimi | 已登录 Web chat；Instant、K3 与 K3 Swarm model；Standard/High thinking effort；file、Web search、Plugins、Skills、Projects 与更广泛的 research/agent/artifact surface | 实验性 chat、search 与 Harness-verified Markdown `file.upload`；选定的 `web-ai` Cloak profile 已登录 `kimi.ai` 并完成两轮 |
-| Dola | 已登录 Web chat；Fast 与 Pro 选择；file input；Create Image、Writing、Create Video、Translate 与 Homework 入口；独立 Seedream image-creation surface；未观察到 Project、file library 或 persistent knowledge-management surface | 实验性 chat 与 Harness-verified `file.upload`；两轮 Markdown 均被逐个可见观察并使用。Image generation 独立保持 experimental |
-| Arena | 已登录 Battle、Direct 与 Side-by-Side chat；model selection；file input；Search、Code、Agent、Image 与 Video surface | 支持 Direct chat，独立 generated-image route 保持 experimental；真实 input 接受 PNG、JPEG 与 WebP，但不接受 Markdown，因此 generic `file.upload` 已移除 |
-| Meta AI | 已登录 Web chat；Instant 与 Thinking mode；广泛 file input；可见 image generation；research-progress 与 assistant-response surface | 实验性 chat、image 与 generic Markdown `file.upload` 保留；精确 Harness bytes 可上传，但组合 attachment instruction 被静默拒绝且不创建 conversation |
+| ChatGPT | Chat、带 citation 的 Web search、Deep Research、file 与 image input、image generation/editing、data analysis、Canvas、agent mode，以及带 file 和 instruction 的 Projects | 支持 chat，以及 Harness-verified `file.upload` transport 与 `document.input`；live gate 已闭环 bootstrap、工具执行、continuation 上传与无 fallback 的精确 final proof。独立 image 与 Project evidence 继续分别约束 |
+| Claude | Chat、Web search、Research、file 与 image、Projects 与 project knowledge、Artifacts、model selection、extended thinking 与 connector | 支持 chat、generic Markdown `file.upload` transport 与 `document.input`，以及 native Project route；上传、提交和回复均通过，但 Harness attachment instruction 被拒绝为 prompt injection |
+| Gemini | Chat、Web-grounded answer、Deep Research、file 与 image input、Deep Think、image/video/music generation、Canvas、Gems、notebook、connected source 与 GitHub repository import | 支持 chat，加 experimental Harness-verified `file.upload` transport 与 `document.input`；upload control 页面重绘由既有 interaction timeout 观察。Image generation 独立保持 experimental |
+| Grok | Chat、带 citation 的 X 与 Web search、reasoning mode、image input 与 image generation | 支持 chat 与 generic Markdown `file.upload` transport、`document.input`；选定 profile 的可见周限额持续到 2026-09-02 06:47:22 UTC，因此当前不进入 Harness。Imagine image generation 独立保持 experimental |
+| Qwen | Chat、Web search、Deep Research Normal/Advanced、file-assisted research、image generation/editing、video generation、Web Dev、Artifacts、Slides、Learn 与 travel planning mode | Experimental Markdown `file.upload` transport 与 `document.input`，现已 Harness-verified：74,595ms built CLI/packaged-daemon gate 在同一 conversation 完成两次 submission、可见 attachment/submission/response proof、两个可见 turn、durable state，且无 fallback。Adapter 等待 spinner/`Parsing...` terminal state，只移除文件名精确匹配、卡片自身有可见 **Remove file** 控件的 pending stale draft，然后沿可见 Select Mode → Upload attachment path 对当前 `#filesUpload` input 设置一次文件；terminal busy state 只使用 `button.stop-button` |
+| DeepSeek | 已登录 Web chat、Instant/Expert/Vision mode、DeepThink、Web search、广泛 file/image input 与同步 chat history | 实验性 chat 与 Harness-verified `file.upload` transport、`document.input`；bootstrap、framed 只读工具调用、同 conversation tool-result 上传与精确 final proof 已无 fallback 通过 |
+| Perplexity | 带 citation 的 Web search、Pro Search、Advanced Deep Research、file-aware research、Spaces、model selection、image generation/editing 与 multi-format asset creation | 实验性 chat 与 generic Markdown `file.upload` transport、`document.input` 保留；选定 Free profile 的官方每天 3 次额度已用完，API capacity guard 会在 browser work 前排除需要 2 次上传的 Harness request |
+| Z.ai / GLM | GLM-5.2 Web chat、1M context、灵活 effort level、coding 与 long-horizon agent strengths | 实验性 chat 与 Harness-verified Markdown `file.upload` transport、`document.input`；点击无 transition 后的普通 Enter 提交和 conversation 页 composer 已闭合两轮 |
+| Doubao / 豆包 | 已登录中文 Web chat；可见 free-account 判别；Fast、Expert 与 Work Task mode；writing、presentation、image、video、deep-research、podcast、music、problem-solving 与 spreadsheet Web skill；广泛 file input；仅 desktop 可用的 recording transcription 入口 | 实验性 chat、image 与 Harness-verified Markdown `file.upload` transport、`document.input`；adapter 会在提交前精确关闭 provider desktop-promotion dialog |
+| Kimi | 已登录 Web chat；Instant、K3 与 K3 Swarm model；Standard/High thinking effort；file、Web search、Plugins、Skills、Projects 与更广泛的 research/agent/artifact surface | 实验性 chat、search 与 Harness-verified Markdown `file.upload` transport、`document.input`；选定的 `web-ai` Cloak profile 已登录 `kimi.ai` 并完成两轮 |
+| Dola | 已登录 Web chat；Fast 与 Pro 选择；file input；Create Image、Writing、Create Video、Translate 与 Homework 入口；独立 Seedream image-creation surface；未观察到 Project、file library 或 persistent knowledge-management surface | 实验性 chat 与 Harness-verified `file.upload` transport、`document.input`；两轮 Markdown 均被逐个可见观察并使用。Image generation 独立保持 experimental |
+| Arena | 已登录 Battle、Direct 与 Side-by-Side chat；model selection；file input；Search、Code、Agent、Image 与 Video surface | 支持 Direct chat，独立 generated-image route 保持 experimental；实验性 image-scoped `file.upload` transport 与 `image.input` 接受 PNG、JPEG 与 WebP，但没有 `document.input` 或 Markdown route |
+| Meta AI | 已登录 Web chat；Instant 与 Thinking mode；广泛 file input；可见 image generation；research-progress 与 assistant-response surface | 实验性 chat、image 与 generic Markdown `file.upload` transport、`document.input` 保留；精确 Harness bytes 可上传，但组合 attachment instruction 被静默拒绝且不创建 conversation |
 
 官方参考：
 
@@ -103,7 +104,7 @@ Caller catalog 必须描述 outcome，而不是 provider control。`qwen.mode`�
 | Family | Candidate canonical capabilities |
 | --- | --- |
 | Conversation | `conversation.chat`、`conversation.continue` |
-| Inputs | `file.upload`、`image.input`、`audio.input`、`video.input`、`url.input`、`repository.import` |
+| Inputs | `file.upload`（transport）、`document.input`、`image.input`、`audio.input`、`video.input`、`url.input`、`repository.import` |
 | Retrieval and reasoning | `search.web`、`research.deep`、`reasoning.extended`、`audio.transcription`、`code.execute`、`data.analyze` |
 | Media generation | `image.generation`、`image.edit`、`video.generation`、`audio.generation` |
 | Artifact generation | `document.generation`、`presentation.generation`、`spreadsheet.generation`、`website.generation` |
@@ -112,7 +113,7 @@ Caller catalog 必须描述 outcome，而不是 provider control。`qwen.mode`�
 
 这是一套 candidate vocabulary。只有至少一个 provider 拥有完整 semantics 与真实 provider closure 时，capability 才能公开。相似的 provider label 不能证明行为等价。
 
-Kimi Skill 或 Dola Homework 等 provider-native label 仍是 namespaced workflow。用户自有 `SKILL.md` 是通过 `conversation.chat` 加 `file.upload` 交付的独立 Harness context，不属于 canonical capability vocabulary。
+Kimi Skill 或 Dola Homework 等 provider-native label 仍是 namespaced workflow。用户自有 `SKILL.md` 是通过 `conversation.chat`、`file.upload` 与 `document.input` 交付的独立 Harness context，不属于 canonical capability vocabulary。
 
 保持 public catalog 精简。Real-time voice conversation、persistent personalization/memory、任意 autonomous Web action、connector write，以及 iterative artifact editing/sharing 都需要独立 safety 与 lifecycle contract。Schema 以后可以增加这些 outcome，但“agent”“canvas”或“memory”等 provider 营销 label 不能作为定义不足的 generic capability 进入 V2。
 

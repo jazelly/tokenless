@@ -28,7 +28,7 @@ test('built Harness package prepares the required System Prompt and preselected 
       }],
     })
 
-    assert.deepEqual(prepared.requiredProviderCapabilities, ['conversation.chat', 'file.upload'])
+    assert.deepEqual(prepared.requiredProviderCapabilities, ['conversation.chat', 'file.upload', 'document.input'])
     assert.deepEqual(prepared.registry.skills.map((skill) => skill.name), [
       'document-review',
       'legacy-description',
@@ -91,7 +91,7 @@ test('built Harness package finalizes a correlated bootstrap turn only after exa
     assert.equal(preparation.runId, 'bootstrap-run')
     assert.equal(preparation.turn, 1)
     assert.equal(preparation.nonce, 'bootstrap-nonce-001')
-    assert.deepEqual(preparation.requiredProviderCapabilities, ['conversation.chat', 'file.upload'])
+    assert.deepEqual(preparation.requiredProviderCapabilities, ['conversation.chat', 'file.upload', 'document.input'])
     assert.deepEqual(preparation.attachments.map((attachment) => attachment.kind), ['system_prompt', 'skill', 'skill'])
     assert.equal(preparation.attachments[0].sourcePath, preparation.systemPrompt.sourcePath)
     assert.deepEqual(preparation.attachments.slice(1).map((attachment) => attachment.skillName), [

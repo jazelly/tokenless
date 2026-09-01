@@ -88,7 +88,6 @@ export class QwenProvider extends BaseProvider<'qwen'> {
       blockerSelectors: Object.freeze([]),
       busySelectors: Object.freeze([
         'button.stop-button',
-        '.qwen-chat-message-awaiting-response',
       ]),
       interactionTimings: Object.freeze({
         attachmentReadyTimeoutMs: 120_000,
@@ -402,7 +401,7 @@ async function visibleQwenImageText(page: Page) {
 }
 
 async function visibleQwenBusyCount(page: Page) {
-  return await page.locator('.qwen-chat-message-awaiting-response, button.stop-button').filter({ visible: true }).count()
+  return await page.locator('button.stop-button').filter({ visible: true }).count()
 }
 
 async function isQwenImageMode(page: Page) {

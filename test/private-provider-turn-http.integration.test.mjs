@@ -131,7 +131,7 @@ test('continuation reuses the proved provider conversation in the same process',
         requestRef: `request:${'b'.repeat(32)}`,
         providerRef: binding.capabilities.providerRef,
         providerBindingRef: binding.providerBindingRef,
-        requiredCapabilities: ['conversation.chat', 'file.upload'],
+        requiredCapabilities: ['conversation.chat', 'file.upload', 'document.input'],
         conversation: { mode: 'continue', conversationRef: first.conversationRef },
         continuation: {
           text: 'continue from the attached action result',
@@ -254,7 +254,7 @@ test('auto bootstrap preference reorders eligible providers while continuation k
         requestRef: `request:${'1'.repeat(32)}`,
         providerRef: binding.capabilities.providerRef,
         providerBindingRef: binding.providerBindingRef,
-        requiredCapabilities: ['conversation.chat', 'file.upload'],
+        requiredCapabilities: ['conversation.chat', 'file.upload', 'document.input'],
         conversation: { mode: 'continue', conversationRef: first.conversationRef },
         continuation: {
           text: 'continue from the attached action result',
@@ -411,7 +411,7 @@ test('canonical start conformance rejects the same adversarial corpus at core, c
       const corpus = [
         { ...valid, unknown: true },
         { ...valid, requiredCapabilities: ['conversation.chat'] },
-        { ...valid, requiredCapabilities: ['file.upload', 'conversation.chat'] },
+        { ...valid, requiredCapabilities: ['file.upload', 'conversation.chat', 'document.input'] },
         { ...valid, bootstrap: { ...valid.bootstrap, text: 'x'.repeat(4001) } },
         { ...valid, bootstrap: { ...valid.bootstrap, attachments: [{ ...valid.bootstrap.attachments[0], attachmentRef: 'attachment:not-a-ref' }] } },
         { ...valid, bootstrap: { ...valid.bootstrap, attachments: [{ ...valid.bootstrap.attachments[0], byteLength: 0 }] } },

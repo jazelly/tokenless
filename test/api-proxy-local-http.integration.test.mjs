@@ -115,7 +115,7 @@ test('image auto routing creates one browser job from image-capable providers on
   })
 })
 
-test('browser image edit rejects Arena before staging because it has no generic file upload route', async () => {
+test('browser image edit stages Arena with its image-scoped upload route', async () => {
   await withDaemon(async (daemon) => {
     const { ManagedProfileRegistry } = await import(profileRegistryModule)
     const registry = new ManagedProfileRegistry(daemon.homeDir)
@@ -139,7 +139,7 @@ test('browser image edit rejects Arena before staging because it has no generic 
       },
     })
 
-    const response = await call(daemon, 'POST', '/v1/images/generations', {
+    const pending = call(daemon, 'POST', '/v1/images/generations', {
       model: 'tokenless/arena',
       prompt: 'Turn the attached mark into a small green leaf icon.',
       reference_image: REFERENCE_IMAGE,
@@ -151,11 +151,19 @@ test('browser image edit rejects Arena before staging because it has no generic 
         timeout_ms: 30_000,
       },
     })
-    assert.equal(response.status, 503)
-    assert.equal(response.body.error.code, 'image_route_unavailable')
-    assert.deepEqual(daemon.store.listJobs({ limit: 1 }), [])
-    const attachmentRoot = path.join(daemon.homeDir, 'attachments')
-    assert.equal(fs.existsSync(attachmentRoot) ? fs.readdirSync(attachmentRoot).length : 0, 0)
+    const job = await waitForQueuedApiProxyJob(daemon, 'IMAGE_HTTP_ARENA_REFERENCE')
+    assert.equal(job.provider, 'arena')
+    assert.deepEqual(job.request_json.capabilityRoute.requirements, [
+      'image.edit',
+      'image.input',
+      'file.upload',
+      'artifact.download',
+    ])
+    assert.equal(job.request_json.fallback, null)
+    await daemon.store.cancelJob(job.job_id, 'focused Arena image edit route test completed')
+    const response = await pending
+    assert.equal(response.status, 502)
+    assert.equal(response.body.error.code, 'image_provider_job_failed')
   })
 })
 

@@ -5,7 +5,7 @@ export const HARNESS_SKILL_MODULE_PROTOCOL = 'tokenless.web-agent.skills/v1' as 
 export const HARNESS_SKILL_STATE_PROTOCOL = 'tokenless.web-agent.skills-state/v1' as const
 export const HARNESS_RUN_PROTOCOL = 'tokenless.web-agent.run/v1' as const
 export const PROVIDER_TURN_PROTOCOL = 'tokenless.provider-turn/v1' as const
-export const REQUIRED_HARNESS_PROVIDER_CAPABILITIES = ['conversation.chat', 'file.upload'] as const
+export const REQUIRED_HARNESS_PROVIDER_CAPABILITIES = ['conversation.chat', 'file.upload', 'document.input'] as const
 
 export type JsonPrimitive = string | number | boolean | null
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue }

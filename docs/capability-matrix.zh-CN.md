@@ -10,14 +10,14 @@ Tokenless Capability Matrix 是 caller outcome 与 provider implementation 之�
 
 Tokenless 将四个相关关注点明确分开：
 
-1. **Canonical capability catalog** — caller 可以要求的 provider-neutral outcome，例如 `conversation.chat`、`file.upload`、`search.web`。
+1. **Canonical capability catalog** — caller 可以要求的 provider-neutral outcome，例如 `conversation.chat`、`file.upload`、`document.input`、`search.web`。
 2. **Provider bindings** — 从 canonical outcome 到 namespaced provider workflow/control 的 evidence-backed mapping。
 3. **User-owned Skills** — Web Agent Harness 交付的 caller-selected `SKILL.md` context；它是 job input，不是 provider capability。
 4. **Live acceptance matrix** — route 对外发布前，必须通过 built CLI、packaged daemon、managed browser 与真实 provider network 的验收用例。
 
 Provider-specific control 不会自动成为 canonical capability。例如 DeepSeek `Search` 是可能实现 `search.web` 的 adapter control；Dola `translate` 目前只是实现 specialized chat path 的 namespaced workflow。公共契约描述 outcome，adapter 负责 provider UI 细节。
 
-用户选择的 Skill 也不是 capability。Harness 会解析 `SKILL.md`、固定其内容 hash，再与 Harness System Prompt 一起通过普通 `file.upload` 交付。因此 eligible provider 只需要 `conversation.chat` 与 `file.upload`，不需要 `skill.invoke`。
+用户选择的 Skill 也不是 capability。Harness 会解析 `SKILL.md`、固定其内容 hash，再与 Harness System Prompt 一起通过普通 `file.upload` 交付。因此 eligible provider 需要 `conversation.chat`、`file.upload` 与 `document.input`，不需要 `skill.invoke`。
 
 ## 用户模型
 
@@ -39,8 +39,8 @@ tokenless run \
 Tokenless 会合并显式 requirement 与结构化推导：
 
 - 普通 submit-and-read run 要求 `conversation.chat`；
-- 任意 attachment 要求 `file.upload`；
-- image、audio、video attachment 还会要求对应 input capability；
+- 任意 attachment 要求传输 capability `file.upload`；
+- image、audio、video 与其他 document attachment 还会分别要求且只要求对应的 semantic input capability（`image.input`、`audio.input`、`video.input` 或 `document.input`）；
 - `--workspace-mode auto` 或 `native` 要求 `workspace.native`。
 
 Provider selection 前会展开所有 implication。同一家 provider 必须满足完整 requirement set；Tokenless 不会静默丢弃任何必需 outcome。
@@ -55,8 +55,11 @@ Provider selection 前会展开所有 implication。同一家 provider 必须满
 | `conversation.continue` | — | — | — | — | — | — | — | — | — | — | — | Supported | — |
 | `model.compare` | — | — | — | — | — | — | — | — | — | — | — | Supported | — |
 | `agent.execute` | — | — | — | — | — | — | — | — | — | — | — | Experimental | — |
-| `file.upload` | Supported | Supported | Experimental | Supported | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | — | Experimental |
+| `file.upload`（transport） | Supported | Supported | Experimental | Supported | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental |
+| `document.input` | Supported | Supported | Experimental | Supported | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | — | Experimental |
 | `image.input` | — | — | — | — | — | — | — | — | — | — | — | Experimental | — |
+| `audio.input` | — | — | — | — | — | — | — | — | — | — | — | — | — |
+| `video.input` | — | — | — | — | — | — | — | — | — | — | — | — | — |
 | `image.generation` | Experimental | — | Experimental | Experimental | — | — | — | — | Experimental | — | Experimental | Experimental | Experimental |
 | `image.edit` | — | — | — | — | — | — | — | — | — | — | — | Experimental | — |
 | `artifact.download` | Experimental | — | Experimental | Experimental | — | — | — | — | Experimental | — | Experimental | Experimental | Experimental |
@@ -69,7 +72,7 @@ Provider selection 前会展开所有 implication。同一家 provider 必须满
 
 当前表是 **Browser execution matrix**。catalog 同时暴露独立的 direct bindings：ChatGPT 有 `conversation.chat`、`image.generation` 与 `artifact.download`，Perplexity 有独立的 direct `conversation.chat` binding。Direct evidence 不能从 Browser route，也不能从恰好声明 `direct` 的 provider descriptor 推断。
 
-Route 会按完整 requirement set 评估。例如 image attachment 同时要求 `file.upload` 与 `image.input`；仅有 `file.upload` 这一行并不代表图片上传已经 routeable。
+Route 会按完整 requirement set 评估。例如 image attachment 同时要求 `file.upload` 与 `image.input`，Markdown/PDF attachment 同时要求 `file.upload` 与 `document.input`；仅有 transport 行并不代表 semantic input 已经 routeable。
 
 ## Harness 附件准入
 
@@ -86,12 +89,12 @@ Route 会按完整 requirement set 评估。例如 image attachment 同时要求
 | Dola | Verified | 完整 bootstrap 与 continuation Markdown round-trip 通过 |
 | Claude | Unavailable | Generic Markdown 上传、提交与回复均通过，但回复把 Harness 附件拒绝为 prompt injection |
 | Grok | Unavailable | 选定 profile 处于可见周限额，截止 2026-09-02 06:47:22 UTC |
-| Qwen | Unavailable | Generic Markdown 上传通过，但完整 Harness job 间歇性没有附件卡片，且 submit 没有可见 transition |
+| Qwen | Verified | built CLI 与 packaged daemon 已在 74,595ms 内完成 Harness attachment round-trip：两次 submission、可见 attachment/submission/response proof、同一 conversation 的两个可见 turn、durable state，且无 fallback |
 | Perplexity | Unavailable | 选定 Free profile 每天 3 次上传；当前提交历史已用完 3 次，而两轮 Harness 还需要 2 次 |
 | Arena | Unavailable | 真实 file input 接受 PNG、JPEG 与 WebP，但不接受 Markdown |
 | Meta AI | Unavailable | Generic Markdown 上传通过，但真实 Harness 附件 instruction 被静默拒绝，没有创建 conversation |
 
-Claude、Grok、Qwen、Perplexity 与 Meta AI 的 generic `file.upload` 继续公开，因为 Markdown 上传证据与 Harness protocol compliance 相互独立。Private provider-turn V0、Harness Auto 与 semantic router 必须看到 `harness-attachment-roundtrip` evidence，因此这些 generic-only route 不会进入 Harness candidate selection。Arena 没有 Markdown `file.upload` route。
+Claude、Grok、Perplexity 与 Meta AI 的 generic document input 继续单独公开，因为 Markdown 上传证据与 Harness protocol compliance 相互独立。Qwen 现在已有 Harness-verified 的 `file.upload` 与 `document.input` evidence。Private provider-turn V0、Harness Auto 与 semantic router 必须看到 `harness-attachment-roundtrip` evidence；Arena 的 experimental `file.upload` route 仅限图片、与 `image.input` 配对，且没有 `document.input` route。
 
 ChatGPT、Gemini、Grok、豆包、Dola、Arena 与 Meta AI Image artifact 会通过选定的 Playwright browser session 下载到按 task、conversation、job 与时间划分的 `assets` 目录。公开 response 只包含 relative asset reference、media type、尺寸、byte size 与 SHA-256 digest；带签名的 provider URL 仅在内存中使用。authenticated daemon 的 `GET /v1/private/assets/{taskId}/{conversationId}/{assetBatch}/{assetFile}` endpoint 会以实际图片 media type 返回已验证 bytes；路径越界、损坏或缺失 asset 会 fail closed。
 
@@ -99,11 +102,11 @@ ChatGPT 的 `image.generation` 与 `artifact.download` 已作为 experimental ro
 
 Grok 的 `image.generation` 与 `artifact.download` 已在独立 Imagine Image surface 上实验性开放。Tokenless 会精确选择 ×2 output、记录提交前的 post set，等待恰好两个新的终态 post identity，忽略网格里的 data-URI preview，逐个打开当前 `/imagine/post/:assetId`，且只下载匹配 `assets.grok.com/.../generated/:assetId/` 的 HTTPS 图片。真实 asset run 生成了两张 768×1152 JPEG，并验证 baseline set-difference、post identity、provider bytes、本地 digest、browser decode 与 authenticated daemon readback。
 
-Arena `conversation.chat`、`conversation.continue` 与 `model.compare` 已支持选定的已登录 profile。新建文字会话前，adapter 会精确选择 **Direct** mode；`model.inspect` 与 `model.select` 可在提交前精确选择一个可见 Direct model，并恢复原始 **Max** router。Built CLI 与 packaged daemon 已证明实质性的 selected-model 回复、已持久化的 `/c/:conversationId` mapping，以及第二个 CLI 进程通过同一 daemon 在同一 URL 只返回最新回答。Battle 会返回两份匿名回答，并将 `model` 明确设为 `null`；Side-by-Side 会返回两份回答与两个可见 selected model 标签。Generic client 会收到完整 A/B 文本，结构化 client 还会收到 `alternatives`。Arena `search.web` 与 `response.citations` 保持 experimental。Arena `image.generation` 与 `artifact.download` 仍用于无附件的 Direct Image；由于真实 input 只接受 PNG、JPEG 与 WebP，不接受 Harness Markdown，generic `file.upload` binding 已移除。Arena `website.generation`、`agent.execute` 与 `video.generation` 继续在各自独立 surface 保持 experimental。Adapter 也会处理 provider 自身提供、内容精确的 **Terms of Use & Privacy Policy** → **Agree** onboarding 对话框；由于当前所选账号已经接受过条款，新账号重复验证仍待完成。
+Arena `conversation.chat`、`conversation.continue` 与 `model.compare` 已支持选定的已登录 profile。新建文字会话前，adapter 会精确选择 **Direct** mode；`model.inspect` 与 `model.select` 可在提交前精确选择一个可见 Direct model，并恢复原始 **Max** router。Built CLI 与 packaged daemon 已证明实质性的 selected-model 回复、已持久化的 `/c/:conversationId` mapping，以及第二个 CLI 进程通过同一 daemon 在同一 URL 只返回最新回答。Battle 会返回两份匿名回答，并将 `model` 明确设为 `null`；Side-by-Side 会返回两份回答与两个可见 selected model 标签。Generic client 会收到完整 A/B 文本，结构化 client 还会收到 `alternatives`。Arena `search.web` 与 `response.citations` 保持 experimental。Arena `image.generation` 与 `artifact.download` 仍用于无附件的 Direct Image；其 experimental `file.upload` transport 与 `image.input` 配对，仅接受 PNG、JPEG 与 WebP，不接受 Harness Markdown。Arena 没有 `document.input` route。Arena `website.generation`、`agent.execute` 与 `video.generation` 继续在各自独立 surface 保持 experimental。Adapter 也会处理 provider 自身提供、内容精确的 **Terms of Use & Privacy Policy** → **Agree** onboarding 对话框；由于当前所选账号已经接受过条款，新账号重复验证仍待完成。
 
 Authenticated `POST /v1/images/generations` endpoint 是 browser 与 direct execution 共用的 canonical image input。Browser auto routing 只把 enabled、usable provider 与 `image.generation`、`artifact.download` 两条 route 取交集，再由已选 provider 组装自己的 image action；Gemini、豆包与 Dola 已加入此前闭环的 browser image routes。Direct V1 保留 logical `tokenless/pollinations/sana` model，并增加显式的 `tokenless/chatgpt/gpt-image`；两者使用同一个 scoped asset contract，同时不在 public model ID、response 或 capability evidence 中暴露 private backend name。ChatGPT direct image 会从选定的 managed browser bootstrap 一个短生命周期 provider-scoped session，经 private adapter 提交，最终只返回已验证的本地 asset。两种 mode 都返回共有 authenticated asset URL 与 metadata。真实 Pollinations direct gate 已生成并回读一张 768×768 JPEG；Gemini、Dola 与豆包的 focused gate 也分别完成了一次可见提交、终态 artifact、本地 digest 与 authenticated readback。
 
-Browser image 请求可携带一个不超过 8 MiB 的 PNG、JPEG 或 WebP `reference_image` data URL。此类请求要求 `image.edit`、`image.input`、`file.upload` 与 `artifact.download` 的完整 route；remote URL 与 direct-mode reference image 会在 provider submission 前失败。Arena 的 generic `file.upload` route 移除后，目前没有 provider 满足这组完整 Browser 要求。它原有的 image-only edit evidence 仍然有效，但不能证明 Harness Markdown support。
+Browser image 请求可携带一个不超过 8 MiB 的 PNG、JPEG 或 WebP `reference_image` data URL。此类请求要求 `image.edit`、`image.input`、`file.upload` 与 `artifact.download` 的完整 route；remote URL 与 direct-mode reference image 会在 provider submission 前失败。Arena 的 experimental image-only route 会为其接受的 PNG、JPEG 与 WebP 格式满足这组完整 Browser 要求；它的 `arena-image` evidence 不能推广为 `document.input` 或 Harness Markdown support。
 
 可选开启的本地 [API proxy](api-proxy-integration.zh-CN.md) 覆盖解析出的 profile 上任何已启用 provider 的 `conversation.chat`，model 命名为 `tokenless/<provider>`。其 OpenAI Chat Completions route 已实现现代 function calls，可用非流式或终态 SSE 返回：Tokenless 校验 catalog 与完整的一对一 result history，调用方仍是唯一 tool executor。Generic prompt-emulation layer 对每个 eligible text conversation provider 开放；provider-specific evidence 只记录 observed conformance，不再构成 allowlist。Tokenless 接受 bare JSON、一个完整 `json`/`text` fence，或被 non-executable prose 包围的唯一 top-level JSON object。提取出的 object 仍必须通过 protocol、nonce、tool choice、call-count、history、argument/schema 与 response-format validation；多个 candidate 或额外 protocol marker 会 fail closed。见[当前 Gemini evidence](evidence/openai-structured-control-gemini-2026-08-27.md)与[早期 framing evidence](evidence/openai-tool-prompt-framing-2026-08-15.md)。`tool_choice` 支持 auto、none、required 与一个精确 named function；省略/true `parallel_tool_calls` 允许按 model order 返回多个调用，false 最多允许一个，而 named choice 始终恰好返回一个。`strict: true` 只准入递归 closed object schema，要求每个 property 都是 required，并对返回 arguments 做 schema 校验。Framing、choice、call-count 或 schema violation 会以 `provider_output_protocol_error` 失败；只有 nonce-correlated `final` 或 `tool_calls` strict JSON serialization failure 可以获得一次 same-kind bounded correction。Packaged daemon 已通过真实 DeepSeek 完成 [single-call](evidence/openai-tool-choice-strict-deepseek-2026-08-15.md)、[sequential streaming](evidence/dsh-streaming-tool-loop-2026-08-15.md) 与 [multiple-call](evidence/openai-multiple-tool-calls-deepseek-2026-08-15.md) tool loop。OpenAI structured final 现已支持有无 tools 时的 `json_object` 与已发布的递归 closed `json_schema` subset；non-stream 与终态 SSE 的成功 content 都是通过声明 schema 的 strict JSON，否则请求会明确失败。Structured number 必须是 canonical finite JSON number，schema/output 的整数值必须是 JavaScript safe integer。`$defs`、`$ref`、根节点 `anyOf` 与未列出的 schema keyword 会在创建 job 前被拒绝。Responses alias 现已公开同一 function/structured 语义，并支持 typed terminal event、full-input replay 与 bounded provider-affine `previous_response_id` ledger；见[当前 SDK 真实证据](evidence/openai-responses-deepseek-2026-08-15.md)。Anthropic tool use 仍不公开。Comparison、Search、Image、Code、Agent 与 Video 等 specialized outcome 继续使用 task API，以保留结构化输出。
 
@@ -119,7 +122,7 @@ Gemini 的 `image.generation` 与 `artifact.download` 已作为 experimental bro
 
 2026-08-09，built CLI 与 packaged daemon 通过 headed Cloak `web-ai` 上传了三份 Markdown 文档，并读取附件相关的可见回复（job `tlp_0b9dde88-e2c2-46e5-8231-81b4f74403e1`；provider 端到端 27.3 秒）。提交给 Gemini 的 Tokenless-rendered request 原样包含冻结的 521 字符 Matrix V2 user prompt；完整 rendered request 为 853 字符，并不等同于该 user prompt。本地 output-savings event 以 `o200k_base` 为 1,607 个可见回复字符估算了 295 个输出 token；这只是本地可见输出估算，并非 provider 计费或 input-token telemetry。
 
-Qwen 的可见 **Select Mode** → **Upload attachment** 路径已实现，generic Markdown `file.upload` 保持 experimental。Focused run 分别接受了小型 Markdown、大型 benign 文档、精确 compiled bytes 与 Harness 文件名。完整 Harness job 仍不稳定：部分运行 120 秒内没有可见卡片，另一次出现卡片但 submit 没有可见 transition。这些证据足以公开 generic upload，但不足以进入 Harness。
+Qwen 的可见 **Select Mode** → **Upload attachment** 路径已实现，Markdown `file.upload` 与 `document.input` 保持 experimental 且已通过 Harness 验证。Adapter 会等待可见 spinner/`Parsing...` terminal state，只移除文件名精确匹配、卡片自身有可见 **Remove file** 控件的 pending stale draft，然后沿可见 upload path 点击并对当前 `#filesUpload` input 设置一次文件（不使用 chooser、不 retry）。已完成的 assistant card 仍永久保留 `.qwen-chat-message-awaiting-response`，因此 terminal busy state 只使用真实 `button.stop-button`；2026-09-01 的 built CLI/packaged-daemon gate 已在同一 conversation 完成两次 submission、两个可见 turn 与 durable state。
 
 DeepSeek 的 `conversation.chat` 与 Markdown `file.upload` 已作为 experimental route 对外提供，并在选定 profile 完成 Harness 验证。当前 live gate 已闭环 bootstrap 上传、framed `workspace.read`、同 conversation tool-result 上传、精确 final proof，以及无 fallback 的 succeeded child run。
 
@@ -185,7 +188,7 @@ V2 catalog 按持久语义分组，而不是按 provider marketing category 分�
 | Family | Canonical capabilities |
 | --- | --- |
 | Conversation | `conversation.chat`, `conversation.continue` |
-| Input | `file.upload`, `image.input`, `audio.input`, `video.input`, `url.input`, `repository.import` |
+| Input | `file.upload`（transport）、`document.input`、`image.input`、`audio.input`、`video.input`、`url.input`、`repository.import` |
 | Retrieval and reasoning | `search.web`, `research.deep`, `reasoning.extended`, `audio.transcription`, `code.execute`, `data.analyze` |
 | Media generation | `image.generation`, `image.edit`, `video.generation`, `audio.generation` |
 | Artifact generation | `document.generation`, `presentation.generation`, `spreadsheet.generation`, `website.generation` |

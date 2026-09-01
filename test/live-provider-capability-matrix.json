@@ -913,10 +913,10 @@
         "session-readiness",
         "prompt-draft",
         "effort-choice",
-        "file-selection"
+        "file-selection",
+        "harness-attachment-roundtrip"
       ],
       "unavailable": {
-        "harness-attachment-roundtrip": "real_markdown_upload_is_supported_but_full_harness_jobs_intermittently_show_no_attachment_card_and_submit_has_no_visible_transition_2026_08_31",
         "qwen-image": "configured_profile_dns_unavailable_2026_08_17",
         "grok-image": "provider_specific_capability",
         "arena-search": "provider_specific_capability",

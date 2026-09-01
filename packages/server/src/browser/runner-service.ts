@@ -1754,7 +1754,10 @@ function liveInspectionTarget(capability: TaskCapabilityId, provider: ProviderId
   ) {
     return { providerCapability: PROVIDER_CAPABILITIES.CONVERSATION_CONTINUE, scope: 'overall' }
   }
-  if (capability === TASK_CAPABILITIES.FILE_UPLOAD) {
+  if (
+    capability === TASK_CAPABILITIES.FILE_UPLOAD ||
+    capability === TASK_CAPABILITIES.DOCUMENT_INPUT
+  ) {
     return { providerCapability: PROVIDER_CAPABILITIES.FILE_UPLOAD, scope: 'overall' }
   }
   if (capability === TASK_CAPABILITIES.MODEL_COMPARE) {

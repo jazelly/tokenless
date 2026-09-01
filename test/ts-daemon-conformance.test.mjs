@@ -153,6 +153,30 @@ test('TS daemon rejects raw image jobs that bypass the shared image/download con
   try {
     const token = readControlToken(homeDir)
     const playwright = await importPlaywright()
+    const arenaImageInput = playwright.resolveTaskCapabilityRoute({
+      requirements: [
+        playwright.TASK_CAPABILITIES.CONVERSATION_CHAT,
+        playwright.TASK_CAPABILITIES.FILE_UPLOAD,
+        playwright.TASK_CAPABILITIES.IMAGE_INPUT,
+      ],
+      candidates: [{ provider: 'arena', runtimeEligibility: 'eligible' }],
+    })
+    const arenaDocumentInput = playwright.resolveTaskCapabilityRoute({
+      requirements: [
+        playwright.TASK_CAPABILITIES.CONVERSATION_CHAT,
+        playwright.TASK_CAPABILITIES.FILE_UPLOAD,
+        playwright.TASK_CAPABILITIES.DOCUMENT_INPUT,
+      ],
+      candidates: [{ provider: 'arena', runtimeEligibility: 'eligible' }],
+    })
+    assert.equal(arenaImageInput.ok, true)
+    assert.deepEqual(arenaImageInput.route.requirements, [
+      playwright.TASK_CAPABILITIES.CONVERSATION_CHAT,
+      playwright.TASK_CAPABILITIES.FILE_UPLOAD,
+      playwright.TASK_CAPABILITIES.IMAGE_INPUT,
+    ])
+    assert.equal(arenaDocumentInput.ok, false)
+    assert.deepEqual(arenaDocumentInput.evaluated[0].missingCapabilities, [playwright.TASK_CAPABILITIES.DOCUMENT_INPUT])
     const artifactOnly = playwright.resolveTaskCapabilityRoute({
       requirements: [
         playwright.TASK_CAPABILITIES.CONVERSATION_CHAT,
@@ -753,10 +777,10 @@ test('built Playwright validators enforce the current internal schema IDs', {
     ],
   })
   assert.equal(rankedRoutes.ok, true)
-  assert.deepEqual(rankedRoutes.routes.map((route) => route.provider), ['chatgpt'])
+  assert.deepEqual(rankedRoutes.routes.map((route) => route.provider), ['chatgpt', 'qwen'])
   assert.deepEqual(
     rankedRoutes.evaluated.map((evaluation) => [evaluation.provider, evaluation.rank, evaluation.support]),
-    [['qwen', null, null], ['chatgpt', 1, 'supported']],
+    [['qwen', 2, 'experimental'], ['chatgpt', 1, 'supported']],
   )
   const completeSetRoutes = playwright.resolveTaskCapabilityRoutes({
     requirements: [
@@ -838,7 +862,7 @@ test('built Playwright validators enforce the current internal schema IDs', {
     }),
     (error) => {
       assert.equal(error.code, 'invalid_playwright_job_capability_requirements')
-      assert.deepEqual(error.details.missing, [playwright.TASK_CAPABILITIES.FILE_UPLOAD])
+      assert.deepEqual(error.details.missing, [playwright.TASK_CAPABILITIES.FILE_UPLOAD, playwright.TASK_CAPABILITIES.DOCUMENT_INPUT])
       return true
     },
   )

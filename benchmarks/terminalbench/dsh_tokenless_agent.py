@@ -48,7 +48,7 @@ PROVIDER_TURN_REF_PATTERN = re.compile(r"^turn:[a-f0-9]{32}$")
 PROVIDER_CONVERSATION_REF_PATTERN = re.compile(r"^conversation:[a-f0-9]{32}$")
 PROVIDER_REQUEST_REF_PATTERN = re.compile(r"^request:[a-f0-9]{32}$")
 WEB_AI_INTERACTION_PROTOCOL = "tokenless.internal.web-ai-interaction-protocol/v0"
-REQUIRED_CAPABILITIES = ("conversation.chat", "file.upload")
+REQUIRED_CAPABILITIES = ("conversation.chat", "file.upload", "document.input")
 TURN_LIFECYCLES = {
     "queued",
     "running",

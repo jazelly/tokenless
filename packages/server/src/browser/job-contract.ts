@@ -603,8 +603,9 @@ function deriveTaskCapabilityRequirements(actions: readonly VisibleActionRequest
       requirements.push(TASK_CAPABILITIES.FILE_UPLOAD)
       for (const attachment of action.payload.attachments) {
         if (attachment.type.startsWith('image/')) requirements.push(TASK_CAPABILITIES.IMAGE_INPUT)
-        if (attachment.type.startsWith('audio/')) requirements.push(TASK_CAPABILITIES.AUDIO_INPUT)
-        if (attachment.type.startsWith('video/')) requirements.push(TASK_CAPABILITIES.VIDEO_INPUT)
+        else if (attachment.type.startsWith('audio/')) requirements.push(TASK_CAPABILITIES.AUDIO_INPUT)
+        else if (attachment.type.startsWith('video/')) requirements.push(TASK_CAPABILITIES.VIDEO_INPUT)
+        else requirements.push(TASK_CAPABILITIES.DOCUMENT_INPUT)
       }
     }
     if (action.action === VISIBLE_ACTIONS.WORKSPACE_ENSURE && action.payload.mode === 'native') {

@@ -812,7 +812,7 @@ function harnessTurnRequest(jobId, provider, expectedAttachmentPrefix) {
     const request = JSON.parse(row.request_json)
     assert.equal(request.provider, provider)
     assert.equal(request.capabilityRoute?.provider, provider)
-    assert.deepEqual(request.capabilityRoute?.requirements, ['conversation.chat', 'file.upload'])
+    assert.deepEqual(request.capabilityRoute?.requirements, ['conversation.chat', 'file.upload', 'document.input'])
     assert.equal(request.fallback, null, 'Explicit Harness provider turns must never fallback')
     assert.deepEqual(
       request.actions?.map((action) => action.action),

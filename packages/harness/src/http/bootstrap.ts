@@ -33,7 +33,7 @@ import {
   validateHarnessBootstrapCompletionResponse,
 } from '../skill-runtime/skill-harness.js'
 
-const REQUIRED_CAPABILITIES = ['conversation.chat', 'file.upload'] as const
+const REQUIRED_CAPABILITIES = ['conversation.chat', 'file.upload', 'document.input'] as const
 const MAX_PROVIDER_RESPONSE_BYTES = 2 * 1024 * 1024
 const MAX_PROVIDER_CHROME_BYTES = 256
 const OPEN_MARKER = '<TOKENLESS_HARNESS_RESPONSE>'
@@ -153,7 +153,7 @@ export async function continueHarnessLocalHttpTurn(input: ContinueHarnessLocalHt
     requestRef: input.requestRef,
     providerRef: input.providerRef,
     providerBindingRef: input.providerBindingRef,
-    requiredCapabilities: ['conversation.chat', 'file.upload'],
+    requiredCapabilities: ['conversation.chat', 'file.upload', 'document.input'],
     conversation: { mode: 'continue', conversationRef: input.conversationRef },
     continuation: {
       text: JSON.stringify({
@@ -305,7 +305,7 @@ function assertRequiredCapabilities(capabilities: readonly string[]) {
   if (capabilities.length !== REQUIRED_CAPABILITIES.length || REQUIRED_CAPABILITIES.some((capability) => !capabilities.includes(capability))) {
     throw new HarnessSkillError(
       'harness_provider_capabilities_unsupported',
-      'V0 local HTTP bootstrap requires conversation.chat and file.upload.',
+      'V0 local HTTP bootstrap requires conversation.chat, file.upload, and document.input.',
     )
   }
 }

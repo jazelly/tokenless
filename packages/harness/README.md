@@ -23,7 +23,7 @@ Skill preparation and visible response control:
 
 The package reads only `SKILL.md`. It never reads or executes `references/`, `assets/`, or `scripts/`. The System Prompt is a required attachment; individual Skill attachments use soft omission results.
 
-Provider transport stays outside this package: the selected adapter must support both `conversation.chat` and `file.upload`. User-owned Skills are context inputs, never provider capabilities. The adapter must visibly accept the context before it calls `finalizeHarnessBootstrapTurn`; a rejected Skill becomes a soft `provider_upload_failed` omission, while a rejected System Prompt produces no prompt and no task submission. A run is single-writer; callers must not prepare the same turn concurrently.
+Provider transport stays outside this package: Harness Markdown and other non-media attachments default to `document.input`, so the selected adapter must support `conversation.chat`, `file.upload`, and `document.input`. User-owned Skills are context inputs, never provider capabilities. The adapter must visibly accept the context before it calls `finalizeHarnessBootstrapTurn`; a rejected Skill becomes a soft `provider_upload_failed` omission, while a rejected System Prompt produces no prompt and no task submission. A run is single-writer; callers must not prepare the same turn concurrently.
 
 ### Local HTTP V0 bootstrap
 
@@ -87,7 +87,7 @@ const preparation = await prepareHarnessBootstrapTurn({
 })
 
 // Upload preparation.attachments in order through a Provider route that supports
-// conversation.chat and file.upload, then collect one exact acceptance outcome
+// conversation.chat, file.upload, and document.input, then collect one exact acceptance outcome
 // for every attachment by its name and SHA-256.
 const bootstrap = await finalizeHarnessBootstrapTurn({
   runId: 'run-123',

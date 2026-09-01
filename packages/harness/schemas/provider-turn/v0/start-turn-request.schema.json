@@ -12,10 +12,10 @@
     "semanticPreference": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$", "maxLength": 64, "x-tokenless-internal-maxUtf8Bytes": 64 },
     "requiredCapabilities": {
       "type": "array",
-      "prefixItems": [{ "const": "conversation.chat" }, { "const": "file.upload" }],
+      "prefixItems": [{ "const": "conversation.chat" }, { "const": "file.upload" }, { "const": "document.input" }],
       "items": false,
-      "minItems": 2,
-      "maxItems": 2
+      "minItems": 3,
+      "maxItems": 3
     },
     "conversation": {
       "oneOf": [

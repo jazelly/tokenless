@@ -6064,6 +6064,45 @@ function taskCapabilityRequirementsForExecution(
       'image.input and image.edit require at least one --attach-file <image-path>.',
     )
   }
+  if (
+    (explicit.includes(TASK_CAPABILITIES.IMAGE_INPUT) || explicit.includes(TASK_CAPABILITIES.IMAGE_EDIT)) &&
+    !args.attachFiles.some((sourcePath) => visibleAttachmentMediaType(sourcePath).startsWith('image/'))
+  ) {
+    throw usageError(
+      'task_capability_input_required',
+      'image.input and image.edit require at least one image --attach-file <path>.',
+    )
+  }
+  if (
+    explicit.includes(TASK_CAPABILITIES.DOCUMENT_INPUT) &&
+    !args.attachFiles.some((sourcePath) => {
+      const mediaType = visibleAttachmentMediaType(sourcePath)
+      return !mediaType.startsWith('image/') && !mediaType.startsWith('audio/') && !mediaType.startsWith('video/')
+    })
+  ) {
+    throw usageError(
+      'task_capability_input_required',
+      'document.input requires at least one document --attach-file <path>.',
+    )
+  }
+  if (
+    explicit.includes(TASK_CAPABILITIES.AUDIO_INPUT) &&
+    !args.attachFiles.some((sourcePath) => visibleAttachmentMediaType(sourcePath).startsWith('audio/'))
+  ) {
+    throw usageError(
+      'task_capability_input_required',
+      'audio.input requires at least one audio --attach-file <path>.',
+    )
+  }
+  if (
+    explicit.includes(TASK_CAPABILITIES.VIDEO_INPUT) &&
+    !args.attachFiles.some((sourcePath) => visibleAttachmentMediaType(sourcePath).startsWith('video/'))
+  ) {
+    throw usageError(
+      'task_capability_input_required',
+      'video.input requires at least one video --attach-file <path>.',
+    )
+  }
   if (explicit.includes(TASK_CAPABILITIES.WORKSPACE_KNOWLEDGE) && args.attachFiles.length === 0) {
     throw usageError('task_capability_input_required', 'workspace.knowledge requires at least one --attach-file <path>.')
   }
@@ -6084,8 +6123,9 @@ function taskCapabilityRequirementsForExecution(
     for (const sourcePath of args.attachFiles) {
       const mediaType = visibleAttachmentMediaType(sourcePath)
       if (mediaType.startsWith('image/')) inferred.push(TASK_CAPABILITIES.IMAGE_INPUT)
-      if (mediaType.startsWith('audio/')) inferred.push(TASK_CAPABILITIES.AUDIO_INPUT)
-      if (mediaType.startsWith('video/')) inferred.push(TASK_CAPABILITIES.VIDEO_INPUT)
+      else if (mediaType.startsWith('audio/')) inferred.push(TASK_CAPABILITIES.AUDIO_INPUT)
+      else if (mediaType.startsWith('video/')) inferred.push(TASK_CAPABILITIES.VIDEO_INPUT)
+      else inferred.push(TASK_CAPABILITIES.DOCUMENT_INPUT)
     }
   }
   if (

@@ -10,12 +10,12 @@
     "turnRef": { "type": "string", "pattern": "^turn:[a-f0-9]{32}$", "maxLength": 37, "x-tokenless-internal-maxUtf8Bytes": 37 },
     "attachmentRef": { "type": "string", "pattern": "^attachment:[a-f0-9]{32}$", "maxLength": 43, "x-tokenless-internal-maxUtf8Bytes": 43 },
     "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-    "capability": { "enum": ["conversation.chat", "file.upload"] },
+    "capability": { "enum": ["conversation.chat", "file.upload", "document.input"] },
     "capabilities": {
       "type": "array",
       "items": { "$ref": "#/$defs/capability" },
       "minItems": 1,
-      "maxItems": 2,
+      "maxItems": 3,
       "uniqueItems": true
     },
     "citation": {

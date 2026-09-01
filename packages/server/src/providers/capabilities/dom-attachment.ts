@@ -30,6 +30,20 @@ type VisibleAttachmentEvidence = {
   failed?: boolean
 }
 
+const MAX_QWEN_ATTACHMENT_DIAGNOSTIC_ENTRIES = 32
+const MAX_QWEN_ATTACHMENT_DIAGNOSTIC_EXTENSIONS = 8
+
+function qwenAttachmentEvidenceSnapshot(evidence: readonly VisibleAttachmentEvidence[]) {
+  return evidence.slice(0, MAX_QWEN_ATTACHMENT_DIAGNOSTIC_ENTRIES).map(({ id, extensions, ready, failed }) => ({
+    id: /^qwen-card\|\d{1,8}$/u.test(id) ? id : 'qwen-card|unknown',
+    extensions: extensions
+      .filter((extension) => /^\.[a-z0-9]{1,16}$/u.test(extension))
+      .slice(0, MAX_QWEN_ATTACHMENT_DIAGNOSTIC_EXTENSIONS),
+    ...(ready === undefined ? {} : { ready }),
+    ...(failed === undefined ? {} : { failed }),
+  }))
+}
+
 export class DomAttachmentCapability implements ProviderActionCapability<AttachmentAction> {
   readonly capability = PROVIDER_CAPABILITIES.FILE_UPLOAD
   readonly actions = Object.freeze([VISIBLE_ACTIONS.FILE_UPLOAD])
@@ -74,12 +88,32 @@ async function uploadFiles(
 ): Promise<FileUploadResult> {
   const attachments = value.map((attachment) => validateAttachmentInput(attachment))
   const files = await Promise.all(attachments.map((attachment) => resolveAttachmentPayload(context.attachmentRoot, attachment)))
+  if (provider.id === 'qwen') {
+    await clearQwenPendingSameFileCards(
+      page,
+      provider,
+      attachments,
+      context.signal,
+    )
+  }
   let fileInput = provider.id === 'doubao' || provider.id === 'deepseek'
     ? await firstFileInputLocator(page, provider.fileInputSelectors)
     : null
-  const chooser = fileInput ? null : await openProviderFileChooser(page, provider)
-  if (!chooser) {
+  let chooser: FileChooser | null = null
+  if (provider.id === 'qwen') {
+    if (!await openQwenFileUploadMenu(page, provider)) {
+      throw providerCapabilityFailure(
+        'file_upload_unavailable',
+        'No visible provider file upload control is available for this account.',
+        { retryable: false },
+      )
+    }
     fileInput = await firstFileInputLocator(page, provider.fileInputSelectors)
+  } else {
+    chooser = fileInput ? null : await openProviderFileChooser(page, provider)
+    if (!chooser) {
+      fileInput = await firstFileInputLocator(page, provider.fileInputSelectors)
+    }
   }
   if (!fileInput && !chooser) {
     throw providerCapabilityFailure(
@@ -102,11 +136,24 @@ async function uploadFiles(
     context.signal,
   )
   if (!acceptedProof) {
-    throw providerCapabilityFailure(
-      'file_upload_not_visibly_accepted',
-      `The provider did not visibly accept and finish processing the selected attachments within ${provider.interactionTimings.attachmentReadyTimeoutMs}ms.`,
-      { retryable: true },
-    )
+    const message = `The provider did not visibly accept and finish processing the selected attachments within ${provider.interactionTimings.attachmentReadyTimeoutMs}ms.`
+    if (provider.id === 'qwen') {
+      const visibleEvidenceAfterTimeout = await visibleAttachmentEvidence(page, provider, attachments)
+      throw tokenlessError(
+        'file_upload_not_visibly_accepted',
+        message,
+        {
+          retryable: true,
+          details: {
+            visibleAttachmentEvidence: {
+              before: qwenAttachmentEvidenceSnapshot(visibleEvidenceBeforeUpload),
+              after: qwenAttachmentEvidenceSnapshot(visibleEvidenceAfterTimeout),
+            },
+          },
+        },
+      )
+    }
+    throw providerCapabilityFailure('file_upload_not_visibly_accepted', message, { retryable: true })
   }
   if (provider.id === 'gemini') {
     await dismissGeminiFileDisclaimer(page)
@@ -125,6 +172,127 @@ async function uploadFiles(
       visible: true as const,
     })),
   }
+}
+
+async function openQwenFileUploadMenu(page: Page, provider: ProviderDomDefinition) {
+  const trigger = await waitForEnabledLocator(
+    page,
+    provider.fileUploadTriggerSelectors,
+    provider.interactionTimings.promptControlTimeoutMs,
+  )
+  if (!trigger) return false
+  const expanded = await trigger.getAttribute('aria-expanded').catch(() => null)
+  if (expanded !== 'true') {
+    try {
+      await trigger.click({ timeout: 5_000 })
+    } catch {
+      return false
+    }
+  }
+  const localUpload = await waitForEnabledLocator(page, provider.fileUploadLocalSelectors, 5_000)
+  if (!localUpload) return false
+  try {
+    await localUpload.click({ timeout: 5_000 })
+  } catch {
+    return false
+  }
+  return true
+}
+
+async function clearQwenPendingSameFileCards(
+  page: Page,
+  provider: ProviderDomDefinition,
+  attachments: readonly AttachmentInput[],
+  signal: AbortSignal | undefined,
+) {
+  const expectedNames = new Set(attachments.map((attachment) => basename(attachment.name)))
+  const deadline = Date.now() + provider.interactionTimings.promptControlTimeoutMs
+  // The observed Qwen card has no stable composer ancestor. Require the exact visible basename,
+  // the same pending state used for upload proof, and a card-local visible remove control.
+  while (Date.now() <= deadline) {
+    assertNotAborted(signal)
+    const target = await findQwenPendingSameFileCard(page, expectedNames)
+    if (!target) return
+    const cardCountBeforeRemoval = await countQwenVisibleCardsWithName(page, target.name)
+    await target.remove.click({ timeout: 5_000 })
+    while (Date.now() <= deadline) {
+      assertNotAborted(signal)
+      if (await countQwenVisibleCardsWithName(page, target.name) < cardCountBeforeRemoval) break
+      if (Date.now() >= deadline) break
+      await waitForPageTimeout(page, 100)
+    }
+    if (await countQwenVisibleCardsWithName(page, target.name) >= cardCountBeforeRemoval) {
+      throw providerCapabilityFailure(
+        'file_upload_not_visibly_accepted',
+        'The provider did not visibly remove the stale pending attachment before the new upload.',
+        { retryable: true },
+      )
+    }
+  }
+  throw providerCapabilityFailure(
+    'file_upload_not_visibly_accepted',
+    'The provider did not visibly remove the stale pending attachment before the new upload.',
+    { retryable: true },
+  )
+}
+
+async function findQwenPendingSameFileCard(page: Page, expectedNames: ReadonlySet<string>) {
+  const cards = page.locator('.fileitem-btn')
+  const count = await cards.count().catch(() => 0)
+  for (let index = count - 1; index >= 0; index -= 1) {
+    const card = cards.nth(index)
+    const state = await readQwenAttachmentCardState(card)
+    if (!state?.pending || !expectedNames.has(state.name)) continue
+    const remove = card.locator('button[aria-label="Remove file"]').filter({ visible: true }).first()
+    if (!await remove.isVisible({ timeout: 100 }).catch(() => false)) continue
+    return { name: state.name, remove }
+  }
+  return null
+}
+
+async function countQwenVisibleCardsWithName(page: Page, expectedName: string) {
+  const cards = page.locator('.fileitem-btn')
+  const count = await cards.count().catch(() => 0)
+  let matches = 0
+  for (let index = 0; index < count; index += 1) {
+    const state = await readQwenAttachmentCardState(cards.nth(index))
+    if (state && state.name === expectedName) matches += 1
+  }
+  return matches
+}
+
+async function readQwenAttachmentCardState(card: Locator): Promise<{ name: string; pending: boolean } | null> {
+  return await card.evaluate((element) => {
+    const isVisibleElement = (candidate: Element | null): candidate is HTMLElement | SVGElement => {
+      if (!candidate || !(candidate instanceof HTMLElement || candidate instanceof SVGElement)) return false
+      let node: Element | null = candidate
+      while (node && node instanceof Element) {
+        const style = window.getComputedStyle(node)
+        if (
+          style.visibility === 'hidden' ||
+          style.visibility === 'collapse' ||
+          style.display === 'none' ||
+          Number(style.opacity) === 0
+        ) return false
+        node = node.parentElement
+      }
+      const rect = candidate.getBoundingClientRect()
+      return rect.width > 0 && rect.height > 0
+    }
+    if (!isVisibleElement(element)) return null
+    const nameText = element.querySelector('.fileitem-file-name-text')?.textContent?.trim() ?? ''
+    const extensionText = element.querySelector('.fileitem-file-name-ext')?.textContent?.trim() ?? ''
+    if (nameText === '' || extensionText === '') return null
+    const statusCard = element.cloneNode(true) as Element
+    statusCard.querySelectorAll('.fileitem-file-name-text, .fileitem-file-name-ext')
+      .forEach((node) => node.remove())
+    const statusText = (statusCard.textContent ?? '').replace(/\s+/g, ' ').toLowerCase()
+    const failed = /\b(?:failed|error|unsupported)\b/.test(statusText)
+    const loading = Array.from(element.querySelectorAll('.fileitem-loading-icon, .anticon-spin'))
+      .some((candidate) => isVisibleElement(candidate))
+    const pending = !failed && (loading || /\b(?:parsing|processing|uploading)\b\s*(?:\.{3})?/.test(statusText))
+    return { name: `${nameText}${extensionText}`, pending }
+  }).catch(() => null)
 }
 
 async function dismissGeminiFileDisclaimer(page: Page) {
@@ -336,7 +504,9 @@ async function visibleAttachmentEvidence(
             .forEach((node) => node.remove())
           const statusText = (statusCard.textContent ?? '').replace(/\s+/g, ' ').toLowerCase()
           const failed = /\b(?:failed|error|unsupported)\b/.test(statusText)
-          const pending = /\b(?:parsing|processing|uploading)\b\s*(?:\.{3})?/.test(statusText)
+          const loading = Array.from(card.querySelectorAll('.fileitem-loading-icon, .anticon-spin'))
+            .some((element) => isVisibleElement(element))
+          const pending = loading || /\b(?:parsing|processing|uploading)\b\s*(?:\.{3})?/.test(statusText)
           return [{
             id: `qwen-card|${index}`,
             extensions,

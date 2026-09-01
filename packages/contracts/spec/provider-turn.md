@@ -6,7 +6,7 @@ V0 defines serialized messages for capability discovery, one new-conversation bo
 
 ## Core messages
 
-`capability-document` reports the protocol version, an opaque `ProviderRef`, and supported capabilities. This slice recognizes only `conversation.chat` and `file.upload`; a start request requires both in that exact order, while discovery may report either or both.
+`capability-document` reports the protocol version, an opaque `ProviderRef`, and supported capabilities. This slice recognizes `conversation.chat`, `file.upload`, and `document.input`; a start request requires all three in that exact order, while discovery may report any non-empty subset of the three.
 
 `start-turn-request` creates exactly one new conversation. It carries opaque `ProviderRef` and `ProviderBindingRef`, a finalized short message, exactly one leading `system_prompt` attachment, and up to 32 following `skill` attachments. Every Markdown file has an independent opaque `AttachmentRef`, display name, byte length, and lowercase SHA-256 digest; the files share one atomic visible upload action and one aggregate delivery state.
 

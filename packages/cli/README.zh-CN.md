@@ -80,7 +80,7 @@ Backend flag、标准 API route、provider mapping、版本固定与隔离边界
 
 如未显式指定 provider，Tokenless 会使用第一个已配置且有 guest 或 signed-in 观测的 provider；没有可用项时会在创建 job 前失败。
 
-使用 `tokenless capabilities list --json` 查看有证据支持的 task outcome 与 provider route。`--capability` 可重复提供；附件和 workspace intent 也会推导 capability，一个 provider 必须满足合并后的全部要求。
+使用 `tokenless capabilities list --json` 查看有证据支持的 task outcome 与 provider route。`--capability` 可重复提供；附件会推导 `file.upload` 与 MIME 对应的 semantic input（非媒体文件为 `document.input`，图片、音频、视频分别为匹配的 `image.input`、`audio.input`、`video.input`），workspace intent 也会推导 capability；一个 provider 必须满足合并后的全部要求。
 
 ```bash
 tokenless run \
