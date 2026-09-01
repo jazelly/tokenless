@@ -625,7 +625,7 @@ async function choiceLabelVisible(page, label) {
 }
 
 async function fileSelection({ provider, journey }) {
-  const extension = provider === 'arena' ? '.png' : '.md'
+  const extension = '.md'
   const name = provider === 'meta'
     ? `browser-fingerprint-review-${compactTimestamp(new Date())}${extension}`
     : `${markerFor(provider, 'ATTACHMENT')}${extension}`
@@ -639,12 +639,7 @@ async function fileSelection({ provider, journey }) {
         'Matching one layer does not establish end-to-end browser equivalence.',
       ].join('\n')
     : `${name}\n`
-  if (provider === 'arena') {
-    await fs.copyFile(path.join(root, 'assets', 'tokenless-logo-v1.png'), file)
-    await fs.chmod(file, 0o600)
-  } else {
-    await fs.writeFile(file, contents, { mode: 0o600 })
-  }
+  await fs.writeFile(file, contents, { mode: 0o600 })
   const deepSeekState = provider === 'deepseek' ? await captureDeepSeekState(journey) : null
   let geminiAttachmentCardsBefore = null
   try {
@@ -682,12 +677,6 @@ async function fileSelection({ provider, journey }) {
         uploaded.observerResult,
         geminiAttachmentCardsBefore + 1,
         'Gemini observer must see one newly visible physical attachment card',
-      )
-    } else if (provider === 'arena') {
-      assert.equal(
-        await uploaded.page.getByAltText(name, { exact: true }).isVisible().catch(() => false),
-        true,
-        'Arena observer must see the selected image preview',
       )
     } else {
       const visibleName = provider === 'kimi' || provider === 'meta' ? path.parse(name).name : name

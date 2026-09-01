@@ -694,7 +694,6 @@
         "session-readiness",
         "prompt-draft",
         "model-choice",
-        "file-selection",
         "conversation-continuation",
         "model-comparison",
         "arena-search",
@@ -705,6 +704,7 @@
         "workspace-response-baseline"
       ],
       "unavailable": {
+        "file-selection": "image_upload_requires_arena_image_lifecycle",
         "harness-attachment-roundtrip": "real_file_input_accepts_only_png_jpeg_and_webp_not_markdown_2026_08_30",
         "qwen-image": "provider_specific_capability",
         "meta-image": "provider_specific_capability",
