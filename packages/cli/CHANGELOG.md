@@ -150,6 +150,10 @@
 
 ### Patch Changes
 
+- c541f6d: Require the Terminal-Bench Git recovery parent to execute recovery through its bash tool before returning a final response.
+
+  要求 Terminal-Bench Git recovery parent 在返回最终响应前通过 bash tool 执行恢复操作。
+
 - ffbcadd: Make the Terminal-Bench Git recovery parent perform and verify the recovered change instead of returning instructions.
 
   让 Terminal-Bench Git recovery parent 实际执行并验证恢复操作，而不是只返回操作说明。
