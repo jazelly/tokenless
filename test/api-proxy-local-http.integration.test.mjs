@@ -1225,6 +1225,73 @@ test('api proxy accepts text and structured final formats with or without comple
   })
 })
 
+test('api proxy accepts bare and fenced final text containing Markdown code fences', async () => {
+  await withDaemon(async (daemon) => {
+    const { ManagedProfileRegistry } = await import(profileRegistryModule)
+    const registry = new ManagedProfileRegistry(daemon.homeDir)
+    await registry.addProfile({ slug: 'web-ai', setDefault: true })
+    await registry.updateProviderStatus('web-ai', {
+      provider: 'deepseek',
+      auth: 'authenticated',
+      access: 'signed_in_free',
+      checkedAt: new Date().toISOString(),
+    })
+    const { writeTokenlessConfig } = await import(runtimeModule)
+    await writeTokenlessConfig({
+      homeDir: daemon.homeDir,
+      apiProxy: { enabled: true, conversationMode: 'new-conversation', executionMode: 'browser' },
+      profiles: {
+        'web-ai': {
+          roleLabel: '',
+          enabledProviders: ['deepseek'],
+          browserVisibility: 'headed',
+          proxy: null,
+        },
+      },
+    })
+
+    const content = 'Apply the change with:\n```sh\ncp resources/about.md site/about.md\n```'
+    for (const fenced of [false, true]) {
+      const pending = call(daemon, 'POST', '/v1/openai/chat/completions', {
+        model: 'tokenless/deepseek',
+        messages: [{ role: 'user', content: 'Return the final instructions.' }],
+        tools: [functionTool('read_file')],
+        tool_choice: 'auto',
+        parallel_tool_calls: false,
+      })
+      const job = await waitForQueuedApiProxyJob(daemon, 'api-proxy:')
+      const marker = '\nJSON request:\n'
+      const prompt = promptInputText(job)
+      const request = JSON.parse(prompt.slice(prompt.lastIndexOf(marker) + marker.length))
+      const body = JSON.stringify({
+        protocol: request.protocol,
+        nonce: request.nonce,
+        kind: 'final',
+        content,
+      })
+      const providerText = fenced ? `\`\`\`json\n${body}\n\`\`\`` : body
+
+      const running = daemon.store.takeNextJob({}, 'web-ai')
+      assert.ok(running)
+      daemon.store.recordProviderSubmission(running.job_id)
+      daemon.store.completeJob(running.job_id, {
+        result_json: {
+          responses: [{
+            action: 'response.read',
+            ok: true,
+            result: { text: providerText, citations: [] },
+          }],
+        },
+      })
+
+      const response = await pending
+      assert.equal(response.status, 200, fenced ? 'fenced' : 'bare')
+      assert.equal(response.body.choices[0].message.content, content)
+      assert.equal(response.body.choices[0].finish_reason, 'stop')
+    }
+  })
+})
+
 test('api proxy rejects malformed tool catalogs and history before creating a job', async () => {
   await withDaemon(async (daemon) => {
     await enableApiProxy(daemon.homeDir)

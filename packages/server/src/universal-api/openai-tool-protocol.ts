@@ -660,6 +660,19 @@ function trimJsonWhitespace(value: string) {
 }
 
 function unwrapRawResponseFence(trimmed: string) {
+  try {
+    parseStrictJson(trimmed)
+    return trimmed
+  } catch {}
+
+  const completeFence = /^```(?:json|text)?\r?\n([\s\S]*)\r?\n```$/u.exec(trimmed)
+  if (completeFence) {
+    const candidate = trimJsonWhitespace(completeFence[1]!)
+    try {
+      parseStrictJson(candidate)
+      return candidate
+    } catch {}
+  }
   const fenceCount = countOccurrences(trimmed, '```')
   if (fenceCount === 0) return trimmed
   if (fenceCount !== 2) fail('provider response contains multiple or incomplete code fences')
