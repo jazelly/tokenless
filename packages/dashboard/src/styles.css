@@ -22,7 +22,8 @@
 }
 
 * { box-sizing: border-box; }
-html, body, #app { min-width: 320px; min-height: 100%; margin: 0; }
+html, body { overflow-x: clip; }
+html, body, #app { min-width: 0; min-height: 100%; margin: 0; }
 body { background: var(--canvas); color: var(--ink); font-size: 15px; }
 button, input, select, textarea { color: inherit; font: inherit; }
 button, select, a, summary, label { touch-action: manipulation; }
@@ -30,7 +31,7 @@ button, select, a { cursor: pointer; }
 button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity: .48; }
 button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible, a:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 h1, h2, h3, p { margin: 0; }
-h1 { font-size: clamp(26px, 2vw, 35px); font-weight: 630; letter-spacing: -.035em; line-height: 1.08; }
+h1 { min-width: 0; overflow-wrap: anywhere; font-size: clamp(26px, 2vw, 35px); font-weight: 630; letter-spacing: -.035em; line-height: 1.08; }
 h2 { font-size: 18px; font-weight: 620; letter-spacing: -.02em; }
 h3 { font-size: 14px; font-weight: 650; }
 small { color: var(--muted); font-size: 12px; font-weight: 450; }
@@ -94,7 +95,7 @@ main#main:focus { outline: none; }
 .page-description { max-width: 600px; margin-top: 10px; color: var(--muted); font-size: 14px; line-height: 1.55; }
 .page-actions { display: flex; align-items: center; gap: 8px; }
 
-.button { display: inline-flex; min-height: 38px; align-items: center; justify-content: center; gap: 7px; padding: 0 14px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 600; }
+.button { display: inline-flex; min-height: 38px; align-items: center; justify-content: center; gap: 7px; padding: 0 14px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 600; white-space: nowrap; }
 .button:hover:not(:disabled) { border-color: #b9b7b0; background: #faf9f7; }
 .button.primary { border-color: var(--ink); background: var(--ink); color: white; }
 .button.primary:hover:not(:disabled) { background: #33322f; }
@@ -113,7 +114,7 @@ main#main:focus { outline: none; }
 .hover-tooltip.tooltip-right { --tooltip-x: 0; --tooltip-origin: 100% 100%; }
 .hover-tooltip.tooltip-below.tooltip-right { --tooltip-origin: 100% 0%; }
 .hover-tooltip.tooltip-right > .hover-tooltip-content { right: 0; left: auto; }
-.hover-tooltip:focus-within > .hover-tooltip-content { opacity: 1; transform: translate(var(--tooltip-x), 0) scale(1); transition-delay: 350ms; visibility: visible; }
+.hover-tooltip:focus-within > .hover-tooltip-content { opacity: 1; transform: translate(var(--tooltip-x), 0) scale(1); transition-delay: 0s; visibility: visible; }
 @media (hover: hover) and (pointer: fine) {
   .hover-tooltip:hover > .hover-tooltip-content { opacity: 1; transform: translate(var(--tooltip-x), 0) scale(1); transition-delay: 350ms; visibility: visible; }
 }
@@ -285,7 +286,8 @@ a.data-row:hover, button.data-row:hover { background: #faf9f7; }
 .danger-text { color: var(--red); }
 .inspector-content { width: min(820px, calc(100% - 72px)); margin: 0 auto; padding: 40px 0 80px; }
 .settings-section { margin-bottom: 34px; }
-.settings-section-title { display: flex; min-height: 36px; align-items: flex-start; justify-content: space-between; color: var(--muted); }
+.settings-section-title { display: flex; min-width: 0; min-height: 36px; align-items: flex-start; justify-content: space-between; color: var(--muted); }
+.settings-section-title > div:first-child { min-width: 0; }
 .settings-section-title h2, .settings-section-title h3 { color: var(--ink); }
 .settings-list, .provider-settings-list { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); }
 .settings-row { display: flex; min-height: 54px; align-items: center; justify-content: space-between; gap: 24px; padding: 0 17px; border-bottom: 1px solid var(--line-soft); }
@@ -444,15 +446,30 @@ a.data-row:hover, button.data-row:hover { background: #faf9f7; }
 .provider-kimi .provider-identity-icon { background: #e5edff; color: #1f56b5; }
 .provider-doubao .provider-identity-icon { background: #e8efff; color: #315fbd; }
 
-.system-grid { display: grid; grid-template-columns: minmax(280px, .72fr) minmax(440px, 1.28fr); align-items: start; gap: 16px; }
-.system-card { margin: 0; padding: 20px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.system-grid { display: grid; min-width: 0; grid-template-columns: minmax(0, .72fr) minmax(0, 1.28fr); align-items: start; gap: 16px; }
+.system-card { min-width: 0; margin: 0; padding: 20px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
 .system-card .settings-section-title { border-bottom: 1px solid var(--line-soft); }
 .system-card-wide { grid-column: 1 / -1; }
 .settings-section-title p { max-width: 620px; margin-top: 5px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.help-trigger { color: var(--subtle); }
+.help-trigger:hover:not(:disabled), .help-trigger:focus-visible { color: var(--ink); }
+.settings-section-title > .help-trigger, .field-label-row .help-trigger { --tooltip-x: 0; --tooltip-origin: 100% 100%; }
+.settings-section-title > .help-trigger > .hover-tooltip-content, .field-label-row .help-trigger > .hover-tooltip-content { right: 0; left: auto; }
+.field-label-row { display: flex; min-width: 0; align-items: center; gap: 5px; }
+.field-label-row > label, .field-label-row > span { min-width: 0; overflow-wrap: anywhere; color: #595751; font-size: 12px; font-weight: 620; line-height: 1.25; }
+.field-label-row > label { cursor: pointer; }
+.field-label-row > label small { margin-left: 4px; font-size: 10px; font-weight: 450; }
+.field-label-row .help-trigger { margin-left: auto; }
+.switch-field > span:first-child { min-width: 0; flex: 1 1 auto; }
+.switch-heading { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 5px; }
+.switch-heading .help-trigger { --tooltip-x: 0; --tooltip-origin: 100% 100%; flex: 0 0 auto; }
+.switch-heading .help-trigger > .hover-tooltip-content { right: 0; left: auto; }
+.config-metadata-list .settings-row > span, .config-metadata-list .settings-row strong { min-width: 0; }
+.config-entry-row, .config-router-row, .config-entry-add { min-width: 0; }
 .system-actions { display: flex; grid-column: 1 / -1; justify-content: flex-end; gap: 8px; }
 .system-form-error { grid-column: 1 / -1; }
 .output-savings-card { margin-top: 16px; }
-.output-savings-lede, .output-savings-help { max-width: 760px; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.output-savings-lede { max-width: 760px; color: var(--muted); font-size: 12px; line-height: 1.55; }
 .output-savings-lede strong { color: var(--ink); }
 .output-savings-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 18px 0; }
 .output-savings-metrics > div { min-width: 0; padding: 12px; border: 1px solid var(--line-soft); border-radius: 7px; background: var(--surface-muted); }
@@ -473,7 +490,7 @@ a.data-row:hover, button.data-row:hover { background: #faf9f7; }
 .switch-field small { color: var(--muted); font-size: 11px; line-height: 1.4; }
 .switch-field.compact { min-height: 30px; margin: 4px 0 6px; }
 .config-entry-list { display: flex; flex-direction: column; gap: 7px; }
-.config-entry-row, .config-router-row, .config-entry-add { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) 150px 36px; align-items: center; gap: 7px; }
+.config-entry-row, .config-router-row, .config-entry-add { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) minmax(100px, 150px) 36px; align-items: center; gap: 7px; }
 .config-entry-row strong { overflow: hidden; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
 .config-entry-row select, .config-entry-row input, .config-router-row input, .config-entry-add input { width: 100%; min-height: 36px; padding: 0 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); font-size: 12px; }
 .config-router-row { grid-template-columns: 170px minmax(0, 1fr) 36px; }
@@ -651,6 +668,8 @@ pre { max-width: 100%; max-height: 260px; overflow: auto; margin: 0; padding: 12
   .top-header-savings { flex-basis: auto; }
   .top-header-profile { min-width: 170px; }
   .page { padding-right: 30px; padding-left: 30px; }
+  .system-grid { grid-template-columns: 1fr; }
+  .system-card-wide { grid-column: auto; }
   .provider-card-grid { grid-template-columns: repeat(2, minmax(240px, 1fr)); }
   .chat-history-page { grid-template-columns: 300px minmax(0, 1fr); }
   .profiles-layout { grid-template-columns: 260px minmax(0, 1fr); }
@@ -667,6 +686,7 @@ pre { max-width: 100%; max-height: 260px; overflow: auto; margin: 0; padding: 12
 
 @media (max-width: 760px) {
   body { font-size: 14px; }
+  .hover-tooltip-content { max-width: min(220px, calc(100vw - 24px)); }
   .app-shell { padding: 0 0 calc(68px + env(safe-area-inset-bottom)); }
   .rail { display: none; }
   .top-header { height: calc(58px + env(safe-area-inset-top)); padding-top: env(safe-area-inset-top); }
@@ -686,6 +706,7 @@ pre { max-width: 100%; max-height: 260px; overflow: auto; margin: 0; padding: 12
   .offline-banner { top: calc(64px + env(safe-area-inset-top)); }
   main#main { min-height: calc(100vh - 126px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
   .page { padding: 28px 16px 38px; }
+  .system-card { padding: 16px; }
   .page-header { min-height: 0; margin-bottom: 24px; }
   .page-header h1 { font-size: 27px; }
   .page-description { max-width: 310px; font-size: 12px; }
@@ -752,6 +773,7 @@ pre { max-width: 100%; max-height: 260px; overflow: auto; margin: 0; padding: 12
   .system-grid { grid-template-columns: 1fr; }
   .system-actions { grid-column: auto; }
   .system-card-wide { grid-column: auto; }
+  .config-entry-row { grid-template-columns: minmax(0, 1fr) minmax(100px, .8fr) 36px; }
   .profile-config-grid { grid-template-columns: 1fr; }
   .config-check-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .config-router-row { grid-template-columns: 1fr; }
