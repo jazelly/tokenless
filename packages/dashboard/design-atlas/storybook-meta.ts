@@ -36,7 +36,6 @@ export const commonArgTypes = {
     name: "Screen / 页面",
     control: "select",
     options: [
-      "foundations",
       "setup",
       "overview",
       "profiles",
@@ -51,7 +50,7 @@ export const commonArgTypes = {
       "fatal",
       "modal",
     ] satisfies DesignScreen[],
-    description: "Switch the independent design surface shown in the canvas.",
+    description: "Switch the Tokenless API Dashboard screen shown in the canvas.",
   },
   language: {
     name: "Language / 语言",
@@ -86,11 +85,10 @@ export const commonArgTypes = {
     options: ["compact", "comfortable", "airy"],
   },
   designState: {
-    name: "Illustrative state / 示例状态",
+    name: "UI state / 界面状态",
     control: "select",
     options: ["ready", "busy", "error"],
-    description:
-      "Illustrative design state; no provider or runtime data is connected.",
+    description: "Preview the ready, busy, or error UI state.",
   },
   selectedProfile: {
     name: "Profile / 配置档",
@@ -136,7 +134,7 @@ export function createAtlasMeta(
       docs: {
         description: {
           component:
-            "Independent Tokenless API design surface. Data is illustrative and never represents telemetry, provider evidence, or production UI code.",
+            "Tokenless API Dashboard UI reference. Story data is local and does not call the daemon.",
         },
       },
     },

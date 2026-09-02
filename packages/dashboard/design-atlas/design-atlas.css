@@ -262,6 +262,7 @@ kbd {
   display: flex;
   min-height: 72px;
   align-items: stretch;
+  justify-content: space-between;
   border-bottom: 1px solid var(--da-line);
   background: color-mix(in srgb, var(--da-surface) 95%, transparent);
   backdrop-filter: blur(14px);
@@ -293,6 +294,7 @@ kbd {
   text-align: left;
 }
 .topbar-saving {
+  flex: 1 1 430px;
   border-right: 1px solid var(--da-line-soft);
 }
 .topbar-saving:hover,
@@ -357,7 +359,12 @@ kbd {
 }
 .topbar-actions {
   display: flex;
+  flex: 0 0 auto;
   align-items: stretch;
+  border-left: 1px solid var(--da-line-soft);
+}
+.topbar-profile-control {
+  border-right: 1px solid var(--da-line-soft);
 }
 .topbar-profile,
 .topbar-settings {
@@ -447,6 +454,13 @@ kbd {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.range-profile-switcher {
+  position: relative;
+  z-index: 5;
+}
+.range-profile-switcher .profile-switcher {
+  width: 150px;
 }
 .atlas-card {
   min-width: 0;
@@ -2240,6 +2254,10 @@ kbd {
 .production-provider-card .toggle-button.active i {
   transform: translateX(13px);
 }
+.production-provider-card .toggle-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
+}
 .provider-info-row {
   display: flex;
   min-height: 47px;
@@ -3348,6 +3366,9 @@ kbd {
   .page-actions {
     width: 100%;
     justify-content: flex-start;
+  }
+  .range-profile-switcher {
+    width: 100%;
   }
   .overview-header .page-actions {
     justify-content: stretch;

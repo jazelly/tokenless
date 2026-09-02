@@ -1,5 +1,4 @@
 export type DesignScreen =
-  | "foundations"
   | "setup"
   | "overview"
   | "profiles"
