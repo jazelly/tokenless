@@ -7,13 +7,17 @@
   "license": "MIT",
   "scripts": {
     "build": "tsc -b ../shared && vite build --config vite.config.ts --logLevel error",
-    "lint": "tsc -b ../shared && svelte-check --tsconfig ./tsconfig.json"
+    "lint": "tsc -b ../shared && svelte-check --tsconfig ./tsconfig.json",
+    "design:dev": "storybook dev -p 6007 --config-dir .storybook",
+    "design:build": "storybook build --config-dir .storybook --output-dir design-atlas-static"
   },
   "devDependencies": {
     "@lucide/svelte": "1.28.0",
+    "@storybook/svelte-vite": "^10.5.10",
     "@sveltejs/vite-plugin-svelte": "7.2.0",
     "svelte": "5.56.8",
     "svelte-check": "4.7.4",
+    "storybook": "^10.5.10",
     "vite": "8.2.0",
     "tokenless-internal-shared": "0.0.0"
   }

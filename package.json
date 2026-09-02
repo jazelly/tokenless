@@ -35,7 +35,9 @@
     "test:e2e:codex-app-server": "npm run build && node --test --test-concurrency=1 test/codex-app-server.e2e.mjs",
     "benchmark:featurebench": "node scripts/featurebench.mjs",
     "benchmark:terminalbench": "node benchmarks/terminalbench/run.mjs",
-    "test:e2e:featurebench": "npm run build && node test/run-gated-e2e.mjs featurebench"
+    "test:e2e:featurebench": "npm run build && node test/run-gated-e2e.mjs featurebench",
+    "design:dev": "npm run design:dev --workspace packages/dashboard",
+    "design:build": "npm run design:build --workspace packages/dashboard"
   },
   "workspaces": [
     "packages/*"

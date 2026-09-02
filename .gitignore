@@ -3,6 +3,7 @@ test-results/
 packages/cli/npm/*/bin/
 dist/
 packages/*/dist/
+/packages/dashboard/design-atlas-static/
 *.tsbuildinfo
 /tokenless-beta
 /benchmarks/terminalbench/cache/

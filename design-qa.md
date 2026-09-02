@@ -54,3 +54,65 @@
 - None required for this slice.
 
 final result: passed
+
+---
+
+# Tokenless API Design Atlas QA
+
+## Scope
+
+- Independent Storybook design surface under `packages/dashboard/design-atlas`.
+- Production source is visual/reference input only; the atlas imports no Dashboard views, components, styles, or API clients.
+- Root screens: Setup, Overview, Profiles, Providers, Capabilities, Chat History, and System.
+- Design-only additions: foundations, provider detail, job detail, loading/offline/fatal states, and modal studies.
+
+## Visual truth and rendered evidence
+
+| Surface | Reference | Implementation | Viewport |
+| --- | --- | --- | --- |
+| Overview desktop | `test-results/design-atlas/reference/overview-desktop.png` | `test-results/design-atlas/implementation/overview-default-1920.png` | 1920 × 1080 |
+| Overview mobile | `test-results/design-atlas/reference/overview-mobile.png` | `test-results/design-atlas/implementation/overview-mobile.png` | 390 × 844 |
+| Root screens desktop | `test-results/design-atlas/reference/screens-contact-sheet.png` | `test-results/design-atlas/comparison-root-screens.png` | 1920 × 1080 per screen |
+| Root screens mobile | Individual `*-mobile.png` reference captures | `test-results/design-atlas/implementation/root-screens-mobile.png` | 390 × 844 per screen |
+| Storybook workbench | Current Storybook manager | `test-results/design-atlas/implementation/storybook-manager.png` | 1600 × 1000 |
+
+All captures use device scale factor 1. Desktop comparisons use the same viewport and empty/local design state. The mobile pass uses the same 390 × 844 viewport and profile selection.
+
+## Comparison findings and corrections
+
+| Severity | Finding | Correction | Result |
+| --- | --- | --- | --- |
+| P1 | The first Profiles, Providers, and Jobs stories were redesigns rather than current-page mirrors. | Rebuilt them around the production profile summary, nine-provider grid, and Chat History empty/select-conversation layout. | Fixed |
+| P1 | Overview mobile used a custom toolbar, a split range control, and a clipped panorama table. | Matched the production mark/profile header, full-width range control, stacked panorama header, and two-column mobile table header. | Fixed |
+| P1 | Capabilities and System were too card-heavy and did not preserve current information density. | Restored grouped capability rows and the production-shaped configuration card hierarchy. | Fixed |
+| P1 | The `screen` Control initialized the canvas but did not update an existing component instance. | Synchronized external `screen` changes while preserving local in-canvas navigation; verified Overview → Providers → Overview in Storybook. | Fixed |
+| P1 | The default `design` profile was absent from the desktop and modal selectors. | Unified the profile options and verified that the desktop selector resolves to `design`. | Fixed |
+| P1 | Provider cards shared one toggle state. | Replaced the shared Boolean with provider-slug state; verified that toggling ChatGPT leaves the other eight cards unchanged. | Fixed |
+| P1 | The production Chat History surface was misleadingly titled `Jobs / List`, and superseded design branches remained in the template. | Renamed the story to Chat History and removed the unreachable branches; Job Detail remains a clearly separate design exploration. | Fixed |
+| P2 | Three icon-only switches emitted missing-label accessibility warnings. | Added localized `aria-label` values and rebuilt without Svelte accessibility warnings. | Fixed |
+| P2 | A canceled job story referenced a value absent from its Storybook control. | Added `job-4796` to the control options. | Fixed |
+| P2 | Several secondary surfaces retained English copy in `zh-CN` mode. | Added focused bilingual variants for Setup, Foundations, Capabilities, provider detail, job detail, and the capability modal. | Fixed |
+
+## Browser and interaction checks
+
+- All 39 stories mounted in the real browser with no visible Storybook error and no console exception.
+- Desktop root screens rendered without horizontal overflow at 1920 × 1080; canonical 1440 × 900 stories also rendered successfully.
+- Profiles, Providers, Capabilities, Chat History, and System rendered at 390 × 844 with `scrollWidth === innerWidth`.
+- Storybook Controls changed density from `comfortable` to `compact`; the canvas updated to `density-compact` and 28 px page top padding.
+- Storybook Controls changed language from `en` to `zh-CN`; the Overview heading updated from `Usage analytics` to `使用分析`, then reset successfully.
+- The same runtime Control changed the Capabilities family, title, description, and status to `对话`, `聊天`, a Chinese description, and `支持`.
+- Navigation, provider/profile selection, local switches, modal actions, forms, and illustrative state controls remain local to Storybook and do not call the Tokenless API daemon.
+
+## Build and isolation checks
+
+- `npm run design:build`: passed with Storybook 10.5.10.
+- `npm run lint --workspace packages/dashboard`: passed with 0 errors and 0 warnings.
+- `npm run build --workspace packages/dashboard`: passed.
+- `git diff --check`: passed.
+- Production import scan across `.storybook` and `design-atlas`: no Dashboard `src` imports.
+- Static Storybook output is ignored and is not part of the committed source.
+- `packages/dashboard/design-atlas/README.md` documents startup, Controls, boundaries, and the coded-workbench limitation.
+
+The remaining build notices are Storybook's default Svelte-config fallback and a single JavaScript chunk over 500 kB. Neither changes the V1 user boundary or the independent-source contract.
+
+Final result: passed
