@@ -1,0 +1,11 @@
+{
+  "schema": "tokenless.mcp-atlas-revision.v1",
+  "benchmark": "MCP-Atlas",
+  "benchmarkRepository": "https://github.com/scaleapi/mcp-atlas.git",
+  "benchmarkCommit": "f24ba3fb0bfa484c86acb28431fad6d7282455f9",
+  "publicDataset": "ScaleAI/MCP-Atlas",
+  "publicDatasetCommit": "8c563b55d7c967755f474299848049834d624617",
+  "publicDatasetArtifact": "MCP-Atlas.parquet",
+  "publicDatasetDigest": "sha256:2d7bc052f14cbcb3b8294293481053f7111d256f9c9deaa96f3ff632d19958d0",
+  "publicTaskCount": 500
+}

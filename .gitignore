@@ -11,6 +11,7 @@ packages/*/dist/
 /benchmarks/terminalbench/results/
 /benchmarks/__pycache__/
 /benchmarks/terminalbench/__pycache__/
+/benchmarks/ifbench/results/
 .DS_Store
 
 .env
