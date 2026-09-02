@@ -499,6 +499,48 @@
         "security": []
       }
     },
+    "/dashboard-api/v1/analytics": {
+      "get": {
+        "operationId": "getDashboardAnalytics",
+        "parameters": [
+          {
+            "name": "profile",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "range",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "7d",
+                "30d",
+                "90d",
+                "1y",
+                "all"
+              ],
+              "default": "30d"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Analytics"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "tags": [
+          "Dashboard"
+        ],
+        "security": []
+      }
+    },
     "/dashboard-api/v1/snapshot": {
       "get": {
         "operationId": "getDashboardSnapshot",
@@ -3430,6 +3472,16 @@
           "application/json": {
             "schema": {
               "$ref": "#/components/schemas/DashboardSnapshot"
+            }
+          }
+        }
+      },
+      "Analytics": {
+        "description": "Persisted daily Dashboard analytics.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/DashboardAnalytics"
             }
           }
         }
@@ -8571,6 +8623,151 @@
           "defaultProfileSlug",
           "configuredProfileSlugs"
         ],
+        "additionalProperties": false
+      },
+      "DashboardAnalyticsTotals": {
+        "type": "object",
+        "properties": {
+          "finishedJobs": { "type": "integer", "minimum": 0 },
+          "succeededJobs": { "type": "integer", "minimum": 0 },
+          "failedJobs": { "type": "integer", "minimum": 0 },
+          "canceledJobs": { "type": "integer", "minimum": 0 },
+          "successRate": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+          "estimatedOutputTokens": { "type": "integer", "minimum": 0 },
+          "visibleCharacters": { "type": "integer", "minimum": 0 },
+          "measuredResponses": { "type": "integer", "minimum": 0 },
+          "measuredJobs": { "type": "integer", "minimum": 0 },
+          "capabilitiesUsed": { "type": "integer", "minimum": 0 },
+          "catalogCapabilities": { "type": "integer", "minimum": 0 }
+        },
+        "required": ["finishedJobs", "succeededJobs", "failedJobs", "canceledJobs", "successRate", "estimatedOutputTokens", "visibleCharacters", "measuredResponses", "measuredJobs", "capabilitiesUsed", "catalogCapabilities"],
+        "additionalProperties": false
+      },
+      "DashboardAnalyticsDailyPoint": {
+        "type": "object",
+        "properties": {
+          "day": { "type": "string", "format": "date" },
+          "succeededJobs": { "type": "integer", "minimum": 0 },
+          "failedJobs": { "type": "integer", "minimum": 0 },
+          "canceledJobs": { "type": "integer", "minimum": 0 },
+          "finishedJobs": { "type": "integer", "minimum": 0 },
+          "estimatedOutputTokens": { "type": "integer", "minimum": 0 },
+          "cumulativeEstimatedOutputTokens": { "type": "integer", "minimum": 0 },
+          "measuredResponses": { "type": "integer", "minimum": 0 },
+          "capabilityFamilies": {
+            "type": "object",
+            "additionalProperties": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "required": ["day", "succeededJobs", "failedJobs", "canceledJobs", "finishedJobs", "estimatedOutputTokens", "cumulativeEstimatedOutputTokens", "measuredResponses", "capabilityFamilies"],
+        "additionalProperties": false
+      },
+      "DashboardAnalyticsProvider": {
+        "type": "object",
+        "properties": {
+          "provider": { "type": "string", "minLength": 1 },
+          "succeededJobs": { "type": "integer", "minimum": 0 },
+          "failedJobs": { "type": "integer", "minimum": 0 },
+          "canceledJobs": { "type": "integer", "minimum": 0 },
+          "finishedJobs": { "type": "integer", "minimum": 0 },
+          "share": { "type": "number", "minimum": 0, "maximum": 1 },
+          "successRate": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+          "estimatedOutputTokens": { "type": "integer", "minimum": 0 },
+          "measuredResponses": { "type": "integer", "minimum": 0 },
+          "capabilitiesUsed": { "type": "integer", "minimum": 0 },
+          "browserJobs": { "type": "integer", "minimum": 0 },
+          "directJobs": { "type": "integer", "minimum": 0 },
+          "unknownModeJobs": { "type": "integer", "minimum": 0 },
+          "lastUsedDay": { "type": ["string", "null"], "format": "date" }
+        },
+        "required": ["provider", "succeededJobs", "failedJobs", "canceledJobs", "finishedJobs", "share", "successRate", "estimatedOutputTokens", "measuredResponses", "capabilitiesUsed", "browserJobs", "directJobs", "unknownModeJobs", "lastUsedDay"],
+        "additionalProperties": false
+      },
+      "DashboardAnalyticsCapability": {
+        "type": "object",
+        "properties": {
+          "capabilityId": { "type": "string", "minLength": 1 },
+          "family": { "type": "string", "minLength": 1 },
+          "succeededJobs": { "type": "integer", "minimum": 0 },
+          "failedJobs": { "type": "integer", "minimum": 0 },
+          "canceledJobs": { "type": "integer", "minimum": 0 },
+          "finishedJobs": { "type": "integer", "minimum": 0 },
+          "successRate": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+          "providersUsed": { "type": "integer", "minimum": 0 }
+        },
+        "required": ["capabilityId", "family", "succeededJobs", "failedJobs", "canceledJobs", "finishedJobs", "successRate", "providersUsed"],
+        "additionalProperties": false
+      },
+      "DashboardAnalyticsCapabilityFamily": {
+        "type": "object",
+        "properties": {
+          "family": { "type": "string", "minLength": 1 },
+          "succeededJobs": { "type": "integer", "minimum": 0 },
+          "failedJobs": { "type": "integer", "minimum": 0 },
+          "canceledJobs": { "type": "integer", "minimum": 0 },
+          "finishedJobs": { "type": "integer", "minimum": 0 }
+        },
+        "required": ["family", "succeededJobs", "failedJobs", "canceledJobs", "finishedJobs"],
+        "additionalProperties": false
+      },
+      "DashboardAnalyticsCapabilityMatrixCell": {
+        "type": "object",
+        "properties": {
+          "provider": { "type": "string", "minLength": 1 },
+          "family": { "type": "string", "minLength": 1 },
+          "succeededJobs": { "type": "integer", "minimum": 0 },
+          "failedJobs": { "type": "integer", "minimum": 0 },
+          "canceledJobs": { "type": "integer", "minimum": 0 },
+          "finishedJobs": { "type": "integer", "minimum": 0 }
+        },
+        "required": ["provider", "family", "succeededJobs", "failedJobs", "canceledJobs", "finishedJobs"],
+        "additionalProperties": false
+      },
+      "DashboardAnalyticsExecutionMode": {
+        "type": "object",
+        "properties": {
+          "mode": { "type": "string", "enum": ["browser", "direct", "unknown"] },
+          "finishedJobs": { "type": "integer", "minimum": 0 },
+          "share": { "type": "number", "minimum": 0, "maximum": 1 }
+        },
+        "required": ["mode", "finishedJobs", "share"],
+        "additionalProperties": false
+      },
+      "DashboardAnalytics": {
+        "type": "object",
+        "properties": {
+          "schema": { "const": "tokenless.dashboard-analytics.v1" },
+          "generatedAt": { "type": "string", "format": "date-time" },
+          "timeZone": { "const": "UTC" },
+          "range": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string", "enum": ["7d", "30d", "90d", "1y", "all"] },
+              "fromDay": { "type": "string", "format": "date" },
+              "toDay": { "type": "string", "format": "date" }
+            },
+            "required": ["id", "fromDay", "toDay"],
+            "additionalProperties": false
+          },
+          "profileId": { "type": ["string", "null"] },
+          "totals": { "$ref": "#/components/schemas/DashboardAnalyticsTotals" },
+          "daily": { "type": "array", "items": { "$ref": "#/components/schemas/DashboardAnalyticsDailyPoint" } },
+          "providers": { "type": "array", "items": { "$ref": "#/components/schemas/DashboardAnalyticsProvider" } },
+          "capabilities": { "type": "array", "items": { "$ref": "#/components/schemas/DashboardAnalyticsCapability" } },
+          "capabilityFamilies": { "type": "array", "items": { "$ref": "#/components/schemas/DashboardAnalyticsCapabilityFamily" } },
+          "capabilityMatrix": { "type": "array", "items": { "$ref": "#/components/schemas/DashboardAnalyticsCapabilityMatrixCell" } },
+          "executionModes": { "type": "array", "items": { "$ref": "#/components/schemas/DashboardAnalyticsExecutionMode" } },
+          "measurementCoverage": {
+            "type": "object",
+            "properties": {
+              "firstMeasuredAt": { "type": ["string", "null"], "format": "date-time" },
+              "lastMeasuredAt": { "type": ["string", "null"], "format": "date-time" }
+            },
+            "required": ["firstMeasuredAt", "lastMeasuredAt"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["schema", "generatedAt", "timeZone", "range", "profileId", "totals", "daily", "providers", "capabilities", "capabilityFamilies", "capabilityMatrix", "executionModes", "measurementCoverage"],
         "additionalProperties": false
       },
       "DashboardSnapshot": {

@@ -1,4 +1,6 @@
 import type {
+  DashboardAnalytics,
+  DashboardAnalyticsRange,
   DashboardConfig,
   DashboardConfigDocument,
   DashboardConfigUpdate,
@@ -25,6 +27,15 @@ import type {
 } from 'tokenless-internal-shared/dashboard'
 
 export type {
+  DashboardAnalytics,
+  DashboardAnalyticsCapability,
+  DashboardAnalyticsCapabilityFamily,
+  DashboardAnalyticsCapabilityMatrixCell,
+  DashboardAnalyticsDailyPoint,
+  DashboardAnalyticsExecutionMode,
+  DashboardAnalyticsProvider,
+  DashboardAnalyticsRange,
+  DashboardAnalyticsTotals,
   DashboardBrowserBinding,
   DashboardBrowserSelection,
   DashboardBrowserVisibility,
@@ -131,6 +142,7 @@ export type HarnessExtensionPairing = {
 }
 
 export type DashboardActions = {
+  getAnalytics: (profile: string, range: DashboardAnalyticsRange) => Promise<DashboardAnalytics>
   updateConfig: (input: DashboardConfigUpdate, announce?: boolean) => Promise<DashboardConfig>
   getConfigDocument: () => Promise<DashboardConfigDocument>
   createProfile: (input: DashboardProfileCreate, announce?: boolean) => Promise<DashboardProfile>

@@ -442,6 +442,8 @@ test('SQLite completes current jobs and marks active jobs interrupted on reopen'
         [...tables].sort(),
         [
           'api_response_ledger',
+          'dashboard_daily_capability_metrics',
+          'dashboard_daily_metrics',
           'jobs',
           'output_savings_events',
           'provider_projects',
@@ -1126,7 +1128,11 @@ test('SQLite attributes measured visible output to its triggering job', async ()
   try {
     const created = store.createJob({
       provider: 'chatgpt',
-      request_json: { taskId: 'savings-task' },
+      request_json: {
+        taskId: 'savings-task',
+        executionMode: 'browser',
+        context: { requirements: ['conversation.chat', 'file.upload'] },
+      },
       profile_id: 'savings-profile',
     })
     const selectedJob = store.takeNextJob({}, 'savings-profile')
@@ -1179,11 +1185,32 @@ test('SQLite attributes measured visible output to its triggering job', async ()
       source_text_sha256: 'b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9',
       measured_at: '2099-08-04T00:00:00.000Z',
     }])
+    const initialAnalytics = store.dashboardMetrics({
+      profile_id: 'savings-profile',
+      from_day: '2000-01-01',
+      to_day: '2100-01-01',
+    })
+    assert.equal(initialAnalytics.daily.reduce((sum, row) => sum + row.succeeded_jobs, 0), 1)
+    assert.equal(initialAnalytics.daily.reduce((sum, row) => sum + row.estimated_output_tokens, 0), 2)
+    assert.deepEqual(
+      initialAnalytics.capabilities.map((row) => row.capability_id).sort(),
+      ['conversation.chat', 'file.upload'],
+    )
+    assert.ok(initialAnalytics.daily.every((row) => row.execution_mode === 'browser'))
     assert.equal(
       Object.hasOwn(store.getJob(created.job_id).result_json.responses[0].result, 'outputSavings'),
       false,
     )
     store.close()
+    const preAnalyticsDatabase = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'))
+    try {
+      preAnalyticsDatabase.exec(`
+        DROP TABLE dashboard_daily_capability_metrics;
+        DROP TABLE dashboard_daily_metrics;
+      `)
+    } finally {
+      preAnalyticsDatabase.close()
+    }
     store = await JobStore.open(homeDir)
     assert.deepEqual(store.outputSavingsSummary(), {
       estimated_output_tokens: 2,
@@ -1193,6 +1220,13 @@ test('SQLite attributes measured visible output to its triggering job', async ()
       first_measured_at: '2099-08-04T00:00:00.000Z',
       last_measured_at: '2099-08-04T00:00:00.000Z',
     })
+    const reopenedAnalytics = store.dashboardMetrics({
+      profile_id: 'savings-profile',
+      from_day: '2000-01-01',
+      to_day: '2100-01-01',
+    })
+    assert.equal(reopenedAnalytics.daily.reduce((sum, row) => sum + row.succeeded_jobs, 0), 1)
+    assert.equal(reopenedAnalytics.daily.reduce((sum, row) => sum + row.estimated_output_tokens, 0), 2)
     assert.deepEqual(store.clearOutputSavings(), { cleared: 1 })
     assert.deepEqual(store.outputSavingsSummary(), {
       estimated_output_tokens: 0,
@@ -1202,6 +1236,13 @@ test('SQLite attributes measured visible output to its triggering job', async ()
       first_measured_at: null,
       last_measured_at: null,
     })
+    const clearedAnalytics = store.dashboardMetrics({
+      profile_id: 'savings-profile',
+      from_day: '2000-01-01',
+      to_day: '2100-01-01',
+    })
+    assert.equal(clearedAnalytics.daily.reduce((sum, row) => sum + row.succeeded_jobs, 0), 1)
+    assert.equal(clearedAnalytics.daily.reduce((sum, row) => sum + row.estimated_output_tokens, 0), 0)
     assert.equal(
       Object.hasOwn(store.getJob(created.job_id).result_json.responses[0].result, 'outputSavings'),
       false,

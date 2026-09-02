@@ -38,6 +38,8 @@ import {
   type Job,
   type JobStore,
   type JobView,
+  type DashboardDailyCapabilityMetric,
+  type DashboardDailyMetric,
   type OutputSavingsEvent,
   type OutputSavingsSummary,
 } from '../jobs/store.js'
@@ -45,6 +47,8 @@ import type { BrowserRuntimeController } from '../runtime/browser-controller.js'
 import { OUTPUT_SAVINGS_ESTIMATOR } from '../output-savings/catalog.js'
 import { OutputSavingsRuntimeManager } from '../output-savings/runtime-manager.js'
 import type {
+  DashboardAnalytics,
+  DashboardAnalyticsRange,
   DashboardConfig,
   DashboardConfigDocument,
   DashboardConfigUpdate,
@@ -201,6 +205,30 @@ export class TokenlessApplicationServices {
         daemon: { ...body.daemon, uptimeMs: 0 },
       }),
     }
+  }
+
+  async analytics(input: { profile?: string | undefined; range?: string | undefined }): Promise<DashboardAnalytics> {
+    const range = dashboardAnalyticsRange(input.range)
+    const profile = input.profile === undefined || input.profile.trim() === ''
+      ? null
+      : await this.profiles.resolveProfile(input.profile)
+    const toDay = new Date().toISOString().slice(0, 10)
+    const queryFromDay = range === 'all'
+      ? '1970-01-01'
+      : subtractUtcDays(toDay, dashboardAnalyticsRangeDays(range) - 1)
+    const metrics = this.store.dashboardMetrics({
+      ...(profile ? { profile_id: profile.slug } : {}),
+      from_day: queryFromDay,
+      to_day: toDay,
+    })
+    return publicDashboardAnalytics({
+      range,
+      profileId: profile?.slug ?? null,
+      queryFromDay,
+      toDay,
+      metrics,
+      capabilities: listTaskCapabilityDefinitions(),
+    })
   }
 
   async job(jobId: string): Promise<DashboardJobDetail> {
@@ -1257,6 +1285,282 @@ function latestProviderControls(jobs: Job[], profileId: string, provider: Provid
     model: choice(VISIBLE_ACTIONS.MODEL_INSPECT),
     effort: choice(VISIBLE_ACTIONS.EFFORT_INSPECT),
   }
+}
+
+type AnalyticsCounter = {
+  succeededJobs: number
+  failedJobs: number
+  canceledJobs: number
+}
+
+function publicDashboardAnalytics(options: {
+  range: DashboardAnalyticsRange
+  profileId: string | null
+  queryFromDay: string
+  toDay: string
+  metrics: ReturnType<JobStore['dashboardMetrics']>
+  capabilities: ReturnType<typeof listTaskCapabilityDefinitions>
+}): DashboardAnalytics {
+  const capabilityDefinitions = new Map(options.capabilities.map((definition) => [definition.id, definition]))
+  const dailyMetrics = new Map<string, DashboardDailyMetric[]>()
+  const dailyCapabilities = new Map<string, DashboardDailyCapabilityMetric[]>()
+  for (const row of options.metrics.daily) (dailyMetrics.get(row.day) ?? setMapValue(dailyMetrics, row.day, [])).push(row)
+  for (const row of options.metrics.capabilities) (dailyCapabilities.get(row.day) ?? setMapValue(dailyCapabilities, row.day, [])).push(row)
+
+  const observedDays = [...dailyMetrics.keys(), ...dailyCapabilities.keys()].sort()
+  const fromDay = options.range === 'all' ? observedDays[0] ?? options.toDay : options.queryFromDay
+  const providerCounters = new Map<string, AnalyticsCounter & {
+    estimatedOutputTokens: number
+    measuredResponses: number
+    browserJobs: number
+    directJobs: number
+    unknownModeJobs: number
+    capabilities: Set<string>
+    lastUsedDay: string | null
+  }>()
+  const capabilityCounters = new Map<string, AnalyticsCounter & { family: string; providers: Set<string> }>()
+  const familyCounters = new Map<string, AnalyticsCounter>()
+  const matrixCounters = new Map<string, AnalyticsCounter & { provider: string; family: string }>()
+  const modeCounters = new Map<'browser' | 'direct' | 'unknown', number>([
+    ['browser', 0],
+    ['direct', 0],
+    ['unknown', 0],
+  ])
+  const totals = emptyAnalyticsCounter()
+  let selectedEstimatedOutputTokens = 0
+  let selectedVisibleCharacters = 0
+  let selectedMeasuredResponses = 0
+  let selectedMeasuredJobs = 0
+  let firstMeasuredAt: string | null = null
+  let lastMeasuredAt: string | null = null
+  let cumulativeEstimatedOutputTokens = options.metrics.opening_estimated_output_tokens
+  const daily = utcDays(fromDay, options.toDay).map((day) => {
+    const counter = emptyAnalyticsCounter()
+    let estimatedOutputTokens = 0
+    let measuredResponses = 0
+    for (const row of dailyMetrics.get(day) ?? []) {
+      addAnalyticsCounter(counter, row)
+      addAnalyticsCounter(totals, row)
+      estimatedOutputTokens += row.estimated_output_tokens
+      measuredResponses += row.measured_responses
+      selectedEstimatedOutputTokens += row.estimated_output_tokens
+      selectedVisibleCharacters += row.visible_characters
+      selectedMeasuredResponses += row.measured_responses
+      selectedMeasuredJobs += row.measured_jobs
+      firstMeasuredAt = earlierTimestamp(firstMeasuredAt, row.first_measured_at)
+      lastMeasuredAt = laterTimestamp(lastMeasuredAt, row.last_measured_at)
+
+      const provider = providerCounters.get(row.provider) ?? setMapValue(providerCounters, row.provider, {
+        ...emptyAnalyticsCounter(),
+        estimatedOutputTokens: 0,
+        measuredResponses: 0,
+        browserJobs: 0,
+        directJobs: 0,
+        unknownModeJobs: 0,
+        capabilities: new Set<string>(),
+        lastUsedDay: null,
+      })
+      addAnalyticsCounter(provider, row)
+      provider.estimatedOutputTokens += row.estimated_output_tokens
+      provider.measuredResponses += row.measured_responses
+      const rowFinished = finishedJobs(row)
+      if (row.execution_mode === 'browser') provider.browserJobs += rowFinished
+      else if (row.execution_mode === 'direct') provider.directJobs += rowFinished
+      else provider.unknownModeJobs += rowFinished
+      if (rowFinished > 0) provider.lastUsedDay = day
+      modeCounters.set(row.execution_mode, (modeCounters.get(row.execution_mode) ?? 0) + rowFinished)
+    }
+
+    const capabilityFamilies: Record<string, number> = {}
+    for (const row of dailyCapabilities.get(day) ?? []) {
+      const definition = capabilityDefinitions.get(row.capability_id as Parameters<typeof capabilityDefinitions.get>[0])
+      if (!definition) continue
+      const capability = capabilityCounters.get(row.capability_id) ?? setMapValue(capabilityCounters, row.capability_id, {
+        ...emptyAnalyticsCounter(),
+        family: definition.family,
+        providers: new Set<string>(),
+      })
+      addAnalyticsCounter(capability, row)
+      capability.providers.add(row.provider)
+
+      const family = familyCounters.get(definition.family) ?? setMapValue(familyCounters, definition.family, emptyAnalyticsCounter())
+      addAnalyticsCounter(family, row)
+      capabilityFamilies[definition.family] = (capabilityFamilies[definition.family] ?? 0) + finishedJobs(row)
+
+      const matrixKey = `${row.provider}\u0000${definition.family}`
+      const matrix = matrixCounters.get(matrixKey) ?? setMapValue(matrixCounters, matrixKey, {
+        ...emptyAnalyticsCounter(),
+        provider: row.provider,
+        family: definition.family,
+      })
+      addAnalyticsCounter(matrix, row)
+      const provider = providerCounters.get(row.provider) ?? setMapValue(providerCounters, row.provider, {
+        ...emptyAnalyticsCounter(),
+        estimatedOutputTokens: 0,
+        measuredResponses: 0,
+        browserJobs: 0,
+        directJobs: 0,
+        unknownModeJobs: 0,
+        capabilities: new Set<string>(),
+        lastUsedDay: null,
+      })
+      provider.capabilities.add(row.capability_id)
+    }
+    cumulativeEstimatedOutputTokens += estimatedOutputTokens
+    return {
+      day,
+      ...counter,
+      finishedJobs: finishedJobs(counter),
+      estimatedOutputTokens,
+      cumulativeEstimatedOutputTokens,
+      measuredResponses,
+      capabilityFamilies,
+    }
+  })
+
+  const totalFinishedJobs = finishedJobs(totals)
+  const providers = [...providerCounters.entries()].map(([provider, counter]) => ({
+    provider,
+    succeededJobs: counter.succeededJobs,
+    failedJobs: counter.failedJobs,
+    canceledJobs: counter.canceledJobs,
+    finishedJobs: finishedJobs(counter),
+    share: totalFinishedJobs === 0 ? 0 : finishedJobs(counter) / totalFinishedJobs,
+    successRate: analyticsSuccessRate(counter),
+    estimatedOutputTokens: counter.estimatedOutputTokens,
+    measuredResponses: counter.measuredResponses,
+    capabilitiesUsed: counter.capabilities.size,
+    browserJobs: counter.browserJobs,
+    directJobs: counter.directJobs,
+    unknownModeJobs: counter.unknownModeJobs,
+    lastUsedDay: counter.lastUsedDay,
+  })).sort((left, right) => right.finishedJobs - left.finishedJobs || left.provider.localeCompare(right.provider))
+
+  return {
+    schema: 'tokenless.dashboard-analytics.v1',
+    generatedAt: new Date().toISOString(),
+    timeZone: 'UTC',
+    range: { id: options.range, fromDay, toDay: options.toDay },
+    profileId: options.profileId,
+    totals: {
+      finishedJobs: totalFinishedJobs,
+      succeededJobs: totals.succeededJobs,
+      failedJobs: totals.failedJobs,
+      canceledJobs: totals.canceledJobs,
+      successRate: analyticsSuccessRate(totals),
+      estimatedOutputTokens: selectedEstimatedOutputTokens,
+      visibleCharacters: selectedVisibleCharacters,
+      measuredResponses: selectedMeasuredResponses,
+      measuredJobs: selectedMeasuredJobs,
+      capabilitiesUsed: capabilityCounters.size,
+      catalogCapabilities: options.capabilities.length,
+    },
+    daily,
+    providers,
+    capabilities: [...capabilityCounters.entries()].map(([capabilityId, counter]) => ({
+      capabilityId,
+      family: counter.family,
+      succeededJobs: counter.succeededJobs,
+      failedJobs: counter.failedJobs,
+      canceledJobs: counter.canceledJobs,
+      finishedJobs: finishedJobs(counter),
+      successRate: analyticsSuccessRate(counter),
+      providersUsed: counter.providers.size,
+    })).sort((left, right) => right.finishedJobs - left.finishedJobs || left.capabilityId.localeCompare(right.capabilityId)),
+    capabilityFamilies: [...familyCounters.entries()].map(([family, counter]) => ({
+      family,
+      ...counter,
+      finishedJobs: finishedJobs(counter),
+    })).sort((left, right) => right.finishedJobs - left.finishedJobs || left.family.localeCompare(right.family)),
+    capabilityMatrix: [...matrixCounters.values()].map((counter) => ({
+      provider: counter.provider,
+      family: counter.family,
+      succeededJobs: counter.succeededJobs,
+      failedJobs: counter.failedJobs,
+      canceledJobs: counter.canceledJobs,
+      finishedJobs: finishedJobs(counter),
+    })).sort((left, right) => left.provider.localeCompare(right.provider) || left.family.localeCompare(right.family)),
+    executionModes: [...modeCounters.entries()].map(([mode, count]) => ({
+      mode,
+      finishedJobs: count,
+      share: totalFinishedJobs === 0 ? 0 : count / totalFinishedJobs,
+    })),
+    measurementCoverage: { firstMeasuredAt, lastMeasuredAt },
+  }
+}
+
+function dashboardAnalyticsRange(value: string | undefined): DashboardAnalyticsRange {
+  if (value === undefined || value === '') return '30d'
+  if (value === '7d' || value === '30d' || value === '90d' || value === '1y' || value === 'all') return value
+  throw applicationError('dashboard_analytics_range_invalid', `Unsupported Dashboard analytics range: ${value}`)
+}
+
+function dashboardAnalyticsRangeDays(range: Exclude<DashboardAnalyticsRange, 'all'>) {
+  if (range === '7d') return 7
+  if (range === '30d') return 30
+  if (range === '90d') return 90
+  return 365
+}
+
+function subtractUtcDays(day: string, days: number) {
+  const date = new Date(`${day}T00:00:00.000Z`)
+  date.setUTCDate(date.getUTCDate() - days)
+  return date.toISOString().slice(0, 10)
+}
+
+function utcDays(fromDay: string, toDay: string) {
+  const days: string[] = []
+  const cursor = new Date(`${fromDay}T00:00:00.000Z`)
+  const end = new Date(`${toDay}T00:00:00.000Z`)
+  while (cursor <= end) {
+    days.push(cursor.toISOString().slice(0, 10))
+    cursor.setUTCDate(cursor.getUTCDate() + 1)
+  }
+  return days
+}
+
+function emptyAnalyticsCounter(): AnalyticsCounter {
+  return { succeededJobs: 0, failedJobs: 0, canceledJobs: 0 }
+}
+
+function addAnalyticsCounter(target: AnalyticsCounter, source: {
+  succeeded_jobs: number
+  failed_jobs: number
+  canceled_jobs: number
+}) {
+  target.succeededJobs += source.succeeded_jobs
+  target.failedJobs += source.failed_jobs
+  target.canceledJobs += source.canceled_jobs
+}
+
+function finishedJobs(counter: AnalyticsCounter | {
+  succeeded_jobs: number
+  failed_jobs: number
+  canceled_jobs: number
+}) {
+  return 'succeededJobs' in counter
+    ? counter.succeededJobs + counter.failedJobs + counter.canceledJobs
+    : counter.succeeded_jobs + counter.failed_jobs + counter.canceled_jobs
+}
+
+function analyticsSuccessRate(counter: AnalyticsCounter) {
+  const attempts = counter.succeededJobs + counter.failedJobs
+  return attempts === 0 ? null : counter.succeededJobs / attempts
+}
+
+function earlierTimestamp(current: string | null, candidate: string | null) {
+  if (candidate === null) return current
+  return current === null || candidate < current ? candidate : current
+}
+
+function laterTimestamp(current: string | null, candidate: string | null) {
+  if (candidate === null) return current
+  return current === null || candidate > current ? candidate : current
+}
+
+function setMapValue<Key, Value>(map: Map<Key, Value>, key: Key, value: Value) {
+  map.set(key, value)
+  return value
 }
 
 function publicJobSummary(

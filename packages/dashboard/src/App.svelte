@@ -59,6 +59,7 @@
     t,
   })
   const actions: DashboardActions = {
+    getAnalytics: (profile, range) => client.analytics(profile, range),
     updateConfig: (input, announce = true) => perform(() => client.updateConfig(input), announce),
     getConfigDocument: () => client.getConfigDocument(),
     createProfile: (input, announce = true) => perform(() => client.createProfile(input), announce),
@@ -270,8 +271,11 @@
     history.replaceState(history.state, '', url)
   }
 
-  function t(key: Parameters<typeof translate>[1]) {
-    return translate(language, key)
+  function t(
+    key: Parameters<typeof translate>[1],
+    params: Readonly<Record<string, string | number>> = {},
+  ) {
+    return translate(language, key, params)
   }
 
   function isSetupPath(pathname: string) {
@@ -351,10 +355,7 @@
           {selectedProfile}
           {language}
           {t}
-          readinessBusy={readiness.state.busy}
-          readinessJobs={readiness.state.jobs}
-          onrefreshreadiness={readiness.refresh}
-          onrefreshproviderreadiness={readiness.refreshProvider}
+          {actions}
         />
       {:else if section === 'profiles'}
         <ProfilesView {snapshot} {selectedProfile} {language} {t} {busy} {actions} onselect={selectProfile} />

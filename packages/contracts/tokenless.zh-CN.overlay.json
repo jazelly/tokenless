@@ -216,6 +216,7 @@
     { "target": "$[\"components\"][\"responses\"][\"GatewayTimeout\"][\"description\"]", "update": "Image generation 未在 deadline 前产生 terminal persisted artifact" },
     { "target": "$[\"components\"][\"responses\"][\"Session\"][\"description\"]", "update": "Active in-memory Dashboard session。" },
     { "target": "$[\"components\"][\"responses\"][\"Snapshot\"][\"description\"]", "update": "已脱敏的 aggregate Dashboard state。" },
+    { "target": "$[\"components\"][\"responses\"][\"Analytics\"][\"description\"]", "update": "已持久化的每日 Dashboard analytics。" },
     { "target": "$[\"components\"][\"responses\"][\"Config\"][\"description\"]", "update": "已持久化的 public configuration。" },
     { "target": "$[\"components\"][\"responses\"][\"OutputSavingsState\"][\"description\"]", "update": "可选的本地 output savings measurement state。" },
     { "target": "$[\"components\"][\"responses\"][\"BrowserRuntimeCatalog\"][\"description\"]", "update": "已发现且可安装的 browser runtime choice。" },
