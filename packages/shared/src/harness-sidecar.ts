@@ -1,4 +1,10 @@
 export const HARNESS_SIDECAR_PROTOCOL = 'tokenless.harness-sidecar/v1' as const
+export const SPARK_X25_4B_MLX_ENGINE_ID = 'spark-x2.5-4b-mlx' as const
+export const SPARK_X25_4B_MLX_ENDPOINT = 'http://127.0.0.1:8080/v1/chat/completions' as const
+export const SPARK_X25_4B_MLX_HEALTH_ENDPOINT = 'http://127.0.0.1:8080/health' as const
+export const SPARK_X25_4B_MLX_MODEL = 'XHToken/Spark-X2.5-4B' as const
+export const SPARK_X25_4B_MLX_TOOL_NAME = 'return_result' as const
+const SPARK_COMPLETION_TIMEOUT_MS = 120_000
 const ROUTER_TASK_TYPE_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/u
 
 export type HarnessSidecarJsonPrimitive = string | number | boolean | null
@@ -103,6 +109,82 @@ export class HarnessSidecarError extends Error {
   }
 }
 
+/**
+ * Browser- and Node-compatible adapter for the fixed local Spark MLX server.
+ * The server is intentionally not configurable in V1: the Dashboard and the
+ * real integration test must exercise the same local endpoint and model.
+ */
+export function createSparkX25MlxAiEngine(): HarnessAiEngine {
+  return {
+    id: SPARK_X25_4B_MLX_ENGINE_ID,
+    async complete(input) {
+      let response: Response
+      try {
+        response = await fetch(SPARK_X25_4B_MLX_ENDPOINT, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          signal: AbortSignal.timeout(SPARK_COMPLETION_TIMEOUT_MS),
+          body: JSON.stringify({
+            model: SPARK_X25_4B_MLX_MODEL,
+            messages: [
+              {
+                role: 'system',
+                content: [
+                  input.instruction,
+                  `Use the available ${SPARK_X25_4B_MLX_TOOL_NAME} tool exactly once. Do not answer with plain text or JSON content. Emit the native Spark tool call syntax beginning with <tool_call>${SPARK_X25_4B_MLX_TOOL_NAME}.`,
+                ].join('\n'),
+              },
+              { role: 'user', content: JSON.stringify(input.input) },
+            ],
+            tools: [{
+              type: 'function',
+              function: {
+                name: SPARK_X25_4B_MLX_TOOL_NAME,
+                description: 'Return the requested structured result.',
+                parameters: input.responseSchema,
+              },
+            }],
+            tool_choice: {
+              type: 'function',
+              function: { name: SPARK_X25_4B_MLX_TOOL_NAME },
+            },
+            parallel_tool_calls: false,
+            stream: false,
+            temperature: 0,
+            max_tokens: 512,
+            chat_template_kwargs: { enable_thinking: false },
+          }),
+        })
+      } catch (error) {
+        const timedOut = error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')
+        throw new HarnessSidecarError(
+          'harness_spark_request_failed',
+          timedOut
+            ? `Spark MLX request timed out after ${SPARK_COMPLETION_TIMEOUT_MS / 1_000} seconds.`
+            : `Spark MLX request failed: ${error instanceof Error ? error.message : String(error)}`,
+        )
+      }
+      if (!response.ok) {
+        throw new HarnessSidecarError(
+          'harness_spark_request_failed',
+          `Spark MLX request failed with HTTP ${response.status}.`,
+        )
+      }
+
+      let payload: unknown
+      try {
+        payload = await response.json()
+      } catch (error) {
+        throw new HarnessSidecarError(
+          'harness_spark_response_invalid',
+          `Spark MLX response was not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+        )
+      }
+      return readSparkToolArguments(payload)
+    },
+  }
+}
+
 export function createHarnessFrontDoorSidecar(engine: HarnessAiEngine): HarnessFrontDoorSidecar {
   return {
     async prepare(input) {
@@ -192,6 +274,53 @@ function readTitle(value: HarnessSidecarJsonValue) {
     throw new HarnessSidecarError('harness_front_door_result_invalid', 'Front Door returned an invalid title.')
   }
   return title.trim()
+}
+
+function readSparkToolArguments(value: unknown): HarnessSidecarJsonValue {
+  const completion = readUnknownRecord(value, 'Spark MLX completion')
+  const choices = completion.choices
+  if (!Array.isArray(choices) || choices.length !== 1) {
+    throw new HarnessSidecarError(
+      'harness_spark_tool_call_invalid',
+      'Spark MLX response must contain exactly one completion choice.',
+    )
+  }
+  const choice = readUnknownRecord(choices[0], 'Spark MLX completion choice')
+  const message = readUnknownRecord(choice.message, 'Spark MLX completion message')
+  const toolCalls = message.tool_calls
+  if (!Array.isArray(toolCalls) || toolCalls.length !== 1) {
+    throw new HarnessSidecarError(
+      'harness_spark_tool_call_invalid',
+      'Spark MLX response must contain exactly one tool call.',
+    )
+  }
+  const toolCall = readUnknownRecord(toolCalls[0], 'Spark MLX tool call')
+  const functionCall = readUnknownRecord(toolCall.function, 'Spark MLX function call')
+  if (
+    toolCall.type !== 'function'
+    || functionCall.name !== SPARK_X25_4B_MLX_TOOL_NAME
+    || typeof functionCall.arguments !== 'string'
+  ) {
+    throw new HarnessSidecarError(
+      'harness_spark_tool_call_invalid',
+      `Spark MLX response must contain one '${SPARK_X25_4B_MLX_TOOL_NAME}' function call.`,
+    )
+  }
+  try {
+    return JSON.parse(functionCall.arguments) as HarnessSidecarJsonValue
+  } catch {
+    throw new HarnessSidecarError(
+      'harness_spark_tool_call_invalid',
+      `Spark MLX '${SPARK_X25_4B_MLX_TOOL_NAME}' arguments were not valid JSON.`,
+    )
+  }
+}
+
+function readUnknownRecord(value: unknown, label: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new HarnessSidecarError('harness_spark_response_invalid', `${label} must be a JSON object.`)
+  }
+  return value as Record<string, unknown>
 }
 
 function readRoute(value: HarnessSidecarJsonValue, candidates: HarnessFrontDoorInput['providers']): HarnessFrontDoorRoute {

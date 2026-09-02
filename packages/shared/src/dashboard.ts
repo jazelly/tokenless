@@ -88,7 +88,7 @@ export type DashboardRouterProviderRule = {
 
 export type DashboardRouterConfig = {
   enabled: boolean
-  engine: 'chrome-prompt-api'
+  engine: 'chrome-prompt-api' | 'spark-x2.5-4b-mlx'
   providers: DashboardRouterProviderRule[]
 }
 

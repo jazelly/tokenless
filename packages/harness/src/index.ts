@@ -143,6 +143,7 @@ export {
   HarnessSidecarError,
   createHarnessExitDoorSidecar,
   createHarnessFrontDoorSidecar,
+  createSparkX25MlxAiEngine,
 } from './sidecar/index.js'
 
 export type {
@@ -159,6 +160,14 @@ export type {
   HarnessSidecarBrowserBinding,
   HarnessSidecarJsonPrimitive,
   HarnessSidecarJsonValue,
+} from 'tokenless-internal-shared/harness-sidecar'
+
+export {
+  SPARK_X25_4B_MLX_ENGINE_ID,
+  SPARK_X25_4B_MLX_ENDPOINT,
+  SPARK_X25_4B_MLX_HEALTH_ENDPOINT,
+  SPARK_X25_4B_MLX_MODEL,
+  SPARK_X25_4B_MLX_TOOL_NAME,
 } from 'tokenless-internal-shared/harness-sidecar'
 
 export {

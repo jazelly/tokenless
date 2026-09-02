@@ -1,9 +1,13 @@
-import type {
-  HarnessAiEngine,
-  HarnessSidecarJsonValue,
+import {
+  createSparkX25MlxAiEngine,
+  SPARK_X25_4B_MLX_ENGINE_ID,
+  SPARK_X25_4B_MLX_HEALTH_ENDPOINT,
+  SPARK_X25_4B_MLX_MODEL,
+  type HarnessAiEngine,
 } from 'tokenless-internal-shared/harness-sidecar'
+import type { HarnessSidecarJsonValue } from 'tokenless-internal-shared/harness-sidecar'
 
-export type RouterEngineId = 'chrome-prompt-api'
+export type RouterEngineId = 'chrome-prompt-api' | typeof SPARK_X25_4B_MLX_ENGINE_ID
 
 export const CHROME_PROMPT_API_MIN_MAJOR = 148
 export const ROUTER_TASK_TYPE_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/u
@@ -21,6 +25,12 @@ export type RouterEngineObservation = {
   browserFamily: string
   browserVersion: string | null
   minimumChromeMajor: number
+}
+
+export type RouterEngineCallbacks = {
+  onObservation: (observation: RouterEngineObservation) => void
+  onAvailability: (availability: string) => void
+  onDownloadProgress: (progress: number | null) => void
 }
 
 export type RouterProviderCandidate = {
@@ -76,6 +86,18 @@ export class RouterEngineError extends Error {
   }
 }
 
+type RouterEngine = {
+  inspect: (browserBinding: RouterBrowserBinding) => Promise<RouterEngineObservation>
+  availability: (browserBinding: RouterBrowserBinding) => Promise<{ observation: RouterEngineObservation; status: string }>
+  route: (
+    task: string,
+    providers: RouterProviderCandidate[],
+    browserBinding: RouterBrowserBinding,
+    callbacks: RouterEngineCallbacks,
+  ) => Promise<RouterResult>
+  title: (task: string, browserBinding: RouterBrowserBinding) => Promise<string>
+}
+
 /** Browser-side adapter for the Harness sidecar seam. */
 export function createGeminiNanoAiEngine(): HarnessAiEngine {
   return {
@@ -104,7 +126,15 @@ export function createGeminiNanoAiEngine(): HarnessAiEngine {
   }
 }
 
-export function createRouterEngine(engine: RouterEngineId) {
+/** Return the selected local model adapter for the shared Harness sidecar seam. */
+export function createRouterAiEngine(engine: RouterEngineId): HarnessAiEngine {
+  if (engine === 'chrome-prompt-api') return createGeminiNanoAiEngine()
+  if (engine === SPARK_X25_4B_MLX_ENGINE_ID) return createSparkX25MlxAiEngine()
+  throw new RouterEngineError('unsupported-engine')
+}
+
+export function createRouterEngine(engine: RouterEngineId): RouterEngine {
+  if (engine === SPARK_X25_4B_MLX_ENGINE_ID) return createSparkRouterEngine()
   if (engine !== 'chrome-prompt-api') throw new RouterEngineError('unsupported-engine')
 
   return {
@@ -124,11 +154,7 @@ export function createRouterEngine(engine: RouterEngineId) {
       task: string,
       providers: RouterProviderCandidate[],
       _browserBinding: RouterBrowserBinding,
-      callbacks: {
-        onObservation: (observation: RouterEngineObservation) => void
-        onAvailability: (availability: string) => void
-        onDownloadProgress: (progress: number | null) => void
-      },
+      callbacks: RouterEngineCallbacks,
     ): Promise<RouterResult> {
       const observation = await inspectChromePromptApi()
       callbacks.onObservation(observation)
@@ -223,6 +249,116 @@ export function createRouterEngine(engine: RouterEngineId) {
       }
     },
   }
+}
+
+function createSparkRouterEngine(): RouterEngine {
+  return {
+    async inspect(_browserBinding) {
+      return sparkObservation()
+    },
+
+    async availability(_browserBinding) {
+      const observation = sparkObservation()
+      await requireSparkAvailability(observation)
+      return { observation, status: 'available' }
+    },
+
+    async route(task, providers, browserBinding, callbacks) {
+      const observation = sparkObservation()
+      callbacks.onObservation(observation)
+      callbacks.onAvailability('checking')
+      await requireSparkAvailability(observation)
+      callbacks.onAvailability('available')
+      callbacks.onDownloadProgress(null)
+      const value = await createSparkX25MlxAiEngine().complete({
+        instruction: semanticInstruction,
+        input: { task, providerConfiguration: providers },
+        responseSchema: routerResponseSchema(providers),
+        browserBinding,
+      })
+      return readRouterResult(value, providers)
+    },
+
+    async title(task, _browserBinding) {
+      const observation = sparkObservation()
+      await requireSparkAvailability(observation)
+      const value = await createSparkX25MlxAiEngine().complete({
+        instruction: titleInstruction,
+        input: { conversation: task.slice(0, 4_000) },
+        responseSchema: {
+          type: 'object',
+          properties: { title: { type: 'string' } },
+          required: ['title'],
+          additionalProperties: false,
+        },
+      })
+      const record = readJsonRecord(value)
+      const title = typeof record.title === 'string' ? record.title.trim() : ''
+      if (!title || title.length > 80) throw new RouterEngineError('invalid-result')
+      return title
+    },
+  }
+}
+
+function sparkObservation(): RouterEngineObservation {
+  return {
+    supported: true,
+    code: 'supported',
+    browserId: SPARK_X25_4B_MLX_ENGINE_ID,
+    browserFamily: 'local-mlx-server',
+    browserVersion: SPARK_X25_4B_MLX_MODEL,
+    minimumChromeMajor: 0,
+  }
+}
+
+async function requireSparkAvailability(observation: RouterEngineObservation) {
+  try {
+    const response = await fetch(SPARK_X25_4B_MLX_HEALTH_ENDPOINT, {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(5_000),
+    })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+  } catch {
+    throw new RouterEngineError('unavailable', observation)
+  }
+}
+
+function routerResponseSchema(providers: RouterProviderCandidate[]) {
+  return {
+    type: 'object',
+    properties: {
+      providerId: { type: 'string', enum: providers.map((provider) => provider.providerId) },
+      model: { enum: [...new Set(providers.map((provider) => provider.model))] },
+      taskType: { type: 'string', pattern: '^[a-z][a-z0-9_-]{0,31}$' },
+      complexity: { type: 'string', enum: ['low', 'medium', 'high'] },
+      reason: { type: 'string' },
+    },
+    required: ['providerId', 'model', 'taskType', 'complexity', 'reason'],
+    additionalProperties: false,
+  }
+}
+
+function readRouterResult(value: HarnessSidecarJsonValue, providers: RouterProviderCandidate[]): RouterResult {
+  const parsed = readJsonRecord(value) as Partial<RouterResult>
+  const selectedProvider = providers.find((provider) => provider.providerId === parsed.providerId)
+  if (
+    !selectedProvider
+    || parsed.model !== selectedProvider.model
+    || typeof parsed.taskType !== 'string'
+    || !ROUTER_TASK_TYPE_PATTERN.test(parsed.taskType)
+    || !['low', 'medium', 'high'].includes(String(parsed.complexity))
+    || typeof parsed.reason !== 'string'
+  ) {
+    throw new RouterEngineError('invalid-result')
+  }
+  return parsed as RouterResult
+}
+
+function readJsonRecord(value: HarnessSidecarJsonValue): Record<string, HarnessSidecarJsonValue> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new RouterEngineError('invalid-result')
+  }
+  return value
 }
 
 async function inspectChromePromptApi(): Promise<RouterEngineObservation> {

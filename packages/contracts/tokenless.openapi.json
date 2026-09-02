@@ -8219,7 +8219,8 @@
           "engine": {
             "type": "string",
             "enum": [
-              "chrome-prompt-api"
+              "chrome-prompt-api",
+              "spark-x2.5-4b-mlx"
             ]
           },
           "providers": {

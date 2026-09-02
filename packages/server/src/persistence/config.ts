@@ -68,7 +68,7 @@ export type DirectProviderConfig = {
   providerBackends: Record<string, ProviderBackend>
 }
 
-export const ROUTER_ENGINES = Object.freeze(['chrome-prompt-api'] as const)
+export const ROUTER_ENGINES = Object.freeze(['chrome-prompt-api', 'spark-x2.5-4b-mlx'] as const)
 export type RouterEngine = typeof ROUTER_ENGINES[number]
 
 export type RouterConfig = {

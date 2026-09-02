@@ -414,7 +414,7 @@
       <div class="settings-section-title"><div><h2>{t('semanticRouting')}</h2></div>{@render helpTooltip(t('routingLede'))}</div>
       <div class="form-stack">
         <div class="switch-field"><span><span class="switch-heading"><strong>{t('experimentalRouter')}</strong>{@render helpTooltip(t('routerEnableHelp'))}</span></span><label class="switch"><input type="checkbox" bind:checked={global.router.enabled} data-testid="config-router-enabled" /><span></span></label></div>
-        <div class="field"><div class="field-label-row"><label for="config-router-engine">{t('routerEngine')}</label></div><select id="config-router-engine" bind:value={global.router.engine} data-testid="config-router-engine"><option value="chrome-prompt-api">chrome-prompt-api</option></select></div>
+        <div class="field"><div class="field-label-row"><label for="config-router-engine">{t('routerEngine')}</label></div><select id="config-router-engine" bind:value={global.router.engine} data-testid="config-router-engine"><option value="chrome-prompt-api">{t('chromePromptApiEngine')}</option><option value="spark-x2.5-4b-mlx">{t('sparkX25MlxEngine')}</option></select></div>
         <div class="field"><div class="field-label-row"><span>{t('routerProviders')}</span>{@render helpTooltip(t('routerProvidersHelp'))}</div></div>
         <div class="config-entry-list" data-testid="config-router-providers">
           {#each global.router.providers as provider, index (provider.id)}

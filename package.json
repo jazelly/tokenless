@@ -36,6 +36,7 @@
     "benchmark:featurebench": "node scripts/featurebench.mjs",
     "benchmark:ifbench": "node benchmarks/ifbench/run.mjs",
     "benchmark:terminalbench": "node benchmarks/terminalbench/run.mjs",
+    "test:frontdoor:spark": "npm run build && node --test --test-concurrency=1 test/harness-front-door-spark.integration.mjs",
     "test:e2e:featurebench": "npm run build && node test/run-gated-e2e.mjs featurebench",
     "design:dev": "npm run design:dev --workspace packages/dashboard",
     "design:build": "npm run design:build --workspace packages/dashboard"

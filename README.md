@@ -80,6 +80,20 @@ tokenless run --provider chatgpt --prompt "Review this proposal."
 
 Setup opens the local dashboard. Reopen it anytime with `tokenless dashboard`.
 
+## Optional local Spark X2.5-4B router engine
+
+On Apple Silicon, the Dashboard can use the official Spark MLX server for the local Spark X2.5-4B model. Ollama is not required; the V1 integration uses the fixed OpenAI-compatible endpoint below.
+
+```bash
+git clone https://github.com/XHToken/Spark-MLX-LLM.git
+cd Spark-MLX-LLM
+python3 -m venv .venv
+.venv/bin/python -m pip install -e '.[test]'
+.venv/bin/spark-mlx-server --model XHToken/Spark-X2.5-4B --host 127.0.0.1 --port 8080 --allowed-origins http://127.0.0.1:7331
+```
+
+In Dashboard → System → Semantic routing, select `Spark X2.5-4B · local MLX` and save. The health endpoint is `http://127.0.0.1:8080/health`; chat completions use `http://127.0.0.1:8080/v1/chat/completions`.
+
 ## What agents get
 
 - Send prompts and read visible responses through real provider websites.
