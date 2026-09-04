@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Calculator, Settings } from '@lucide/svelte'
+  import { Activity, CircleCheck, Coins, Hand, Play, Settings } from '@lucide/svelte'
   import ProfileSwitcher from './ProfileSwitcher.svelte'
   import { formatNumber } from '../formatting.js'
   import { stateLabel, type MessageKey } from '../i18n/index.js'
@@ -28,11 +28,13 @@
   let savingsEnabled = $derived(snapshot.outputSavings.enabled === true)
   let savingsReady = $derived(savingsEnabled && snapshot.outputSavings.collection === 'enabled')
   let savingsState = $derived(!savingsEnabled ? 'disabled' : savingsReady ? 'ready' : 'pending')
-  let savingsTitle = $derived(!savingsEnabled
+  let savingsValue = $derived(savingsReady ? formatNumber(snapshot.outputSavings.summary.estimatedOutputTokens, language) : '—')
+  let savingsHelp = $derived(!savingsEnabled
     ? t('savingsUnavailableTooltip')
     : !savingsReady
       ? t('tokenizerPreparesOnFirstResponse')
-      : undefined)
+      : `${t('estimatedTokensSaved')}: ${savingsValue} · ${t('measuredResponses')}: ${formatNumber(snapshot.outputSavings.summary.responseCount, language)}`)
+  let jobsHelp = $derived(`${t('runtime')}: ${runtimeLabel} · ${formatNumber(snapshot.runtime.activeJobCount, language)} ${t('activeUnit')} · ${t('waitingJobs')}: ${formatNumber(waitingJobs, language)} · ${t('finishedJobs')}: ${formatNumber(finishedJobs, language)}`)
 </script>
 
 <header class="top-header" data-testid="top-header">
@@ -41,36 +43,33 @@
     class="top-header-savings"
     data-testid="overview-output-savings"
     data-state={savingsState}
-    title={savingsTitle}
   >
-    <a href={`/dashboard/system/?profile=${encodeURIComponent(selectedProfile)}`} aria-label={t('manageOutputSavings')} data-dashboard-section="system">
-      <span class="top-header-icon dark"><Calculator size={17} /></span>
-      <span class="top-header-value" data-testid="header-tokens-saved">
-        <strong>{savingsReady ? formatNumber(snapshot.outputSavings.summary.estimatedOutputTokens, language) : '—'}</strong>
-        <small>{t('tokensSavedShort')}</small>
-      </span>
-      <span class="top-header-detail">
-        {#if !savingsEnabled}
-          {t('savingsSummaryUnavailable')} {t('turnOnToReview')}
-        {:else if !savingsReady}
-          {t('tokenizerPreparesOnFirstResponse')}
-        {:else}
-          {formatNumber(snapshot.outputSavings.summary.responseCount, language)} {t('measuredResponses')}
-        {/if}
-      </span>
+    <a class="top-header-control hover-tooltip tooltip-below" href={`/dashboard/system/?profile=${encodeURIComponent(selectedProfile)}`} aria-label={`${savingsHelp} · ${t('manageOutputSavings')}`} data-dashboard-section="system">
+      <Coins size={16} aria-hidden="true" />
+      <strong class="top-header-value" data-testid="header-tokens-saved">{savingsValue}</strong>
+      <span class="hover-tooltip-content" role="tooltip" aria-hidden="true">{savingsHelp}</span>
     </a>
   </div>
 
-  <a class="top-header-jobs" href={`/dashboard/jobs/?profile=${encodeURIComponent(selectedProfile)}`} data-dashboard-section="jobs">
-    <span class:ok={snapshot.runtime.status === 'running'} class="status-dot"></span>
-    <span class="top-header-runtime">
-      <small>{t('runtime')}</small>
+  <div class="top-header-jobs">
+    <a class="top-header-control top-header-runtime hover-tooltip tooltip-below" class:running={snapshot.runtime.status === 'running'} href={`/dashboard/jobs/?profile=${encodeURIComponent(selectedProfile)}`} aria-label={jobsHelp} data-dashboard-section="jobs">
+      <Activity size={16} aria-hidden="true" />
       <strong data-testid="header-runtime-status" data-state={runtimeState}>{runtimeLabel}</strong>
-    </span>
-    <span class="top-header-job-count"><strong>{formatNumber(snapshot.runtime.activeJobCount, language)}</strong><small>{t('activeUnit')}</small></span>
-    <span class="top-header-job-count"><strong>{formatNumber(waitingJobs, language)}</strong><small>{t('waitingJobs')}</small></span>
-    <span class="top-header-job-count" data-testid="header-finished-jobs"><strong>{formatNumber(finishedJobs, language)}</strong><small>{t('finishedJobs')}</small></span>
-  </a>
+      <span class="hover-tooltip-content" role="tooltip" aria-hidden="true">{jobsHelp}</span>
+    </a>
+    <a class="top-header-control hover-tooltip tooltip-below" href={`/dashboard/jobs/?profile=${encodeURIComponent(selectedProfile)}`} aria-label={`${formatNumber(snapshot.runtime.activeJobCount, language)} ${t('activeUnit')}`} data-dashboard-section="jobs">
+      <Play size={16} aria-hidden="true" /><strong>{formatNumber(snapshot.runtime.activeJobCount, language)}</strong>
+      <span class="hover-tooltip-content" role="tooltip" aria-hidden="true">{formatNumber(snapshot.runtime.activeJobCount, language)} {t('activeUnit')}</span>
+    </a>
+    <a class="top-header-control top-header-secondary hover-tooltip tooltip-below" href={`/dashboard/jobs/?profile=${encodeURIComponent(selectedProfile)}`} aria-label={`${t('waitingJobs')}: ${formatNumber(waitingJobs, language)}`} data-dashboard-section="jobs">
+      <Hand size={16} aria-hidden="true" /><strong>{formatNumber(waitingJobs, language)}</strong>
+      <span class="hover-tooltip-content" role="tooltip" aria-hidden="true">{t('waitingJobs')}</span>
+    </a>
+    <a class="top-header-control top-header-secondary hover-tooltip tooltip-below" href={`/dashboard/jobs/?profile=${encodeURIComponent(selectedProfile)}`} aria-label={`${t('finishedJobs')}: ${formatNumber(finishedJobs, language)}`} data-dashboard-section="jobs" data-testid="header-finished-jobs">
+      <CircleCheck size={16} aria-hidden="true" /><strong>{formatNumber(finishedJobs, language)}</strong>
+      <span class="hover-tooltip-content" role="tooltip" aria-hidden="true">{t('finishedJobs')}</span>
+    </a>
+  </div>
 
   <div class="top-header-actions">
     <ProfileSwitcher
@@ -81,12 +80,9 @@
       {onselect}
     />
 
-    <a class="top-header-settings" href={`/dashboard/system/?profile=${encodeURIComponent(selectedProfile)}`} aria-label={`${t('system')} · ${t('version')} ${snapshot.daemon.version}`} data-dashboard-section="system">
-      <span class="top-header-icon"><Settings size={16} /></span>
-      <span>
-        <small>{t('system')}</small>
-        <strong translate="no">v{snapshot.daemon.version}</strong>
-      </span>
+    <a class="top-header-control top-header-settings hover-tooltip tooltip-below tooltip-right" href={`/dashboard/system/?profile=${encodeURIComponent(selectedProfile)}`} aria-label={`${t('system')} · ${t('version')} ${snapshot.daemon.version}`} data-dashboard-section="system">
+      <Settings size={16} aria-hidden="true" />
+      <span class="hover-tooltip-content" role="tooltip" aria-hidden="true">{t('system')} · <span translate="no">v{snapshot.daemon.version}</span></span>
     </a>
   </div>
 </header>

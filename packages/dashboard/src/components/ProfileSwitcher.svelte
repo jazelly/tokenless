@@ -79,7 +79,7 @@
 <div bind:this={root} class:open class="profile-switcher">
   <button
     bind:this={trigger}
-    class="profile-switcher-trigger"
+    class="profile-switcher-trigger hover-tooltip tooltip-below tooltip-right"
     type="button"
     data-testid="header-profile"
     aria-label={`${label}: ${current?.label ?? value}`}
@@ -89,13 +89,15 @@
     onkeydown={triggerKeydown}
   >
     <span class="profile-switcher-icon"
-        ><UserRound size={15} /></span
+        ><UserRound size={16} aria-hidden="true" /></span
       >
     <span class="profile-switcher-copy">
-      {#if countLabel}<small>{countLabel}</small>{/if}
       <strong>{current?.label ?? value}</strong>
     </span>
-    <span class="profile-switcher-chevron"><ChevronDown size={14} /></span>
+    <span class="profile-switcher-chevron"><ChevronDown size={14} aria-hidden="true" /></span>
+    {#if !open}
+      <span class="hover-tooltip-content" role="tooltip" aria-hidden="true">{label}: {current?.label ?? value}{countLabel ? ` · ${countLabel}` : ''}</span>
+    {/if}
   </button>
 
   {#if open}
@@ -128,17 +130,19 @@
   .profile-switcher {
     align-self: center;
     position: relative;
-    min-width: 188px;
+    min-width: 0;
+    width: clamp(96px, 14vw, 180px);
     color: var(--ink, #171715);
   }
   .profile-switcher-trigger {
     display: flex;
     width: 100%;
-    min-height: 70px;
+    height: 36px;
     align-items: center;
-    gap: 10px;
-    padding: 0 14px;
+    gap: 8px;
+    padding: 0 8px;
     border: 0;
+    border-radius: 7px;
     background: transparent;
     color: inherit;
     text-align: left;
@@ -155,38 +159,29 @@
   }
   .profile-switcher-icon {
     display: grid;
-    width: 29px;
-    height: 29px;
+    width: 16px;
+    height: 16px;
     flex: 0 0 auto;
     place-items: center;
-    border-radius: 8px;
-    background: var(--surface-muted, #f0efec);
+    color: var(--muted, #706e68);
   }
   .profile-switcher-copy {
     display: flex;
     min-width: 0;
     flex: 1;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .profile-switcher-copy small {
-    overflow: hidden;
-    color: var(--muted, #706e68);
-    font-size: 9px;
-    font-weight: 660;
-    line-height: 1.2;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    align-items: center;
   }
   .profile-switcher-copy strong {
     overflow: hidden;
-    font-size: 12px;
-    font-weight: 700;
-    line-height: 1.2;
+    font-size: 14px;
+    font-weight: 650;
+    line-height: 20px;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .profile-switcher-chevron {
+    display: grid;
+    place-items: center;
     flex: 0 0 auto;
     color: var(--muted, #706e68);
     transition: transform 150ms ease;
@@ -198,8 +193,8 @@
     position: absolute;
     z-index: 90;
     top: calc(100% + 7px);
-    right: 8px;
-    width: 248px;
+    right: 0;
+    width: min(248px, calc(100vw - 24px));
     overflow: hidden;
     padding: 6px;
     border: 1px solid var(--line, #dedcd6);
@@ -260,9 +255,7 @@
     font-weight: 750;
   }
   @media (max-width: 760px) {
-    .profile-switcher { min-width: 0; width: min(40vw, 170px); margin-right: 12px; }
-    .profile-switcher-trigger { min-height: 36px; padding: 0 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); }
-    .profile-switcher-icon, .profile-switcher-copy small { display: none; }
-    .profile-switcher-menu { right: 0; width: min(280px, calc(100vw - 24px)); }
+    .profile-switcher { width: clamp(96px, 27vw, 150px); }
+    .profile-switcher-trigger { gap: 6px; padding: 0 6px; }
   }
 </style>
