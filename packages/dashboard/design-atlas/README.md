@@ -1,6 +1,6 @@
 # Tokenless API Design Atlas
 
-This Storybook is the code-owned design source for the current Dashboard. It mirrors the production screen hierarchy without importing production views, styles, clients, or runtime data.
+Storybook renders the production Dashboard components and stylesheet with illustrative local data. The application and Atlas both use `src/Dashboard.svelte`; neither maintains a second page implementation.
 
 ## Open the atlas
 
@@ -8,19 +8,37 @@ This Storybook is the code-owned design source for the current Dashboard. It mir
 npm run design:dev
 ```
 
-Open `http://localhost:6007/`. Use the sidebar to choose a screen or an isolated component. The Controls panel changes locale, viewport, colors, radius, density, profile, provider, and UI state.
-
-Build the static Storybook with:
+Open `http://localhost:6007/`. Choose a page, component, or interaction in the sidebar. Controls switch language, profile, loading/error state, and preview values for the production CSS variables. The viewport toolbar provides desktop and mobile layouts.
 
 ```bash
 npm run design:build
 ```
 
+This builds a standalone Storybook in `design-atlas-static/`.
+
+## Where to change a design
+
+| Change | Source of truth |
+| --- | --- |
+| Navigation, header composition, loading/offline/fatal layout | `src/Dashboard.svelte` |
+| Page layout and interactions | `src/views/*.svelte` |
+| Shared components, including the profile picker and metric card | `src/components/*.svelte` |
+| Colors, typography, spacing, and responsive rules | `src/styles.css` and component-local styles |
+| Product copy | `src/i18n/index.ts` |
+| Example data, initial state, and review scenarios | `design-atlas/preview-data.ts`, `preview-state.svelte.ts`, and `*.stories.ts` |
+
+A change to shared UI appears in Storybook and in the next Dashboard build. Controls only change the current preview; save an accepted design in the shared source. Keep wrappers limited to arranging examples, without overriding component typography or colors.
+
 ## Boundaries
 
-- Atlas data and provider states are illustrative, not telemetry or capability evidence.
-- Page stories render only Dashboard UI. Storybook or design-workbench labels belong in the manager and documentation, never inside the page canvas.
-- The Components group owns the reusable profile switcher, buttons, badges, metrics, provider card, and navigation states.
-- Profile choices use distinct local Dashboard data so selecting `design`, `studio`, `research`, or `personal` changes the visible page rather than only changing a label.
-- Controls update the rendered Storybook canvas; they do not call the Tokenless API daemon.
-- Storybook is a coded design workbench, not a freeform Figma canvas. Persistent design changes belong in `DesignAtlas.svelte`, `design-atlas.css`, or the relevant story, then must be implemented separately in the production Dashboard.
+- `src/App.svelte` owns authentication, polling, real API actions, and application navigation. It passes data and actions to the shared Dashboard.
+- Atlas imports the production UI, styles, translations, and display types. Production must never import Atlas data or Storybook code.
+- Atlas data is illustrative, not telemetry, provider capability evidence, or benchmark evidence.
+- Profile/configuration edits and conversation cancellation affect only the current preview. Changing scenario or reloading resets the example data.
+- Browser, provider, harness, and tokenizer operations display an explanatory error instead of contacting real services. Semantic routing remains disabled in the preview.
+- Detail and modal stories open the actual product controls. Atlas-only command palettes, cards, badges, and other unimplemented product designs have been removed from the current design catalog.
+- Storybook is a coded workbench. Add new product designs in shared UI; use stories to review their states and interactions.
+
+## Verification
+
+`npm run lint --workspace packages/dashboard` checks the application, Atlas, and Storybook configuration together. Verify visible changes in Storybook and the built Dashboard; local example data does not prove backend behavior.

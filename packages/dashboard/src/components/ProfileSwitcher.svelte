@@ -13,34 +13,21 @@
     value,
     label,
     countLabel,
-    compact = false,
-    startOpen = false,
     onselect,
   }: {
     profiles: ProfileOption[];
     value: string;
     label: string;
     countLabel?: string;
-    compact?: boolean;
-    startOpen?: boolean;
     onselect: (slug: string) => void;
   } = $props();
 
   let root: HTMLDivElement;
   let trigger: HTMLButtonElement;
   let open = $state(false);
-  let previousStartOpen: boolean | undefined;
   let current = $derived(
     profiles.find((profile) => profile.slug === value) ?? profiles[0],
   );
-
-  $effect(() => {
-    const next = startOpen;
-    if (next !== previousStartOpen) {
-      previousStartOpen = next;
-      open = next;
-    }
-  });
 
   onMount(() => {
     const closeFromOutside = (event: PointerEvent) => {
@@ -89,20 +76,21 @@
   }
 </script>
 
-<div bind:this={root} class:compact class:open class="profile-switcher">
+<div bind:this={root} class:open class="profile-switcher">
   <button
     bind:this={trigger}
     class="profile-switcher-trigger"
     type="button"
-    aria-label={label}
+    data-testid="header-profile"
+    aria-label={`${label}: ${current?.label ?? value}`}
     aria-haspopup="listbox"
     aria-expanded={open}
     onclick={toggle}
     onkeydown={triggerKeydown}
   >
-    {#if !compact}<span class="profile-switcher-icon"
+    <span class="profile-switcher-icon"
         ><UserRound size={15} /></span
-      >{/if}
+      >
     <span class="profile-switcher-copy">
       {#if countLabel}<small>{countLabel}</small>{/if}
       <strong>{current?.label ?? value}</strong>
@@ -138,9 +126,10 @@
 
 <style>
   .profile-switcher {
+    align-self: center;
     position: relative;
     min-width: 188px;
-    color: var(--da-ink, #171715);
+    color: var(--ink, #171715);
   }
   .profile-switcher-trigger {
     display: flex;
@@ -158,10 +147,10 @@
   }
   .profile-switcher-trigger:hover,
   .profile-switcher.open .profile-switcher-trigger {
-    background: var(--da-accent-soft, #f0efec);
+    background: var(--surface-muted, #f0efec);
   }
   .profile-switcher-trigger:focus-visible {
-    outline: 2px solid var(--da-ink, #171715);
+    outline: 2px solid var(--ink, #171715);
     outline-offset: -3px;
   }
   .profile-switcher-icon {
@@ -171,7 +160,7 @@
     flex: 0 0 auto;
     place-items: center;
     border-radius: 8px;
-    background: var(--da-accent-soft, #f0efec);
+    background: var(--surface-muted, #f0efec);
   }
   .profile-switcher-copy {
     display: flex;
@@ -182,7 +171,7 @@
   }
   .profile-switcher-copy small {
     overflow: hidden;
-    color: var(--da-muted, #706e68);
+    color: var(--muted, #706e68);
     font-size: 9px;
     font-weight: 660;
     line-height: 1.2;
@@ -199,7 +188,7 @@
   }
   .profile-switcher-chevron {
     flex: 0 0 auto;
-    color: var(--da-muted, #706e68);
+    color: var(--muted, #706e68);
     transition: transform 150ms ease;
   }
   .open .profile-switcher-chevron {
@@ -213,9 +202,9 @@
     width: 248px;
     overflow: hidden;
     padding: 6px;
-    border: 1px solid var(--da-line, #dedcd6);
+    border: 1px solid var(--line, #dedcd6);
     border-radius: 12px;
-    background: var(--da-surface, #fff);
+    background: var(--surface, #fff);
     box-shadow:
       0 18px 48px rgb(24 23 20 / 18%),
       0 2px 8px rgb(24 23 20 / 8%);
@@ -238,7 +227,7 @@
   .profile-switcher-menu button:hover,
   .profile-switcher-menu button:focus-visible,
   .profile-switcher-menu button.selected {
-    background: var(--da-accent-soft, #f0efec);
+    background: var(--surface-muted, #f0efec);
     outline: 0;
   }
   .profile-switcher-menu button > span:nth-child(2) {
@@ -253,7 +242,7 @@
   }
   .profile-switcher-menu small {
     overflow: hidden;
-    color: var(--da-muted, #706e68);
+    color: var(--muted, #706e68);
     font-size: 10px;
     line-height: 1.25;
     text-overflow: ellipsis;
@@ -264,29 +253,16 @@
     width: 30px;
     height: 30px;
     place-items: center;
-    border: 1px solid var(--da-line, #dedcd6);
+    border: 1px solid var(--line, #dedcd6);
     border-radius: 9px;
-    background: var(--da-surface, #fff);
+    background: var(--surface, #fff);
     font-size: 11px;
     font-weight: 750;
   }
-  .profile-switcher.compact {
-    width: min(40vw, 146px);
-    min-width: 126px;
-  }
-  .compact .profile-switcher-trigger {
-    min-height: 38px;
-    padding: 0 10px 0 12px;
-    border: 1px solid var(--da-line, #dedcd6);
-    border-radius: 9px;
-    background: var(--da-surface, #fff);
-    box-shadow: 0 1px 2px rgb(24 23 20 / 3%);
-  }
-  .compact .profile-switcher-copy strong {
-    font-size: 12px;
-  }
-  .compact .profile-switcher-menu {
-    right: 0;
-    width: min(280px, calc(100vw - 24px));
+  @media (max-width: 760px) {
+    .profile-switcher { min-width: 0; width: min(40vw, 170px); margin-right: 12px; }
+    .profile-switcher-trigger { min-height: 36px; padding: 0 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); }
+    .profile-switcher-icon, .profile-switcher-copy small { display: none; }
+    .profile-switcher-menu { right: 0; width: min(280px, calc(100vw - 24px)); }
   }
 </style>

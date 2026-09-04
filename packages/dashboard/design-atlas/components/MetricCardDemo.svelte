@@ -1,16 +1,5 @@
 <script lang="ts">
-  import MetricCard from './MetricCard.svelte'
-
-  let { label = 'Completed jobs', value = '24', detail = 'Selected range · Aug 4–Sep 2', icon = 'activity' } = $props<{
-    label?: string
-    value?: string
-    detail?: string
-    icon?: 'provider' | 'activity' | 'success' | 'capability'
-  }>()
+  import MetricCard from '../../src/components/MetricCard.svelte'
+  let props: import('svelte').ComponentProps<typeof MetricCard> = $props()
 </script>
-
-<div class="metric-demo"><MetricCard {label} {value} {detail} {icon} /></div>
-
-<style>
-  .metric-demo { width: min(300px, calc(100vw - 40px)); font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
-</style>
+<div class="analytics-kpis" style="grid-template-columns:1fr;width:300px"><MetricCard {...props} /></div>

@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { Calculator, Settings, UserRound } from '@lucide/svelte'
+  import { Calculator, Settings } from '@lucide/svelte'
+  import ProfileSwitcher from './ProfileSwitcher.svelte'
   import { formatNumber } from '../formatting.js'
   import { stateLabel, type MessageKey } from '../i18n/index.js'
   import type { DashboardSnapshot, Language } from '../types.js'
@@ -72,23 +73,13 @@
   </a>
 
   <div class="top-header-actions">
-    <label class="top-header-profile">
-      <span class="top-header-icon"><UserRound size={16} /></span>
-      <span class="top-header-control-copy">
-        <small>{formatNumber(snapshot.profiles.length, language)} {t('profiles')}</small>
-        <select
-          name="activeProfile"
-          value={selectedProfile}
-          aria-label={t('selectProfile')}
-          data-testid="header-profile"
-          onchange={(event) => onselect(event.currentTarget.value)}
-        >
-          {#each snapshot.profiles as profile (profile.slug)}
-            <option value={profile.slug}>{profile.slug}</option>
-          {/each}
-        </select>
-      </span>
-    </label>
+    <ProfileSwitcher
+      profiles={snapshot.profiles.map((profile) => ({ slug: profile.slug, label: profile.slug, description: profile.roleLabel }))}
+      value={selectedProfile}
+      label={t('selectProfile')}
+      countLabel={`${formatNumber(snapshot.profiles.length, language)} ${t('profiles')}`}
+      {onselect}
+    />
 
     <a class="top-header-settings" href={`/dashboard/system/?profile=${encodeURIComponent(selectedProfile)}`} aria-label={`${t('system')} · ${t('version')} ${snapshot.daemon.version}`} data-dashboard-section="system">
       <span class="top-header-icon"><Settings size={16} /></span>

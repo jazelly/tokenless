@@ -1,37 +1,7 @@
-import DesignAtlas from "./DesignAtlas.svelte";
-import {
-  canonicalViewports,
-  commonArgTypes,
-  defaultArgs,
-  type AtlasStory,
-} from "./storybook-meta";
+import { clickPreview, atlasMeta, defaultArgs, type AtlasStory } from './storybook-meta.js'
 
-export default {
-  title: "Modals / Local interactions",
-  component: DesignAtlas,
-  args: { ...defaultArgs, screen: "modal" },
-  argTypes: commonArgTypes,
-  parameters: {
-    layout: "fullscreen",
-    controls: { expanded: true, disable: false },
-    viewport: { options: canonicalViewports },
-  },
-  globals: { viewport: "desktop" },
-};
-
-export const ProviderPicker: AtlasStory = {
-  args: { screen: "modal", modal: "provider" },
-};
-export const ProfilePicker: AtlasStory = {
-  args: { screen: "modal", modal: "profile" },
-};
-export const CapabilityDetail: AtlasStory = {
-  args: { screen: "modal", modal: "capability" },
-};
-export const CommandPalette: AtlasStory = {
-  args: { screen: "modal", modal: "command" },
-};
-export const Mobile: AtlasStory = {
-  args: { screen: "modal", modal: "provider" },
-  globals: { viewport: "mobile" },
-};
+export default { ...atlasMeta, title: 'Modals / Product interactions', args: { ...defaultArgs, screen: 'profiles' } }
+export const CreateProfile: AtlasStory = { play: async ({ canvasElement }) => clickPreview(canvasElement, '[data-testid="add-profile"]') }
+export const ProfilePicker: AtlasStory = { play: async ({ canvasElement }) => clickPreview(canvasElement, '[data-testid="header-profile"]') }
+export const CapabilityDetail: AtlasStory = { args: { screen: 'capabilities' }, play: async ({ canvasElement }) => clickPreview(canvasElement, '.capability-row') }
+export const Mobile: AtlasStory = { ...CreateProfile, globals: { viewport: 'mobile' } }

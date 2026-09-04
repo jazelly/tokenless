@@ -1,24 +1,6 @@
-import DesignAtlas from "./DesignAtlas.svelte";
-import {
-  canonicalViewports,
-  commonArgTypes,
-  defaultArgs,
-  type AtlasStory,
-} from "./storybook-meta";
+import { clickPreview, atlasMeta, defaultArgs, type AtlasStory } from './storybook-meta.js'
 
-export default {
-  title: "Jobs / Detail",
-  component: DesignAtlas,
-  args: { ...defaultArgs, screen: "job-detail" },
-  argTypes: commonArgTypes,
-  parameters: {
-    layout: "fullscreen",
-    controls: { expanded: true, disable: false },
-    viewport: { options: canonicalViewports },
-  },
-  globals: { viewport: "desktop" },
-};
-
-export const Default: AtlasStory = {};
-export const Canceled: AtlasStory = { args: { selectedJob: "job-4796" } };
-export const Mobile: AtlasStory = { globals: { viewport: "mobile" } };
+export default { ...atlasMeta, title: 'Jobs / Detail', args: { ...defaultArgs, screen: 'jobs' } }
+export const Default: AtlasStory = { play: async ({ canvasElement }) => clickPreview(canvasElement, '[data-testid="job-job-1"]') }
+export const Canceled: AtlasStory = { play: async ({ canvasElement }) => clickPreview(canvasElement, '[data-testid="job-job-1-canceled"]') }
+export const Mobile: AtlasStory = { ...Default, globals: { viewport: 'mobile' } }

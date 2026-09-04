@@ -1,26 +1,6 @@
-import DesignAtlas from "./DesignAtlas.svelte";
-import {
-  canonicalViewports,
-  commonArgTypes,
-  defaultArgs,
-  type AtlasStory,
-} from "./storybook-meta";
+import { clickPreview, atlasMeta, defaultArgs, type AtlasStory } from './storybook-meta.js'
 
-export default {
-  title: "Providers / Detail + routing",
-  component: DesignAtlas,
-  args: { ...defaultArgs, screen: "provider-detail" },
-  argTypes: commonArgTypes,
-  parameters: {
-    layout: "fullscreen",
-    controls: { expanded: true, disable: false },
-    viewport: { options: canonicalViewports },
-  },
-  globals: { viewport: "desktop" },
-};
-
-export const Default: AtlasStory = {};
-export const AlternateProvider: AtlasStory = {
-  args: { selectedProvider: "Claude" },
-};
-export const Mobile: AtlasStory = { globals: { viewport: "mobile" } };
+export default { ...atlasMeta, title: 'Providers / Detail + routing', args: { ...defaultArgs, screen: 'providers' } }
+export const Default: AtlasStory = { play: async ({ canvasElement }) => clickPreview(canvasElement, '[data-testid="provider-details-chatgpt"]') }
+export const AlternateProvider: AtlasStory = { args: { selectedProfile: 'research' }, play: async ({ canvasElement }) => clickPreview(canvasElement, '[data-testid="provider-details-claude"]') }
+export const Mobile: AtlasStory = { ...Default, globals: { viewport: 'mobile' } }

@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { Activity, CheckCircle2, Layers3, RefreshCw, Sparkles, UsersRound } from '@lucide/svelte'
+  import { Activity, RefreshCw, Sparkles } from '@lucide/svelte'
+  import MetricCard from '../components/MetricCard.svelte'
   import { capabilityFamilyLabel, capabilityText, type MessageKey } from '../i18n/index.js'
   import { formatNumber } from '../formatting.js'
   import type {
@@ -194,10 +195,10 @@
     <div class="analytics-state error" role="alert"><strong>{t('analyticsUnavailable')}</strong><span>{loadError}</span><button class="button" type="button" onclick={() => loadAnalytics(selectedProfile, range, activityKey)}><RefreshCw size={15} />{t('retryAnalytics')}</button></div>
   {:else if analytics}
     <div class="analytics-kpis" data-testid="analytics-kpis">
-      <article><span class="analytics-kpi-icon"><UsersRound size={17} /></span><small>{t('mostUsedProvider')}</small><strong>{topProvider ? providerName(topProvider.provider) : '—'}</strong><p>{topProvider ? `${formatPercent(topProvider.share)} · ${formatNumber(topProvider.finishedJobs, language)} ${t('completedJobs')}` : t('noUsageYet')}</p></article>
-      <article><span class="analytics-kpi-icon"><Activity size={17} /></span><small>{t('completedJobs')}</small><strong>{formatNumber(analytics.totals.finishedJobs, language)}</strong><p>{t('selectedRange')} · {formatDay(analytics.range.fromDay)}–{formatDay(analytics.range.toDay)}</p></article>
-      <article><span class="analytics-kpi-icon"><CheckCircle2 size={17} /></span><small>{t('successRate')}</small><strong>{formatPercent(analytics.totals.successRate)}</strong><p>{formatNumber(analytics.totals.succeededJobs, language)} {t('succeeded')} · {formatNumber(analytics.totals.failedJobs, language)} {t('failed')}</p></article>
-      <article><span class="analytics-kpi-icon"><Layers3 size={17} /></span><small>{t('capabilityBreadth')}</small><strong>{formatNumber(analytics.totals.capabilitiesUsed, language)}/{formatNumber(analytics.totals.catalogCapabilities, language)}</strong><p>{t('capabilityBreadthValue', { used: formatNumber(analytics.totals.capabilitiesUsed, language), total: formatNumber(analytics.totals.catalogCapabilities, language) })}</p></article>
+      <MetricCard icon="provider" label={t('mostUsedProvider')} value={topProvider ? providerName(topProvider.provider) : '—'} detail={topProvider ? `${formatPercent(topProvider.share)} · ${formatNumber(topProvider.finishedJobs, language)} ${t('completedJobs')}` : t('noUsageYet')} />
+      <MetricCard label={t('completedJobs')} value={formatNumber(analytics.totals.finishedJobs, language)} detail={`${t('selectedRange')} · ${formatDay(analytics.range.fromDay)}–${formatDay(analytics.range.toDay)}`} />
+      <MetricCard icon="success" label={t('successRate')} value={formatPercent(analytics.totals.successRate)} detail={`${formatNumber(analytics.totals.succeededJobs, language)} ${t('succeeded')} · ${formatNumber(analytics.totals.failedJobs, language)} ${t('failed')}`} />
+      <MetricCard icon="capability" label={t('capabilityBreadth')} value={`${formatNumber(analytics.totals.capabilitiesUsed, language)}/${formatNumber(analytics.totals.catalogCapabilities, language)}`} detail={t('capabilityBreadthValue', { used: formatNumber(analytics.totals.capabilitiesUsed, language), total: formatNumber(analytics.totals.catalogCapabilities, language) })} />
     </div>
 
     <section class="analytics-insights" data-testid="analytics-insights">

@@ -8,8 +8,8 @@
   "scripts": {
     "build": "tsc -b ../shared && vite build --config vite.config.ts --logLevel error",
     "lint": "tsc -b ../shared && svelte-check --tsconfig ./tsconfig.json",
-    "design:dev": "storybook dev -p 6007 --config-dir .storybook",
-    "design:build": "storybook build --config-dir .storybook --output-dir design-atlas-static"
+    "design:dev": "tsc -b ../shared && storybook dev -p 6007 --config-dir .storybook",
+    "design:build": "tsc -b ../shared && storybook build --config-dir .storybook --output-dir design-atlas-static"
   },
   "devDependencies": {
     "@lucide/svelte": "1.28.0",

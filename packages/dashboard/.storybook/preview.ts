@@ -1,4 +1,4 @@
-import "../design-atlas/design-atlas.css";
+import "../src/styles.css";
 
 const preview = {
   parameters: {

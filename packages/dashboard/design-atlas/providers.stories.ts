@@ -1,24 +1,8 @@
-import DesignAtlas from "./DesignAtlas.svelte";
-import {
-  canonicalViewports,
-  commonArgTypes,
-  defaultArgs,
-  type AtlasStory,
-} from "./storybook-meta";
+import { atlasMeta, defaultArgs, type AtlasStory } from './storybook-meta.js'
 
-export default {
-  title: "Providers / List",
-  component: DesignAtlas,
-  args: { ...defaultArgs, screen: "providers" },
-  argTypes: commonArgTypes,
-  parameters: {
-    layout: "fullscreen",
-    controls: { expanded: true, disable: false },
-    viewport: { options: canonicalViewports },
-  },
-  globals: { viewport: "desktop" },
-};
+export default { ...atlasMeta, title: 'Providers / List', args: { ...defaultArgs, screen: 'providers' } }
 
-export const Default: AtlasStory = {};
-export const Mobile: AtlasStory = { globals: { viewport: "mobile" } };
-export const Chinese: AtlasStory = { args: { language: "zh-CN" } };
+export const Default: AtlasStory = {}
+export const Research: AtlasStory = { args: { selectedProfile: 'research' } }
+export const Mobile: AtlasStory = { globals: { viewport: 'mobile' } }
+export const Chinese: AtlasStory = { args: { language: 'zh-CN' } }
