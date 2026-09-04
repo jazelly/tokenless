@@ -1,4 +1,7 @@
 export const ERROR_SUMMARIES_ZH = {
+  database_schema_too_new: '数据库版本高于当前安装包支持的版本；请先升级 Tokenless API。',
+  database_schema_incompatible: '数据库结构不兼容，migration 已停止。',
+  database_schema_invalid: '数据库 schema 版本无效，无法执行 migration。',
   playwright_active_browser_configuration_mismatch: '请求与当前浏览器配置不匹配；浏览器及其中运行的任务已保留。',
   featurebench_option_invalid: 'FeatureBench option 无效。',
   featurebench_option_required: '缺少必需的 FeatureBench option。',

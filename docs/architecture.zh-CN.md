@@ -213,6 +213,8 @@ Daemon 绑定 loopback，以 bearer token 保护 machine endpoint，并用 SQLit
 
 Control-plane page 有独立的 reserved page key，不能被 provider job acquire、navigate 或 replace。Job completion、cancellation 与 state query 都经过 daemon 的 SQLite business record。
 
+数据库 schema migration 随 npm 安装包发布，在本地打开数据库时执行。初始接管、版本记录与发布验证见[数据库迁移](database-migrations.zh-CN.md)。
+
 ## Browser boundary
 
 - 每个 managed profile 拥有自己的 persistent browser instance 与 user-data directory。

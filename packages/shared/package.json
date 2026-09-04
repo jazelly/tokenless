@@ -10,7 +10,8 @@
     "./structured-json": "./dist/src/structured-json.js",
     "./dashboard": "./dist/src/dashboard.js",
     "./harness-sidecar": "./dist/src/harness-sidecar.js",
-    "./i18n": "./dist/src/i18n.js"
+    "./i18n": "./dist/src/i18n.js",
+    "./database/*": "./dist/src/database/*"
   },
   "files": [
     "dist/src",

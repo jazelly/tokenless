@@ -12,6 +12,7 @@ import {
   type CodexAppServerThread,
   type CodexContextInspection,
 } from './contracts.js'
+import { migrateDatabase } from 'tokenless-internal-shared/database/migrate.js'
 
 const DATABASE_FILE = 'tokenless.sqlite3'
 
@@ -71,8 +72,13 @@ export class AgentContextStore {
     await fs.mkdir(requested, { recursive: true, mode: 0o700 })
     const canonical = await fs.realpath(requested)
     const store = new AgentContextStore(canonical)
-    store.initialize()
-    return store
+    try {
+      store.initialize()
+      return store
+    } catch (error) {
+      store.close()
+      throw error
+    }
   }
 
   private constructor(homeDir: string) {
@@ -424,12 +430,7 @@ export class AgentContextStore {
   }
 
   private initialize() {
-    this.#db.exec(`
-      CREATE TABLE IF NOT EXISTS harness_context_records (
-        chat_id TEXT PRIMARY KEY NOT NULL,
-        data_json TEXT NOT NULL
-      );
-    `)
+    migrateDatabase(this.#db)
     if (process.platform !== 'win32') fsSync.chmodSync(this.databasePath, 0o600)
   }
 

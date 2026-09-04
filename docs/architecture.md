@@ -242,6 +242,8 @@ The dashboard's reserved page key is `tokenless:control-plane:<daemon-home-id>`.
 
 Job creation, completion, cancellation, and state queries use the shared SQLite business record. Execution belongs to the current daemon process, with no delayed admission or automatic recovery; CLI cancellation is reported as complete only after the authenticated control endpoint confirms `canceled`.
 
+Database schema migrations ship with the npm package and run locally when the database opens. See [Database migrations](database-migrations.md) for initial adoption, versioning, and release verification.
+
 Completed and failed job facts remain queryable from SQLite. Active jobs are owned by the current daemon process, and unfinished jobs are marked `job_interrupted` after a daemon restart; state output omits capability tokens and does not expose raw authentication data.
 
 ## Browser boundary
