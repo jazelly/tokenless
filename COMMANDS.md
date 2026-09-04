@@ -17,7 +17,7 @@ This document is the public inventory of the `tokenless` command-line interface.
 | `tokenless menubar status` | Print the same-home menu bar snapshot for a native macOS client. | None |
 | `tokenless doctor` | Read local configuration and runtime health without refreshing providers. | None |
 | `tokenless config` | Read or update persistent Tokenless configuration. | None |
-| `tokenless upgrade` | Upgrade the global CLI, skills, local runtime, and run doctor. | None |
+| `tokenless upgrade` | Update the installed CLI or macOS app and verify its daemon and database. | None |
 | `tokenless profiles add` | Create a logical Tokenless profile for tabs and provider configuration. | None |
 | `tokenless profiles list` | List profiles and their persisted provider observations. | None |
 | `tokenless profiles status` | Check one provider live and persist the observation in the shared Tokenless database. | Yes |
@@ -341,15 +341,15 @@ Tokenless always controls managed Chromium through CDP while exposing Playwright
 
 ### `tokenless upgrade`
 
-Runs the canonical user-facing maintenance pipeline. It updates the global npm CLI, resolves and verifies the installed CLI, invokes that new CLI's shared maintenance module to upsert global agent skills across the canonical and detected direct agent roots and reconcile the matching daemon, then runs doctor. Use this instead of `tokenless install` for normal installation maintenance and upgrades.
+Updates the current global npm installation or the complete macOS app. The new runtime migrates the database and verifies its daemon and authenticated API without rerunning setup or changing user configuration. See [Updates](docs/updates.md) for the lifecycle and release requirements.
 
 ```bash
 tokenless upgrade
-tokenless upgrade --json
+tokenless upgrade --yes --json
 tokenless upgrade --check --json
 ```
 
-Accepted options are `--check`, `--json`, `--home`, `--daemon-url`, `--browser`, `--browsers`, and `--daemon-start-timeout-ms`. `--check` only queries npm for the latest published version and does not mutate the CLI, runtime, or daemon.
+Accepted options are `--check`, `--yes`, `--package <local-archive>`, `--json`, `--home`, `--daemon-url`, and `--daemon-start-timeout-ms`. `--check` queries the matching release channel without changing local state. Applying an update requires interactive confirmation or `--yes`; active tasks may be interrupted. A local `.tgz` or macOS `.zip` explicitly selects an offline package. Browser and provider choices belong to setup/config, not upgrade.
 
 ### `tokenless daemon stop`
 

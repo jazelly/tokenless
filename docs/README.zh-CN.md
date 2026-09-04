@@ -6,6 +6,7 @@
 
 - [README](../README.zh-CN.md) — 产品概览、安装与首次运行。
 - [CLI 命令](../COMMANDS.zh-CN.md) — 完整 command 与 option reference。
+- [更新指南](updates.zh-CN.md) — 统一 CLI 与 macOS App 更新、配置保留及数据库 migration。
 - [Capability Matrix](capability-matrix.zh-CN.md) — canonical outcomes、当前 provider mappings、support states 与扩展规则。
 - [API Proxy 接入指南](api-proxy-integration.zh-CN.md) — 从既有项目调用 OpenAI/Anthropic 兼容的本地 proxy。
 - [Tokenless Harness Browser Extension](harness-browser-extension.zh-CN.md) — 安装、配对、支持的 input、approval 与实验性真实页面验收流程。

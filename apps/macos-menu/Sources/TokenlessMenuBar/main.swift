@@ -96,18 +96,20 @@ private struct CLIInvocationResult {
 private enum PendingConfirmation {
     case restart
     case quit
+    case upgrade(version: String?)
 }
 
 private enum UpdateState {
     case idle
     case checking
+    case updating
     case upToDate
     case available(version: String?)
     case unavailable
 
     var isBusy: Bool {
         switch self {
-        case .checking:
+        case .checking, .updating:
             return true
         default:
             return false
@@ -258,6 +260,11 @@ private final class AppModel: ObservableObject {
         }
     }
 
+    func requestUpgrade() {
+        guard case .available = updateState else { return }
+        pendingConfirmation = .upgrade(version: availableUpdateVersion)
+    }
+
     func confirmPendingAction() {
         let action = pendingConfirmation
         pendingConfirmation = nil
@@ -266,9 +273,17 @@ private final class AppModel: ObservableObject {
             restart()
         case .quit:
             quit()
+        case .upgrade:
+            updateState = .updating
+            startUpdateWorker()
         case nil:
             break
         }
+    }
+
+    private var availableUpdateVersion: String? {
+        if case let .available(version) = updateState { return version }
+        return nil
     }
 
     func checkForUpdates() {
@@ -307,16 +322,6 @@ private final class AppModel: ObservableObject {
                 errorMessage = localizedError(error)
             }
         }
-    }
-
-    func upgrade() {
-        guard !updateState.isBusy else { return }
-        updateState = .unavailable
-        updateMessage = nil
-        errorMessage = versionMessage(
-            english: "Install the latest Tokenless app to upgrade.",
-            chinese: "请安装最新的 Tokenless app 以完成升级。"
-        )
     }
 
     func setLaunchAtLogin(_ enabled: Bool) {
@@ -358,6 +363,62 @@ private final class AppModel: ObservableObject {
                 operationMessage = nil
                 errorMessage = localizedError(error)
             }
+        }
+    }
+
+    private func startUpdateWorker() {
+        operationMessage = text(LocalizedText(
+            english: "Starting Tokenless update…",
+            chinese: "正在启动 Tokenless 更新…"
+        ))
+        errorMessage = nil
+        do {
+            let runtime = try loadEmbeddedRuntime()
+            let process = Process()
+            process.executableURL = runtime.nodeExecutable
+            process.arguments = [
+                runtime.cliEntrypoint.path,
+                "upgrade",
+                "--yes",
+                "--json",
+                "--home",
+                runtime.homeDirectory.path,
+            ]
+            process.standardInput = FileHandle.nullDevice
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            var environment = ProcessInfo.processInfo.environment
+            let nodeBin = runtime.nodeExecutable.deletingLastPathComponent().path
+            let existingPath = environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+            environment["PATH"] = "\(nodeBin):\(existingPath)"
+            process.environment = environment
+            process.terminationHandler = { [weak self] process in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.operationMessage = nil
+                    if process.terminationStatus == 0 {
+                        self.updateState = .upToDate
+                        self.updateMessage = self.versionMessage(
+                            english: "You are up to date.",
+                            chinese: "当前已是最新版本。"
+                        )
+                        self.errorMessage = nil
+                    } else {
+                        self.updateState = .unavailable
+                        self.updateMessage = nil
+                        self.errorMessage = self.text(LocalizedText(
+                            english: "Tokenless update failed. See the update error dialog.",
+                            chinese: "Tokenless 更新失败，请查看更新错误对话框。"
+                        ))
+                    }
+                }
+            }
+            try process.run()
+        } catch {
+            updateState = .unavailable
+            updateMessage = nil
+            operationMessage = nil
+            errorMessage = localizedError(error)
         }
     }
 
@@ -450,8 +511,13 @@ private final class AppModel: ObservableObject {
             .appendingPathComponent("dist", isDirectory: true)
             .appendingPathComponent("src", isDirectory: true)
             .appendingPathComponent("tokenless.mjs", isDirectory: false)
-        let homeURL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".tokenless", isDirectory: true)
+        let homeURL: URL
+        if let homeOverride = processArgumentValue("--home"), homeOverride.hasPrefix("/") {
+            homeURL = URL(fileURLWithPath: homeOverride, isDirectory: true)
+        } else {
+            homeURL = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".tokenless", isDirectory: true)
+        }
         guard FileManager.default.isExecutableFile(atPath: nodeURL.path),
               FileManager.default.isReadableFile(atPath: cliEntrypointURL.path) else {
             throw TokenlessAppError.runtimeInvalid
@@ -463,6 +529,15 @@ private final class AppModel: ObservableObject {
         )
         runtime = loadedRuntime
         return loadedRuntime
+    }
+
+    private func processArgumentValue(_ name: String) -> String? {
+        let arguments = ProcessInfo.processInfo.arguments
+        if let index = arguments.firstIndex(of: name), arguments.indices.contains(index + 1) {
+            return arguments[index + 1]
+        }
+        let prefix = "\(name)="
+        return arguments.first(where: { $0.hasPrefix(prefix) })?.dropFirst(prefix.count).description
     }
 
     private func decode<T: Decodable>(_ type: T.Type, from result: CLIInvocationResult) throws -> T {
@@ -953,7 +1028,7 @@ private struct MenuBarView: View {
         switch model.updateState {
         case .available(let version):
             Button {
-                model.upgrade()
+                model.requestUpgrade()
             } label: {
                 MenuBarActionRow(title: model.text(LocalizedText(
                     english: version.map { "Upgrade to \($0)" } ?? "Upgrade to latest",
@@ -975,6 +1050,19 @@ private struct MenuBarView: View {
             .accessibilityLabel(model.text(LocalizedText(
                 english: "Checking for Updates",
                 chinese: "正在检查更新"
+            )))
+            .accessibilityAddTraits(.updatesFrequently)
+        case .updating:
+            MenuBarActionRow(title: model.text(LocalizedText(
+                english: "Updating Tokenless…",
+                chinese: "正在更新 Tokenless…"
+            ))) {
+                ProgressView()
+                    .controlSize(.small)
+            }
+            .accessibilityLabel(model.text(LocalizedText(
+                english: "Updating Tokenless",
+                chinese: "正在更新 Tokenless"
             )))
             .accessibilityAddTraits(.updatesFrequently)
         default:
@@ -1018,6 +1106,11 @@ private struct MenuBarView: View {
                 english: "Quit Tokenless?",
                 chinese: "要退出 Tokenless 吗？"
             ))
+        case let .upgrade(version):
+            return model.text(LocalizedText(
+                english: version.map { "Update Tokenless to \($0)?" } ?? "Update Tokenless?",
+                chinese: version.map { "要将 Tokenless 更新到 \($0) 吗？" } ?? "要更新 Tokenless 吗？"
+            ))
         case nil:
             return ""
         }
@@ -1029,16 +1122,28 @@ private struct MenuBarView: View {
             return model.text(LocalizedText(english: "Restart", chinese: "重启"))
         case .quit:
             return model.text(LocalizedText(english: "Quit", chinese: "退出"))
+        case .upgrade:
+            return model.text(LocalizedText(english: "Update", chinese: "更新"))
         case nil:
             return ""
         }
     }
 
     private var confirmationMessage: String {
-        model.text(LocalizedText(
-            english: "There are active jobs. Stopping Tokenless may interrupt them.",
-            chinese: "当前有活跃任务。停止 Tokenless 可能会中断这些任务。"
-        ))
+        switch model.pendingConfirmation {
+        case .upgrade:
+            return model.text(LocalizedText(
+                english: "Tokenless will restart its local API and menu app. Active jobs may be interrupted.",
+                chinese: "Tokenless 将重启本地 API 和菜单应用。活跃任务可能会被中断。"
+            ))
+        case .restart, .quit:
+            return model.text(LocalizedText(
+                english: "There are active jobs. Stopping Tokenless may interrupt them.",
+                chinese: "当前有活跃任务。停止 Tokenless 可能会中断这些任务。"
+            ))
+        case nil:
+            return ""
+        }
     }
 }
 

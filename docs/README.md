@@ -6,6 +6,7 @@ This index separates user guidance, stable product contracts, implementation arc
 
 - [README](../README.md) — product overview, installation, and first run.
 - [CLI Commands](../COMMANDS.md) — complete command and option reference.
+- [Updates](updates.md) — unified CLI and macOS app updates, configuration preservation, and database migrations.
 - [Capability Matrix](capability-matrix.md) — canonical outcomes, current provider mappings, support states, and extension rules.
 - [API Proxy Integration](api-proxy-integration.md) — calling the OpenAI/Anthropic-compatible local proxy from an existing project.
 - [Tokenless Harness Browser Extension](harness-browser-extension.md) — install, pairing, supported inputs, approval, and the experimental real-page acceptance flow.

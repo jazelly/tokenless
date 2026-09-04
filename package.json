@@ -9,7 +9,7 @@
     "build": "npm run build --workspaces --if-present && npm run build:scripts && npm run build:link",
     "build:link": "node scripts/link-built-cli.mjs",
     "build:scripts": "node -e \"require('node:fs').rmSync('dist/scripts',{recursive:true,force:true})\" && tsc -p tsconfig.scripts.json",
-    "build:macos-menu": "npm run build && node scripts/build-macos-menu.mjs",
+    "build:macos-menu": "npm run build --workspace packages/cli && node scripts/build-macos-menu.mjs",
     "install:macos-menu": "npm run build:macos-menu && node scripts/install-macos-menu.mjs",
     "changeset": "changeset",
     "lint": "npm run api:check && npm run lint --workspaces --if-present && tsc -p tsconfig.scripts.json --noEmit",

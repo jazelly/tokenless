@@ -80,6 +80,8 @@ tokenless run --provider chatgpt --prompt "Review this proposal."
 
 Setup 会自动打开本地 Dashboard，之后可随时用 `tokenless dashboard` 再次打开。
 
+已经安装？先运行 `tokenless upgrade --check`，再运行 `tokenless upgrade`。CLI 与 macOS App 更新说明见[更新指南](docs/updates.zh-CN.md)。
+
 ## 可选的本地 Spark X2.5-4B Router Engine
 
 在 Apple Silicon 上，Dashboard 可以使用官方 Spark MLX server 运行本地 Spark X2.5-4B 模型；不需要 Ollama。V1 使用下面固定的 OpenAI 兼容 endpoint。

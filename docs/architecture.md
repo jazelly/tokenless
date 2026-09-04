@@ -244,6 +244,8 @@ Job creation, completion, cancellation, and state queries use the shared SQLite 
 
 Database schema migrations ship with the npm package and run locally when the database opens. See [Database migrations](database-migrations.md) for initial adoption, versioning, and release verification.
 
+The CLI and macOS menu share the [update entry point](updates.md), which replaces the correct installation and verifies the new runtime without rerunning setup.
+
 Completed and failed job facts remain queryable from SQLite. Active jobs are owned by the current daemon process, and unfinished jobs are marked `job_interrupted` after a daemon restart; state output omits capability tokens and does not expose raw authentication data.
 
 ## Browser boundary

@@ -17,7 +17,7 @@
 | `tokenless menubar status` | 为原生 macOS 菜单栏客户端输出同一 Tokenless home 的 menu bar snapshot。 | 否 |
 | `tokenless doctor` | 只读检查本地配置和 runtime 健康状态，不刷新 provider。 | 否 |
 | `tokenless config` | 读取或更新 Tokenless 持久化配置。 | 否 |
-| `tokenless upgrade` | 升级全局 CLI、skills、本地 runtime，并运行 doctor。 | 否 |
+| `tokenless upgrade` | 更新已安装 CLI 或 macOS App，并验证 daemon 与数据库。 | 否 |
 | `tokenless profiles add` | 创建用于 tab 与 provider configuration 的逻辑 Tokenless profile。 | 否 |
 | `tokenless profiles list` | 列出 profiles 及已持久化的 provider 检查结果。 | 否 |
 | `tokenless profiles status` | 实时检查一家 provider，并把结果持久化到共享 Tokenless 数据库。 | 是 |
@@ -341,15 +341,15 @@ Tokenless 始终通过 CDP 控制 managed Chromium，内部仍使用 Playwright 
 
 ### `tokenless upgrade`
 
-执行面向普通用户的 canonical maintenance pipeline：更新全局 npm CLI、解析并验证已安装 CLI、调用新 CLI 的共享 maintenance 模块来跨 canonical 与已检测到的 direct agent root upsert 全局 agent skills 并协调匹配版本的 daemon，然后运行 doctor。日常安装维护和升级请使用它，不要直接使用 `tokenless install`。
+更新当前全局 npm 安装或整个 macOS App。新版 runtime 会迁移数据库并验证 daemon 及经过身份认证的 API，不重跑 Setup，也不改变用户配置。生命周期和发布要求见[更新指南](docs/updates.zh-CN.md)。
 
 ```bash
 tokenless upgrade
-tokenless upgrade --json
+tokenless upgrade --yes --json
 tokenless upgrade --check --json
 ```
 
-接受的选项为 `--check`、`--json`、`--home`、`--daemon-url`、`--browser`、`--browsers` 和 `--daemon-start-timeout-ms`。`--check` 只查询 npm 最新发布版本，不修改 CLI、runtime 或 daemon。
+接受的选项为 `--check`、`--yes`、`--package <local-archive>`、`--json`、`--home`、`--daemon-url` 和 `--daemon-start-timeout-ms`。`--check` 查询对应发布渠道，不改变本地状态。执行更新需要交互确认或 `--yes`，活跃任务可能中断。本地 `.tgz` 或 macOS `.zip` 可显式选择离线安装包。浏览器和 provider 选择属于 Setup/Config，不属于 Upgrade。
 
 ### `tokenless daemon stop`
 

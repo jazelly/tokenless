@@ -109,14 +109,13 @@ import {
   inspectTokenlessSkills,
 } from './bootstrap/setup-workflow.js'
 import { reconcileTokenlessMaintenance } from './bootstrap/maintenance.js'
-import { fetchTokenlessLatestVersion } from './http/npm-registry.js'
 import {
   createSetupPresenter,
   resolveSetupTerminalCapabilities,
   type SetupPresenter,
 } from './output/setup-presenter.js'
 import { tokenlessPackageVersion } from '#tokenless-server/platform-package.js'
-import { formatUpgradeProgress, formatUpgradeSummary, runUpgradeCommand, type UpgradeProgressEvent } from './commands/upgrade.js'
+import { checkUpgrade, formatUpgradeProgress, formatUpgradeSummary, runUpgradeCommand, type UpgradeProgressEvent } from './commands/upgrade.js'
 import {
   BrowserRuntimeManager,
   normalizeBrowserSelection,
@@ -208,6 +207,7 @@ type ManagedAuthObservation = {
 }
 type SetupCliVersionCheck = {
   packageName: 'tokenless'
+  channel: string
   registryUrl: string
   currentVersion: string
   currentMajor: number | null
@@ -397,6 +397,20 @@ try {
     if (args.check === true) {
       await upgradeCheckCommand(args)
     } else {
+      if (args.yes !== true) {
+        if (args.json === true || !process.stdin.isTTY || !process.stdout.isTTY) {
+          throw usageError('upgrade_confirmation_required', 'Updating restarts the Tokenless API daemon and may interrupt active tasks. Run with --yes to confirm.')
+        }
+        const prompt = createSetupPrompt()
+        try {
+          if (!await prompt.confirm(t('upgradeConfirm'), false)) {
+            console.log(t('upgradeCanceled'))
+            process.exit(0)
+          }
+        } finally {
+          prompt.close()
+        }
+      }
       const humanOutput = args.json !== true
       if (humanOutput && !args.quiet) console.error(t('upgradeTitle'))
       const result = await runUpgradeCommand(args, humanOutput && args.verbose
@@ -744,19 +758,19 @@ async function menubarCommand(subcommand: string | undefined, args: CliArgs) {
 }
 
 async function upgradeCheckCommand(args: CliArgs) {
-  const check = await setupCliVersionCheck()
+  const check = await checkUpgrade(args)
   const payload = {
-    ok: check.ok,
+    ...check,
     command: 'upgrade',
-    current: check.currentVersion,
-    latest: check.latestVersion,
-    status: check.status,
-    updateAvailable: check.updateAvailable,
-    ...(check.error === undefined ? {} : { error: check.error }),
+    ...(check.error ? { error: { ...check.error, message: localizedError(check.error.code, check.error.message) } } : {}),
   }
   printPayload(args.json === true ? payload : {
     ...payload,
-    compactOutput: setupCliVersionCompact(check),
+    compactOutput: !check.ok
+      ? t('upgradeCheckUnavailable', { code: check.error?.code ?? 'unknown' })
+      : check.updateAvailable
+        ? t('upgradeAvailable', { current: check.current, latest: check.latest ?? 'unknown', channel: check.channel })
+        : t('upgradeNoChange', { version: check.current, channel: check.channel }),
   }, args)
   if (!check.ok) process.exitCode = 1
 }
@@ -1111,61 +1125,40 @@ function setupFailedCompactOutput({
 }
 
 async function setupCliVersionCheck(): Promise<SetupCliVersionCheck> {
-  const currentVersion = tokenlessPackageVersion()
-  const currentMajor = semanticVersionMajor(currentVersion)
-  const latest = await fetchTokenlessLatestVersion()
-  if (!latest.ok) {
-    return {
-      packageName: 'tokenless',
-      registryUrl: latest.registryUrl,
-      currentVersion,
-      currentMajor,
-      latestVersion: null,
-      latestMajor: null,
-      status: 'check_unavailable',
-      updateAvailable: null,
-      ok: false,
-      error: {
-        code: latest.code,
-        message: latest.message,
-        retryable: true,
-      },
-    }
-  }
-  const latestMajor = semanticVersionMajor(latest.latestVersion)
-  const comparison = compareSemanticVersions(currentVersion, latest.latestVersion)
-  const updateAvailable = comparison === null ? latest.latestVersion !== currentVersion : comparison < 0
+  const check = await checkUpgrade({})
   return {
     packageName: 'tokenless',
-    registryUrl: latest.registryUrl,
-    currentVersion,
-    currentMajor,
-    latestVersion: latest.latestVersion,
-    latestMajor,
-    status: updateAvailable ? 'update_available' : 'up_to_date',
-    updateAvailable,
-    ok: true,
+    channel: check.channel,
+    registryUrl: check.channel === 'macos' ? 'https://github.com/jazelly/tokenless/releases' : 'https://registry.npmjs.org/tokenless/latest',
+    currentVersion: check.current,
+    currentMajor: semanticVersionMajor(check.current),
+    latestVersion: check.latest,
+    latestMajor: check.latest ? semanticVersionMajor(check.latest) : null,
+    status: !check.ok ? 'check_unavailable' : check.updateAvailable ? 'update_available' : 'up_to_date',
+    updateAvailable: check.updateAvailable,
+    ok: check.ok,
+    ...(check.error ? { error: check.error } : {}),
   }
 }
 
 function noteSetupCliVersion(check: SetupCliVersionCheck, presenter: SetupPresenter) {
   if (check.status === 'check_unavailable') {
-    presenter.note(t('setupNpmUnavailable', { code: check.error?.code ?? 'npm_registry_unavailable' }))
+    presenter.note(t('upgradeCheckUnavailable', { code: check.error?.code ?? 'upgrade_check_unavailable' }))
   } else if (check.updateAvailable) {
-    presenter.note(t('setupNpmAvailable', { latest: check.latestVersion ?? 'latest', current: check.currentVersion }))
+    presenter.note(t('upgradeAvailable', { latest: check.latestVersion ?? 'latest', current: check.currentVersion, channel: check.channel }))
   } else {
-    presenter.success(t('setupNpmCurrent', { current: check.currentVersion }))
+    presenter.success(t('upgradeNoChange', { version: check.currentVersion, channel: check.channel }))
   }
 }
 
 function setupCliVersionCompact(check: SetupCliVersionCheck) {
   if (check.status === 'check_unavailable') {
-    return t('setupCliUnavailable', { current: check.currentVersion, code: check.error?.code ?? 'npm_registry_unavailable' })
+    return t('upgradeCheckUnavailable', { code: check.error?.code ?? 'upgrade_check_unavailable' })
   }
   if (check.updateAvailable) {
-    return t('setupCliAvailable', { current: check.currentVersion, latest: check.latestVersion ?? 'latest' })
+    return t('upgradeAvailable', { current: check.currentVersion, latest: check.latestVersion ?? 'latest', channel: check.channel })
   }
-  return t('setupCliCurrent', { current: check.currentVersion, latest: check.latestVersion ?? check.currentVersion })
+  return t('upgradeNoChange', { version: check.currentVersion, channel: check.channel })
 }
 
 function setupDaemonCompact(daemon: {
@@ -1176,49 +1169,6 @@ function setupDaemonCompact(daemon: {
     version: daemon.runningVersion ?? 'unknown',
     revision: daemon.runningControlApiRevision ?? 'unknown',
   })
-}
-
-function compareSemanticVersions(left: string, right: string) {
-  const leftVersion = parseSemanticVersion(left)
-  const rightVersion = parseSemanticVersion(right)
-  if (!leftVersion || !rightVersion) return null
-  for (const key of ['major', 'minor', 'patch'] as const) {
-    const diff = leftVersion[key] - rightVersion[key]
-    if (diff !== 0) return diff
-  }
-  if (leftVersion.prerelease.length === 0 && rightVersion.prerelease.length > 0) return 1
-  if (leftVersion.prerelease.length > 0 && rightVersion.prerelease.length === 0) return -1
-  for (let index = 0; index < Math.max(leftVersion.prerelease.length, rightVersion.prerelease.length); index += 1) {
-    const leftIdentifier = leftVersion.prerelease[index]
-    const rightIdentifier = rightVersion.prerelease[index]
-    if (leftIdentifier === undefined) return -1
-    if (rightIdentifier === undefined) return 1
-    const diff = comparePrereleaseIdentifier(leftIdentifier, rightIdentifier)
-    if (diff !== 0) return diff
-  }
-  return 0
-}
-
-function parseSemanticVersion(value: string) {
-  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(value)
-  if (!match) return null
-  const [major, minor, patch] = [Number(match[1]), Number(match[2]), Number(match[3])]
-  if (![major, minor, patch].every(Number.isSafeInteger)) return null
-  return {
-    major,
-    minor,
-    patch,
-    prerelease: match[4] ? match[4].split('.') : [],
-  }
-}
-
-function comparePrereleaseIdentifier(left: string, right: string) {
-  const leftNumeric = /^(0|[1-9]\d*)$/.test(left)
-  const rightNumeric = /^(0|[1-9]\d*)$/.test(right)
-  if (leftNumeric && rightNumeric) return Number(left) - Number(right)
-  if (leftNumeric) return -1
-  if (rightNumeric) return 1
-  return left < right ? -1 : (left > right ? 1 : 0)
 }
 
 async function defaultProfileSlug(registry: ManagedProfileRegistry) {
@@ -5460,7 +5410,7 @@ function createCommandContracts(): CommandContract[] {
     { command: 'cancel', usage: ['tokenless cancel --job-id <job-id> --json'], options: ['home', 'json', 'jobId', 'daemonUrl', 'daemonStartTimeoutMs', 'cancelTimeoutMs'] },
     { command: 'setup', usage: ['tokenless setup [--browser <chrome|brave|cloak>|--anti-detect] [--browser-executable-path <absolute-path>] [--install-codex [--codex-home <dir>]] [--profile <slug>] [--provider-whitelist <list>] [--no-open] [--defaults] --json'], options: ['home', 'json', 'quiet', 'browser', 'browserExecutablePath', 'antiDetect', 'profile', 'providerWhitelist', 'noOpen', 'daemonUrl', 'daemonStartTimeoutMs', 'cancelTimeoutMs', 'timeoutMs', 'targetUrl', 'setDefault', 'setupDefaults', 'installCodex', 'codexHome'] },
     { command: 'install', usage: ['tokenless install [--browser <browser>|--browsers <list>] [--repair-browser] --json'], options: ['home', 'json', 'browser', 'browsers', 'repairBrowser', 'daemonUrl', 'daemonStartTimeoutMs'] },
-    { command: 'upgrade', usage: ['tokenless upgrade [--check] [--json] [--home <dir>] [--daemon-url <url>] [--browser <browser>|--browsers <list>]'], options: ['check', 'json', 'home', 'daemonUrl', 'browser', 'browsers', 'daemonStartTimeoutMs'] },
+    { command: 'upgrade', usage: ['tokenless upgrade [--check | --yes] [--package <local-archive>] [--json] [--home <dir>] [--daemon-url <url>]'], options: ['check', 'yes', 'package', 'json', 'home', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'doctor', usage: ['tokenless doctor --json'], options: ['home', 'json', 'browser', 'daemonUrl'] },
     { command: 'config', usage: ['tokenless config [--language <en|zh-CN>] [--browser <chrome|brave>] [--browser-executable-path <absolute-path>|--clear-browser-executable-path] [--daemon-url <url>] --json', 'tokenless config --profile <slug> [--provider-whitelist <list>] [--browser-visibility headed] --json'], options: ['home', 'json', 'profile', 'language', 'providerWhitelist', 'browser', 'browserExecutablePath', 'clearBrowserExecutablePath', 'browserVisibility', 'daemonUrl'] },
     { command: 'dashboard', usage: ['tokenless dashboard [--profile <slug>] [--job-id <id>] [--semantic-manifest-output <absolute-path>] [--no-open] [--json]'], options: ['home', 'json', 'profile', 'jobId', 'semanticManifestOutput', 'noOpen', 'daemonUrl', 'daemonStartTimeoutMs'] },
@@ -5503,6 +5453,7 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     enumerable: false,
   })
   const valueFlags: Record<string, string> = {
+    '--package': 'package',
     '--prompt': 'prompt',
     '--prompt-file': 'promptFile',
     '--project-root': 'projectRoot',
@@ -5587,6 +5538,7 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--provider-turn-timeout-ms': 'providerTurnTimeoutMs',
   }
   const booleanFlags: Record<string, string> = {
+    '--yes': 'yes',
     '--include-text': 'includeText',
     '--help': 'help',
     '-h': 'help',
@@ -7020,6 +6972,8 @@ function optionUsageLabel(option: string) {
     bridgeTimeoutMs: '--bridge-timeout-ms <ms>',
     cancelTimeoutMs: '--cancel-timeout-ms <ms>',
     check: '--check',
+    yes: '--yes',
+    package: '--package <local-archive>',
     color: '--color',
     chatName: '--chat-name <name>',
     chatId: '--chat-id <id>',

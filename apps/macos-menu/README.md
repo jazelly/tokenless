@@ -15,7 +15,7 @@ On an Apple Silicon Mac with the repository dependencies installed, run this for
 npm run install:macos-menu
 ```
 
-`build:macos-menu` first builds the CLI and then creates `dist/macos/Tokenless.app` and `dist/macos/Tokenless.zip`. It targets macOS 13 or newer and contains its own arm64 Node runtime, CLI, daemon, and production Node dependencies. It does not use the installing machine's Node, nvm, Homebrew, or a global `tokenless` command.
+`build:macos-menu` first builds the CLI and then creates `dist/macos/Tokenless.app`, a versioned `dist/macos/tokenless-macos-darwin-arm64-v<version>.zip`, and its matching `.sha256` file. It targets macOS 13 or newer and contains its own arm64 Node runtime, CLI, daemon, and production Node dependencies. It does not use the installing machine's Node, nvm, Homebrew, or a global `tokenless` command.
 
 `npm run install:macos-menu` rebuilds the bundle, copies it to a sibling staging path, validates the app directory, menu executable, embedded Node runtime, and embedded CLI, then replaces `~/Applications/Tokenless.app`. If an installed menu app is running, the installer finds only that exact executable path, sends `SIGTERM`, and waits briefly for it to exit; it does not stop the Tokenless daemon. The old app is kept at a sibling backup path until the new bundle passes validation and LaunchServices accepts the launch. If staging, replacement, validation, or launch acceptance fails, the old bundle is restored and relaunched when it was running before the upgrade.
 
@@ -29,4 +29,6 @@ When the app launches, it immediately runs the embedded `tokenless menubar statu
 
 The base app intentionally excludes the G4F Python virtual environment and browser binaries. Those optional runtimes remain separate, on-demand installation concerns and are not started at login unless their corresponding provider/runtime is explicitly configured.
 
-The menu's update check is informational. Install the latest macOS app package to upgrade the embedded runtime; the app does not run a global npm upgrade.
+The menu's Check for Update and confirmed update action use the same `tokenless upgrade` entry point. Updates replace the entire app, preserve the selected home, apply bundled database migrations, and verify the new daemon and authenticated API before reporting success; the app never runs a global npm upgrade. See the [update guide](../../docs/updates.md) for the release channel and failure behavior.
+
+An older installed app with only an informational update message needs one manual replacement to receive this updater.

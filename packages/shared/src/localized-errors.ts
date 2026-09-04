@@ -1,4 +1,8 @@
 export const ERROR_SUMMARIES_ZH = {
+  upgrade_confirmation_required: '更新将重启 Tokenless API daemon，活跃任务可能中断。请添加 --yes 确认。',
+  upgrade_activation_failed: '新版 Tokenless API 启动或验证失败。未执行自动回滚；请检查本地 daemon 状态。',
+  macos_app_release_asset_unavailable: '此 release 尚未提供对应的 macOS 安装包和 SHA-256 校验文件，暂时无法更新。',
+  macos_app_release_unavailable: '暂时无法读取 macOS release，请检查网络后手动重新检查。',
   database_schema_too_new: '数据库版本高于当前安装包支持的版本；请先升级 Tokenless API。',
   database_schema_incompatible: '数据库结构不兼容，migration 已停止。',
   database_schema_invalid: '数据库 schema 版本无效，无法执行 migration。',

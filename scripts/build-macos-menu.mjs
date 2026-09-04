@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -12,8 +13,8 @@ const cliDistSource = path.join(cliRoot, 'dist')
 const cliManifestPath = path.join(cliRoot, 'package.json')
 const outputRoot = path.join(repositoryRoot, 'dist', 'macos')
 const appPath = path.join(outputRoot, 'Tokenless.app')
-const zipPath = path.join(outputRoot, 'Tokenless.zip')
 const scratchPath = path.join(outputRoot, '.swift-build')
+const releasePlatform = 'darwin-arm64'
 const executableName = 'TokenlessMenuBar'
 const runtimeDirectoryName = 'runtime'
 const runtimeNodeName = 'node'
@@ -32,8 +33,21 @@ if (process.platform !== 'darwin') {
 }
 
 const cliManifest = readJSON(cliManifestPath, 'CLI package manifest')
-const nodeSourcePath = resolveNodeExecutable(process.argv.slice(2))
-const version = typeof cliManifest.version === 'string' ? cliManifest.version : '0.0.0'
+const buildOptions = parseBuildOptions(process.argv.slice(2))
+const version = cliManifest.version
+assertVersion(version)
+if (buildOptions.releaseVersion !== undefined) {
+  assertVersion(buildOptions.releaseVersion)
+  if (buildOptions.releaseVersion !== version) {
+    throw new Error(
+      `CLI version ${version} does not match requested release version ${buildOptions.releaseVersion} / CLI 版本 ${version} 与请求的 release 版本 ${buildOptions.releaseVersion} 不匹配。`,
+    )
+  }
+}
+const nodeSourcePath = resolveNodeExecutable(buildOptions.nodePath)
+const zipFileName = `tokenless-macos-${releasePlatform}-v${version}.zip`
+const zipPath = path.join(outputRoot, zipFileName)
+const checksumPath = `${zipPath}.sha256`
 const iconSource = path.join(repositoryRoot, 'assets', 'tokenless-mark.png')
 const cliEntrypointSource = path.join(cliDistSource, 'src', 'tokenless.mjs')
 
@@ -47,6 +61,7 @@ if (cliManifest.name !== 'tokenless' || typeof cliManifest.imports !== 'object' 
 fs.mkdirSync(outputRoot, { recursive: true })
 fs.rmSync(appPath, { recursive: true, force: true })
 fs.rmSync(zipPath, { force: true })
+fs.rmSync(checksumPath, { force: true })
 
 run('swift', [
   'build',
@@ -113,11 +128,49 @@ run('plutil', ['-lint', path.join(contentsPath, 'Info.plist')])
 run('codesign', ['--force', '--deep', '--sign', '-', appPath])
 run('codesign', ['--verify', '--deep', '--strict', appPath])
 run('/usr/bin/ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', appPath, zipPath])
+const checksum = createHash('sha256').update(fs.readFileSync(zipPath)).digest('hex')
+fs.writeFileSync(checksumPath, `${checksum}  ${zipFileName}\n`, 'utf8')
 
 console.log(`Built ${appPath} / 已构建 ${appPath}`)
 console.log(`Created ${zipPath} / 已创建 ${zipPath}`)
+console.log(`Created ${checksumPath} / 已创建 ${checksumPath}`)
 console.log(`Embedded Node ${nodeSourcePath} / 已内置 Node ${nodeSourcePath}`)
 console.log('Ad-hoc signing only; Developer ID signing and notarization remain deferred. / 当前仅使用 ad-hoc 签名；Developer ID 签名和 notarization 暂缓。')
+
+function parseBuildOptions(args) {
+  let nodePath
+  let releaseVersion
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index]
+    if (argument === '--node-path') {
+      nodePath = requireOptionValue(argument, args[index + 1])
+      index += 1
+    } else if (argument.startsWith('--node-path=')) {
+      nodePath = argument.slice('--node-path='.length)
+    } else if (argument === '--release-version') {
+      releaseVersion = requireOptionValue(argument, args[index + 1])
+      index += 1
+    } else if (argument.startsWith('--release-version=')) {
+      releaseVersion = argument.slice('--release-version='.length)
+    } else {
+      throw new Error(`Unknown build option ${argument}. Use --node-path <path> and --release-version <version>. / 未知构建选项 ${argument}，请使用 --node-path <path> 和 --release-version <version>。`)
+    }
+  }
+  return { nodePath, releaseVersion }
+}
+
+function requireOptionValue(option, value) {
+  if (typeof value !== 'string' || value.length === 0 || value.startsWith('--')) {
+    throw new Error(`Option ${option} requires a value / 选项 ${option} 需要一个值。`)
+  }
+  return value
+}
+
+function assertVersion(value) {
+  if (typeof value !== 'string' || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(value)) {
+    throw new Error(`CLI package version is invalid: ${String(value)} / CLI package 版本无效：${String(value)}`)
+  }
+}
 
 function copyCliDist(source, destination) {
   const excludedPath = path.join(source, 'runtime', 'g4f-service', '.venv')
@@ -175,19 +228,7 @@ function resolvePackageDirectory(packageName, startDirectory) {
   throw new Error(`Required production dependency is missing / 缺少必要的 production dependency：${packageName}`)
 }
 
-function resolveNodeExecutable(args) {
-  let explicitPath
-  for (let index = 0; index < args.length; index += 1) {
-    const argument = args[index]
-    if (argument === '--node-path') {
-      explicitPath = args[index + 1]
-      index += 1
-    } else if (argument.startsWith('--node-path=')) {
-      explicitPath = argument.slice('--node-path='.length)
-    } else {
-      throw new Error(`Unknown build option ${argument}. Use --node-path <path>. / 未知构建选项 ${argument}，请使用 --node-path <path>。`)
-    }
-  }
+function resolveNodeExecutable(explicitPath) {
   const configuredPath = explicitPath || process.env.TOKENLESS_MACOS_NODE_PATH || process.execPath
   const candidatePath = path.resolve(configuredPath)
   const resolvedPath = requireExecutable(candidatePath, 'Node runtime input')

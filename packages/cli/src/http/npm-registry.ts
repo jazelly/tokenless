@@ -1,7 +1,10 @@
-const TOKENLESS_LATEST_URL = 'https://registry.npmjs.org/tokenless/latest'
+import { isSemanticVersion } from './version-check.js'
+
+export const TOKENLESS_PACKAGE_NAME = 'tokenless'
+export const TOKENLESS_REGISTRY_URL = 'https://registry.npmjs.org/tokenless'
+export const TOKENLESS_LATEST_URL = `${TOKENLESS_REGISTRY_URL}/latest`
 const DEFAULT_NPM_REGISTRY_TIMEOUT_MS = 2_500
 const MAX_NPM_REGISTRY_RESPONSE_BYTES = 64 * 1024
-const SEMANTIC_VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
 
 export type TokenlessLatestVersionResult =
   | {
@@ -35,7 +38,7 @@ export async function fetchTokenlessLatestVersion({
     if (!response.ok) {
       return {
         ok: false,
-        packageName: 'tokenless',
+        packageName: TOKENLESS_PACKAGE_NAME,
         registryUrl,
         code: 'npm_registry_http_error',
         message: `npm registry returned HTTP ${response.status} for tokenless/latest.`,
@@ -47,16 +50,16 @@ export async function fetchTokenlessLatestVersion({
     } catch (error) {
       return {
         ok: false,
-        packageName: 'tokenless',
+        packageName: TOKENLESS_PACKAGE_NAME,
         registryUrl,
         code: 'npm_registry_invalid_response',
         message: error instanceof Error ? error.message : 'npm registry returned invalid JSON.',
       }
     }
-    if (!isRecord(body) || body.name !== 'tokenless' || typeof body.version !== 'string' || !SEMANTIC_VERSION_PATTERN.test(body.version)) {
+    if (!isRecord(body) || body.name !== TOKENLESS_PACKAGE_NAME || typeof body.version !== 'string' || !isSemanticVersion(body.version)) {
       return {
         ok: false,
-        packageName: 'tokenless',
+        packageName: TOKENLESS_PACKAGE_NAME,
         registryUrl,
         code: 'npm_registry_invalid_response',
         message: 'npm registry returned an invalid tokenless/latest response.',
@@ -64,14 +67,14 @@ export async function fetchTokenlessLatestVersion({
     }
     return {
       ok: true,
-      packageName: 'tokenless',
+      packageName: TOKENLESS_PACKAGE_NAME,
       registryUrl,
       latestVersion: body.version,
     }
   } catch (error) {
     return {
       ok: false,
-      packageName: 'tokenless',
+      packageName: TOKENLESS_PACKAGE_NAME,
       registryUrl,
       code: error instanceof DOMException && error.name === 'TimeoutError'
         ? 'npm_registry_timeout'
