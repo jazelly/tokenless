@@ -31,9 +31,6 @@ export class DirectOnlyG4fProvider extends BaseProvider<ProviderId> {
       setupOrder,
       subscriptionSupport: 'unsupported',
       executionModes: Object.freeze(['direct'] as const),
-      protocolCompatibility: Object.freeze({
-        legacyRequests: false,
-      }),
       navigation: directOnlyNavigation(catalogId),
       controls: Object.freeze({
         chatSurface: false,

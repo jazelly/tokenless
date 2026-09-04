@@ -5,7 +5,15 @@ export const SPARK_X25_4B_MLX_HEALTH_ENDPOINT = 'http://127.0.0.1:8080/health' a
 export const SPARK_X25_4B_MLX_MODEL = 'XHToken/Spark-X2.5-4B' as const
 export const SPARK_X25_4B_MLX_TOOL_NAME = 'return_result' as const
 const SPARK_COMPLETION_TIMEOUT_MS = 120_000
-const ROUTER_TASK_TYPE_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/u
+export const ROUTER_TASK_TYPE_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/u
+export const HARNESS_ROUTE_INSTRUCTION = 'Analyze the task. Choose the eligible AI provider whose suitableTasks best matches it. Provider candidates include the current profile plan and known remaining capacity after deterministic exclusions. Treat unknown capacity as uncertainty, not an unlimited allowance. Return that provider ID, its configured model, the task type, complexity, and a concise reason.'
+export const HARNESS_TITLE_INSTRUCTION = 'Write a direct, descriptive title for this conversation. Use the conversation language. Return only JSON. Keep the title under eight words in English or twenty characters in Chinese.'
+export const HARNESS_TITLE_RESPONSE_SCHEMA = {
+  type: 'object',
+  properties: { title: { type: 'string' } },
+  required: ['title'],
+  additionalProperties: false,
+}
 
 export type HarnessSidecarJsonPrimitive = string | number | boolean | null
 export type HarnessSidecarJsonValue =
@@ -78,25 +86,6 @@ export type HarnessFrontDoorResult = {
 
 export type HarnessFrontDoorSidecar = {
   prepare(input: HarnessFrontDoorInput): Promise<HarnessFrontDoorResult>
-}
-
-export type HarnessExitDoorInput = {
-  taskPrompt: string
-  output: string
-  artifacts: readonly string[]
-  browserBinding?: HarnessSidecarBrowserBinding | undefined
-}
-
-export type HarnessExitDoorResult = {
-  protocol: typeof HARNESS_SIDECAR_PROTOCOL
-  kind: 'exit_door'
-  engine: string
-  summary: string
-  labels: readonly string[]
-}
-
-export type HarnessExitDoorSidecar = {
-  finalize(input: HarnessExitDoorInput): Promise<HarnessExitDoorResult>
 }
 
 export class HarnessSidecarError extends Error {
@@ -191,36 +180,20 @@ export function createHarnessFrontDoorSidecar(engine: HarnessAiEngine): HarnessF
       if (!input.taskPrompt.trim()) throw new HarnessSidecarError('harness_front_door_input_invalid', 'Front Door taskPrompt must not be empty.')
       if (input.providers.length === 0) throw new HarnessSidecarError('harness_front_door_candidates_missing', 'Front Door requires at least one provider candidate.')
 
-      const title = readTitle(await engine.complete({
-        instruction: 'Write a direct, descriptive title for this conversation. Use the conversation language. Return only JSON. Keep the title under eight words in English or twenty characters in Chinese.',
+      const title = readHarnessTitle(await engine.complete({
+        instruction: HARNESS_TITLE_INSTRUCTION,
         input: { conversation: input.taskPrompt.slice(0, 4_000) },
-        responseSchema: {
-          type: 'object',
-          properties: { title: { type: 'string' } },
-          required: ['title'],
-          additionalProperties: false,
-        },
+        responseSchema: HARNESS_TITLE_RESPONSE_SCHEMA,
         ...(input.browserBinding === undefined ? {} : { browserBinding: input.browserBinding }),
       }))
 
-      const route = readRoute(await engine.complete({
-        instruction: 'Analyze the task. Choose the eligible AI provider whose suitableTasks best matches it. Provider candidates include the current profile plan and known remaining capacity after deterministic exclusions. Treat unknown capacity as uncertainty, not an unlimited allowance. Return that provider ID, its configured model, the task type, complexity, and a concise reason.',
+      const route = readHarnessRoute(await engine.complete({
+        instruction: HARNESS_ROUTE_INSTRUCTION,
         input: {
           task: input.taskPrompt,
           providerConfiguration: input.providers.map((provider) => ({ ...provider })),
         },
-        responseSchema: {
-          type: 'object',
-          properties: {
-            providerId: { type: 'string', enum: input.providers.map((provider) => provider.providerId) },
-            model: { enum: [...new Set(input.providers.map((provider) => provider.model))] },
-            taskType: { type: 'string', pattern: '^[a-z][a-z0-9_-]{0,31}$' },
-            complexity: { type: 'string', enum: ['low', 'medium', 'high'] },
-            reason: { type: 'string' },
-          },
-          required: ['providerId', 'model', 'taskType', 'complexity', 'reason'],
-          additionalProperties: false,
-        },
+        responseSchema: harnessRouteResponseSchema(input.providers),
         ...(input.browserBinding === undefined ? {} : { browserBinding: input.browserBinding }),
       }), input.providers)
 
@@ -235,39 +208,7 @@ export function createHarnessFrontDoorSidecar(engine: HarnessAiEngine): HarnessF
   }
 }
 
-export function createHarnessExitDoorSidecar(engine: HarnessAiEngine): HarnessExitDoorSidecar {
-  return {
-    async finalize(input) {
-      if (!input.output.trim()) throw new HarnessSidecarError('harness_exit_door_input_invalid', 'Exit Door output must not be empty.')
-      const result = readExitResult(await engine.complete({
-        instruction: 'Review the completed task result. Return a concise summary and a small set of useful labels. Do not change the result or invent facts.',
-        input: {
-          taskPrompt: input.taskPrompt.slice(0, 4_000),
-          output: input.output.slice(0, 12_000),
-          artifacts: [...input.artifacts],
-        },
-        responseSchema: {
-          type: 'object',
-          properties: {
-            summary: { type: 'string' },
-            labels: { type: 'array', items: { type: 'string' } },
-          },
-          required: ['summary', 'labels'],
-          additionalProperties: false,
-        },
-        ...(input.browserBinding === undefined ? {} : { browserBinding: input.browserBinding }),
-      }))
-      return {
-        protocol: HARNESS_SIDECAR_PROTOCOL,
-        kind: 'exit_door',
-        engine: engine.id,
-        ...result,
-      }
-    },
-  }
-}
-
-function readTitle(value: HarnessSidecarJsonValue) {
+export function readHarnessTitle(value: HarnessSidecarJsonValue) {
   const record = readRecord(value, 'Front Door title')
   const title = record.title
   if (typeof title !== 'string' || title.trim() === '' || title.trim().length > 80) {
@@ -323,7 +264,22 @@ function readUnknownRecord(value: unknown, label: string): Record<string, unknow
   return value as Record<string, unknown>
 }
 
-function readRoute(value: HarnessSidecarJsonValue, candidates: HarnessFrontDoorInput['providers']): HarnessFrontDoorRoute {
+export function harnessRouteResponseSchema(candidates: HarnessFrontDoorInput['providers']) {
+  return {
+    type: 'object',
+    properties: {
+      providerId: { type: 'string', enum: candidates.map((provider) => provider.providerId) },
+      model: { enum: [...new Set(candidates.map((provider) => provider.model))] },
+      taskType: { type: 'string', pattern: ROUTER_TASK_TYPE_PATTERN.source },
+      complexity: { type: 'string', enum: ['low', 'medium', 'high'] },
+      reason: { type: 'string' },
+    },
+    required: ['providerId', 'model', 'taskType', 'complexity', 'reason'],
+    additionalProperties: false,
+  }
+}
+
+export function readHarnessRoute(value: HarnessSidecarJsonValue, candidates: HarnessFrontDoorInput['providers']): HarnessFrontDoorRoute {
   const record = readRecord(value, 'Front Door route')
   const providerId = record.providerId
   const model = record.model
@@ -349,16 +305,6 @@ function readRoute(value: HarnessSidecarJsonValue, candidates: HarnessFrontDoorI
     complexity: complexity as HarnessFrontDoorRoute['complexity'],
     reason,
   }
-}
-
-function readExitResult(value: HarnessSidecarJsonValue): Pick<HarnessExitDoorResult, 'summary' | 'labels'> {
-  const record = readRecord(value, 'Exit Door result')
-  const summary = record.summary
-  const labels = record.labels
-  if (typeof summary !== 'string' || summary.trim() === '' || !Array.isArray(labels) || labels.some((label) => typeof label !== 'string')) {
-    throw new HarnessSidecarError('harness_exit_door_result_invalid', 'Exit Door returned an invalid result.')
-  }
-  return { summary: summary.trim(), labels: labels.map((label) => String(label).trim()).filter(Boolean).slice(0, 16) }
 }
 
 function readRecord(value: HarnessSidecarJsonValue, label: string): Record<string, HarnessSidecarJsonValue> {

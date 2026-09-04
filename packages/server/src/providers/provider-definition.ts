@@ -49,9 +49,6 @@ export type ProviderDescriptor<TId extends string = string> = Readonly<{
   setupOrder: number
   executionModes: readonly ProviderExecutionMode[]
   subscriptionSupport: ProviderSubscriptionSupport
-  protocolCompatibility: Readonly<{
-    legacyRequests: boolean
-  }>
   navigation: ProviderNavigationDefinition
   controls: Readonly<{
     chatSurface: boolean
@@ -126,7 +123,7 @@ export type ProviderCapabilityStrategy = {
   readonly stability: ProviderCapabilityStability
 }
 
-export type ProviderDomDefinition<TId extends ProviderId = ProviderId> = ProviderDescriptor<TId> & {
+export type ProviderDomDefinition<TId extends ProviderId = ProviderId> = {
   readonly descriptor: ProviderDescriptor<TId>
   readonly navigationPolicy: ProviderNavigationPolicy
   readonly homeUrl: string
@@ -581,14 +578,12 @@ export function defineDescriptor<TId extends ProviderId>(
 }
 
 export function defineProvider<TId extends ProviderId>(
-  provider: Omit<ProviderDomDefinition<TId>, keyof ProviderDescriptor<TId> | 'navigationPolicy' | 'homeUrl' | 'interactionTimings'> & {
-    descriptor: ProviderDescriptor<TId>
+  provider: Omit<ProviderDomDefinition<TId>, 'navigationPolicy' | 'homeUrl' | 'interactionTimings'> & {
     interactionTimings?: Partial<ProviderInteractionTimingPolicy>
   }
 ): ProviderDomDefinition<TId> {
   const navigationPolicy = new ProviderNavigationPolicy(provider.descriptor.id, provider.descriptor.navigation)
   return Object.freeze({
-    ...provider.descriptor,
     ...provider,
     descriptor: provider.descriptor,
     navigationPolicy,

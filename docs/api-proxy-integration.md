@@ -17,7 +17,7 @@ Three things must be true before any request succeeds. None of them can be estab
 1. **The daemon is running.** Any `tokenless` command starts it on demand; `tokenless dashboard --no-open --json` is the explicit way. A stopped daemon means connection refused, not an HTTP error.
 2. **The proxy is enabled.** It ships off.
    ```bash
-   tokenless api-proxy enable --conversation-mode new-conversation --json
+   tokenless api-proxy enable --json
    ```
 3. **A managed profile is signed in to the target provider.** Run `tokenless setup`, then sign in through the visible browser window. Without this, requests fail on a provider sign-in blocker.
 
@@ -157,7 +157,9 @@ The current scope is deliberately narrow:
 
 Auto calls use versioned opaque public ids that encode only their provider origin. A later full-history turn prefers that provider after rechecking current eligibility; a caller-influenced id cannot bypass the filter. Responses `previous_response_id` uses its existing ledger provider the same way—as portable affinity, not a hard pin.
 
-Provider switching always starts a new target-provider conversation with the exact canonical assistant call and caller result. Provider URLs and opaque state are never replayed. The existing Managed Playwright fallback plan may switch before `provider_submitted_at`; its direct post-submission exception is `tokenless/auto` reporting the provider-scoped terminal code `provider_rate_limited` before any visible response, which restarts from the target provider home and records one bounded `rate_limit` routing attempt. A `tokenless/auto` new-conversation completion also shares its existing ten-minute request budget across the current route list: a submitted provider that does not settle within its bounded share is canceled before the next untried provider starts, and every provider runs at most once. Exact providers, provider-specific continuation targets, exhausted route lists, malformed outcomes, and waiting-for-user state remain terminal. The bounded final-escaping correction stays on the settled provider and strategy with no auto resolution or fallback.
+Provider switching always starts a new target-provider conversation with the exact canonical assistant call and caller result; provider URLs and opaque state are never replayed. The existing Managed Playwright fallback plan may switch before `provider_submitted_at`; its direct post-submission exception is `tokenless/auto` reporting the provider-scoped terminal code `provider_rate_limited` before any visible response, which restarts from the target provider home and records one bounded `rate_limit` routing attempt.
+
+A completion timeout cancels the exact local job without starting another provider. Exact providers, provider-specific continuation targets, exhausted route lists, malformed outcomes, and waiting-for-user state remain terminal. The bounded final-escaping correction stays on the settled provider and strategy with no auto resolution or fallback.
 
 Real visible rate-limit observations already stored on jobs temporarily remove that provider from subsequent execution attempts for the observed minute, hour, day, or week window. An explicit retry duration wins; an unknown window uses a five-minute cooldown. Exact provider requests still fail clearly instead of switching.
 
@@ -494,7 +496,7 @@ For browser/native and structured requests, do not build a progress indicator of
 
 ## Conversation state
 
-The persisted `conversationMode` option is retained for configuration and status compatibility, but it does not select the API protocol. API behavior follows the endpoint contract and the fields present in each request.
+Conversation behavior follows the endpoint contract and the fields present in each request; there is no global conversation-mode setting.
 
 ### Chat Completions and Anthropic
 
@@ -508,7 +510,7 @@ When `previous_response_id` is valid, route-compatible, and has a proved provide
 
 Structured/tool continuation follows the same rule. The mapped turn contains the current tool result or message delta and the current tool catalog; prior user and assistant content is not replayed into the existing provider chat. Full-input replay remains available when the caller intentionally wants a new provider conversation, such as after context compaction.
 
-The response `tokenless.conversation_mode` value reports the actual route: `new-conversation` for fresh or mapping-miss turns, and `continue-conversation` only for a mapped Responses continuation. The CLI `--conversation-mode` value does not override these endpoint rules.
+The response `tokenless.conversation_mode` value reports the actual route: `new-conversation` for fresh or mapping-miss turns, and `continue-conversation` only for a mapped Responses continuation.
 
 ## Errors
 
@@ -563,7 +565,7 @@ Design around these, not against them.
 | --- | --- |
 | Latency | Seconds to minutes. Real browser navigation, page settle, typing, submit, and render. |
 | Timeout | 10 minutes; the exact local job is canceled before 504 unless it wins a race to a terminal success or failure. |
-| Concurrency | Effectively serial per profile. One browser, one provider tab. |
+| Concurrency | Requests are not serialized by profile or locked by chat. The caller owns shared-chat ordering; provider limits still apply. |
 | Tool use | One or more modern function calls, non-streaming or terminal SSE; caller executes them. |
 | Structured output | OpenAI `json_object` and the documented closed-object `json_schema` subset; valid final JSON or explicit error. |
 | Shared validation boundary | The Universal API and Standalone Web Agent Harness use the same strict JSON parser and JSON Schema validator setup. Their response grammars and execution ownership remain separate. |
@@ -653,7 +655,7 @@ Note both SDKs need their default timeout raised and their retry count zeroed. D
 - [ ] Branch on HTTP status, not on `message`: retry only `500`, `502`, and `504`.
 - [ ] On `499` or `504`, expect the exact local job to be canceled; never replay or switch providers after submission.
 - [ ] Log `tokenless.job_id` on every call.
-- [ ] Expect serial execution; do not fan out concurrent requests.
+- [ ] Coordinate shared-chat ordering in your Harness; use independent conversations for independent concurrent work.
 - [ ] For Chat Completions/Anthropic, send full history on every request; for Responses, omit `previous_response_id` when starting a fresh provider chat and use it only for a mapped continuation.
 
 ## Verified DeepSeek tool loop

@@ -28,10 +28,6 @@ test('provider control commands validate generic model and effort labels while k
         code: 'invalid_effort',
       },
       {
-        args: ['provider-configure', '--provider', 'claude', '--model-fallback', 'Sonnet'],
-        code: 'model_fallback_requires_model',
-      },
-      {
         args: ['provider-configure', '--provider', 'grok', '--model', 'Fast\nExpert'],
         code: 'invalid_model',
       },
@@ -39,10 +35,6 @@ test('provider control commands validate generic model and effort labels while k
         args: ['provider-controls', '--provider', 'gemini', '--model', 'Flash'],
         code: 'controls_unsupported_for_action',
         usage: true,
-      },
-      {
-        args: ['chatgpt-configure', '--provider', 'gemini', '--model', 'Flash'],
-        code: 'chatgpt_controls_unsupported',
       },
       {
         args: ['provider-configure', '--provider', 'deepseek', '--deepseek-search', 'on'],
@@ -117,10 +109,6 @@ test('provider-action maps only the strict priority payload for each action', as
       {
         args: ['provider-action', '--provider', 'gemini', '--action', 'model.select', '--model', 'Flash\nPro'],
         code: 'invalid_model',
-      },
-      {
-        args: ['provider-action', '--provider', 'gemini', '--action', 'model.select', '--model', 'Flash', '--model-fallback', 'Pro'],
-        code: 'model_fallback_unsupported',
       },
       {
         args: ['provider-action', '--provider', 'deepseek', '--action', 'deepseek.mode.select'],

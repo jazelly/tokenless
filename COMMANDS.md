@@ -28,7 +28,7 @@ This document is the public inventory of the `tokenless` command-line interface.
 | `tokenless capabilities list` | List canonical task capabilities and evidence-backed provider routes. | None |
 | `tokenless limits inspect` | Inspect the next-prompt provider/profile capacity estimate from the packaged catalog and local job history. | None |
 | `tokenless savings <status\|enable\|disable\|clear\|uninstall>` | Manage optional local output savings measurement and its tokenizer, downloaded on the first successful visible response. | None |
-| `tokenless api-proxy <status\|enable\|disable>` | Manage the OpenAI/Anthropic-compatible local API proxy and its compatibility conversation-mode setting. | None |
+| `tokenless api-proxy <status\|enable\|disable>` | Manage the OpenAI/Anthropic-compatible local API proxy. | None |
 | `tokenless run` | Send a prompt and optional files through a visible provider session. | Yes |
 | `tokenless state` | Inspect current daemon job state. | None |
 | `tokenless cancel` | Cancel a daemon job and confirm its canceled state. | None |
@@ -36,8 +36,6 @@ This document is the public inventory of the `tokenless` command-line interface.
 | `tokenless provider-controls` | Inspect visible model and effort controls. | Yes |
 | `tokenless provider-configure` | Select exact visible model or effort labels. | Yes |
 | `tokenless provider-action` | Execute one low-level visible provider action. | Yes |
-| `tokenless chatgpt-controls` | Inspect ChatGPT model and effort controls. | Yes |
-| `tokenless chatgpt-configure` | Configure ChatGPT-specific visible controls. | Yes |
 | `tokenless snapshot-dom` | Capture and persist a sanitized provider DOM snapshot. | Yes |
 | `tokenless daemon stop` | Gracefully stop a compatible local daemon. | None |
 | `tokenless prompt` | Build a shareable Tokenless prompt without submitting it. | None |
@@ -247,7 +245,7 @@ tokenless dashboard --semantic-manifest-output /absolute/path/terminal-bench-sem
 
 The dashboard provides Overview, Profiles, Providers, Capabilities, Jobs, and System/Diagnostics areas. Provider membership, visibility, role label, and an optional credential-free HTTP/HTTPS/SOCKS5 proxy are profile scoped. CLI state and cancellation commands remain available:
 
-Provider readiness refreshes run serially per profile. Tokenless starts a resident headless browser when the profile is idle, or reuses an already-running headed profile without replacing its browser, closing its existing tabs, or bringing the check to the foreground. Each check owns one temporary background tab and closes it on every completion, failure, blocker, timeout, or cancellation path; user-owned tabs remain untouched. A readiness check that encounters sign-in or verification records the required action; visible browser interaction starts only from an explicit provider, browser, or job action.
+Provider readiness refreshes use independent background tabs without a profile-wide execution lock. Tokenless starts a resident headless browser when the profile is idle, or reuses an already-running headed profile without replacing its browser, closing its existing tabs, or bringing the check to the foreground. Each check owns one temporary background tab and closes it on every completion, failure, blocker, timeout, or cancellation path; user-owned tabs remain untouched. A readiness check that encounters sign-in or verification records the required action; visible browser interaction starts only from an explicit provider, browser, or job action.
 
 ```bash
 tokenless config --profile work --provider-whitelist chatgpt,claude --browser-visibility headed --json
@@ -490,8 +488,7 @@ Manages the local API proxy: an OpenAI- and Anthropic-compatible surface on the 
 
 ```bash
 tokenless api-proxy status --json
-tokenless api-proxy enable --conversation-mode new-conversation --json
-tokenless api-proxy enable --conversation-mode continue-conversation --json
+tokenless api-proxy enable --json
 tokenless api-proxy disable --json
 ```
 
@@ -504,7 +501,7 @@ Point a client at the daemon and use the daemon control token as the API key:
 
 `model` must name the provider explicitly as `tokenless/<provider>`, for example `tokenless/chatgpt`. An unmapped model is rejected rather than redirected to a provider the caller did not choose. `GET /v1/openai/models` lists every accepted name.
 
-The `--conversation-mode` option is retained for config/status compatibility, but it does not override the API contract. Chat Completions and Anthropic always start a fresh provider conversation and send the full request history. Responses starts fresh when `previous_response_id` is omitted, and continues a mapped provider conversation only when a valid `previous_response_id` is supplied; a missing mapping falls back to a fresh chat with the reconstructed transcript. See [API proxy integration](docs/api-proxy-integration.md#conversation-state) for the exact continuation rules.
+The persisted API proxy config only controls whether the proxy is enabled and which execution mode it uses. Conversation selection belongs to each API request and its caller; Responses continuation requires an explicit `previous_response_id`. See [API proxy integration](docs/api-proxy-integration.md#conversation-state) for the exact continuation rules.
 
 `tools`, `tool_choice`, `functions`, `function_call`, and `response_format` are rejected because visible provider pages expose no equivalent control. `stream: true` returns the documented event sequence for that dialect, delivered as one terminal chunk, because a visible response is only readable once it has finished rendering. Reported `usage` counts are always zero: Tokenless does not meter provider tokens, and the response is billed by your own web subscription.
 
@@ -641,29 +638,7 @@ tokenless provider-configure \
   --json
 ```
 
-At least one control is required. Labels must match visible UI labels; model fallback lists are not supported by managed visible jobs.
-
-### `tokenless chatgpt-controls`
-
-ChatGPT-specific alias for inspecting model and effort controls.
-
-```bash
-tokenless chatgpt-controls -P default --json
-```
-
-### `tokenless chatgpt-configure`
-
-Selects ChatGPT-specific model or effort controls. It also accepts `--chat-surface chat` as an explicit surface constraint; other ChatGPT surfaces are rejected.
-
-```bash
-tokenless chatgpt-configure \
-  -P default \
-  --model "GPT-5" \
-  --effort "High" \
-  --json
-```
-
-If `--provider` is supplied, it must be `chatgpt`.
+At least one control is required. Labels must match visible UI labels.
 
 ### `tokenless provider-action`
 
@@ -763,7 +738,6 @@ The following aliases are accepted for compatibility. Prefer the canonical form 
 | `tokenless status` | `tokenless state` |
 | `tokenless provider-auth-status` | `tokenless provider-status` |
 | `tokenless inspect-provider-controls` | `tokenless provider-controls` |
-| `tokenless inspect-chatgpt-controls` | `tokenless chatgpt-controls` |
 | `--turn-context` | `--context` |
 | `--turn-context-file` | `--context-file` |
 

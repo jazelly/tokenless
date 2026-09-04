@@ -125,8 +125,8 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         self._audit_events: list[dict[str, Any]] = []
         self._parent_completion_ordinal = 0
         self._provider_turn_route_refs: set[str] = set()
+        # The bridge handler holds this for every provider-state request and response.
         self.provider_control_lock = threading.Lock()
-        self._provider_state_lock = threading.Lock()
         self._provider_binding_ref: str | None = None
         self._provider_ref: str | None = None
         self._bootstrap_turn_ref: str | None = None
@@ -205,8 +205,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             text = body.decode("utf-8")
         except UnicodeDecodeError as error:
             raise ValueError("provider text attachment is not UTF-8") from error
-        with self._provider_state_lock:
-            self._attachment_text[attachment_ref] = text
+        self._attachment_text[attachment_ref] = text
 
     def record_child_turn_input(
         self,
@@ -214,16 +213,15 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         prompt_text: str,
         attachment_refs: list[str],
     ) -> None:
-        with self._provider_state_lock:
-            attachments = []
-            for attachment_ref in attachment_refs:
-                text = self._attachment_text.pop(attachment_ref, None)
-                if text is None:
-                    raise ValueError("provider turn attachment text is unavailable")
-                attachments.append(text)
-            self._child_turn_input_text[turn_ref] = "\n\n".join(
-                [prompt_text, *attachments]
-            )
+        attachments = []
+        for attachment_ref in attachment_refs:
+            text = self._attachment_text.pop(attachment_ref, None)
+            if text is None:
+                raise ValueError("provider turn attachment text is unavailable")
+            attachments.append(text)
+        self._child_turn_input_text[turn_ref] = "\n\n".join(
+            [prompt_text, *attachments]
+        )
 
     def _token_estimate(
         self,
@@ -354,9 +352,8 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
                 or value.get("profileId") != self.expected_profile
             ):
                 raise ValueError("provider binding is not the expected auto profile")
-            with self._provider_state_lock:
-                if self._provider_binding_ref is not None:
-                    raise ValueError("provider binding was already accepted")
+            if self._provider_binding_ref is not None:
+                raise ValueError("provider binding was already accepted")
             return {"kind": "bind"}
 
         request_cancel = PROVIDER_REQUEST_CANCEL_PATH.fullmatch(path)
@@ -367,15 +364,14 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             request_ref = unquote(request_cancel.group(1) or "")
             if not PROVIDER_REQUEST_REF_PATTERN.fullmatch(request_ref):
                 raise ValueError("provider request reference is invalid")
-            with self._provider_state_lock:
-                stage = self._provider_request_stages.get(request_ref)
-                if stage is None:
-                    raise ValueError("provider request reference is unknown")
-                if stage == "bootstrap" and self._continuation_turn_ref is not None:
-                    raise ValueError("provider request cancellation is out of sequence")
-                turn_ref = self._provider_request_turn_refs.get(request_ref)
-                if turn_ref is None or turn_ref != self._turn_ref_for_stage_locked(stage):
-                    raise ValueError("provider request cancellation is out of sequence")
+            stage = self._provider_request_stages.get(request_ref)
+            if stage is None:
+                raise ValueError("provider request reference is unknown")
+            if stage == "bootstrap" and self._continuation_turn_ref is not None:
+                raise ValueError("provider request cancellation is out of sequence")
+            turn_ref = self._provider_request_turn_refs.get(request_ref)
+            if turn_ref is None or turn_ref != self._turn_ref_for_stage(stage):
+                raise ValueError("provider request cancellation is out of sequence")
             return {
                 "kind": "request_cancel",
                 "requestRef": request_ref,
@@ -405,59 +401,58 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         action = binding_route.group(2)
         if not PROVIDER_BINDING_REF_PATTERN.fullmatch(binding_ref):
             raise ValueError("provider binding reference is invalid")
-        with self._provider_state_lock:
-            if self._provider_binding_ref is None or binding_ref != self._provider_binding_ref:
-                raise ValueError("provider binding reference is unknown")
-            provider_ref = self._provider_ref
-            if provider_ref is None:
-                raise ValueError("provider binding provider reference is unavailable")
+        if self._provider_binding_ref is None or binding_ref != self._provider_binding_ref:
+            raise ValueError("provider binding reference is unknown")
+        provider_ref = self._provider_ref
+        if provider_ref is None:
+            raise ValueError("provider binding provider reference is unavailable")
 
-            if action == "capabilities":
-                if method != "GET" or body not in {None, b""}:
-                    raise ValueError("provider capabilities request is invalid")
+        if action == "capabilities":
+            if method != "GET" or body not in {None, b""}:
+                raise ValueError("provider capabilities request is invalid")
+            if self._bootstrap_turn_ref is not None:
+                raise ValueError("provider capabilities request is out of sequence")
+            return {"kind": "capabilities", "bindingRef": binding_ref}
+
+        if action == "attachments":
+            if method != "POST" or body in {None, b""}:
+                raise ValueError("provider attachment request is invalid")
+            if self._bootstrap_turn_ref is None:
+                stage = "bootstrap"
+            elif self._bootstrap_succeeded and (
+                self._continuation_turn_ref is None
+                or self._continuation_succeeded
+            ):
+                stage = "continuation"
+            else:
+                raise ValueError("provider attachment is out of sequence")
+            return {"kind": "attachment", "bindingRef": binding_ref, "stage": stage}
+
+        if action == "turns":
+            if method != "POST":
+                raise ValueError("provider turn start method is invalid")
+            start = self._parse_start_request(body)
+            if start["providerRef"] != provider_ref or start["providerBindingRef"] != binding_ref:
+                raise ValueError("provider turn start identity does not match the binding")
+            request_ref = start["requestRef"]
+            if request_ref in self._provider_request_refs:
+                raise ValueError("provider turn request reference was already used")
+            mode = start["mode"]
+            if mode == "bootstrap":
                 if self._bootstrap_turn_ref is not None:
-                    raise ValueError("provider capabilities request is out of sequence")
-                return {"kind": "capabilities", "bindingRef": binding_ref}
-
-            if action == "attachments":
-                if method != "POST" or body in {None, b""}:
-                    raise ValueError("provider attachment request is invalid")
-                if self._bootstrap_turn_ref is None:
-                    stage = "bootstrap"
-                elif self._bootstrap_succeeded and (
-                    self._continuation_turn_ref is None
-                    or self._continuation_succeeded
-                ):
-                    stage = "continuation"
-                else:
-                    raise ValueError("provider attachment is out of sequence")
-                return {"kind": "attachment", "bindingRef": binding_ref, "stage": stage}
-
-            if action == "turns":
-                if method != "POST":
-                    raise ValueError("provider turn start method is invalid")
-                start = self._parse_start_request(body)
-                if start["providerRef"] != provider_ref or start["providerBindingRef"] != binding_ref:
-                    raise ValueError("provider turn start identity does not match the binding")
-                request_ref = start["requestRef"]
-                if request_ref in self._provider_request_refs:
-                    raise ValueError("provider turn request reference was already used")
-                mode = start["mode"]
-                if mode == "bootstrap":
-                    if self._bootstrap_turn_ref is not None:
-                        raise ValueError("provider bootstrap turn was already started")
-                    if start["semanticPreference"] not in {None, self.semantic_preference}:
-                        raise ValueError("provider bootstrap semantic preference does not match the task")
-                elif (
-                    not self._bootstrap_succeeded
-                    or (
-                        self._continuation_turn_ref is not None
-                        and not self._continuation_succeeded
-                    )
-                    or start["conversationRef"] != self._bootstrap_conversation_ref
-                ):
-                    raise ValueError("provider continuation turn is out of sequence")
-                return {"kind": "start", **start}
+                    raise ValueError("provider bootstrap turn was already started")
+                if start["semanticPreference"] not in {None, self.semantic_preference}:
+                    raise ValueError("provider bootstrap semantic preference does not match the task")
+            elif (
+                not self._bootstrap_succeeded
+                or (
+                    self._continuation_turn_ref is not None
+                    and not self._continuation_succeeded
+                )
+                or start["conversationRef"] != self._bootstrap_conversation_ref
+            ):
+                raise ValueError("provider continuation turn is out of sequence")
+            return {"kind": "start", **start}
 
         raise ValueError("provider turn action is invalid")
 
@@ -469,11 +464,10 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         kind = operation["kind"]
         if kind == "bind":
             binding_ref, provider_ref = self._parse_binding_response(body)
-            with self._provider_state_lock:
-                if self._provider_binding_ref is not None:
-                    raise ValueError("provider binding response was duplicated")
-                self._provider_binding_ref = binding_ref
-                self._provider_ref = provider_ref
+            if self._provider_binding_ref is not None:
+                raise ValueError("provider binding response was duplicated")
+            self._provider_binding_ref = binding_ref
+            self._provider_ref = provider_ref
             return
         if kind == "capabilities":
             self._parse_binding_response(body, expected_binding_ref=operation["bindingRef"], expected_provider_ref=self._provider_ref)
@@ -488,36 +482,35 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
                 expected_binding_ref=operation["providerBindingRef"],
                 expected_conversation_ref=operation.get("conversationRef"),
             )
-            with self._provider_state_lock:
-                if operation["requestRef"] in self._provider_request_refs:
-                    raise ValueError("provider turn request reference was duplicated")
-                turn_ref = turn["turnRef"]
-                if turn_ref in self._provider_turn_refs:
-                    raise ValueError("provider turn reference was duplicated")
-                mode = operation["mode"]
-                if mode == "bootstrap":
-                    if self._bootstrap_turn_ref is not None:
-                        raise ValueError("provider bootstrap response was duplicated")
-                    self._bootstrap_turn_ref = turn_ref
-                    self._bootstrap_conversation_ref = turn["conversationRef"]
-                else:
-                    if (
-                        not self._bootstrap_succeeded
-                        or (
-                            self._continuation_turn_ref is not None
-                            and not self._continuation_succeeded
-                        )
-                        or turn["conversationRef"] != self._bootstrap_conversation_ref
-                    ):
-                        raise ValueError("provider continuation response is out of sequence")
-                    self._continuation_turn_ref = turn_ref
-                    self._continuation_succeeded = False
-                self._provider_request_refs.add(operation["requestRef"])
-                self._provider_request_stages[operation["requestRef"]] = mode
-                self._provider_request_turn_refs[operation["requestRef"]] = turn_ref
-                self._provider_turn_refs[turn_ref] = mode
-                self._provider_turn_request_refs[turn_ref] = operation["requestRef"]
-                self._apply_turn_lifecycle_locked(mode, turn["lifecycle"])
+            if operation["requestRef"] in self._provider_request_refs:
+                raise ValueError("provider turn request reference was duplicated")
+            turn_ref = turn["turnRef"]
+            if turn_ref in self._provider_turn_refs:
+                raise ValueError("provider turn reference was duplicated")
+            mode = operation["mode"]
+            if mode == "bootstrap":
+                if self._bootstrap_turn_ref is not None:
+                    raise ValueError("provider bootstrap response was duplicated")
+                self._bootstrap_turn_ref = turn_ref
+                self._bootstrap_conversation_ref = turn["conversationRef"]
+            else:
+                if (
+                    not self._bootstrap_succeeded
+                    or (
+                        self._continuation_turn_ref is not None
+                        and not self._continuation_succeeded
+                    )
+                    or turn["conversationRef"] != self._bootstrap_conversation_ref
+                ):
+                    raise ValueError("provider continuation response is out of sequence")
+                self._continuation_turn_ref = turn_ref
+                self._continuation_succeeded = False
+            self._provider_request_refs.add(operation["requestRef"])
+            self._provider_request_stages[operation["requestRef"]] = mode
+            self._provider_request_turn_refs[operation["requestRef"]] = turn_ref
+            self._provider_turn_refs[turn_ref] = mode
+            self._provider_turn_request_refs[turn_ref] = operation["requestRef"]
+            self._apply_turn_lifecycle(mode, turn["lifecycle"])
             return {"turnRef": turn["turnRef"]}
         if kind in {"turn_read", "turn_cancel"}:
             stage = operation["stage"]
@@ -530,36 +523,33 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
                 expected_turn_ref=operation["turnRef"],
                 expected_conversation_ref=expected_conversation_ref,
             )
-            with self._provider_state_lock:
-                if self._provider_turn_refs.get(operation["turnRef"]) != stage:
-                    raise ValueError("provider turn response reference changed")
-                self._apply_turn_lifecycle_locked(stage, turn["lifecycle"])
+            if self._provider_turn_refs.get(operation["turnRef"]) != stage:
+                raise ValueError("provider turn response reference changed")
+            self._apply_turn_lifecycle(stage, turn["lifecycle"])
             return {"turnRef": turn["turnRef"]}
         if kind == "request_cancel":
             turn = self._parse_request_cancellation_response(body)
             if turn["turnRef"] != operation["turnRef"] or turn["conversationRef"] != self._conversation_ref_for_stage(operation["stage"]):
                 raise ValueError("provider request cancellation identity changed")
-            with self._provider_state_lock:
-                if self._provider_request_stages.get(operation["requestRef"]) != operation["stage"]:
-                    raise ValueError("provider request cancellation reference changed")
-                self._apply_turn_lifecycle_locked(operation["stage"], "cancelled")
+            if self._provider_request_stages.get(operation["requestRef"]) != operation["stage"]:
+                raise ValueError("provider request cancellation reference changed")
+            self._apply_turn_lifecycle(operation["stage"], "cancelled")
             return
         raise ValueError("provider turn operation is invalid")
 
     def _tracked_turn_operation(self, kind: str, turn_ref: str) -> dict[str, Any]:
         if not PROVIDER_TURN_REF_PATTERN.fullmatch(turn_ref):
             raise ValueError("provider turn reference is invalid")
-        with self._provider_state_lock:
-            stage = self._provider_turn_refs.get(turn_ref)
-            if stage is None:
-                raise ValueError("provider turn reference is unknown")
-            if kind == "turn_cancel" and stage == "bootstrap" and self._continuation_turn_ref is not None:
-                raise ValueError("provider turn cancellation is out of sequence")
-            if turn_ref != self._turn_ref_for_stage_locked(stage):
-                raise ValueError("provider turn operation is out of sequence")
-            request_ref = self._provider_turn_request_refs.get(turn_ref)
-            if request_ref is None:
-                raise ValueError("provider turn request reference is unavailable")
+        stage = self._provider_turn_refs.get(turn_ref)
+        if stage is None:
+            raise ValueError("provider turn reference is unknown")
+        if kind == "turn_cancel" and stage == "bootstrap" and self._continuation_turn_ref is not None:
+            raise ValueError("provider turn cancellation is out of sequence")
+        if turn_ref != self._turn_ref_for_stage(stage):
+            raise ValueError("provider turn operation is out of sequence")
+        request_ref = self._provider_turn_request_refs.get(turn_ref)
+        if request_ref is None:
+            raise ValueError("provider turn request reference is unavailable")
         return {
             "kind": kind,
             "stage": stage,
@@ -786,7 +776,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             "conversationRef": turn["conversationRef"],
         }
 
-    def _apply_turn_lifecycle_locked(self, stage: str, lifecycle: str) -> None:
+    def _apply_turn_lifecycle(self, stage: str, lifecycle: str) -> None:
         if lifecycle not in TURN_LIFECYCLES:
             raise ValueError("provider turn lifecycle is invalid")
         if lifecycle not in {"succeeded", "failed", "cancelled"}:
@@ -798,7 +788,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         else:
             raise ValueError("provider turn stage is invalid")
 
-    def _turn_ref_for_stage_locked(self, stage: str) -> str:
+    def _turn_ref_for_stage(self, stage: str) -> str:
         if stage == "bootstrap":
             turn_ref = self._bootstrap_turn_ref
         elif stage == "continuation":
@@ -810,8 +800,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         return turn_ref
 
     def _conversation_ref_for_stage(self, stage: str) -> str:
-        with self._provider_state_lock:
-            conversation_ref = self._bootstrap_conversation_ref
+        conversation_ref = self._bootstrap_conversation_ref
         if conversation_ref is None:
             raise ValueError("provider conversation reference is unavailable")
         return conversation_ref
@@ -1092,8 +1081,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             )
             return
         turn_ref = unquote(path.rsplit("/", 1)[-1])
-        with self._provider_state_lock:
-            input_text = self._child_turn_input_text.pop(turn_ref, None)
+        input_text = self._child_turn_input_text.pop(turn_ref, None)
         if input_text is None:
             self.record_event(
                 {"type": "provider.routing.invalid", "reason": "child_token_input"}

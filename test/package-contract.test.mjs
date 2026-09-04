@@ -641,9 +641,6 @@ test('CLI rejects misspelled, unknown, and wrong-command options with usage befo
     ['provider-controls', '--all'],
     ['inspect-provider-controls', '--all'],
     ['provider-configure', '--all'],
-    ['chatgpt-controls', '--all'],
-    ['inspect-chatgpt-controls', '--all'],
-    ['chatgpt-configure', '--all'],
     ['snapshot-dom', '--all'],
     ['state', '--all'],
     ['status', '--all'],
@@ -905,77 +902,16 @@ test('pure JS CLI packs, installs, and exposes executable runtime artifacts', ()
   }
 })
 
-test('CLI rejects removed local fallback routes before network access', () => {
+test('CLI rejects local profile import and copy routes before network access', () => {
   for (const args of [
     ['setup', '--import-browser-profile', 'Default', '--json'],
     ['setup', '--reimport-profile', '--json'],
     ['profiles', 'add', '--profile', 'copied', '--consent-local-profile-copy', '--json'],
-    ['profiles', 'discover', '--json'],
-    ['profiles', 'reset', '--profile', 'default', '--json'],
   ]) {
     const result = spawnSync(process.execPath, [cliEntry, ...args], { cwd: root, encoding: 'utf8' })
     assert.equal(result.status, 2, result.stderr || result.stdout)
     assert.ok(['unknown_argument', 'profiles_command_invalid'].includes(JSON.parse(result.stdout).error.code))
   }
-
-  const compatibilityAlias = spawnSync(process.execPath, [
-    cliEntry,
-    'doctor',
-    '--clean-profile',
-    '--json',
-  ], { cwd: root, encoding: 'utf8' })
-  assert.equal(compatibilityAlias.status, 2)
-  assert.equal(JSON.parse(compatibilityAlias.stdout).error.code, 'unknown_argument')
-
-  const removed = spawnSync(process.execPath, [
-    cliEntry,
-    'run',
-    '--prompt',
-    'hello',
-    '--no-daemon',
-    '--json',
-  ], { cwd: root, encoding: 'utf8' })
-  assert.equal(removed.status, 1)
-  assert.equal(JSON.parse(removed.stdout).error.code, 'daemon_only')
-  assert.match(JSON.parse(removed.stdout).error.message, /daemon-only/)
-
-  for (const command of ['accounts', 'projects', 'serve']) {
-    const result = spawnSync(process.execPath, [
-      cliEntry,
-      command,
-      '--json',
-    ], { cwd: root, encoding: 'utf8' })
-    assert.equal(result.status, 2)
-    assert.equal(result.stderr, '')
-    const payload = JSON.parse(result.stdout)
-    assert.equal(payload.error.code, 'unknown_command')
-    assert.ok(payload.error.usage.usage.some((line) => line.includes('tokenless <command>')))
-    assert.ok(payload.error.usage.commonOptions.includes('-h, --help'))
-  }
-
-  const removedFlag = spawnSync(process.execPath, [
-    cliEntry,
-    'run',
-    `--${'direct'}-backend`,
-    'api',
-    '--prompt',
-    'hello',
-    '--json',
-  ], { cwd: root, encoding: 'utf8' })
-  assert.equal(removedFlag.status, 2)
-  assert.equal(JSON.parse(removedFlag.stdout).error.code, 'unknown_argument')
-
-  const removedProjectRouteFlag = spawnSync(process.execPath, [
-    cliEntry,
-    'run',
-    '--project',
-    'legacy-project',
-    '--prompt',
-    'hello',
-    '--json',
-  ], { cwd: root, encoding: 'utf8' })
-  assert.equal(removedProjectRouteFlag.status, 2)
-  assert.equal(JSON.parse(removedProjectRouteFlag.stdout).error.code, 'unknown_argument')
 })
 
 test('built CLI reads profiles without a separate registry database', async () => {

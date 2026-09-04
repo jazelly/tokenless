@@ -12,7 +12,7 @@ import {
   tokenlessHome,
 } from '#tokenless-server/persistence/config.js'
 import { daemonUrl as normalizeDaemonUrl, readDaemonToken, resolveDaemonUrl, shutdownDaemon } from '../http/daemon-client.js'
-import { getProviderInstanceById, getProviderInstanceForUrl, listProviderDescriptors } from '#tokenless-server/providers/registry.js'
+import { getProviderInstanceById, listProviderDescriptors } from '#tokenless-server/providers/registry.js'
 import {
   DAEMON_CONTROL_API_REVISION,
   DAEMON_SNAPSHOT_SCHEMA_ID,
@@ -543,31 +543,6 @@ export async function resolveChromiumBrowser(
     displayName: runtime.displayName,
     playwrightExecutablePath: runtime.executablePath,
   }
-}
-
-export async function openProviderUrl(url: string, browser: ChromiumBrowser) {
-  // Re-validate here so future callers cannot turn this into a general URL launcher.
-  const parsed = new URL(url)
-  const provider = getProviderInstanceForUrl(parsed.href)
-  if (
-    !provider ||
-    provider.navigation.classify(parsed.href).kind !== 'approved'
-  ) {
-    throw runtimeError(
-      'invalid_provider_url',
-      `Tokenless only opens allowlisted ${supportedVisibleProviderList()} HTTPS pages.`,
-      false
-    )
-  }
-  const child = spawn(browser.command, [...browser.argsPrefix, parsed.href], {
-    detached: true,
-    stdio: 'ignore',
-  })
-  await new Promise<void>((resolve, reject) => {
-    child.once('spawn', resolve)
-    child.once('error', reject)
-  })
-  child.unref()
 }
 
 export async function inspectManagedRuntime(homeDir = tokenlessHome(), packageRoot?: string | undefined) {

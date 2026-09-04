@@ -32,9 +32,6 @@ export class GeminiProvider extends BaseProvider<'gemini'> {
       stage: 'supported',
       setupOrder: 2,
       subscriptionSupport: 'supported',
-      protocolCompatibility: Object.freeze({
-        legacyRequests: true,
-      }),
       navigation: PROVIDER_NAVIGATION_CATALOG.gemini,
       controls: Object.freeze({
         chatSurface: false,

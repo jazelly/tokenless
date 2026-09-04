@@ -42,8 +42,6 @@ export type ProviderNavigationClassification =
   }
 
 export type ProviderNavigationPolicyOwner = {
-  readonly id?: ProviderId
-  readonly homeUrl: string
   readonly navigationPolicy: ProviderNavigationPolicy
 }
 
@@ -116,17 +114,6 @@ export class ProviderNavigationPolicy {
   }
 }
 
-export function canonicalProviderTarget(
-  provider: ProviderNavigationPolicyOwner,
-  targetUrl: unknown,
-): CanonicalProviderTarget | null {
-  return provider.navigationPolicy.canonicalTarget(targetUrl === undefined ? provider.homeUrl : targetUrl)
-}
-
-export function safeProviderTargetUrl(provider: ProviderNavigationPolicyOwner, targetUrl: unknown): string | null {
-  return canonicalProviderTarget(provider, targetUrl)?.href ?? null
-}
-
 export function assertProviderUrlAllowed(provider: ProviderNavigationPolicyOwner, targetUrl: unknown) {
   const target = provider.navigationPolicy.assertCurrentPageAllowed(targetUrl)
   if (!target) {
@@ -139,11 +126,6 @@ export function assertProviderUrlAllowed(provider: ProviderNavigationPolicyOwner
     ok: true as const,
     target,
   }
-}
-
-export function trustedProviderSignInNavigation(provider: ProviderNavigationPolicyOwner, targetUrl: unknown) {
-  const classification = provider.navigationPolicy.classify(targetUrl)
-  return classification.kind === 'trusted_sign_in' ? classification : null
 }
 
 function parseObservedProviderUrl(value: unknown, origins: readonly string[]): URL | null {

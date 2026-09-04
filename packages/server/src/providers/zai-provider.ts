@@ -16,9 +16,6 @@ export class ZaiProvider extends BaseProvider<'zai'> {
       stage: 'experimental',
       setupOrder: 7,
       subscriptionSupport: 'supported',
-      protocolCompatibility: Object.freeze({
-        legacyRequests: false,
-      }),
       navigation: PROVIDER_NAVIGATION_CATALOG.zai,
       controls: Object.freeze({
         chatSurface: false,

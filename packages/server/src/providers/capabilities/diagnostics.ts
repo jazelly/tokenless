@@ -97,7 +97,7 @@ async function inspectNavigation(page: Page, provider: ProviderDomDefinition): P
   const policy = assertProviderUrlAllowed(provider, page.url())
   return {
     allowed: policy.ok,
-    provider: provider.id,
+    provider: provider.descriptor.id,
     reason: policy.ok ? null : policy.reason,
   }
 }
@@ -289,8 +289,8 @@ async function sanitizedSnapshot(page: Page, provider: ProviderDomDefinition): P
       controls,
     }
   }, {
-    id: provider.id,
-    label: provider.label,
+    id: provider.descriptor.id,
+    label: provider.descriptor.label,
     selectorProbes,
     answerSelectors: provider.answerSelectors,
     busySelectors: provider.busySelectors,

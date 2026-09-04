@@ -112,7 +112,7 @@ function providerSurfaceNotReadyBlocker(
     userResolvable: false,
     retryable: true,
     visibleProof: 'provider-session-observation-timeout',
-    provider: provider.id,
+    provider: provider.descriptor.id,
     url: observation.url,
   }
 }

@@ -25,3 +25,5 @@ The authenticated loopback Client Adapter belongs to `packages/harness/src/http/
 The HTTP Server Adapter and request validation belong to `packages/server/src/http/private/provider-turn/`. Neither Adapter is exported from this documentation package. OpenAI-compatible model requests remain owned by `/v1/chat/completions`, `/v1/responses`, and `/v1/images/generations`; this private Interface is retained only for current semantics those Interfaces do not yet express losslessly.
 
 Provider execution belongs to the current daemon process. An interrupted turn fails and callers start a new turn explicitly.
+
+Tokenless Harness owns conversation sharing and turn ordering. Tokenless API resolves the caller's opaque conversation reference to its existing provider target without a chat lease or a latest-turn-success gate; an unavailable target still fails explicitly. Request correlation references remain unique within the current daemon.

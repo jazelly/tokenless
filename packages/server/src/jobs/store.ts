@@ -323,7 +323,7 @@ export class JobStore {
   }
 
   createJob(input: CreateJobInput) {
-    return this.transaction(() => this.insertJob(input))
+    return this.insertJob(input)
   }
 
   putApiResponse(input: ApiResponseLedgerEntry) {
@@ -470,30 +470,28 @@ export class JobStore {
       throw invalidInput('web ai staged attachment was not found')
     }
     if (this.#webAiTurns.has(turnRef)) throw invalidInput('web ai turn reference is already in use')
-    return this.transaction(() => {
-      const existing = this.getWebAiTurnByRequestRef(requestRef)
-      if (existing) throw new WebAiRequestRefConflictError()
-      for (const candidate of attachments) {
-        const record = this.#webAiStagedAttachments.get(candidate!.attachment_ref)
-        if (!record || record.consumed_turn_ref !== null) throw invalidInput('web ai staged attachment has already been consumed')
-      }
-      const job = this.insertJob(input.job)
-      for (const candidate of attachments) {
-        this.#webAiStagedAttachments.get(candidate!.attachment_ref)!.consumed_turn_ref = turnRef
-      }
-      const turn: WebAiTurnRecord = {
-        turn_ref: turnRef,
-        binding_ref: binding.binding_ref,
-        provider_ref: binding.provider_ref,
-        conversation_ref: conversationRef,
-        attachment_ref: attachment.attachment_ref,
-        request_ref: requestRef,
-        job_id: job.job_id,
-        cancelled: false,
-      }
-      this.#webAiTurns.set(turnRef, turn)
-      return { ...turn }
-    })
+    const existing = this.getWebAiTurnByRequestRef(requestRef)
+    if (existing) throw new WebAiRequestRefConflictError()
+    for (const candidate of attachments) {
+      const record = this.#webAiStagedAttachments.get(candidate!.attachment_ref)
+      if (!record || record.consumed_turn_ref !== null) throw invalidInput('web ai staged attachment has already been consumed')
+    }
+    const job = this.insertJob(input.job)
+    for (const candidate of attachments) {
+      this.#webAiStagedAttachments.get(candidate!.attachment_ref)!.consumed_turn_ref = turnRef
+    }
+    const turn: WebAiTurnRecord = {
+      turn_ref: turnRef,
+      binding_ref: binding.binding_ref,
+      provider_ref: binding.provider_ref,
+      conversation_ref: conversationRef,
+      attachment_ref: attachment.attachment_ref,
+      request_ref: requestRef,
+      job_id: job.job_id,
+      cancelled: false,
+    }
+    this.#webAiTurns.set(turnRef, turn)
+    return { ...turn }
   }
 
   getWebAiTurn(turnRef: string) {
@@ -517,23 +515,18 @@ export class JobStore {
   }
 
   cancelWebAiTurn(turnRef: string) {
-    return this.transaction(() => {
-      const turn = this.getWebAiTurn(turnRef)
-      return turn ? this.cancelWebAiTurnInTransaction(turn) : null
-    })
+    const turn = this.getWebAiTurn(turnRef)
+    return turn ? this.cancelStoredWebAiTurn(turn) : null
   }
 
   /** Cancels an existing turn for this requestRef. */
   cancelWebAiRequest(requestRef: string): WebAiRequestCancellation | null {
     const canonicalRequestRef = webAiRequestRef(requestRef)
-    return this.transaction(() => {
-      const turn = this.getWebAiTurnByRequestRef(canonicalRequestRef)
-      if (turn) return { kind: 'turn', turn: this.cancelWebAiTurnInTransaction(turn) }
-      return null
-    })
+    const turn = this.getWebAiTurnByRequestRef(canonicalRequestRef)
+    return turn ? { kind: 'turn', turn: this.cancelStoredWebAiTurn(turn) } : null
   }
 
-  private cancelWebAiTurnInTransaction(turn: WebAiTurn) {
+  private cancelStoredWebAiTurn(turn: WebAiTurn) {
     const job = this.getJobRecord(turn.job_id)
     if (turn.cancelled || job.status === 'canceled') return turn
     if (!['queued', 'running', 'waiting_for_user'].includes(job.status)) throw invalidInput('web ai turn cannot be cancelled in its current state')
@@ -856,7 +849,7 @@ export class JobStore {
       throw invalidJobState(job.job_id, 'running or waiting_for_user', job.status)
     }
     if (job.provider_submitted_at !== null) return job
-    const result = this.run(
+    this.run(
       `UPDATE jobs
        SET provider_submitted_at = ?, updated_at = ?
        WHERE job_id = ?
@@ -866,7 +859,6 @@ export class JobStore {
       now,
       jobId,
     )
-    if (result.changes === 1) return this.getJobRecord(jobId)
     return this.getJobRecord(jobId)
   }
 
@@ -1377,12 +1369,6 @@ export class JobStore {
         canceled_jobs INTEGER NOT NULL DEFAULT 0,
         updated_at TEXT NOT NULL,
         PRIMARY KEY (day, profile_id, provider, execution_mode, capability_id)
-      );
-      CREATE TABLE IF NOT EXISTS provider_statuses (
-        profile_id TEXT NOT NULL,
-        provider TEXT NOT NULL,
-        status_json TEXT NOT NULL,
-        PRIMARY KEY (profile_id, provider)
       );
     `)
   }

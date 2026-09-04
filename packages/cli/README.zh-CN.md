@@ -149,6 +149,10 @@ tokenless profiles status --profile work --provider claude --json
 
 Tokenless profile 只组织 provider tab 与配置，不创建独立 browser identity。当前已发布的 visible-browser mode 不检查单个 cookie、token、browser storage、Keychain data 或 authentication value；任何 mode 都不会把这些值暴露给 agent。
 
+Managed runtime 会把不同 provider 和稳定的 task identity 保持在独立 tab 中。重新进入相同 project 或 conversation task 会返回原来的 tab；替换它需要通过 local job API 显式设置 `pagePolicy: replace`。
+
+Page Ref 是地址，不是执行锁：Tokenless API 允许并发使用同一 profile 和 Page Ref，conversation 顺序由 Tokenless Harness 控制。操作结束后 provider tab 保持打开，不按空闲时间自动过期。
+
 ## Browser 与本地 Runtime
 
 Native mode 只支持 headed，因为它控制用户已打开的 Chrome 或 Brave。停止或重启 daemon 只会断开 Playwright，不会关闭所选浏览器。

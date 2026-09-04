@@ -104,7 +104,7 @@ test('unsupported binding stages through local-http but fails closed before job 
   })
 })
 
-test('continuation reuses the proved provider conversation in the same process', async () => {
+test('local continuation admission uses the stored target without serializing conversation turns', async () => {
   await withHome(async (homeDir) => {
     const daemon = await startControlPlane(homeDir)
     try {
@@ -112,9 +112,6 @@ test('continuation reuses the proved provider conversation in the same process',
       const first = await startTurn(client, binding, 'a', 'bootstrap')
       const firstMapping = daemon.store.getWebAiTurn(first.turnRef)
       const firstJob = daemon.store.getJob(firstMapping.job_id)
-      const firstJobState = daemon.store.takeNextJob({ job_id_prefix: firstJob.job_id }, firstJob.profile_id)
-      assert.ok(firstJobState)
-      daemon.store.recordProviderSubmission(firstJobState.job_id)
       daemon.store.upsertProviderTaskConversation({
         provider: 'chatgpt',
         profile_id: firstJob.profile_id,
@@ -122,8 +119,7 @@ test('continuation reuses the proved provider conversation in the same process',
         canonical_url: 'https://chatgpt.com/c/tokenless-continuation',
         job_id: firstJob.job_id,
       })
-      daemon.store.completeJob(firstJobState.job_id, { result_json: successfulVisibleResult('first') })
-      assert.equal((await client.read(first.turnRef)).lifecycle, 'succeeded')
+      assert.equal((await client.read(first.turnRef)).lifecycle, 'queued')
 
       const resultAttachment = await client.stage(binding.providerBindingRef, new TextEncoder().encode('{"result":"exact"}'), { name: 'tool-result.md' })
       const continuationRequest = {
@@ -157,6 +153,19 @@ test('continuation reuses the proved provider conversation in the same process',
       assert.equal(continuedJob.request_json.fallback, null)
 
       assert.equal((await client.read(continued.turnRef)).lifecycle, 'queued')
+      const nextAttachment = await client.stage(binding.providerBindingRef, new TextEncoder().encode('next caller turn'), { name: 'next-result.md' })
+      const overlapping = await client.continue(binding.providerBindingRef, {
+        ...continuationRequest,
+        requestRef: `request:${'c'.repeat(32)}`,
+        continuation: {
+          text: 'the caller owns conversation ordering',
+          attachments: [{ kind: 'tool_result', name: 'next-result.md', ...nextAttachment }],
+        },
+      })
+      assert.equal(overlapping.conversationRef, first.conversationRef)
+      assert.equal(overlapping.lifecycle, 'queued')
+      const overlappingJob = daemon.store.getJob(daemon.store.getWebAiTurn(overlapping.turnRef).job_id)
+      assert.equal(overlappingJob.request_json.target.url, continuedJob.request_json.target.url)
     } finally {
       await daemon.close()
     }

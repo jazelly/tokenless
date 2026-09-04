@@ -28,7 +28,7 @@
 | `tokenless capabilities list` | 列出 canonical task capabilities 和已有证据闭环的 provider routes。 | 否 |
 | `tokenless limits inspect` | 根据 packaged catalog 和本地 job 历史查看下一次 prompt 的 provider/profile 容量估算。 | 否 |
 | `tokenless savings <status\|enable\|disable\|clear\|uninstall>` | 管理可选的本地输出节省计量及其在首次成功可见 response 时下载的 tokenizer。 | 否 |
-| `tokenless api-proxy <status\|enable\|disable>` | 管理 OpenAI/Anthropic 兼容的本地 API proxy 及其兼容性 conversation-mode 设置。 | 否 |
+| `tokenless api-proxy <status\|enable\|disable>` | 管理 OpenAI/Anthropic 兼容的本地 API proxy。 | 否 |
 | `tokenless run` | 通过可见 provider session 发送 prompt 和可选文件。 | 是 |
 | `tokenless state` | 查询当前 daemon job 状态。 | 否 |
 | `tokenless cancel` | 取消 daemon job，并确认其已进入 canceled 状态。 | 否 |
@@ -36,8 +36,6 @@
 | `tokenless provider-controls` | 检查可见的 model 和 effort 控件。 | 是 |
 | `tokenless provider-configure` | 选择精确的可见 model 或 effort label。 | 是 |
 | `tokenless provider-action` | 执行一个底层可见 provider action。 | 是 |
-| `tokenless chatgpt-controls` | 检查 ChatGPT 的 model 和 effort 控件。 | 是 |
-| `tokenless chatgpt-configure` | 配置 ChatGPT 专用的可见控件。 | 是 |
 | `tokenless snapshot-dom` | 捕获并保存经过清理的 provider DOM snapshot。 | 是 |
 | `tokenless daemon stop` | 优雅停止兼容的本地 daemon。 | 否 |
 | `tokenless prompt` | 构建 shareable Tokenless prompt，但不提交。 | 否 |
@@ -247,7 +245,7 @@ tokenless dashboard --semantic-manifest-output /absolute/path/terminal-bench-sem
 
 Dashboard 包含 Overview、Profiles、Providers、Capabilities、Jobs 和 System/Diagnostics。Provider membership、visibility、role label，以及不带凭据的 HTTP/HTTPS/SOCKS5 proxy 都按 profile 配置。CLI 恢复入口仍然完整保留：
 
-Provider 就绪状态刷新会在每个 Profile 内串行运行。Profile 空闲时，Tokenless 会启动常驻 headless browser；如果同一 Profile 已有 headed browser，则复用该 runtime，不替换 browser、不关闭现有 tabs，也不把检查带到前台。每项检查只拥有一个临时后台 tab，并在完成、失败、遇到 blocker、超时或取消时关闭它；用户原有 tabs 不受影响。刷新遇到登录或验证时只记录所需操作；只有显式 Provider、browser 或 job 操作才会启动可见 browser interaction。
+Provider 就绪状态刷新使用独立后台 tab，不再持有 Profile 级执行锁。Profile 空闲时，Tokenless 会启动常驻 headless browser；如果同一 Profile 已有 headed browser，则复用该 runtime，不替换 browser、不关闭现有 tabs，也不把检查带到前台。每项检查只拥有一个临时后台 tab，并在完成、失败、遇到 blocker、超时或取消时关闭它；用户原有 tabs 不受影响。刷新遇到登录或验证时只记录所需操作；只有显式 Provider、browser 或 job 操作才会启动可见 browser interaction。
 
 ```bash
 tokenless config --profile work --provider-whitelist chatgpt,claude --browser-visibility headed --json
@@ -490,8 +488,7 @@ tokenless savings uninstall --confirm-delete --json
 
 ```bash
 tokenless api-proxy status --json
-tokenless api-proxy enable --conversation-mode new-conversation --json
-tokenless api-proxy enable --conversation-mode continue-conversation --json
+tokenless api-proxy enable --json
 tokenless api-proxy disable --json
 ```
 
@@ -504,7 +501,7 @@ tokenless api-proxy disable --json
 
 `model` 必须以 `tokenless/<provider>` 显式指明 provider，例如 `tokenless/chatgpt`。无法映射的 model 会被拒绝，而不会被改写到调用方没有选择的 provider。`GET /v1/openai/models` 会列出全部可用名称。
 
-`--conversation-mode` 仍保留用于配置/status 兼容，但不会覆盖 API contract。Chat Completions 与 Anthropic 始终新建 provider conversation，并发送完整请求历史。Responses 省略 `previous_response_id` 时新建 chat；只有提供有效 `previous_response_id` 且存在 mapping 时才继续既有 provider conversation；mapping 缺失则以重建 transcript 新建 chat。精确 continuation 规则见 [API proxy 集成文档](docs/api-proxy-integration.zh-CN.md#conversation-状态)。
+持久化的 API proxy 配置只控制 proxy 是否启用以及 execution mode。Conversation 的选择由每个 API request 及其调用方负责；Responses continuation 必须显式提供 `previous_response_id`。精确 continuation 规则见 [API proxy 集成文档](docs/api-proxy-integration.zh-CN.md#conversation-状态)。
 
 `tools`、`tool_choice`、`functions`、`function_call` 和 `response_format` 会被拒绝，因为可见 provider 页面没有对应控件。`stream: true` 会返回该方言约定的事件序列，但作为一个终态 chunk 一次性下发，因为可见 response 只有渲染完成后才可读。返回的 `usage` 计数恒为 0：Tokenless 不计量 provider token，该 response 由你自己的网页版订阅承担。
 
@@ -641,29 +638,7 @@ tokenless provider-configure \
   --json
 ```
 
-至少需要提供一个 control。Label 必须与可见 UI label 精确匹配；managed visible jobs 不支持 model fallback list。
-
-### `tokenless chatgpt-controls`
-
-用于检查 model 与 effort controls 的 ChatGPT 专用命令。
-
-```bash
-tokenless chatgpt-controls -P default --json
-```
-
-### `tokenless chatgpt-configure`
-
-选择 ChatGPT 专用的 model 或 effort controls。也可以用 `--chat-surface chat` 显式约束使用 chat surface；其他 ChatGPT surfaces 会被拒绝。
-
-```bash
-tokenless chatgpt-configure \
-  -P default \
-  --model "GPT-5" \
-  --effort "High" \
-  --json
-```
-
-如果提供 `--provider`，其值必须是 `chatgpt`。
+至少需要提供一个 control。Label 必须与可见 UI label 精确匹配。
 
 ### `tokenless provider-action`
 
@@ -763,7 +738,6 @@ tokenless prompt \
 | `tokenless status` | `tokenless state` |
 | `tokenless provider-auth-status` | `tokenless provider-status` |
 | `tokenless inspect-provider-controls` | `tokenless provider-controls` |
-| `tokenless inspect-chatgpt-controls` | `tokenless chatgpt-controls` |
 | `--turn-context` | `--context` |
 | `--turn-context-file` | `--context-file` |
 

@@ -136,7 +136,7 @@ async function inspectChoices(
 }
 
 async function openNestedChoiceSurface(page: Page, provider: ProviderDomDefinition, kind: ChoiceKind) {
-  if (provider.id !== 'claude' || kind !== 'model') return
+  if (provider.descriptor.id !== 'claude' || kind !== 'model') return
   const moreModels = page.locator('[role="menuitem"]')
     .filter({ visible: true })
     .filter({ hasText: /^More models/u })
@@ -157,7 +157,7 @@ async function dismissChoiceSurface(page: Page, trigger: Locator) {
 }
 
 async function waitForProviderChoiceSurface(page: Page, provider: ProviderDomDefinition) {
-  if (provider.id !== 'qwen') return
+  if (provider.descriptor.id !== 'qwen') return
   const overlay = page.locator('.page-loading[aria-hidden="false"]').filter({ visible: true })
   if (await overlay.count() === 0) return
   await overlay.last().waitFor({ state: 'hidden', timeout: 10_000 })
@@ -190,10 +190,10 @@ async function selectChoice(
       visibleProof: 'exact-label-not-found',
     }
   }
-  if (provider.id === 'claude') {
+  if (provider.descriptor.id === 'claude') {
     await option.focus()
     await option.press('Enter')
-  } else if (provider.id === 'arena') {
+  } else if (provider.descriptor.id === 'arena') {
     await option.evaluate((element) => (element as HTMLElement).click())
   } else {
     await option.click({ timeout: 5000 })
@@ -219,8 +219,8 @@ async function exactVisibleChoiceLocator(
     '[cmdk-item]',
     '.ant-select-item-option',
   ]
-  if (provider.id === 'arena') selectors.push('button')
-  const surface = provider.id === 'arena'
+  if (provider.descriptor.id === 'arena') selectors.push('button')
+  const surface = provider.descriptor.id === 'arena'
     ? page.locator('[role="dialog"]').filter({ visible: true }).last()
     : page
   const candidates = surface.locator(selectors.join(',')).filter({ visible: true })
@@ -238,7 +238,7 @@ async function exactVisibleChoiceLocator(
       element.getAttribute('aria-label') ??
       element.textContent ??
       ''
-    ).replace(/\s+/gu, ' ').trim(), provider.id)
+    ).replace(/\s+/gu, ' ').trim(), provider.descriptor.id)
     if (text === label) return candidate
   }
   return null
@@ -274,11 +274,11 @@ async function collectVisibleChoices(page: Page, provider: ProviderDomDefinition
     ? page.locator(`[id="${controlledId.replace(/["\\]/gu, '\\$&')}"]`).filter({ visible: true })
     : null
   const overlayRoot = page.locator('[role="menu"], [role="listbox"], [role="dialog"]').filter({ visible: true }).last()
-  const root = provider.id !== 'claude' && controlledRoot && await controlledRoot.count() > 0
+  const root = provider.descriptor.id !== 'claude' && controlledRoot && await controlledRoot.count() > 0
     ? controlledRoot
     : overlayRoot
   const locators = [
-    provider.id === 'claude'
+    provider.descriptor.id === 'claude'
       ? page.locator('[role="menuitemradio"]').filter({ visible: true })
       : root.locator('[role="menuitem"], [role="menuitemcheckbox"], [role="option"], [cmdk-item], button').filter({ visible: true }),
     page.locator('.ant-select-dropdown').filter({ visible: true })
@@ -337,7 +337,7 @@ async function collectVisibleChoices(page: Page, provider: ProviderDomDefinition
       }).filter((entry) => entry.label.length > 0)
     }, {
       choiceAvailability: provider.choiceAvailability,
-      providerId: provider.id,
+      providerId: provider.descriptor.id,
     })
     choices.push(...values)
   }

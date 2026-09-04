@@ -1,5 +1,13 @@
 import {
   createSparkX25MlxAiEngine,
+  HARNESS_ROUTE_INSTRUCTION as semanticInstruction,
+  HARNESS_TITLE_INSTRUCTION as titleInstruction,
+  HARNESS_TITLE_RESPONSE_SCHEMA,
+  harnessRouteResponseSchema,
+  readHarnessRoute,
+  readHarnessTitle,
+  type HarnessFrontDoorProviderCandidate,
+  type HarnessFrontDoorRoute,
   SPARK_X25_4B_MLX_ENGINE_ID,
   SPARK_X25_4B_MLX_HEALTH_ENDPOINT,
   SPARK_X25_4B_MLX_MODEL,
@@ -10,7 +18,7 @@ import type { HarnessSidecarJsonValue } from 'tokenless-internal-shared/harness-
 export type RouterEngineId = 'chrome-prompt-api' | typeof SPARK_X25_4B_MLX_ENGINE_ID
 
 export const CHROME_PROMPT_API_MIN_MAJOR = 148
-export const ROUTER_TASK_TYPE_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/u
+export { ROUTER_TASK_TYPE_PATTERN } from 'tokenless-internal-shared/harness-sidecar'
 
 export type RouterBrowserBinding = {
   browserId: string
@@ -33,35 +41,8 @@ export type RouterEngineCallbacks = {
   onDownloadProgress: (progress: number | null) => void
 }
 
-export type RouterProviderCandidate = {
-  providerId: string
-  label: string
-  suitableTasks: string
-  model: string | null
-  plan: {
-    accessClass: string
-    planId: string
-    label: string | null
-  }
-  capacity: {
-    decision: 'admit' | 'unknown'
-    rules: Array<{
-      action: string
-      publishedAllowance: number | null
-      remainingUnits: number | null
-      requestedUnits: number
-      decision: 'admit' | 'unknown'
-    }>
-  }
-}
-
-export type RouterResult = {
-  providerId: string
-  model: string | null
-  taskType: string
-  complexity: 'low' | 'medium' | 'high'
-  reason: string
-}
+export type RouterProviderCandidate = HarnessFrontDoorProviderCandidate
+export type RouterResult = HarnessFrontDoorRoute
 
 type LanguageModelSession = {
   prompt: (input: string, options: { responseConstraint: Record<string, unknown> }) => Promise<string>
@@ -185,32 +166,9 @@ export function createRouterEngine(engine: RouterEngineId): RouterEngine {
           task,
           providerConfiguration: providers,
         })}`, {
-          responseConstraint: {
-            type: 'object',
-            properties: {
-              providerId: { type: 'string', enum: providers.map((provider) => provider.providerId) },
-              model: { enum: [...new Set(providers.map((provider) => provider.model))] },
-              taskType: { type: 'string', pattern: '^[a-z][a-z0-9_-]{0,31}$' },
-              complexity: { type: 'string', enum: ['low', 'medium', 'high'] },
-              reason: { type: 'string' },
-            },
-            required: ['providerId', 'model', 'taskType', 'complexity', 'reason'],
-            additionalProperties: false,
-          },
+          responseConstraint: harnessRouteResponseSchema(providers),
         })
-        const parsed = JSON.parse(response) as Partial<RouterResult>
-        const selectedProvider = providers.find((provider) => provider.providerId === parsed.providerId)
-        if (
-          !selectedProvider ||
-          parsed.model !== selectedProvider.model ||
-          typeof parsed.taskType !== 'string' ||
-          !ROUTER_TASK_TYPE_PATTERN.test(parsed.taskType) ||
-          !['low', 'medium', 'high'].includes(String(parsed.complexity)) ||
-          typeof parsed.reason !== 'string'
-        ) {
-          throw new RouterEngineError('invalid-result')
-        }
-        return parsed as RouterResult
+        return readRouterResult(JSON.parse(response) as HarnessSidecarJsonValue, providers)
       } catch (error) {
         if (error instanceof RouterEngineError) throw error
         if (error instanceof SyntaxError) throw new RouterEngineError('invalid-result')
@@ -229,17 +187,9 @@ export function createRouterEngine(engine: RouterEngineId): RouterEngine {
       const session = await api.create({ monitor() {} })
       try {
         const response = await session.prompt(`${titleInstruction}\n${JSON.stringify({ conversation: task.slice(0, 4_000) })}`, {
-          responseConstraint: {
-            type: 'object',
-            properties: { title: { type: 'string' } },
-            required: ['title'],
-            additionalProperties: false,
-          },
+          responseConstraint: HARNESS_TITLE_RESPONSE_SCHEMA,
         })
-        const parsed = JSON.parse(response) as { title?: unknown }
-        const title = typeof parsed.title === 'string' ? parsed.title.trim() : ''
-        if (!title || title.length > 80) throw new RouterEngineError('invalid-result')
-        return title
+        return readRouterTitle(JSON.parse(response) as HarnessSidecarJsonValue)
       } catch (error) {
         if (error instanceof RouterEngineError) throw error
         if (error instanceof SyntaxError) throw new RouterEngineError('invalid-result')
@@ -273,7 +223,7 @@ function createSparkRouterEngine(): RouterEngine {
       const value = await createSparkX25MlxAiEngine().complete({
         instruction: semanticInstruction,
         input: { task, providerConfiguration: providers },
-        responseSchema: routerResponseSchema(providers),
+        responseSchema: harnessRouteResponseSchema(providers),
         browserBinding,
       })
       return readRouterResult(value, providers)
@@ -285,17 +235,9 @@ function createSparkRouterEngine(): RouterEngine {
       const value = await createSparkX25MlxAiEngine().complete({
         instruction: titleInstruction,
         input: { conversation: task.slice(0, 4_000) },
-        responseSchema: {
-          type: 'object',
-          properties: { title: { type: 'string' } },
-          required: ['title'],
-          additionalProperties: false,
-        },
+        responseSchema: HARNESS_TITLE_RESPONSE_SCHEMA,
       })
-      const record = readJsonRecord(value)
-      const title = typeof record.title === 'string' ? record.title.trim() : ''
-      if (!title || title.length > 80) throw new RouterEngineError('invalid-result')
-      return title
+      return readRouterTitle(value)
     },
   }
 }
@@ -323,42 +265,20 @@ async function requireSparkAvailability(observation: RouterEngineObservation) {
   }
 }
 
-function routerResponseSchema(providers: RouterProviderCandidate[]) {
-  return {
-    type: 'object',
-    properties: {
-      providerId: { type: 'string', enum: providers.map((provider) => provider.providerId) },
-      model: { enum: [...new Set(providers.map((provider) => provider.model))] },
-      taskType: { type: 'string', pattern: '^[a-z][a-z0-9_-]{0,31}$' },
-      complexity: { type: 'string', enum: ['low', 'medium', 'high'] },
-      reason: { type: 'string' },
-    },
-    required: ['providerId', 'model', 'taskType', 'complexity', 'reason'],
-    additionalProperties: false,
-  }
-}
-
 function readRouterResult(value: HarnessSidecarJsonValue, providers: RouterProviderCandidate[]): RouterResult {
-  const parsed = readJsonRecord(value) as Partial<RouterResult>
-  const selectedProvider = providers.find((provider) => provider.providerId === parsed.providerId)
-  if (
-    !selectedProvider
-    || parsed.model !== selectedProvider.model
-    || typeof parsed.taskType !== 'string'
-    || !ROUTER_TASK_TYPE_PATTERN.test(parsed.taskType)
-    || !['low', 'medium', 'high'].includes(String(parsed.complexity))
-    || typeof parsed.reason !== 'string'
-  ) {
+  try {
+    return readHarnessRoute(value, providers)
+  } catch {
     throw new RouterEngineError('invalid-result')
   }
-  return parsed as RouterResult
 }
 
-function readJsonRecord(value: HarnessSidecarJsonValue): Record<string, HarnessSidecarJsonValue> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+function readRouterTitle(value: HarnessSidecarJsonValue): string {
+  try {
+    return readHarnessTitle(value)
+  } catch {
     throw new RouterEngineError('invalid-result')
   }
-  return value
 }
 
 async function inspectChromePromptApi(): Promise<RouterEngineObservation> {
@@ -424,6 +344,3 @@ function versionMajor(version: string | null) {
 function languageModelApi() {
   return (window as Window & { LanguageModel?: LanguageModelApi }).LanguageModel
 }
-
-const semanticInstruction = 'Analyze the task. Choose the eligible AI provider whose suitableTasks best matches it. Provider candidates include the current profile plan and known remaining capacity after deterministic exclusions. Treat unknown capacity as uncertainty, not an unlimited allowance. Return that provider ID, its configured model, the task type, complexity, and a concise reason.'
-const titleInstruction = 'Write a direct, descriptive title for this conversation. Use the conversation language. Return only JSON. Keep the title under eight words in English or twenty characters in Chinese.'

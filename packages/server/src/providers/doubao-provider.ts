@@ -35,9 +35,6 @@ export class DoubaoProvider extends BaseProvider<'doubao'> {
       stage: 'experimental',
       setupOrder: 8,
       subscriptionSupport: 'supported',
-      protocolCompatibility: Object.freeze({
-        legacyRequests: false,
-      }),
       navigation: PROVIDER_NAVIGATION_CATALOG.doubao,
       controls: Object.freeze({
         chatSurface: false,

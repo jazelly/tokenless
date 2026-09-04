@@ -48,10 +48,8 @@ type ChannelRecord = {
   effort: string | null
   taskId: string
   maxTurns: number
-  turns: number
   expiresAtMs: number
   providerTurnTimeoutMs: number
-  active: boolean
 }
 
 export class FeatureBenchChannelError extends Error {
@@ -128,10 +126,8 @@ export class FeatureBenchChannelManager {
       effort,
       taskId,
       maxTurns,
-      turns: 0,
       expiresAtMs,
       providerTurnTimeoutMs,
-      active: false,
     }
     this.channels.set(tokenHash.toString('hex'), channel)
     const bridgePort = await this.ensureBridge()
@@ -228,43 +224,31 @@ export class FeatureBenchChannelManager {
   }
 
   private async turn(channel: ChannelRecord, body: Record<string, unknown>) {
-    if (channel.active) {
-      throw new FeatureBenchChannelError(409, 'featurebench_channel_turn_active', 'channel', 'A FeatureBench provider turn is already active.')
-    }
     if (body.protocol !== FEATUREBENCH_PROTOCOL) {
       throw new FeatureBenchChannelError(400, 'featurebench_channel_protocol_invalid', 'channel', 'FeatureBench channel protocol is invalid.')
     }
-    const expectedTurn = channel.turns + 1
     const turn = boundedInteger(body.turn, 'turn', 1, channel.maxTurns)
-    if (turn !== expectedTurn) {
-      throw new FeatureBenchChannelError(409, 'featurebench_channel_turn_out_of_order', 'channel', `FeatureBench expected turn ${expectedTurn}.`)
-    }
     const prompt = boundedPrompt(body.prompt, 'prompt')
-    const replayPrompt = boundedPrompt(body.replayPrompt, 'replayPrompt')
-    channel.turns = turn
-    channel.active = true
-    try {
-      const completion = await this.completeProviderTurn(channel, turn, prompt, replayPrompt)
-      return {
-        protocol: FEATUREBENCH_PROTOCOL,
-        turn,
-        text: completion.text,
-        citations: completion.citations,
-        jobId: completion.jobId,
-      }
-    } finally {
-      channel.active = false
+    const completion = await this.completeProviderTurn(channel, turn, prompt)
+    return {
+      protocol: FEATUREBENCH_PROTOCOL,
+      turn,
+      text: completion.text,
+      citations: completion.citations,
+      jobId: completion.jobId,
     }
   }
 
-  private async completeProviderTurn(channel: ChannelRecord, turn: number, prompt: string, replayPrompt: string) {
+  private async completeProviderTurn(channel: ChannelRecord, turn: number, prompt: string) {
     const provider = getProviderInstanceById(channel.provider)
     if (!provider) throw new FeatureBenchChannelError(503, 'featurebench_provider_unavailable', 'provider_turn', 'FeatureBench provider is unavailable.')
     const mapping = channel.executionMode === 'browser'
       ? this.store.resolveProviderTaskConversation({ provider: channel.provider, profile_id: channel.profileId, task_id: channel.taskId })
       : null
     const resumesConversation = Boolean(mapping?.canonical_url)
-    const actualPrompt = channel.executionMode === 'direct' || !resumesConversation ? replayPrompt : prompt
+    if (channel.executionMode === 'browser' && turn > 1 && !resumesConversation) {
+      throw new FeatureBenchChannelError(409, 'featurebench_conversation_unavailable', 'provider_turn', 'The caller-selected FeatureBench conversation is unavailable.')
+    }
     const actions = []
     if (channel.executionMode === 'browser' && !resumesConversation && channel.model !== 'provider-default') {
       actions.push(createVisibleActionRequest({ provider: channel.provider, action: VISIBLE_ACTIONS.MODEL_SELECT, payload: { label: channel.model } }))
@@ -273,7 +257,7 @@ export class FeatureBenchChannelManager {
       actions.push(createVisibleActionRequest({ provider: channel.provider, action: VISIBLE_ACTIONS.EFFORT_SELECT, payload: { label: channel.effort } }))
     }
     actions.push(
-      createVisibleActionRequest({ provider: channel.provider, action: VISIBLE_ACTIONS.PROMPT_INPUT, payload: { text: actualPrompt } }),
+      createVisibleActionRequest({ provider: channel.provider, action: VISIBLE_ACTIONS.PROMPT_INPUT, payload: { text: prompt } }),
       createVisibleActionRequest({ provider: channel.provider, action: VISIBLE_ACTIONS.PROMPT_SUBMIT, payload: {} }),
       createVisibleActionRequest({ provider: channel.provider, action: VISIBLE_ACTIONS.RESPONSE_READ, payload: {} }),
     )

@@ -40,5 +40,5 @@ export function assertProviderRequest(
   provider: ProviderDomDefinition,
   request: VisibleActionRequest,
 ) {
-  return request.provider === provider.id
+  return request.provider === provider.descriptor.id
 }

@@ -165,7 +165,9 @@ Native Project behavior is implemented experimentally for the explicit Claude an
 
 One managed profile can hold sessions for all enabled providers. Use separate profiles for multiple accounts of the same provider.
 
-The managed runtime keeps different providers and stable task identities in separate tabs. Re-entering the same project or conversation task returns to its tab; a job can overwrite an existing tab only by explicitly setting `pagePolicy` to `replace` through the local job API.
+The managed runtime keeps different providers and stable task identities in separate tabs. Re-entering the same project or conversation task returns to its tab; replacing it requires explicit `pagePolicy: replace` through the local job API.
+
+Page Ref is an address, not an execution lock: Tokenless API permits concurrent use of the same profile and Page Ref, while Tokenless Harness owns conversation ordering. Completed operations leave provider tabs open without idle expiry.
 
 ```bash
 tokenless profiles list --json

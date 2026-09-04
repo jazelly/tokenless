@@ -71,7 +71,7 @@
     browserExecutablePath: '',
     daemonUrl: untrack(() => snapshot.config.daemonUrl ?? ''),
     defaultProfile: initialDefaultProfile,
-    apiProxy: { enabled: false, conversationMode: 'new-conversation', executionMode: 'direct' },
+    apiProxy: { enabled: false, executionMode: 'direct' },
     g4f: untrack(() => ({ ...snapshot.config.g4f })),
     directProvider: untrack(() => ({
       defaultBackend: snapshot.config.directProvider.defaultBackend,
@@ -390,7 +390,6 @@
       <div class="form-stack">
         <div class="field"><div class="field-label-row"><label for="config-daemon-url">{t('daemonUrl')}</label>{@render helpTooltip(t('daemonUrlHelp'))}</div><input id="config-daemon-url" bind:value={global.daemonUrl} placeholder="http://127.0.0.1:8787" autocomplete="off" spellcheck="false" data-testid="config-daemon-url" /></div>
         <div class="switch-field"><span><span class="switch-heading"><strong>{t('apiProxy')}</strong>{@render helpTooltip(t('apiProxyHelp'))}</span></span><label class="switch"><input type="checkbox" bind:checked={global.apiProxy.enabled} data-testid="config-api-proxy-enabled" /><span></span></label></div>
-        <div class="field"><div class="field-label-row"><label for="config-api-proxy-conversation-mode">{t('conversationMode')}</label></div><select id="config-api-proxy-conversation-mode" bind:value={global.apiProxy.conversationMode} data-testid="config-api-proxy-conversation-mode"><option value="new-conversation">new-conversation</option><option value="continue-conversation">continue-conversation</option></select></div>
         <div class="field"><div class="field-label-row"><label for="config-api-proxy-execution-mode">{t('executionMode')}</label></div><select id="config-api-proxy-execution-mode" bind:value={global.apiProxy.executionMode} data-testid="config-api-proxy-execution-mode"><option value="direct">direct</option><option value="browser">browser</option></select></div>
       </div>
     </section>

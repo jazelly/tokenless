@@ -242,7 +242,7 @@ test('auto accepts plain browser requests and applies generic structured routing
     const { writeTokenlessConfig } = await import(runtimeModule)
     await writeTokenlessConfig({
       homeDir: daemon.homeDir,
-      apiProxy: { enabled: true, conversationMode: 'new-conversation', executionMode: 'browser' },
+      apiProxy: { enabled: true, executionMode: 'browser' },
       profiles: {
         'web-ai': {
           roleLabel: '',
@@ -313,7 +313,7 @@ test('auto keeps Claude available through generic single-call structured control
     const { writeTokenlessConfig } = await import(runtimeModule)
     await writeTokenlessConfig({
       homeDir: daemon.homeDir,
-      apiProxy: { enabled: true, conversationMode: 'new-conversation', executionMode: 'browser' },
+      apiProxy: { enabled: true, executionMode: 'browser' },
       profiles: {
         'web-ai': {
           roleLabel: '',
@@ -391,7 +391,7 @@ test('auto exposes bounded exclusions while generic prompt emulation admits ever
     }
     await writeTokenlessConfig({
       homeDir: daemon.homeDir,
-      apiProxy: { enabled: true, conversationMode: 'new-conversation', executionMode: 'browser' },
+      apiProxy: { enabled: true, executionMode: 'browser' },
       profiles: { 'structured-auto': profile },
     })
 
@@ -487,7 +487,7 @@ test('auto semantic preference reorders only eligible conversation routes', asyn
     const { writeTokenlessConfig } = await import(runtimeModule)
     await writeTokenlessConfig({
       homeDir: daemon.homeDir,
-      apiProxy: { enabled: true, conversationMode: 'new-conversation', executionMode: 'browser' },
+      apiProxy: { enabled: true, executionMode: 'browser' },
       profiles: {
         'semantic-auto': {
           roleLabel: '',
@@ -597,7 +597,7 @@ test('explicit auto applies portable call-id affinity and persists one real fall
     const { writeTokenlessConfig } = await import(runtimeModule)
     await writeTokenlessConfig({
       homeDir: daemon.homeDir,
-      apiProxy: { enabled: true, conversationMode: 'new-conversation', executionMode: 'browser' },
+      apiProxy: { enabled: true, executionMode: 'browser' },
       profiles: {
         'web-ai': {
           roleLabel: '',
@@ -668,7 +668,7 @@ test('auto rate-limit fallback preserves one local job and reports source attrib
     const { writeTokenlessConfig } = await import(runtimeModule)
     await writeTokenlessConfig({
       homeDir: daemon.homeDir,
-      apiProxy: { enabled: true, conversationMode: 'new-conversation', executionMode: 'browser' },
+      apiProxy: { enabled: true, executionMode: 'browser' },
       profiles: {
         'web-ai': {
           roleLabel: '',
@@ -796,7 +796,7 @@ test('auto fallback observer preserves captcha and unreachable attempt reasons',
     const { writeTokenlessConfig } = await import(runtimeModule)
     await writeTokenlessConfig({
       homeDir: daemon.homeDir,
-      apiProxy: { enabled: true, conversationMode: 'new-conversation', executionMode: 'browser' },
+      apiProxy: { enabled: true, executionMode: 'browser' },
       profiles: {
         'web-ai': {
           roleLabel: '',
@@ -888,7 +888,7 @@ test('api proxy client abort cancels the exact local job', async () => {
     const { writeTokenlessConfig } = await import(runtimeModule)
     await writeTokenlessConfig({
       homeDir: daemon.homeDir,
-      apiProxy: { enabled: true, conversationMode: 'new-conversation', executionMode: 'browser' },
+      apiProxy: { enabled: true, executionMode: 'browser' },
       profiles: {
         'web-ai': {
           roleLabel: '',
@@ -1239,7 +1239,7 @@ test('api proxy accepts bare and fenced final text containing Markdown code fenc
     const { writeTokenlessConfig } = await import(runtimeModule)
     await writeTokenlessConfig({
       homeDir: daemon.homeDir,
-      apiProxy: { enabled: true, conversationMode: 'new-conversation', executionMode: 'browser' },
+      apiProxy: { enabled: true, executionMode: 'browser' },
       profiles: {
         'web-ai': {
           roleLabel: '',
@@ -1702,25 +1702,25 @@ test('api proxy distinguishes each caller mistake by status so clients can decid
   })
 })
 
-test('api proxy conversation mode round-trips through the persisted config', async () => {
+test('api proxy enabled and execution mode round-trip through the persisted config', async () => {
   await withDaemon(async (daemon) => {
     const { readTokenlessConfig, writeTokenlessConfig } = await import(runtimeModule)
     assert.deepEqual(
       (await readTokenlessConfig(daemon.homeDir)).apiProxy,
-      { enabled: false, conversationMode: 'new-conversation', executionMode: 'direct' },
+      { enabled: false, executionMode: 'direct' },
     )
     await writeTokenlessConfig({
       homeDir: daemon.homeDir,
-      apiProxy: { enabled: true, conversationMode: 'continue-conversation', executionMode: 'browser' },
+      apiProxy: { enabled: true, executionMode: 'browser' },
     })
     assert.deepEqual(
       (await readTokenlessConfig(daemon.homeDir)).apiProxy,
-      { enabled: true, conversationMode: 'continue-conversation', executionMode: 'browser' },
+      { enabled: true, executionMode: 'browser' },
     )
     await assert.rejects(
       () => writeTokenlessConfig({
         homeDir: daemon.homeDir,
-        apiProxy: { enabled: true, conversationMode: 'sometimes', executionMode: 'direct' },
+        apiProxy: { enabled: true, executionMode: 'sometimes' },
       }),
       /API proxy configuration/,
     )
@@ -1741,7 +1741,7 @@ test('api proxy keeps Chat Completions fresh and Responses continuation on the m
     const { writeTokenlessConfig } = await import(runtimeModule)
     await writeTokenlessConfig({
       homeDir: daemon.homeDir,
-      apiProxy: { enabled: true, conversationMode: 'continue-conversation', executionMode: 'browser' },
+      apiProxy: { enabled: true, executionMode: 'browser' },
       profiles: {
         'web-ai': {
           roleLabel: '',
@@ -1895,9 +1895,9 @@ test('api proxy keeps Chat Completions fresh and Responses continuation on the m
   })
 })
 
-async function enableApiProxy(homeDir, conversationMode = 'new-conversation') {
+async function enableApiProxy(homeDir) {
   const { writeTokenlessConfig } = await import(runtimeModule)
-  await writeTokenlessConfig({ homeDir, apiProxy: { enabled: true, conversationMode } })
+  await writeTokenlessConfig({ homeDir, apiProxy: { enabled: true, executionMode: 'direct' } })
 }
 
 function promptInputText(job) {

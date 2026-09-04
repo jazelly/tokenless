@@ -956,36 +956,15 @@ async function controlRequest<T>(
   body?: Record<string, unknown>,
 ) {
   const daemon = await authenticatedDaemonAccess(options)
-  try {
-    return await daemonRequest<T>({
-      daemonUrl: daemon.daemonUrl,
-      method,
-      path: requestPath,
-      ...(body === undefined ? {} : { body }),
-      token: daemon.token,
-      timeoutMs: options.requestTimeoutMs,
-      signal: options.signal,
-    })
-  } catch (error) {
-    preservePreHttpControlErrorShape(error)
-    throw error
-  }
-}
-
-function preservePreHttpControlErrorShape(error: unknown) {
-  if (!error || typeof error !== 'object') return
-  const controlError = error as DaemonError
-  const code = controlError.code
-  if (!code || isControlTransportErrorCode(code)) return
-  delete controlError.status
-}
-
-function isControlTransportErrorCode(code: string) {
-  return code.startsWith('daemon_') ||
-    code === 'control_auth_missing' ||
-    code === 'control_auth_rejected' ||
-    code === 'invalid_input' ||
-    code === 'non_loopback_bind'
+  return daemonRequest<T>({
+    daemonUrl: daemon.daemonUrl,
+    method,
+    path: requestPath,
+    ...(body === undefined ? {} : { body }),
+    token: daemon.token,
+    timeoutMs: options.requestTimeoutMs,
+    signal: options.signal,
+  })
 }
 
 export async function waitDaemonJobResult({

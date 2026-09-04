@@ -14,11 +14,10 @@
 
 | 术语 | 定义 | 不要作为同义词使用 |
 |---|---|---|
-| **Harness AI Engine** | Tokenless Harness sidecar 用于有界辅助推理的内部 model，例如生成 title、进行 task classification 与 provider routing，以及生成 result summary 与 label；它不执行 Harness task，也不替代 Tokenless API route。 | Harness Task Model、provider route、Tokenless API |
+| **Harness AI Engine** | Tokenless Harness Front Door 用于有界辅助推理的内部 model，例如生成 title、进行 task classification 与 provider routing；它不执行 Harness task，也不替代 Tokenless API route。 | Harness Task Model、provider route、Tokenless API |
 | **Harness Task Model** | 通过 Tokenless API 及其所选 provider route 执行 Harness 用户任务的 provider model。 | Harness AI Engine、sidecar model |
 | **AI Sidecar** | 在当前进程内 provider-execution loop 之外使用 Harness AI Engine 的 Harness-owned auxiliary component。 | Provider adapter、Harness task executor |
 | **Front Door** | Harness run 开始前准备 conversation metadata，并选择具体 Tokenless API provider route 的 pre-run AI Sidecar。 | Tokenless API router、Harness AI Engine |
-| **Exit Door** | 在不更改 terminal Harness result 的前提下为其生成 summary 与 label 的 post-run AI Sidecar。 | Harness finalizer、Harness Task Model |
 
 ## Execution mode
 

@@ -141,7 +141,6 @@ export {
 
 export {
   HarnessSidecarError,
-  createHarnessExitDoorSidecar,
   createHarnessFrontDoorSidecar,
   createSparkX25MlxAiEngine,
 } from './sidecar/index.js'
@@ -149,9 +148,6 @@ export {
 export type {
   HarnessAiCompletionInput,
   HarnessAiEngine,
-  HarnessExitDoorInput,
-  HarnessExitDoorResult,
-  HarnessExitDoorSidecar,
   HarnessFrontDoorInput,
   HarnessFrontDoorProviderCandidate,
   HarnessFrontDoorResult,

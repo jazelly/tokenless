@@ -25,9 +25,6 @@ export class ChatGptProvider extends BaseProvider<'chatgpt'> {
       stage: 'supported',
       setupOrder: 0,
       subscriptionSupport: 'supported',
-      protocolCompatibility: Object.freeze({
-        legacyRequests: true,
-      }),
       navigation: PROVIDER_NAVIGATION_CATALOG.chatgpt,
       controls: Object.freeze({
         chatSurface: true,

@@ -72,7 +72,6 @@ export type DashboardProfileConfig = {
 
 export type DashboardApiProxyConfig = {
   enabled: boolean
-  conversationMode: 'new-conversation' | 'continue-conversation'
   executionMode: 'browser' | 'direct'
 }
 

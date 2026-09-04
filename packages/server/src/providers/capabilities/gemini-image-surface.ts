@@ -103,7 +103,7 @@ class UnsupportedGeminiImageSurfaceCapability implements InspectableProviderActi
 export function createGeminiImageSurfaceCapability(provider: ProviderDomDefinition): InspectableProviderActionCapability<GeminiImageSurfaceAction> & {
   readonly capability: typeof PROVIDER_CAPABILITIES.GEMINI_IMAGE_SURFACE
 } {
-  return provider.id === 'gemini'
+  return provider.descriptor.id === 'gemini'
     ? new GeminiImageSurfaceCapability(provider as ProviderDomDefinition<'gemini'>)
     : new UnsupportedGeminiImageSurfaceCapability(provider)
 }

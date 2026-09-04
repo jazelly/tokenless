@@ -30,9 +30,6 @@ export class ArenaProvider extends BaseProvider<'arena'> {
       stage: 'supported',
       setupOrder: 11,
       subscriptionSupport: 'unsupported',
-      protocolCompatibility: Object.freeze({
-        legacyRequests: false,
-      }),
       navigation: PROVIDER_NAVIGATION_CATALOG.arena,
       controls: Object.freeze({
         chatSurface: false,

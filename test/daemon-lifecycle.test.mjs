@@ -69,7 +69,7 @@ test('built CLI profile, config, API proxy, and savings commands cross the priva
     assert.equal(duplicate.status, 1, duplicate.stderr || duplicate.stdout)
     const duplicateError = JSON.parse(duplicate.stdout).error
     assert.equal(duplicateError.code, 'profile_already_exists')
-    assert.equal(Object.hasOwn(duplicateError, 'status'), false)
+    assert.equal(duplicateError.status, 409)
 
     const state = await authenticatedJson(homeDir, daemonUrl, '/v1/private/control/state')
     pid = state.runtime.pid
@@ -105,9 +105,10 @@ test('built CLI profile, config, API proxy, and savings commands cross the priva
     assert.equal(configured.status, 0, configured.stderr || configured.stdout)
     assert.deepEqual(JSON.parse(configured.stdout).profile.enabledProviders, ['chatgpt', 'claude'])
 
-    const proxy = runCli(['api-proxy', 'enable', '--home', homeDir, '--conversation-mode', 'continue-conversation', '--json'], env)
+    const proxy = runCli(['api-proxy', 'enable', '--home', homeDir, '--json'], env)
     assert.equal(proxy.status, 0, proxy.stderr || proxy.stdout)
-    assert.equal(JSON.parse(proxy.stdout).apiProxy.conversationMode, 'continue-conversation')
+    assert.equal(JSON.parse(proxy.stdout).apiProxy.enabled, true)
+    assert.equal(Object.hasOwn(JSON.parse(proxy.stdout).apiProxy, 'conversationMode'), false)
 
     const savings = runCli(['savings', 'status', '--home', homeDir, '--json'], env)
     assert.equal(savings.status, 0, savings.stderr || savings.stdout)

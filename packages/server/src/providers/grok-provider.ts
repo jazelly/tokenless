@@ -32,9 +32,6 @@ export class GrokProvider extends BaseProvider<'grok'> {
       stage: 'supported',
       setupOrder: 3,
       subscriptionSupport: 'supported',
-      protocolCompatibility: Object.freeze({
-        legacyRequests: true,
-      }),
       navigation: PROVIDER_NAVIGATION_CATALOG.grok,
       controls: Object.freeze({
         chatSurface: false,

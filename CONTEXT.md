@@ -20,7 +20,8 @@ profile + provider + Page Ref  <->  live Playwright Page
 ```
 
 Page Bindings are runtime state, not a durable page inventory.
-The job request persists only the Page Ref; live pages, leases, generations, and close events remain in memory.
+The job request persists only the Page Ref; live pages and close events remain in memory.
+The binding is an address lookup, not a lease: Tokenless API does not serialize work, reject a concurrent Page Ref, or expire an idle provider tab.
 
 ## Provider Page
 
@@ -30,13 +31,13 @@ The browser context's current pages are the source of truth for whether it still
 ## Relationships and lifecycle
 
 1. Acquire queries the current `BrowserContext.pages()` and reconciles any stale binding.
-2. The same live Page Ref reuses its Page Binding; a concurrently leased Ref is busy.
-3. A different Page Ref never takes over another Ref's idle binding.
-4. Release makes the binding idle without transferring ownership.
+2. The same live Page Ref reuses its Page Binding, including for concurrent callers; the API never returns a Page Ref busy error.
+3. A different Page Ref never takes over another Ref's claimed binding; a newly created Ref receives a different browser target.
+4. Tokenless Harness owns conversation ordering and any same-Ref exclusivity policy.
 5. A user-closed or crashed page invalidates only that binding.
 6. Closing a tab never closes the managed profile, and no eager replacement is created.
 7. The next explicit acquire may adopt an unclaimed matching tab or create a new tab.
-8. Automatic idle cleanup closes only Tokenless-owned pages and never removes the last live page for a provider.
+8. Detaching the runtime disconnects Playwright and leaves provider tabs in the resident browser; a later runtime can bind them again.
 
 ## Example
 

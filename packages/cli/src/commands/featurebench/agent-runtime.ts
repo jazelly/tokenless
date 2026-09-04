@@ -87,10 +87,10 @@ export async function runFeatureBenchAgent(options: RuntimeOptions) {
         ? initialPrompt
         : observationPrompt(step, lastObservations, validationFailures)
       if (step > 1) transcript.push({ role: 'user', text: prompt })
-      const replayPrompt = renderTranscript(transcript)
-      assertPromptSize(replayPrompt)
-      await writer.write('provider.turn.started', { step, promptBytes: Buffer.byteLength(prompt), replayPromptBytes: Buffer.byteLength(replayPrompt) })
-      const response = await providerTurn(channel, step, prompt, replayPrompt)
+      const providerPrompt = channel.executionMode === 'direct' ? renderTranscript(transcript) : prompt
+      assertPromptSize(providerPrompt)
+      await writer.write('provider.turn.started', { step, promptBytes: Buffer.byteLength(providerPrompt) })
+      const response = await providerTurn(channel, step, providerPrompt)
       transcript.push({ role: 'assistant', text: response.text })
       await writer.write('provider.turn.completed', {
         step,
@@ -197,7 +197,7 @@ async function consumeChannelFile(channelPath: string): Promise<FeatureBenchChan
   return channel as FeatureBenchChannelFile
 }
 
-async function providerTurn(channel: FeatureBenchChannelFile, turn: number, prompt: string, replayPrompt: string) {
+async function providerTurn(channel: FeatureBenchChannelFile, turn: number, prompt: string) {
   const response = await requestJsonWithTimeout(channel.endpoint, {
     method: 'POST',
     headers: {
@@ -205,7 +205,7 @@ async function providerTurn(channel: FeatureBenchChannelFile, turn: number, prom
       'content-type': 'application/json',
       authorization: `Bearer ${channel.token}`,
     },
-    body: JSON.stringify({ protocol: FEATUREBENCH_PROTOCOL, turn, prompt, replayPrompt }),
+    body: JSON.stringify({ protocol: FEATUREBENCH_PROTOCOL, turn, prompt }),
   }, Math.min(channel.providerTurnTimeoutMs + 30_000, 31 * 60_000))
   const body = response.body
   if (!response.ok) {

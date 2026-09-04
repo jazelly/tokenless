@@ -46,13 +46,8 @@ export type OutputSavingsConfig = {
   enabled: boolean
 }
 
-export const API_PROXY_CONVERSATION_MODES = Object.freeze(['new-conversation', 'continue-conversation'] as const)
-
-export type ApiProxyConversationMode = (typeof API_PROXY_CONVERSATION_MODES)[number]
-
 export type ApiProxyConfig = {
   enabled: boolean
-  conversationMode: ApiProxyConversationMode
   executionMode: 'browser' | 'direct'
 }
 
@@ -415,20 +410,18 @@ function emptyTokenlessConfig(): TokenlessConfig {
 }
 
 function defaultApiProxyConfig(): ApiProxyConfig {
-  return { enabled: false, conversationMode: 'new-conversation', executionMode: 'direct' }
+  return { enabled: false, executionMode: 'direct' }
 }
 
 function isApiProxyConfig(value: unknown): value is ApiProxyConfig {
   return isJsonRecord(value) &&
-    (Object.keys(value).length === 2 || Object.keys(value).length === 3) &&
     typeof value.enabled === 'boolean' &&
-    API_PROXY_CONVERSATION_MODES.includes(value.conversationMode as ApiProxyConversationMode) &&
-    (value.executionMode === undefined || value.executionMode === 'browser' || value.executionMode === 'direct')
+    (value.executionMode === 'browser' || value.executionMode === 'direct')
 }
 
 function normalizeApiProxyConfig(value: unknown): ApiProxyConfig {
   return isApiProxyConfig(value)
-    ? { enabled: value.enabled, conversationMode: value.conversationMode, executionMode: value.executionMode ?? 'browser' }
+    ? { enabled: value.enabled, executionMode: value.executionMode }
     : defaultApiProxyConfig()
 }
 
@@ -436,7 +429,7 @@ function validateApiProxyConfig(value: unknown): ApiProxyConfig {
   if (!isApiProxyConfig(value)) {
     throw configError('tokenless_config_invalid', 'Invalid Tokenless API proxy configuration.')
   }
-  return { enabled: value.enabled, conversationMode: value.conversationMode, executionMode: value.executionMode ?? 'direct' }
+  return { enabled: value.enabled, executionMode: value.executionMode }
 }
 
 function isG4fConfig(value: unknown): value is G4fConfig {

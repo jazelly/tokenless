@@ -88,7 +88,7 @@ test('CDP managed browser preserves independent logical tabs in one profile', as
   })
 })
 
-test('CDP provider Page Refs reuse stable live bindings without sharing independent work', async () => {
+test('CDP provider Page Refs allow concurrent callers without sharing independent work', async () => {
   await withManager(async ({ manager, profile }) => {
     const context = await manager.ensureContext(profile, 'auto')
     const pageRefA = `page:test:a:${randomUUID()}`
@@ -97,36 +97,38 @@ test('CDP provider Page Refs reuse stable live bindings without sharing independ
 
     const first = await context.acquireProviderPage({ provider: 'chatgpt', pageRef: pageRefA })
     assert.equal(first.reused, false)
-    await assert.rejects(
+    const sameRef = await Promise.all([
       context.acquireProviderPage({ provider: 'chatgpt', pageRef: pageRefA }),
-      (error) => error?.code === 'managed_provider_page_busy',
-    )
-    await first.release()
+      context.acquireProviderPage({ provider: 'chatgpt', pageRef: pageRefA }),
+    ])
+    assert.equal(sameRef[0].page, first.page)
+    assert.equal(sameRef[1].page, first.page)
+    assert.equal(sameRef[0].reused, true)
+    assert.equal(sameRef[1].reused, true)
 
     const continued = await context.acquireProviderPage({ provider: 'chatgpt', pageRef: pageRefA })
     assert.equal(continued.page, first.page)
     assert.equal(continued.reused, true)
-    await continued.release()
 
-    const independent = await context.acquireProviderPage({ provider: 'chatgpt', pageRef: pageRefB })
+    const [independent, independentConcurrent] = await Promise.all([
+      context.acquireProviderPage({ provider: 'chatgpt', pageRef: pageRefB }),
+      context.acquireProviderPage({ provider: 'chatgpt', pageRef: pageRefC }),
+    ])
     assert.notEqual(independent.page, first.page)
-    await independent.release()
+    assert.notEqual(independentConcurrent.page, first.page)
+    assert.notEqual(independentConcurrent.page, independent.page)
+
+    const sharedNewRef = `page:test:shared-new:${randomUUID()}`
+    const sharedNewPages = await Promise.all([
+      context.acquireProviderPage({ provider: 'chatgpt', pageRef: sharedNewRef }),
+      context.acquireProviderPage({ provider: 'chatgpt', pageRef: sharedNewRef }),
+    ])
+    assert.equal(sharedNewPages[0].page, sharedNewPages[1].page)
+    assert.notEqual(sharedNewPages[0].page, independent.page)
 
     const independentContinued = await context.acquireProviderPage({ provider: 'chatgpt', pageRef: pageRefB })
     assert.equal(independentContinued.page, independent.page)
     assert.equal(independentContinued.reused, true)
-    await independentContinued.release()
-
-    const concurrentFirstAcquires = await Promise.allSettled([
-      context.acquireProviderPage({ provider: 'chatgpt', pageRef: pageRefC }),
-      context.acquireProviderPage({ provider: 'chatgpt', pageRef: pageRefC }),
-    ])
-    const acquired = concurrentFirstAcquires.filter((result) => result.status === 'fulfilled')
-    const rejected = concurrentFirstAcquires.filter((result) => result.status === 'rejected')
-    assert.equal(acquired.length, 1)
-    assert.equal(rejected.length, 1)
-    assert.equal(rejected[0].reason?.code, 'managed_provider_page_busy')
-    await acquired[0].value.release()
 
     const replaced = await context.acquireProviderPage({
       provider: 'chatgpt',
@@ -136,26 +138,62 @@ test('CDP provider Page Refs reuse stable live bindings without sharing independ
     assert.notEqual(replaced.page, first.page)
     assert.equal(replaced.reused, false)
     assert.equal(first.page.isClosed(), true)
-    await replaced.release()
   })
 })
 
-test('CDP detach removes released blank provider pages before their runtime bindings are lost', async () => {
+test('CDP profile operations overlap without a profile execution lane', async () => {
+  await withManager(async ({ manager, profile }) => {
+    await manager.ensureContext(profile, 'auto')
+    let entered = 0
+    let active = 0
+    let maximumActive = 0
+    let resolveSecondEntry
+    const secondEntry = new Promise((resolve) => { resolveSecondEntry = resolve })
+    let releaseGate
+    const gate = new Promise((resolve) => { releaseGate = resolve })
+    const operation = async (context) => {
+      entered += 1
+      active += 1
+      maximumActive = Math.max(maximumActive, active)
+      if (entered === 2) resolveSecondEntry()
+      await gate
+      active -= 1
+      return context.browserContext
+    }
+    const first = manager.runWithProfile(profile, 'auto', operation)
+    const second = manager.runWithProfile(profile, 'auto', operation)
+    let overlapError
+    let timeout
+    try {
+      await Promise.race([
+        secondEntry,
+        new Promise((_, reject) => {
+          timeout = setTimeout(() => reject(new Error('Timed out waiting for concurrent profile operations.')), 2_000)
+        }),
+      ])
+    } catch (error) {
+      overlapError = error
+    } finally {
+      clearTimeout(timeout)
+      releaseGate()
+    }
+    const [firstContext, secondContext] = await Promise.all([first, second])
+    if (overlapError) throw overlapError
+    assert.equal(entered, 2)
+    assert.equal(maximumActive, 2)
+    assert.equal(firstContext, secondContext)
+  })
+})
+
+test('CDP detach preserves provider tabs while runtime bindings are rebuilt', async () => {
   const primary = await resolveConfiguredBrowserTarget()
-  const marker = `tokenless-detach-cleanup-${randomUUID()}`
+  const marker = `tokenless-detach-preserve-${randomUUID()}`
+  const pageRef = `page:test:detach:${randomUUID()}`
   const manager = createManager(primary.runtime)
-  let baselinePageCount
   try {
     const context = await manager.ensureContext(primary.profile, 'auto')
-    baselinePageCount = context.browserContext.pages().length
-    for (const suffix of ['a', 'b']) {
-      const lease = await context.acquireProviderPage({
-        provider: 'chatgpt',
-        pageRef: `page:test:detach:${suffix}:${randomUUID()}`,
-      })
-      await lease.page.evaluate((title) => { document.title = title }, `${marker}-${suffix}`)
-      await lease.release()
-    }
+    const providerPage = await context.acquireProviderPage({ provider: 'chatgpt', pageRef })
+    await providerPage.page.evaluate((title) => { document.title = title }, marker)
   } finally {
     await manager.detach()
   }
@@ -165,8 +203,16 @@ test('CDP detach removes released blank provider pages before their runtime bind
     const reconnected = await observer.ensureContext(primary.profile, 'auto')
     const pages = reconnected.browserContext.pages()
     const titles = await Promise.all(pages.map((page) => page.title().catch(() => '')))
-    assert.equal(titles.some((title) => title.startsWith(marker)), false)
-    assert.ok(pages.length <= Math.max(1, baselinePageCount))
+    assert.equal(titles.includes(marker), true)
+    const rebound = await reconnected.acquireProviderPage({
+      provider: 'chatgpt',
+      pageRef,
+      matchesExistingPage: (page) => page.url() === 'about:blank',
+      isAvailablePage: async (page) => (await page.title().catch(() => '')) === marker,
+    })
+    assert.equal(await rebound.page.title(), marker)
+    const continued = await reconnected.acquireProviderPage({ provider: 'chatgpt', pageRef })
+    assert.equal(continued.page, rebound.page)
   } finally {
     await observer.detach()
   }

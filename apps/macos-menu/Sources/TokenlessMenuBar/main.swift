@@ -84,9 +84,7 @@ private struct ConfigResponse: Decodable {
 private struct UpgradeResponse: Decodable {
     let ok: Bool?
     let error: CLIErrorPayload?
-    let current: String?
     let latest: String?
-    let status: String?
     let updateAvailable: Bool?
 }
 
@@ -103,15 +101,13 @@ private enum PendingConfirmation {
 private enum UpdateState {
     case idle
     case checking
-    case upToDate(version: String?)
+    case upToDate
     case available(version: String?)
     case unavailable
-    case upgrading
-    case upgraded
 
     var isBusy: Bool {
         switch self {
-        case .checking, .upgrading:
+        case .checking:
             return true
         default:
             return false
@@ -300,7 +296,7 @@ private final class AppModel: ObservableObject {
                         chinese: "有新版本 \(payload.latest ?? "latest") 可用。"
                     )
                 } else {
-                    updateState = .upToDate(version: payload.current)
+                    updateState = .upToDate
                     updateMessage = versionMessage(
                         english: "You are up to date.",
                         chinese: "当前已是最新版本。"
@@ -979,19 +975,6 @@ private struct MenuBarView: View {
             .accessibilityLabel(model.text(LocalizedText(
                 english: "Checking for Updates",
                 chinese: "正在检查更新"
-            )))
-            .accessibilityAddTraits(.updatesFrequently)
-        case .upgrading:
-            MenuBarActionRow(title: model.text(LocalizedText(
-                english: "Upgrading…",
-                chinese: "正在升级…"
-            ))) {
-                ProgressView()
-                    .controlSize(.small)
-            }
-            .accessibilityLabel(model.text(LocalizedText(
-                english: "Upgrading",
-                chinese: "正在升级"
             )))
             .accessibilityAddTraits(.updatesFrequently)
         default:

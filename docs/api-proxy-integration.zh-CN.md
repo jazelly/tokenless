@@ -17,7 +17,7 @@ Proxy 所映射的 provider-side contract 见 [Provider Tool-Calling Conformance
 1. **daemon 正在运行。** 任何 `tokenless` 命令都会按需启动它；`tokenless dashboard --no-open --json` 是显式做法。daemon 未启动时得到的是 connection refused，不是 HTTP 错误。
 2. **proxy 已开启。** 默认关闭。
    ```bash
-   tokenless api-proxy enable --conversation-mode new-conversation --json
+   tokenless api-proxy enable --json
    ```
 3. **managed profile 已登录目标 provider。** 先运行 `tokenless setup`，再在可见浏览器窗口里完成登录。否则请求会因 provider 登录 blocker 而失败。
 
@@ -157,7 +157,9 @@ tokenless/<provider>
 
 Auto call 使用只编码 provider origin 的版本化 opaque public id。后续 full-history turn 会在重新检查 current eligibility 后优先该 provider；调用方影响 id 也无法绕过 filter。Responses `previous_response_id` 以相同方式使用现有 ledger provider——它是 portable affinity，不是 hard pin。
 
-切换 provider 时，始终用完整 canonical assistant call 与 caller result 在 target provider 新建会话。Provider URL 与 opaque state 永不 replay。现有 Managed Playwright fallback plan 可在 `provider_submitted_at` 前切换；其直接 submission 后例外是 `tokenless/auto` 在尚无 visible response 时收到 provider-scoped terminal code `provider_rate_limited`，此时从 target provider home 重新开始，并记录一条有界的 `rate_limit` routing attempt。`tokenless/auto` new-conversation completion 还会在当前 route list 之间共享现有十分钟 request budget：submitted provider 如果未在自己的有界份额内 settle，会先被 cancel，再启动下一个尚未尝试的 provider；每个 provider 最多运行一次。精确 provider、provider-specific continuation target、已耗尽 route list、malformed outcome 与 waiting-for-user state 仍是 terminal。Bounded final-escaping correction 固定在 settled provider 与 strategy 上，不再执行 auto resolution 或 fallback。
+切换 provider 时，始终用完整 canonical assistant call 与 caller result 在 target provider 新建会话；provider URL 与 opaque state 永不 replay。现有 Managed Playwright fallback plan 可在 `provider_submitted_at` 前切换；其直接 submission 后例外是 `tokenless/auto` 在尚无 visible response 时收到 provider-scoped terminal code `provider_rate_limited`，此时从 target provider home 重新开始，并记录一条有界的 `rate_limit` routing attempt。
+
+Completion timeout 只取消对应 local job，不启动另一个 provider。精确 provider、provider-specific continuation target、已耗尽 route list、malformed outcome 与 waiting-for-user state 仍是 terminal。Bounded final-escaping correction 固定在 settled provider 与 strategy 上，不再执行 auto resolution 或 fallback。
 
 Job 中已经保存的真实可见 rate-limit observation 会在后续 execution attempt 中按 observed minute、hour、day 或 week window 暂时移除该 provider。明确的 retry duration 优先；unknown window 使用五分钟 cooldown。精确 provider request 仍会清晰失败，而不会切换。
 
@@ -494,7 +496,7 @@ Anthropic 帧，按顺序：`message_start`、`content_block_start`、`content_b
 
 ## Conversation 状态
 
-持久化的 `conversationMode` 选项仍保留，用于配置与 status 的兼容性，但它不再选择 API 协议。API 行为由 endpoint contract 以及每次请求中是否提供相应字段决定。
+Conversation 行为由 endpoint contract 和每次请求中的字段决定；没有全局 conversation-mode 配置。
 
 ### Chat Completions 与 Anthropic
 
@@ -508,7 +510,7 @@ Anthropic 帧，按顺序：`message_start`、`content_block_start`、`content_b
 
 Structured/tool continuation 遵循同一规则：命中 mapping 的 turn 只包含当前 tool result 或 message delta，以及当前 tool catalog；不会把旧 user/assistant 内容再次输入既有 provider chat。若调用方在 context compaction 后希望切换到新 chat，仍可显式使用 full-input replay。
 
-Response 中的 `tokenless.conversation_mode` 报告实际 route：fresh 或 mapping-miss turn 为 `new-conversation`，只有命中 mapping 的 Responses continuation 才是 `continue-conversation`。CLI 的 `--conversation-mode` 不会覆盖这些 endpoint 规则。
+Response 中的 `tokenless.conversation_mode` 报告实际 route：fresh 或 mapping-miss turn 为 `new-conversation`，只有命中 mapping 的 Responses continuation 才是 `continue-conversation`。
 
 ## 错误
 
@@ -563,7 +565,7 @@ Anthropic：
 | --- | --- |
 | 延迟 | 秒到分钟级。真实浏览器导航、页面稳定、输入、提交、渲染。 |
 | 超时 | 10 分钟；返回 504 前会取消 exact local job，除非它已竞态进入 terminal success 或 failure。 |
-| 并发 | 单 profile 基本串行。一个浏览器、一个 provider 标签页。 |
+| 并发 | 请求不会按 profile 串行化，也不会按 chat 加锁。共享 chat 的顺序由调用方负责；provider 自身的限制仍然适用。 |
 | Tool use | 支持一个或多个现代 function calls，可使用非流式或终态 SSE；由调用方执行。 |
 | 结构化输出 | 支持 OpenAI `json_object` 与本文记录的 closed-object `json_schema` subset；返回 valid final JSON 或明确错误。 |
 | 共享校验边界 | Universal API 与 Standalone Web Agent Harness 使用同一 strict JSON parser 和 JSON Schema validator setup；两者的 response grammar 与执行权仍保持分离。 |
@@ -653,7 +655,7 @@ console.log(message.content)
 - [ ] 依据 HTTP 状态码而不是 `message` 分支：只重试 `500`、`502`、`504`。
 - [ ] 遇到 `499` 或 `504` 时，应预期 exact local job 已取消；submission 后绝不 replay 或切换 provider。
 - [ ] 每次调用都记录 `tokenless.job_id`。
-- [ ] 按串行执行预期设计；不要并发扇出请求。
+- [ ] 在 Harness 中协调共享 chat 的执行顺序；独立的并发工作使用独立 conversation。
 - [ ] Chat Completions/Anthropic 每次发送完整历史；Responses 要新建 provider chat 时省略 `previous_response_id`，只在已有 mapping 时使用它继续。
 
 ## 已验证的 DeepSeek tool loop

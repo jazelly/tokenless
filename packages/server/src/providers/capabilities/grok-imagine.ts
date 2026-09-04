@@ -104,7 +104,7 @@ class UnsupportedGrokImagineCapability implements InspectableProviderActionCapab
 export function createGrokImagineCapability(provider: ProviderDomDefinition): InspectableProviderActionCapability<GrokImagineAction> & {
   readonly capability: typeof PROVIDER_CAPABILITIES.GROK_IMAGINE
 } {
-  return provider.id === 'grok'
+  return provider.descriptor.id === 'grok'
     ? new GrokImagineCapability(provider as ProviderDomDefinition<'grok'>)
     : new UnsupportedGrokImagineCapability(provider)
 }

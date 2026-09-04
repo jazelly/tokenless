@@ -489,16 +489,8 @@ export class TokenlessApplicationServices {
   }
 
   async removeControlProfile(slug: string) {
-    const target = await this.profiles.resolveProfile(slug)
-    this.assertProfilesHaveNoPendingJobs([target])
-    await this.runtimeController?.quiesce()
-    try {
-      this.assertProfilesHaveNoPendingJobs([target])
-      const profile = await this.profiles.removeProfile(slug, { confirmDelete: true })
-      return { profile, defaultProfile: (await this.profiles.read()).defaultProfile }
-    } finally {
-      await this.runtimeController?.wake()
-    }
+    const { cleared, defaultProfile } = await this.clearControlProfiles({ profile: slug })
+    return { profile: cleared[0]!, defaultProfile }
   }
 
   async updateControlProfileObservation(slug: string, input: ProviderStatus) {
@@ -866,16 +858,8 @@ export class TokenlessApplicationServices {
   }
 
   async removeProfile(slug: string): Promise<DashboardProfileRemoval> {
-    const target = await this.profiles.resolveProfile(slug)
-    this.assertProfilesHaveNoPendingJobs([target])
-    await this.runtimeController?.quiesce()
-    try {
-      this.assertProfilesHaveNoPendingJobs([target])
-      const profile = await this.profiles.removeProfile(slug, { confirmDelete: true })
-      return { slug: profile.slug, removed: true }
-    } finally {
-      await this.runtimeController?.wake()
-    }
+    const { profile } = await this.removeControlProfile(slug)
+    return { slug: profile.slug, removed: true }
   }
 
   private assertProfilesHaveNoPendingJobs(profiles: readonly ManagedProfileRecord[]) {

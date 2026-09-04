@@ -494,7 +494,7 @@ test('local web control plane opens directly, establishes Dashboard sessions, an
         defaultProfile: 'work',
         daemonUrl: daemon.origin,
         outputSavings: { enabled: false },
-        apiProxy: { enabled: true, conversationMode: 'continue-conversation', executionMode: 'browser' },
+        apiProxy: { enabled: true, executionMode: 'browser' },
         g4f: { enabled: true },
         directProvider: { defaultBackend: 'native', providerBackends: { chatgpt: 'native' } },
         router: { enabled: false, engine: 'chrome-prompt-api', providers: [] },
@@ -504,7 +504,7 @@ test('local web control plane opens directly, establishes Dashboard sessions, an
     const fullConfig = JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8'))
     assert.equal(fullConfig.defaultProfile, 'work')
     assert.equal(fullConfig.daemonUrl, daemon.origin)
-    assert.deepEqual(fullConfig.apiProxy, { enabled: true, conversationMode: 'continue-conversation', executionMode: 'browser' })
+    assert.deepEqual(fullConfig.apiProxy, { enabled: true, executionMode: 'browser' })
     assert.deepEqual(fullConfig.g4f, { enabled: true })
     assert.deepEqual(fullConfig.directProvider, { defaultBackend: 'native', providerBackends: { chatgpt: 'native' } })
 

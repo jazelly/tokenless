@@ -35,24 +35,20 @@ Provider transport 位于该 package 之外：Harness Markdown 与其他非媒�
 
 ### AI sidecars
 
-Front Door 与 Exit Door 是围绕 Harness loop 的 sidecar。它们不会向 provider execution 添加 phase：Front Door 在 `WebAgentHarness.start` 前准备 metadata 与具体 provider route，Exit Door 在 Harness run 完成后审查 terminal result。
+Front Door 是围绕 Harness loop 的 sidecar。它不会向 provider execution 添加 phase：它在 `WebAgentHarness.start` 前准备 metadata 与具体 provider route。
 
-Sidecar 依赖很小的 `HarnessAiEngine` contract。第一个 adapter 是由 Gemini Nano 支持的 browser-side Chrome Prompt API implementation；以后 local 与 remote engine 可以实现同一 contract，而无需改变 Front Door 或 Exit Door。
+Sidecar 依赖很小的 `HarnessAiEngine` contract。第一个 adapter 是由 Gemini Nano 支持的 browser-side Chrome Prompt API implementation；以后 local 与 remote engine 可以实现同一 contract，而无需改变 Front Door。
 
 ```ts
 import {
-  createHarnessExitDoorSidecar,
   createHarnessFrontDoorSidecar,
 } from 'tokenless-web-agent-harness'
 
 const frontDoor = createHarnessFrontDoorSidecar(geminiNanoEngine)
-const exitDoor = createHarnessExitDoorSidecar(geminiNanoEngine)
 const prepared = await frontDoor.prepare({ taskPrompt, providers, browserBinding })
 const run = await harness.start({ ...spec, provider: prepared.route.providerId })
 // Daemon 存活期间，通过正常 Harness interface 读取 run。
-const postprocessed = run.final
-  ? await exitDoor.finalize({ taskPrompt, output: run.final.output, artifacts: run.final.artifacts, browserBinding })
-  : undefined
+const result = run.final
 ```
 
 正常 CLI 通过 authenticated daemon HTTP 到达同一个 module：

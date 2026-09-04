@@ -34,9 +34,6 @@ export class QwenProvider extends BaseProvider<'qwen'> {
       stage: 'experimental',
       setupOrder: 4,
       subscriptionSupport: 'supported',
-      protocolCompatibility: Object.freeze({
-        legacyRequests: false,
-      }),
       navigation: PROVIDER_NAVIGATION_CATALOG.qwen,
       controls: Object.freeze({
         chatSurface: false,

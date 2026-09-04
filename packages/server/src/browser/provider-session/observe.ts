@@ -33,7 +33,7 @@ export async function observeProviderSession(
           : 'unknown' as const
 
   return {
-    provider: provider.id,
+    provider: provider.descriptor.id,
     url: sanitizedNavigationOrigin(provider, page.url()),
     authentication,
     access,
@@ -323,7 +323,7 @@ function createBlocker(input: {
     userResolvable,
     retryable: userResolvable || input.family === 'rate_limit',
     visibleProof: input.visibleProof,
-    provider: input.provider.id,
+    provider: input.provider.descriptor.id,
     url: sanitizedNavigationOrigin(input.provider, input.url),
     ...(input.family ? { family: input.family } : {}),
     ...(input.limitWindow === undefined ? {} : { limitWindow: input.limitWindow }),
