@@ -1,6 +1,7 @@
 import { VISIBLE_ACTIONS } from '../contracts.js'
 import { tokenlessError } from '../../browser/errors.js'
 import { observeProviderSession } from '../../browser/provider-session/observe.js'
+import { dismissChatGptHistoryWarning, ensureChatGptChat } from './chatgpt-chat.js'
 import {
   countVisibleLocators,
   firstEnabledLocator,
@@ -132,6 +133,7 @@ export async function inputDomPrompt(
   signal?: AbortSignal,
 ) {
   await dismissProviderAnnouncement(page, provider)
+  if (provider.descriptor.id === 'chatgpt') await ensureChatGptChat(page)
   const timeoutMs = provider.interactionTimings.promptControlTimeoutMs
   const deadline = Date.now() + timeoutMs
   let composerObserved = false
@@ -203,12 +205,7 @@ async function promptInputDiagnostics(page: Page) {
 
 async function dismissProviderAnnouncement(page: Page, provider: ProviderDomDefinition) {
   if (provider.descriptor.id === 'chatgpt') {
-    const dialog = page.locator('[role="dialog"], [role="alertdialog"]')
-      .filter({ visible: true, hasText: /temporarily limited access to your conversations to protect your data/i })
-      .last()
-    if (!await dialog.isVisible({ timeout: 100 }).catch(() => false)) return
-    await dialog.getByRole('button', { name: 'Got it', exact: true }).click({ timeout: 5000 })
-    await dialog.waitFor({ state: 'hidden', timeout: 2000 })
+    await dismissChatGptHistoryWarning(page)
     return
   }
   if (provider.descriptor.id === 'claude') {
@@ -284,6 +281,7 @@ export async function submitDomPrompt(
   signal?: AbortSignal,
 ) {
   await dismissProviderAnnouncement(page, provider)
+  if (provider.descriptor.id === 'chatgpt') await ensureChatGptChat(page)
   const controlTimeoutMs = provider.interactionTimings.promptControlTimeoutMs
   const button = await waitForActionableSubmitControl(provider, page, signal)
   const disabledClaudeSubmit = provider.descriptor.id === 'claude' && !button

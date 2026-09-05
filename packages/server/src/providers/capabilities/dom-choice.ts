@@ -1,5 +1,6 @@
 import { firstVisibleLocator, waitForVisibleLocator } from '../dom-locators.js'
 import { PROVIDER_CAPABILITIES } from '../provider-identity.js'
+import { CHATGPT_CHAT_EFFORTS, ensureChatGptChat } from './chatgpt-chat.js'
 import type { Locator, Page } from 'playwright-core'
 import type { ProviderActionCapability } from '../capability-set.js'
 import type { VisibleAction, VisibleActionRequest } from '../contracts.js'
@@ -114,6 +115,7 @@ async function inspectChoices(
     }
   }
   await waitForProviderChoiceSurface(page, provider)
+  if (provider.descriptor.id === 'chatgpt') await ensureChatGptChat(page)
   const trigger = await waitForVisibleLocator(page, selectors, 10_000)
   if (!trigger) {
     return {
@@ -127,7 +129,19 @@ async function inspectChoices(
   await trigger.click({ timeout: 5000 })
   await page.waitForTimeout(300)
   await openNestedChoiceSurface(page, provider, kind)
-  const choices = await collectVisibleChoices(page, provider, trigger)
+  const choices = provider.descriptor.id === 'chatgpt'
+    ? kind === 'effort'
+      ? CHATGPT_CHAT_EFFORTS.map((label) => ({ label, selected: false, enabled: true }))
+      : await page.locator('[role="menu"] [data-active="true"] [role="menuitemradio"]').filter({ visible: true }).evaluateAll((elements) => elements.map((element) => ({
+          label: (element.textContent ?? '').trim(),
+          selected: element.getAttribute('aria-checked') === 'true',
+          enabled: element.getAttribute('aria-disabled') !== 'true',
+        })))
+    : await collectVisibleChoices(page, provider, trigger)
+  if (provider.descriptor.id === 'chatgpt' && kind === 'effort') {
+    const value = Number(await page.locator('[role="menu"] [role="slider"]').getAttribute('aria-valuenow'))
+    choices.forEach((choice, index) => { choice.selected = index === value })
+  }
   if (!keepOpen) await dismissChoiceSurface(page, trigger)
   return {
     supported: true as const,
@@ -136,6 +150,11 @@ async function inspectChoices(
 }
 
 async function openNestedChoiceSurface(page: Page, provider: ProviderDomDefinition, kind: ChoiceKind) {
+  if (provider.descriptor.id === 'chatgpt' && kind === 'model') {
+    await page.getByRole('menuitem', { name: 'Select model', exact: true }).click({ timeout: 5000 })
+    await page.locator('[role="menu"] [data-active="true"] [role="menuitemradio"]').first().waitFor({ state: 'visible', timeout: 5000 })
+    return
+  }
   if (provider.descriptor.id !== 'claude' || kind !== 'model') return
   const moreModels = page.locator('[role="menuitem"]')
     .filter({ visible: true })
@@ -182,6 +201,16 @@ async function selectChoice(
       visibleProof: 'exact-label-not-found',
     }
   }
+  if (provider.descriptor.id === 'chatgpt' && kind === 'effort') {
+    const index = CHATGPT_CHAT_EFFORTS.findIndex((effort) => effort === label)
+    const slider = page.locator('[role="menu"] [role="slider"]')
+    const current = Number(await slider.getAttribute('aria-valuenow'))
+    await slider.focus()
+    for (let step = 0; step < Math.abs(index - current); step += 1) await slider.press(index > current ? 'ArrowRight' : 'ArrowLeft')
+    const selected = Number(await slider.getAttribute('aria-valuenow')) === index
+    await page.keyboard.press('Escape')
+    return { supported: true, selectedLabel: selected ? label : '', visibleProof: selected ? 'chatgpt-power-slider-selected' : 'selected-label-not-visible' }
+  }
   const option = await exactVisibleChoiceLocator(page, provider, label)
   if (!option) {
     return {
@@ -198,7 +227,9 @@ async function selectChoice(
   } else {
     await option.click({ timeout: 5000 })
   }
-  const visible = await waitForSelectedLabel(page, provider, kind, label)
+  const visible = provider.descriptor.id === 'chatgpt' && kind === 'model'
+    ? await inspectChoices(page, provider, kind).then((result) => result.supported && result.choices.some((choice) => choice.label === label && choice.selected))
+    : await waitForSelectedLabel(page, provider, kind, label)
   return {
     supported: true as const,
     selectedLabel: visible ? label : '',
@@ -223,13 +254,15 @@ async function exactVisibleChoiceLocator(
   const surface = provider.descriptor.id === 'arena'
     ? page.locator('[role="dialog"]').filter({ visible: true }).last()
     : page
-  const candidates = surface.locator(selectors.join(',')).filter({ visible: true })
+  const candidates = surface.locator(provider.descriptor.id === 'chatgpt'
+    ? '[role="menu"] [data-active="true"] [role="menuitemradio"]'
+    : selectors.join(',')).filter({ visible: true })
   const count = Math.min(await candidates.count(), 80)
   for (let index = 0; index < count; index += 1) {
     const candidate = candidates.nth(index)
     const text = await candidate.evaluate((element, providerId) => (
       (providerId === 'github-copilot'
-        ? element.querySelector('[data-component="ActionList.Item.Label"] > span')?.firstChild?.textContent
+        ? element.querySelector('[data-component="ActionList.Item.Label"] > span')?.firstChild?.textContent ?? element.querySelector('[data-component="ActionList.Item.Label"]')?.textContent
         : null) ??
       (providerId === 'arena' && element.closest('[data-arena-buttons]') !== null ? '' : null) ??
       (providerId === 'arena'
