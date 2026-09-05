@@ -228,6 +228,9 @@ async function exactVisibleChoiceLocator(
   for (let index = 0; index < count; index += 1) {
     const candidate = candidates.nth(index)
     const text = await candidate.evaluate((element, providerId) => (
+      (providerId === 'github-copilot'
+        ? element.querySelector('[data-component="ActionList.Item.Label"] > span')?.firstChild?.textContent
+        : null) ??
       (providerId === 'arena' && element.closest('[data-arena-buttons]') !== null ? '' : null) ??
       (providerId === 'arena'
         ? element.querySelector('.text-lg, .font-mono')?.textContent
@@ -278,7 +281,7 @@ async function collectVisibleChoices(page: Page, provider: ProviderDomDefinition
     ? controlledRoot
     : overlayRoot
   const locators = [
-    provider.descriptor.id === 'claude'
+    provider.descriptor.id === 'claude' || provider.descriptor.id === 'github-copilot'
       ? page.locator('[role="menuitemradio"]').filter({ visible: true })
       : root.locator('[role="menuitem"], [role="menuitemcheckbox"], [role="option"], [cmdk-item], button').filter({ visible: true }),
     page.locator('.ant-select-dropdown').filter({ visible: true })
@@ -300,7 +303,10 @@ async function collectVisibleChoices(page: Page, provider: ProviderDomDefinition
           : null) ?? element.querySelector('.label') ??
           (element.matches('[role="menuitemcheckbox"]') ? element.querySelector('.text-subheadline') : null) ??
           (element.matches('[role="menuitemradio"], [role="menuitemcheckbox"]') ? element.querySelector('.truncate') : null)
-        const text = (labelElement?.textContent ?? element.getAttribute('aria-label') ?? element.textContent ?? '').replace(/\s+/g, ' ').trim()
+        const githubLabel = options.providerId === 'github-copilot'
+          ? element.querySelector('[data-component="ActionList.Item.Label"] > span')?.firstChild?.textContent
+          : null
+        const text = (githubLabel ?? labelElement?.textContent ?? element.getAttribute('aria-label') ?? element.textContent ?? '').replace(/\s+/g, ' ').trim()
         const fullText = (element.textContent ?? '').replace(/\s+/g, ' ').trim()
         const ariaSelected = element.getAttribute('aria-selected') === 'true' ||
           element.getAttribute('aria-checked') === 'true' ||

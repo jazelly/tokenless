@@ -717,6 +717,7 @@ async function harnessAttachmentRoundtrip({ provider, journey }) {
       '--workspace-root', workspace,
       '--prompt', [
         `Use the read-only workspace.read tool to read ${proofFile}.`,
+        'No Skill loads are needed. Propose workspace.read directly in your first response.',
         'Then return exactly the complete file contents with no additional text.',
         'Do not call any write tool.',
       ].join(' '),
@@ -1339,7 +1340,7 @@ async function conversationWorkflow({ provider, journey }) {
   const name = markerFor(provider, 'CONVERSATION_WORKFLOW')
   const attachmentMarker = markerFor(provider, 'ATTACHMENT')
   const responseMarker = markerFor(provider, 'TURN_ONE_RESPONSE')
-  const contextSecret = markerFor(provider, 'CONTEXT_SECRET')
+  const contextNote = markerFor(provider, 'CONTEXT_NOTE')
   const attachmentName = `${attachmentMarker}.txt`
   const attachment = path.join(root, 'test-results', 'live-provider-inputs', attachmentName)
   await fs.mkdir(path.dirname(attachment), { recursive: true, mode: 0o700 })
@@ -1359,7 +1360,7 @@ async function conversationWorkflow({ provider, journey }) {
         'Read the attached text file.',
         'Respond with exactly three lines: the exact file contents; then the following response marker;',
         `${responseMarker}; then a Markdown link to the official Node.js homepage.`,
-        `Remember ${contextSecret} for my next message, but do not include it in this response.`,
+        `Remember this fictional reference code for my next message: ${contextNote}. Do not include the reference code in this response.`,
       ].join(' '),
     ], 360_000, ({ page }) => waitForExactText(
       page,
@@ -1370,7 +1371,7 @@ async function conversationWorkflow({ provider, journey }) {
     const citations = responseResult(first.payload, 'response.read')?.citations
     assert.match(firstText, new RegExp(escapeRegExp(attachmentMarker)))
     assert.match(firstText, new RegExp(escapeRegExp(responseMarker)))
-    assert.doesNotMatch(firstText, new RegExp(escapeRegExp(contextSecret)))
+    assert.doesNotMatch(firstText, new RegExp(escapeRegExp(contextNote)))
     assert.ok(responseResult(first.payload, 'file.upload')?.attachments?.some(
       (attachmentResult) => attachmentResult.name === attachmentName,
     ))
@@ -1389,10 +1390,10 @@ async function conversationWorkflow({ provider, journey }) {
         '--deepseek-deepthink', 'off',
         '--deepseek-search', 'on',
       ] : []),
-      '--prompt', 'Return a JSON object with the secret from my previous message and its exact character count.',
+      '--prompt', 'Return a JSON object with the fictional reference code I asked you to remember and its exact character count.',
     ])
     const secondText = responseResult(second.payload, 'response.read')?.text ?? ''
-    assert.match(secondText, new RegExp(escapeRegExp(contextSecret)))
+    assert.match(secondText, new RegExp(escapeRegExp(contextNote)))
     assert.equal(canonicalPageUrl(second.page.url()), firstUrl, `${provider} both CLI processes must share one exact conversation`)
     await second.close()
   } finally {

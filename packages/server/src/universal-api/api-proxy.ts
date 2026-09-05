@@ -1714,7 +1714,8 @@ function routingAttemptsFromRequest(value: unknown): ApiProxyRoutingAttempt[] | 
       || (candidate.visibleProof !== undefined && (typeof candidate.visibleProof !== 'string' || !/^[a-z0-9:_-]{1,160}$/u.test(candidate.visibleProof)))
       || (candidate.limitWindow !== undefined && !['minute', 'hour', 'day', 'week', 'unknown'].includes(String(candidate.limitWindow)))
       || (candidate.retryAfterSeconds !== undefined && (typeof candidate.retryAfterSeconds !== 'number' || !Number.isSafeInteger(candidate.retryAfterSeconds) || candidate.retryAfterSeconds < 1 || candidate.retryAfterSeconds > 604_800))
-      || ((candidate.visibleProof !== undefined || candidate.limitWindow !== undefined || candidate.retryAfterSeconds !== undefined) && !['rate_limit', 'capacity', 'captcha', 'unreachable'].includes(String(candidate.reason)))
+      || (candidate.visibleProof !== undefined && !['rate_limit', 'capacity', 'auth', 'captcha', 'unreachable'].includes(String(candidate.reason)))
+      || ((candidate.limitWindow !== undefined || candidate.retryAfterSeconds !== undefined) && !['rate_limit', 'capacity', 'captcha', 'unreachable'].includes(String(candidate.reason)))
       || (candidate.reason === 'captcha' && candidate.visibleProof === undefined)
     ) return null
     parsed.push({

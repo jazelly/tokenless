@@ -51,6 +51,8 @@ npm run benchmark:terminalbench -- full \
 
 仓库中受 Git 跟踪的 harness、adapter、固定 manifests 和双语文档都位于 `benchmarks/terminalbench`。Harbor job 默认写入 Git ignored 的 `benchmarks/terminalbench/results/`；显式 `--jobs-dir` 只能是该目录或其子目录。Git ignored 的 `benchmarks/terminalbench/observations/` 保存本地 semantic manifest 与有界 run observations，`cache/` 保存生成的 runtime artifacts；旧的 `runs/` 不再作为输出目录。
 
+成功 child dispatch settle 后，bridge 允许 10 分钟的 tool 阶段；下一次 parent completion 保留现有 tool catalog、将 `tool_choice` 设为 `none`，并审计为 final-only，以便在不变的官方 timeout 内返回 final response。
+
 每个能够生成 `tokenless-run.json` 的 settled run，也会生成 `observations/<job-name>/run-observation.json`。Runner 会依据 `observation.schema.json` 构造并校验这个 Git ignored artifact；`observe` 会把同一个确定性 collector 用于已有的兼容 result job，并且绝不覆盖 evidence。
 
 Observation 会把 official verifier outcome 与 routing outcome 分开。它记录实际 profile 与由 run 固定的 execution mode、Harbor run/trial/stage timing、每个有序 provider interaction 与 fallback reason、submission/failure rate、可见 limit evidence、估算 token usage、response 字符数与 hash，以及源 result/audit 文件的 SHA-256 对应关系。新的 DeepSeek Harness run 会把 `executionMode` 固定到 `tokenless-run.json`；旧 report 如果没有该字段，就会记录为 `unavailable`，而不会把今天的 configuration 错误归因给过去的 run。采集完全由代码完成且只保存 metadata：v4 不能证明逐 provider latency，token 数值只是估算而不是 provider billing usage，并且绝不保存 prompt 或 response body。

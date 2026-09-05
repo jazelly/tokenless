@@ -687,6 +687,50 @@
     }
   },
   "providers": {
+    "github-copilot": {
+      "stage": "experimental",
+      "account": "signed_in_selected_setup_profile",
+      "required": [
+        "session-readiness",
+        "prompt-draft",
+        "model-choice",
+        "file-selection",
+        "conversation-continuation",
+        "conversation-workflow",
+        "harness-attachment-roundtrip"
+      ],
+      "unavailable": {
+        "effort-choice": "no_independent_effort_selector_observed",
+        "deepseek-controls": "provider_specific_capability",
+        "deepseek-search-reasoning": "provider_specific_capability",
+        "deepseek-vision-input": "provider_specific_capability",
+        "model-comparison": "provider_specific_capability",
+        "arena-search": "provider_specific_capability",
+        "arena-image": "provider_specific_capability",
+        "meta-image": "provider_specific_capability",
+        "chatgpt-image": "provider_specific_capability",
+        "grok-image": "provider_specific_capability",
+        "gemini-image": "provider_specific_capability",
+        "dola-image": "provider_specific_capability",
+        "doubao-image": "provider_specific_capability",
+        "qwen-image": "provider_specific_capability",
+        "arena-code": "provider_specific_capability",
+        "arena-agent": "provider_specific_capability",
+        "arena-video": "provider_specific_capability",
+        "workspace-response-citations": "covered_by_conversation_workflow",
+        "workspace-response-baseline": "covered_by_conversation_continuation",
+        "qwen-mode-workspace": "provider_specific_capability",
+        "doubao-controls": "provider_specific_capability",
+        "native-project": "github_spaces_not_integrated",
+        "kimi-library-controls": "provider_specific_capability",
+        "kimi-search": "provider_specific_capability",
+        "kimi-library-workflows": "provider_specific_capability",
+        "kimi-deep-research": "provider_specific_capability",
+        "kimi-artifacts": "provider_specific_capability",
+        "kimi-long-running": "provider_specific_capability",
+        "kimi-agent-swarm": "provider_specific_capability"
+      }
+    },
     "arena": {
       "stage": "supported",
       "account": "signed_in_selected_setup_profile",
@@ -1256,6 +1300,50 @@
         "kimi-long-running": "provider_specific_capability",
         "kimi-agent-swarm": "provider_specific_capability",
         "kimi-library-workflows": "provider_specific_capability"
+      }
+    },
+    "microsoft-copilot": {
+      "stage": "experimental",
+      "account": "signed_in_selected_setup_profile",
+      "required": [
+        "session-readiness",
+        "prompt-draft",
+        "file-selection",
+        "conversation-continuation",
+        "conversation-workflow"
+      ],
+      "unavailable": {
+        "model-choice": "no_independent_model_selector_observed",
+        "effort-choice": "response_modes_not_e2e_closed",
+        "deepseek-controls": "provider_specific_capability",
+        "deepseek-search-reasoning": "provider_specific_capability",
+        "deepseek-vision-input": "provider_specific_capability",
+        "harness-attachment-roundtrip": "harness_attachment_roundtrip_not_yet_proven",
+        "model-comparison": "provider_specific_capability",
+        "arena-search": "provider_specific_capability",
+        "arena-image": "provider_specific_capability",
+        "meta-image": "provider_specific_capability",
+        "chatgpt-image": "provider_specific_capability",
+        "grok-image": "provider_specific_capability",
+        "gemini-image": "provider_specific_capability",
+        "dola-image": "provider_specific_capability",
+        "doubao-image": "provider_specific_capability",
+        "qwen-image": "provider_specific_capability",
+        "arena-code": "provider_specific_capability",
+        "arena-agent": "provider_specific_capability",
+        "arena-video": "provider_specific_capability",
+        "workspace-response-citations": "visible_citations_not_yet_proven",
+        "workspace-response-baseline": "covered_by_conversation_continuation",
+        "qwen-mode-workspace": "provider_specific_capability",
+        "doubao-controls": "provider_specific_capability",
+        "native-project": "native_project_not_proven",
+        "kimi-library-controls": "provider_specific_capability",
+        "kimi-search": "provider_specific_capability",
+        "kimi-library-workflows": "provider_specific_capability",
+        "kimi-deep-research": "provider_specific_capability",
+        "kimi-artifacts": "provider_specific_capability",
+        "kimi-long-running": "provider_specific_capability",
+        "kimi-agent-swarm": "provider_specific_capability"
       }
     }
   }

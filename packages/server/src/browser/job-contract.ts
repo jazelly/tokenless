@@ -463,7 +463,8 @@ function validateRoutingObservation(value: unknown): ManagedPlaywrightRoutingObs
       || (visibleProof !== undefined && (typeof visibleProof !== 'string' || !/^[a-z0-9:_-]{1,160}$/u.test(visibleProof)))
       || (limitWindow !== undefined && !['minute', 'hour', 'day', 'week', 'unknown'].includes(String(limitWindow)))
       || (retryAfterSeconds !== undefined && (typeof retryAfterSeconds !== 'number' || !Number.isSafeInteger(retryAfterSeconds) || retryAfterSeconds < 1 || retryAfterSeconds > 604_800))
-      || ((visibleProof !== undefined || limitWindow !== undefined || retryAfterSeconds !== undefined) && !['rate_limit', 'capacity', 'captcha', 'unreachable'].includes(String(attempt.reason)))
+      || (visibleProof !== undefined && !['rate_limit', 'capacity', 'auth', 'captcha', 'unreachable'].includes(String(attempt.reason)))
+      || ((limitWindow !== undefined || retryAfterSeconds !== undefined) && !['rate_limit', 'capacity', 'captcha', 'unreachable'].includes(String(attempt.reason)))
       || (attempt.reason === 'captcha' && visibleProof === undefined)
     ) {
       throw tokenlessError('invalid_playwright_routing_observation', 'Managed Playwright routing observation is invalid.')

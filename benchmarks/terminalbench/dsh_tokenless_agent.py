@@ -12,6 +12,7 @@ import secrets
 import shlex
 import subprocess
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, override
@@ -38,6 +39,7 @@ CHANNEL_PROTOCOL = "tokenless.terminalbench-channel.v1"
 AUDIT_PROTOCOL = "tokenless.terminalbench-deep-audit.v4"
 PROXY_PORT = 18765
 MAX_BRIDGE_BODY_BYTES = 8 * 1024 * 1024
+FINAL_ONLY_AFTER_SECONDS = 600
 PROVIDER_ID_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 SEMANTIC_TASK_TYPE_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 SEMANTIC_COMPLEXITIES = {"low", "medium", "high"}
@@ -143,6 +145,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         self._child_turn_input_text: dict[str, str] = {}
         self._subagent_dispatch_lock = threading.Lock()
         self._subagent_dispatch_state = "available"
+        self._subagent_dispatch_completed_monotonic: float | None = None
 
     def claim_subagent_dispatch(self) -> bool:
         with self._subagent_dispatch_lock:
@@ -156,6 +159,18 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             if self._subagent_dispatch_state != "claimed":
                 raise RuntimeError("subagent dispatch claim is unavailable")
             self._subagent_dispatch_state = "dispatched" if succeeded else "available"
+            self._subagent_dispatch_completed_monotonic = (
+                time.monotonic() if succeeded else None
+            )
+
+    def final_only_parent_completion_due(self) -> bool:
+        with self._subagent_dispatch_lock:
+            completed_at = self._subagent_dispatch_completed_monotonic
+            return (
+                self._subagent_dispatch_state == "dispatched"
+                and completed_at is not None
+                and time.monotonic() - completed_at >= FINAL_ONLY_AFTER_SECONDS
+            )
 
     def record_event(self, value: dict[str, Any]) -> None:
         with self._audit_lock:
@@ -196,6 +211,16 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             ):
                 raise RuntimeError("parent completion audit reference is invalid")
             event["forcedSubagent"] = True
+
+    def mark_parent_completion_final_only(self, sequence: int) -> None:
+        with self._audit_lock:
+            event = self._audit_events[sequence - 1]
+            if (
+                event.get("sequence") != sequence
+                or event.get("type") != "api.completion.request"
+            ):
+                raise RuntimeError("parent completion audit reference is invalid")
+            event["finalOnly"] = True
 
     def record_child_turn_started(self, mode: str) -> None:
         self.record_event({"type": "child.turn.started", "mode": mode})
@@ -574,7 +599,9 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         if cls._json_object(body):
             raise ValueError("provider cancellation body must be empty")
 
-    def decorate_parent_completion_body(self, body: bytes | None) -> bytes:
+    def decorate_parent_completion_body(
+        self, body: bytes | None, audit_sequence: int | None = None
+    ) -> bytes:
         value = self._json_object(body)
         if value.get("model") != "tokenless/auto":
             raise ValueError("DSH parent completion must use tokenless/auto")
@@ -586,6 +613,10 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         tokenless = dict(tokenless)
         tokenless["semantic_preference"] = self.semantic_preference
         value["tokenless"] = tokenless
+        if self.final_only_parent_completion_due():
+            value["tool_choice"] = "none"
+            if audit_sequence is not None:
+                self.mark_parent_completion_final_only(audit_sequence)
         return json.dumps(value, separators=(",", ":")).encode("utf-8")
 
     def decorate_bootstrap_body(self, body: bytes | None) -> bytes:
@@ -979,14 +1010,11 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
                     )
                 )
                 or (
-                    any(
-                        key in attempt
-                        for key in {
-                            "visibleProof",
-                            "limitWindow",
-                            "retryAfterSeconds",
-                        }
-                    )
+                    "visibleProof" in attempt
+                    and attempt.get("reason") not in {"rate_limit", "capacity", "auth", "captcha", "unreachable"}
+                )
+                or (
+                    any(key in attempt for key in {"limitWindow", "retryAfterSeconds"})
                     and attempt.get("reason") not in {"rate_limit", "capacity", "captcha", "unreachable"}
                 )
                 or attempt.get("reason") == "captcha"
@@ -1236,7 +1264,9 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
         if path in ALLOWED_COMPLETION_PATHS and self.command == "POST":
             parent_event_sequence, parent_ordinal = self.server.record_parent_completion_request()  # type: ignore[attr-defined]
             try:
-                body = self.server.decorate_parent_completion_body(body)  # type: ignore[attr-defined]
+                body = self.server.decorate_parent_completion_body(  # type: ignore[attr-defined]
+                    body, parent_event_sequence
+                )
                 request_value = json.loads(body)
                 tools = request_value.get("tools") if isinstance(request_value, dict) else None
                 has_subagent = isinstance(tools, list) and any(

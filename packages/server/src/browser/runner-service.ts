@@ -1569,10 +1569,14 @@ function routingFailureEvidence(failure: ClassifiedProviderFailure) {
   const details = failure.details && typeof failure.details === 'object' && !Array.isArray(failure.details)
     ? failure.details as Record<string, unknown>
     : null
-  if (!['rate_limit', 'plan_limit', 'input_limit', 'recaptcha', 'cloudflare', 'hcaptcha', 'arkose', 'availability'].includes(String(details?.family))) return {}
+  const family = String(details?.family)
   const visibleProof = typeof details?.visibleProof === 'string' && /^[a-z0-9:_-]{1,160}$/u.test(details.visibleProof)
     ? details.visibleProof
     : undefined
+  if (routingFailureReason(failure) === 'auth') {
+    return family === 'provider_sign_in' && visibleProof !== undefined ? { visibleProof } : {}
+  }
+  if (!['rate_limit', 'plan_limit', 'input_limit', 'recaptcha', 'cloudflare', 'hcaptcha', 'arkose', 'availability'].includes(family)) return {}
   const limitWindow = typeof details?.limitWindow === 'string' && ['minute', 'hour', 'day', 'week', 'unknown'].includes(details.limitWindow)
     ? details.limitWindow as 'minute' | 'hour' | 'day' | 'week' | 'unknown'
     : undefined

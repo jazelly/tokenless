@@ -566,6 +566,7 @@ async function visibleAttachmentEvidence(
       '[data-default-action="true"] button[aria-label]',
       ...(providerId === 'meta' ? ['[class~="group/attachment-tile"]'] : []),
       ...(providerId === 'zai' ? ['.chip-scroll > button'] : []),
+      ...(providerId === 'github-copilot' ? ['form [role="toolbar"][aria-label="Attachments"] [class*="ReferenceToken-module__name__"]'] : []),
     ]
     const elements = selectors.flatMap((selector) => {
       try {

@@ -1450,11 +1450,12 @@ function deepIntegrationStats(events, trial) {
     }
     if (event.type === 'api.completion.request') {
       if (
-        Object.keys(event).some((key) => !['protocol', 'sequence', 'type', 'ordinal', 'forcedSubagent'].includes(key))
+        Object.keys(event).some((key) => !['protocol', 'sequence', 'type', 'ordinal', 'forcedSubagent', 'finalOnly'].includes(key))
         || event.ordinal !== nextParentOrdinal
         || !Number.isSafeInteger(event.ordinal)
         || event.ordinal < 1
         || event.forcedSubagent !== true && event.forcedSubagent !== false
+        || event.finalOnly !== undefined && event.finalOnly !== true && event.finalOnly !== false
       ) {
         throw new Error('Host parent completion evidence is invalid.')
       }
@@ -1703,7 +1704,9 @@ function validateProviderRoutingEvent(event) {
         || attempt.retryAfterSeconds < 1
         || attempt.retryAfterSeconds > 604_800
       )
-      || (attempt.visibleProof !== undefined || attempt.limitWindow !== undefined || attempt.retryAfterSeconds !== undefined)
+      || attempt.visibleProof !== undefined
+        && !['rate_limit', 'capacity', 'auth', 'captcha', 'unreachable'].includes(attempt.reason)
+      || (attempt.limitWindow !== undefined || attempt.retryAfterSeconds !== undefined)
         && !['rate_limit', 'capacity', 'captcha', 'unreachable'].includes(attempt.reason)
       || attempt.reason === 'captcha' && attempt.visibleProof === undefined
       || attempt.reason === 'rate_limit' && (attempt.visibleProof === undefined || attempt.limitWindow === undefined)

@@ -50,8 +50,11 @@ Product surface 比当前 Tokenless evidence 更广。中间一列结合官方�
 | Dola | 已登录 Web chat；Fast 与 Pro 选择；file input；Create Image、Writing、Create Video、Translate 与 Homework 入口；独立 Seedream image-creation surface；未观察到 Project、file library 或 persistent knowledge-management surface | 实验性 chat 与 Harness-verified `file.upload` transport、`document.input`；两轮 Markdown 均被逐个可见观察并使用。Image generation 当前不可用：2026-09-01 的 focused run 在 300 秒后遇到 `daemon_unavailable` |
 | Arena | 已登录 Battle、Direct 与 Side-by-Side chat；model selection；file input；Search、Code、Agent、Image 与 Video surface | 支持 Direct chat，独立 generated-image route 保持 experimental；实验性 image-scoped `file.upload` transport 与 `image.input` 接受 PNG、JPEG 与 WebP，但没有 `document.input` 或 Markdown route |
 | Meta AI | 已登录 Web chat；Instant 与 Thinking mode；广泛 file input；可见 image generation；research-progress 与 assistant-response surface | 实验性 chat、image 与 generic Markdown `file.upload` transport、`document.input` 保留；精确 Harness bytes 可上传，但组合 attachment instruction 被静默拒绝且不创建 conversation |
+| GitHub Copilot | 已登录的 GitHub.com chat、model selection、Markdown/code-file upload、conversation history、repository context、Spaces 与 cloud agent | 实验性 browser chat、continuation、citation，以及 Harness-verified `file.upload` 与 `document.input`。2026-09-05，配置中的 Copilot Pro profile 使用 GPT-5.6 Luna 在 26,438ms 内通过 Harness gate：两次 Markdown 上传、真实只读 workspace tool、同会话续聊、精确最终结果且无 fallback。GPT-5.4 mini 通过 file/content/citation continuation；Harness 验收未使用 Auto。Spaces 与 cloud-agent action 保持不公布 |
 
 官方参考：
+
+- [GitHub Copilot Web chat](https://docs.github.com/en/copilot/how-tos/copilot-on-github/chat-with-copilot/chat-in-github) 与 [usage limits](https://docs.github.com/en/copilot/concepts/usage-limits)
 
 - [ChatGPT capabilities](https://help.openai.com/en/articles/9260256-chatgpt-capabilities-overview)、[Deep Research](https://help.openai.com/en/articles/10500283-deep-research-in-chatgpt) 与 [Projects](https://help.openai.com/en/articles/10169521-projects-in-chatgpt)
 - [Claude Research](https://support.anthropic.com/en/articles/11088861-using-research-on-claude-ai)、[Web search](https://support.anthropic.com/en/articles/10684626-enabling-and-using-web-search)、[Projects](https://support.anthropic.com/en/articles/9529781-examples-of-projects-you-can-create) 与 [Artifacts](https://support.anthropic.com/en/articles/9487310-what-are-artifacts-and-how-do-i-use-them)
@@ -73,7 +76,7 @@ Product surface 比当前 Tokenless evidence 更广。中间一列结合官方�
 | Candidate | Canonical Web 入口 | 官方已记录或当前已确认的 surface | 建议评估 |
 | --- | --- | --- | --- |
 | Mistral Le Chat | `https://chat.mistral.ai/` | Web search 与 citation、Deep Research、Think mode、Projects 与 Libraries、file、code interpreter、image generation/editing、Canvas、agent 与 MCP connector | P1。Capability 匹配广，官方文档相对清晰；适合作为 research 与 artifact semantics 的第二个 adapter |
-| Microsoft Copilot | `https://copilot.microsoft.com/` | Web chat、Quick/Think Deeper/Smart mode、Deep Research、file upload、image generation/editing、Pages、connector、voice 与 browser-related experience | 在 2026-08-01 Cloak precheck 中被阻止：登出 surface 提供 Microsoft、Apple 与 Google 登录选择，但没有 guest composer。只有明确选择 setup-managed signed-in profile 后才能继续 |
+| Microsoft Copilot | `https://copilot.microsoft.com/` | 2026-09-05 已观察到：chat、Smart/Think deeper/Study and learn/Search mode、Markdown upload、image 与 Deep Research 入口、podcast、quiz、connector 和 Projects | 已登录的 ego-browser Observer 在同一会话完成两轮对话，并从上传的 Markdown 读出唯一标记。Tokenless API 配置中的 profile 仍需单独通过 CLI/daemon 验收 |
 | Tencent Yuanbao | `https://yuanbao.tencent.com/` | Web product、腾讯增强 Web search、多格式 file reading、reasoning/model surface 与更广泛的腾讯内容 ecosystem | P2。有价值的中文 search 与 file route；高级 artifact 与 workspace 声明需要官方和真实闭合 |
 | MiniMax Agent | `https://agent.minimax.io/` | Long-horizon planning、Web 与 application generation、code execution、multimedia understanding/generation 与 MCP integration | P3 specialist adapter。其 autonomous-agent lifecycle 与 chat 有实质差异，不应强行放入 baseline provider contract |
 

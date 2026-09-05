@@ -249,7 +249,7 @@ export async function buildTokenlessPrompt({
     '',
     '## Relevant Files',
     selectedFiles.length === 0
-      ? 'No relevant files were attached.'
+      ? 'No inline file contents were included. Files uploaded through the chat composer are separate attachments.'
       : selectedFiles.map(formatFile).join('\n\n'),
   ].join('\n')
 }
