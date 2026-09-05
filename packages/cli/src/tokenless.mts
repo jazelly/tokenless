@@ -256,6 +256,11 @@ const PRIORITY_VISIBLE_PROVIDER_ACTIONS = new Set([
   'kimi.plugin.select',
   'kimi.skill.inspect',
   'kimi.skill.select',
+  'github-copilot.mode.inspect',
+  'github-copilot.mode.select',
+  'github-copilot.repository.inspect',
+  'github-copilot.repository.select',
+  'github-copilot.usage.inspect',
   'file.upload',
   'workspace.ensure',
   'prompt.clear',
@@ -1455,6 +1460,18 @@ async function visibleProviderActionFromArgs(args: CliArgs) {
     throw usageError('kimi_control_unsupported', 'kimi actions are available only for the Kimi provider.')
   }
 
+  if (action.startsWith('github-copilot.') && normalizeProvider(args.provider) !== 'github-copilot') {
+    throw usageError('github_copilot_control_unsupported', 'GitHub Copilot controls are available only for github-copilot.')
+  }
+  if (action === 'github-copilot.mode.select') {
+    assertProviderActionPayloadOptions(args, new Set(['copilotMode']))
+    return { action, payload: { mode: normalizeCopilotMode(args.copilotMode) } }
+  }
+  if (action === 'github-copilot.repository.select') {
+    assertProviderActionPayloadOptions(args, new Set(['copilotRepo']))
+    return { action, payload: { label: normalizeCopilotRepository(args.copilotRepo) } }
+  }
+
   if (action === 'capability.inspect') {
     assertProviderActionPayloadOptions(args, new Set())
     return { action, payload: {} }
@@ -1475,7 +1492,10 @@ async function visibleProviderActionFromArgs(args: CliArgs) {
     action === 'doubao.skill.inspect' ||
     action === 'kimi.search.inspect' ||
     action === 'kimi.plugin.inspect' ||
-    action === 'kimi.skill.inspect'
+    action === 'kimi.skill.inspect' ||
+    action === 'github-copilot.mode.inspect' ||
+    action === 'github-copilot.repository.inspect' ||
+    action === 'github-copilot.usage.inspect'
   ) {
     assertProviderActionPayloadOptions(args, new Set())
     return { action, payload: {} }
@@ -1684,6 +1704,8 @@ function assertProviderActionPayloadOptions(args: CliArgs, allowed: Set<string>)
     ['kimiSearch', '--kimi-search'],
     ['kimiPlugin', '--kimi-plugin'],
     ['kimiSkill', '--kimi-skill'],
+    ['copilotMode', '--copilot-mode'],
+    ['copilotRepo', '--copilot-repo'],
     ['chatSurface', '--chat-surface'],
     ['projectName', '--project-name'],
     ['projectInstructions', '--project-instructions'],
@@ -2061,6 +2083,8 @@ function automaticProviderFallbackAllowed({
     args.kimiSearch === undefined &&
     args.kimiPlugin === undefined &&
     args.kimiSkill === undefined &&
+    args.copilotMode === undefined &&
+    args.copilotRepo === undefined &&
     args.chatSurface === undefined
 }
 
@@ -2253,6 +2277,15 @@ function managedVisibleActions({
     return actions
   }
   if (action === 'inspect_controls') {
+    if (provider === 'github-copilot') {
+      return [
+        { requestId: `${requestId}:mode`, action: VISIBLE_ACTIONS.GITHUB_COPILOT_MODE_INSPECT, payload: {} },
+        { requestId: `${requestId}:model`, action: VISIBLE_ACTIONS.MODEL_INSPECT, payload: {} },
+        { requestId: `${requestId}:effort`, action: VISIBLE_ACTIONS.EFFORT_INSPECT, payload: {} },
+        { requestId: `${requestId}:repository`, action: VISIBLE_ACTIONS.GITHUB_COPILOT_REPOSITORY_INSPECT, payload: {} },
+        { requestId: `${requestId}:usage`, action: VISIBLE_ACTIONS.GITHUB_COPILOT_USAGE_INSPECT, payload: {} },
+      ]
+    }
     if (provider === 'deepseek') {
       actions.push(
         { requestId: `${requestId}:deepseek-mode`, action: VISIBLE_ACTIONS.DEEPSEEK_MODE_INSPECT, payload: {} },
@@ -2276,6 +2309,12 @@ function managedVisibleActions({
       { requestId: `${requestId}:effort`, action: VISIBLE_ACTIONS.EFFORT_INSPECT, payload: {} },
     )
     return actions
+  }
+  if (providerControls.copilotMode !== undefined) {
+    actions.push({ requestId: `${requestId}:copilot-mode`, action: VISIBLE_ACTIONS.GITHUB_COPILOT_MODE_SELECT, payload: { mode: providerControls.copilotMode } })
+  }
+  if (providerControls.copilotRepo !== undefined) {
+    actions.push({ requestId: `${requestId}:copilot-repository`, action: VISIBLE_ACTIONS.GITHUB_COPILOT_REPOSITORY_SELECT, payload: { label: providerControls.copilotRepo } })
   }
   if (action === 'configure_controls') {
     if (providerControls.deepSeekMode !== undefined) {
@@ -2524,7 +2563,7 @@ async function managedProviderTarget({
   }
   const kimiSurface = provider === 'kimi' ? kimiCapabilitySurface(taskCapabilities) : null
   if (kimiSurface) return { url: new URL(kimiSurface, 'https://www.kimi.com').toString(), resumesConversation: false }
-  if ((workspaceMode === 'auto' || workspaceMode === 'native') && projectName) {
+  if (provider !== 'github-copilot' && (workspaceMode === 'auto' || workspaceMode === 'native') && projectName) {
     const daemon = await ensureDaemonReady({ homeDir, daemonUrl, timeoutMs: daemonStartTimeoutMs, requiredProvider: provider })
     const mapped = await mappedDaemonTarget({
       homeDir,
@@ -5358,7 +5397,7 @@ function createCommandContracts(): CommandContract[] {
     'projectName', 'chatName', 'workspaceMode', 'projectInstructions', 'projectInstructionsFile',
     'model', 'effort', 'thinkingEffort', 'qwenMode', 'qwenModeVariant',
     'arenaMode', 'arenaModality',
-    'deepSeekMode', 'deepSeekDeepThink', 'deepSeekSearch', 'kimiSearch', 'kimiPlugin', 'kimiSkill',
+    'deepSeekMode', 'deepSeekDeepThink', 'deepSeekSearch', 'kimiSearch', 'kimiPlugin', 'kimiSkill', 'copilotMode', 'copilotRepo',
     'chatSurface', 'noWait',
     'agentKind', 'agentSessionId',
   ] as const
@@ -5373,7 +5412,7 @@ function createCommandContracts(): CommandContract[] {
   ] as const
   const providerConfigureOptions = [
     ...providerInspectOptions, 'model', 'effort', 'thinkingEffort', 'chatSurface',
-    'deepSeekMode', 'deepSeekDeepThink', 'deepSeekSearch', 'kimiSearch', 'kimiPlugin', 'kimiSkill',
+    'deepSeekMode', 'deepSeekDeepThink', 'deepSeekSearch', 'kimiSearch', 'kimiPlugin', 'kimiSkill', 'copilotMode', 'copilotRepo',
   ] as const
 
   const contracts: CommandContract[] = [
@@ -5403,7 +5442,7 @@ function createCommandContracts(): CommandContract[] {
     { command: 'provider-controls', usage: ['tokenless provider-controls --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
     { command: 'inspect-provider-controls', usage: ['tokenless inspect-provider-controls --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
     { command: 'provider-configure', usage: ['tokenless provider-configure --profile <slug> --provider <provider> [--model <label>] [--effort <label>] --json'], options: providerConfigureOptions },
-    { command: 'provider-action', usage: [`tokenless provider-action --profile <slug> --provider <provider> --action <${PRIORITY_VISIBLE_PROVIDER_ACTION_LIST.replace(/, /g, '|')}> --json`], options: [...providerInspectOptions, 'action', 'prompt', 'promptFile', 'attachFiles', 'projectName', 'projectInstructions', 'projectInstructionsFile', 'workspaceMode', 'model', 'effort', 'thinkingEffort', 'qwenMode', 'qwenModeVariant', 'arenaMode', 'arenaModality', 'deepSeekMode', 'deepSeekDeepThink', 'deepSeekSearch', 'doubaoMode', 'doubaoSkill', 'kimiSearch', 'kimiPlugin', 'kimiSkill'] },
+    { command: 'provider-action', usage: [`tokenless provider-action --profile <slug> --provider <provider> --action <${PRIORITY_VISIBLE_PROVIDER_ACTION_LIST.replace(/, /g, '|')}> --json`], options: [...providerInspectOptions, 'action', 'prompt', 'promptFile', 'attachFiles', 'projectName', 'projectInstructions', 'projectInstructionsFile', 'workspaceMode', 'model', 'effort', 'thinkingEffort', 'qwenMode', 'qwenModeVariant', 'arenaMode', 'arenaModality', 'deepSeekMode', 'deepSeekDeepThink', 'deepSeekSearch', 'doubaoMode', 'doubaoSkill', 'kimiSearch', 'kimiPlugin', 'kimiSkill', 'copilotMode', 'copilotRepo'] },
     { command: 'snapshot-dom', usage: ['tokenless snapshot-dom --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
     { command: 'state', usage: ['tokenless state (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'jobId', 'projectName', 'chatName', 'limit', 'agentKind', 'agentSessionId'] },
     { command: 'status', usage: ['tokenless status (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'jobId', 'projectName', 'chatName', 'limit', 'agentKind', 'agentSessionId'] },
@@ -5514,6 +5553,8 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--deepseek-search': 'deepSeekSearch',
     '--doubao-mode': 'doubaoMode',
     '--doubao-skill': 'doubaoSkill',
+    '--copilot-mode': 'copilotMode',
+    '--copilot-repo': 'copilotRepo',
     '--kimi-search': 'kimiSearch',
     '--kimi-plugin': 'kimiPlugin',
     '--kimi-skill': 'kimiSkill',
@@ -5860,7 +5901,7 @@ function assertVisibleRunArguments(args: CliArgs) {
     'targetUrl', 'taskId', 'projectName', 'chatName', 'workspaceMode',
     'projectInstructions', 'projectInstructionsFile', 'model', 'effort',
     'thinkingEffort', 'qwenMode', 'qwenModeVariant', 'arenaMode', 'arenaModality', 'deepSeekMode', 'deepSeekDeepThink',
-    'deepSeekSearch', 'kimiSearch', 'kimiPlugin', 'kimiSkill', 'chatSurface', 'longRunning',
+    'deepSeekSearch', 'kimiSearch', 'kimiPlugin', 'kimiSkill', 'copilotMode', 'copilotRepo', 'chatSurface', 'longRunning',
   ])
   if (unsupported.length > 0) {
     throw usageError(
@@ -5992,6 +6033,7 @@ function taskCapabilityRequirementsForExecution(
   }
 
   const inferred: TaskCapabilityId[] = []
+  if (args.copilotMode === 'agent') inferred.push(TASK_CAPABILITIES.AGENT_EXECUTE)
   if (action === 'submit_and_read') inferred.push(TASK_CAPABILITIES.CONVERSATION_CHAT)
   if (args.attachFiles.length > 0) {
     inferred.push(TASK_CAPABILITIES.FILE_UPLOAD)
@@ -6023,6 +6065,8 @@ function assertProviderConfigureArguments(args: CliArgs) {
     args.kimiSearch === undefined &&
     args.kimiPlugin === undefined &&
     args.kimiSkill === undefined &&
+    args.copilotMode === undefined &&
+    args.copilotRepo === undefined &&
     args.chatSurface === undefined
   ) {
     throw usageError(
@@ -6052,6 +6096,8 @@ function resolveProviderControls({
     args.deepSeekDeepThink !== undefined ||
     args.deepSeekSearch !== undefined
   )
+  const hasRequestedCopilotControl = args.copilotMode !== undefined || args.copilotRepo !== undefined
+  if (hasRequestedCopilotControl && provider !== 'github-copilot') throw usageError('github_copilot_control_unsupported', 'GitHub Copilot controls are available only for github-copilot.')
   const hasRequestedKimiControl = args.kimiSearch !== undefined || args.kimiPlugin !== undefined || args.kimiSkill !== undefined
   const hasRequestedChatGptControl = (
     args.chatSurface !== undefined
@@ -6060,7 +6106,7 @@ function resolveProviderControls({
     action === 'inspect_auth' ||
     action === 'inspect_controls'
   )
-  if (inspectionAction && (hasRequestedModelControl || hasRequestedEffortControl || hasRequestedQwenMode || hasRequestedArenaSurface || hasRequestedDeepSeekControl || hasRequestedKimiControl || hasRequestedChatGptControl)) {
+  if (inspectionAction && (hasRequestedModelControl || hasRequestedEffortControl || hasRequestedQwenMode || hasRequestedArenaSurface || hasRequestedDeepSeekControl || hasRequestedKimiControl || hasRequestedChatGptControl || hasRequestedCopilotControl)) {
     throw usageError(
       'controls_unsupported_for_action',
       'Control selection options are not accepted by provider-controls; use provider-configure.'
@@ -6093,6 +6139,15 @@ function resolveProviderControls({
   if (inspectionAction) return {}
 
   const requestedCapabilities = new Set(requirements)
+  const requiresCopilotAgent = provider === 'github-copilot' && (requestedCapabilities.has(TASK_CAPABILITIES.AGENT_EXECUTE) || requestedCapabilities.has(TASK_CAPABILITIES.SEARCH_WEB))
+  const copilotMode = args.copilotMode !== undefined
+    ? normalizeCopilotMode(args.copilotMode)
+    : requiresCopilotAgent ? 'agent'
+      : provider === 'github-copilot' && action !== 'configure_controls' && args.targetUrl === undefined && !requestedCapabilities.has(TASK_CAPABILITIES.CONVERSATION_CONTINUE) ? 'ask'
+        : undefined
+  const copilotRepo = args.copilotRepo === undefined ? undefined : normalizeCopilotRepository(args.copilotRepo)
+  if (requiresCopilotAgent && copilotMode !== 'agent') throw usageError('github_copilot_agent_mode_required', 'GitHub Copilot agent.execute requires --copilot-mode agent.')
+  if (copilotRepo !== undefined && args.workspaceMode !== undefined && args.projectName !== copilotRepo) throw usageError('github_copilot_repository_mismatch', '--copilot-repo and --project-name must refer to the same repository when --workspace-mode is present.')
   const requiresArenaAgent = provider === 'arena' && requestedCapabilities.has(TASK_CAPABILITIES.AGENT_EXECUTE)
   const requiresArenaComparison = provider === 'arena' && requestedCapabilities.has(TASK_CAPABILITIES.MODEL_COMPARE)
   const requiresArenaSearch = provider === 'arena' && (
@@ -6389,6 +6444,8 @@ function resolveProviderControls({
       kimiPlugin,
       kimiSkill,
       geminiImageSurface: requiresGeminiImage,
+      copilotMode,
+      copilotRepo,
     }
   }
 
@@ -6401,6 +6458,16 @@ function resolveProviderControls({
     model,
     effort,
   }
+}
+
+function normalizeCopilotMode(value: unknown): 'ask' | 'agent' {
+  if (value === 'ask' || value === 'agent') return value
+  throw usageError('invalid_github_copilot_mode', '--copilot-mode must be ask or agent.')
+}
+
+function normalizeCopilotRepository(value: unknown): string {
+  if (typeof value === 'string' && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(value)) return value
+  throw usageError('invalid_github_copilot_repository', '--copilot-repo must be owner/repo.')
 }
 
 function qwenModeSelectionPayload(args: CliArgs) {
@@ -6959,6 +7026,8 @@ function commonOptionsFor(options: readonly string[]) {
 function optionUsageLabel(option: string) {
   return ({
     action: '--action <action>',
+    copilotMode: '--copilot-mode <ask|agent>',
+    copilotRepo: '--copilot-repo <owner/repo>',
     allProfiles: '--all',
     answers: '--answer <need-id=json>',
     approvals: '--approve <call-id:digest>',

@@ -8898,7 +8898,35 @@
           "payload": {
             "type": "object"
           }
-        }
+        },
+        "description": "One provider-visible action. GitHub Copilot exposes mode.inspect/select, repository.inspect/select, and usage.inspect under the github-copilot namespace. Model choices include enabled state and observed requiredPlan/description for locked models. Usage returns account AI credits and nullable latestMessage inputTokens/outputTokens/creditsUsed; response.read includes observed message usage. See docs/github-copilot.md for results and repository-to-Project mapping.",
+        "examples": [
+          {
+            "protocol": "tokenless.playwright.visible-action.v3",
+            "requestId": "copilot-mode",
+            "provider": "github-copilot",
+            "action": "github-copilot.mode.select",
+            "payload": {
+              "mode": "agent"
+            }
+          },
+          {
+            "protocol": "tokenless.playwright.visible-action.v3",
+            "requestId": "copilot-repository",
+            "provider": "github-copilot",
+            "action": "github-copilot.repository.select",
+            "payload": {
+              "label": "owner/repo"
+            }
+          },
+          {
+            "protocol": "tokenless.playwright.visible-action.v3",
+            "requestId": "copilot-usage",
+            "provider": "github-copilot",
+            "action": "github-copilot.usage.inspect",
+            "payload": {}
+          }
+        ]
       },
       "WebAiAttachmentDelivery": {
         "type": "object",

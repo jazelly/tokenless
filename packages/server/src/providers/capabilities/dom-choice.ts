@@ -1,6 +1,7 @@
 import { firstVisibleLocator, waitForVisibleLocator } from '../dom-locators.js'
 import { PROVIDER_CAPABILITIES } from '../provider-identity.js'
 import { CHATGPT_CHAT_EFFORTS, ensureChatGptChat } from './chatgpt-chat.js'
+import { tokenlessError } from '../../browser/errors.js'
 import type { Locator, Page } from 'playwright-core'
 import type { ProviderActionCapability } from '../capability-set.js'
 import type { VisibleAction, VisibleActionRequest } from '../contracts.js'
@@ -195,6 +196,13 @@ async function selectChoice(
   if (!inspection.supported) return inspection
   const choice = inspection.choices.find((candidate) => candidate.label === label && candidate.enabled)
   if (!choice) {
+    if (provider.descriptor.id === 'github-copilot') {
+      await page.keyboard.press('Escape')
+      const locked = inspection.choices.find((candidate) => candidate.label === label)
+      throw tokenlessError('github_copilot_choice_unavailable', 'The requested GitHub Copilot choice is unavailable for the current mode and account.', {
+        retryable: false, details: { kind, label, ...(locked?.requiredPlan ? { requiredPlan: locked.requiredPlan } : {}) },
+      })
+    }
     return {
       supported: true as const,
       selectedLabel: '',
@@ -230,6 +238,9 @@ async function selectChoice(
   const visible = provider.descriptor.id === 'chatgpt' && kind === 'model'
     ? await inspectChoices(page, provider, kind).then((result) => result.supported && result.choices.some((choice) => choice.label === label && choice.selected))
     : await waitForSelectedLabel(page, provider, kind, label)
+  if (!visible && provider.descriptor.id === 'github-copilot') {
+    throw tokenlessError('github_copilot_choice_not_selected', 'GitHub Copilot did not visibly select the requested choice.', { retryable: false, details: { kind, label } })
+  }
   return {
     supported: true as const,
     selectedLabel: visible ? label : '',
@@ -337,7 +348,7 @@ async function collectVisibleChoices(page: Page, provider: ProviderDomDefinition
           (element.matches('[role="menuitemcheckbox"]') ? element.querySelector('.text-subheadline') : null) ??
           (element.matches('[role="menuitemradio"], [role="menuitemcheckbox"]') ? element.querySelector('.truncate') : null)
         const githubLabel = options.providerId === 'github-copilot'
-          ? element.querySelector('[data-component="ActionList.Item.Label"] > span')?.firstChild?.textContent
+          ? element.querySelector('[data-component="ActionList.Item.Label"] > span')?.firstChild?.textContent ?? element.querySelector('[data-component="ActionList.Item.Label"]')?.textContent
           : null
         const text = (githubLabel ?? labelElement?.textContent ?? element.getAttribute('aria-label') ?? element.textContent ?? '').replace(/\s+/g, ' ').trim()
         const fullText = (element.textContent ?? '').replace(/\s+/g, ' ').trim()
@@ -368,10 +379,14 @@ async function collectVisibleChoices(page: Page, provider: ProviderDomDefinition
           grokUpgradeRestricted ||
           unrelatedAccountControl
         )
+        const description = options.providerId === 'github-copilot' ? element.getAttribute('aria-description') : null
+        const requiredPlan = description ? /Upgrade to (.+?) to access/u.exec(description)?.[1] : null
         return {
           label: text.slice(0, 120),
           selected: ariaSelected,
           enabled: !disabled,
+          ...(description ? { description } : {}),
+          ...(requiredPlan ? { requiredPlan } : {}),
         }
       }).filter((entry) => entry.label.length > 0)
     }, {

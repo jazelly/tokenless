@@ -228,6 +228,7 @@ export const PROVIDER_NAVIGATION_CATALOG = Object.freeze({
     pagePatterns: pages(
       { kind: 'entry', urlPattern: 'https://github.com/copilot' },
       { kind: 'conversation', urlPattern: 'https://github.com/copilot/c/:conversationId' },
+      { kind: 'conversation', urlPattern: 'https://github.com/:owner/:repo/tasks/:conversationId' },
     ),
     trustedSignInOrigins: [],
   }),

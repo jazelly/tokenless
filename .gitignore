@@ -33,6 +33,8 @@ docs/*
 !docs/updates.zh-CN.md
 !docs/g4f-direct-provider-service.md
 !docs/g4f-direct-provider-service.zh-CN.md
+!docs/github-copilot.md
+!docs/github-copilot.zh-CN.md
 !docs/glossary.md
 !docs/glossary.zh-CN.md
 !docs/harness-browser-extension.md

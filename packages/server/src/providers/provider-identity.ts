@@ -30,6 +30,9 @@ export const PROVIDER_CAPABILITIES = Object.freeze({
   KIMI_SEARCH: 'kimi.search',
   KIMI_PLUGIN: 'kimi.plugin',
   KIMI_SKILL: 'kimi.skill',
+  GITHUB_COPILOT_MODE: 'github-copilot.mode',
+  GITHUB_COPILOT_REPOSITORY: 'github-copilot.repository',
+  GITHUB_COPILOT_USAGE: 'github-copilot.usage',
 })
 
 export type ProviderCapabilityId = typeof PROVIDER_CAPABILITIES[keyof typeof PROVIDER_CAPABILITIES]

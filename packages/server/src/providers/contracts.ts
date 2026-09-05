@@ -42,6 +42,11 @@ export const VISIBLE_ACTIONS = Object.freeze({
   KIMI_PLUGIN_SELECT: 'kimi.plugin.select',
   KIMI_SKILL_INSPECT: 'kimi.skill.inspect',
   KIMI_SKILL_SELECT: 'kimi.skill.select',
+  GITHUB_COPILOT_MODE_INSPECT: 'github-copilot.mode.inspect',
+  GITHUB_COPILOT_MODE_SELECT: 'github-copilot.mode.select',
+  GITHUB_COPILOT_REPOSITORY_INSPECT: 'github-copilot.repository.inspect',
+  GITHUB_COPILOT_REPOSITORY_SELECT: 'github-copilot.repository.select',
+  GITHUB_COPILOT_USAGE_INSPECT: 'github-copilot.usage.inspect',
   FILE_UPLOAD: 'file.upload',
   WORKSPACE_ENSURE: 'workspace.ensure',
   PROMPT_INPUT: 'prompt.input',
@@ -135,6 +140,9 @@ export type DoubaoSkillSelectionPayload = {
 }
 export type KimiSearchSelectionPayload = {
   mode: 'auto' | 'off'
+}
+export type GitHubCopilotModeSelectionPayload = {
+  mode: 'ask' | 'agent'
 }
 export type FileUploadPayload = {
   attachments: readonly AttachmentInput[]
@@ -321,6 +329,11 @@ export type BlockerCheckActionRequest = VisibleActionRequestEnvelope<
 >
 
 export type VisibleActionRequest =
+  | VisibleActionRequestEnvelope<typeof VISIBLE_ACTIONS.GITHUB_COPILOT_MODE_INSPECT, EmptyVisibleActionPayload>
+  | VisibleActionRequestEnvelope<typeof VISIBLE_ACTIONS.GITHUB_COPILOT_MODE_SELECT, GitHubCopilotModeSelectionPayload>
+  | VisibleActionRequestEnvelope<typeof VISIBLE_ACTIONS.GITHUB_COPILOT_REPOSITORY_INSPECT, EmptyVisibleActionPayload>
+  | VisibleActionRequestEnvelope<typeof VISIBLE_ACTIONS.GITHUB_COPILOT_REPOSITORY_SELECT, VisibleSelectionPayload>
+  | VisibleActionRequestEnvelope<typeof VISIBLE_ACTIONS.GITHUB_COPILOT_USAGE_INSPECT, EmptyVisibleActionPayload>
   | CapabilityInspectActionRequest
   | AuthStatusActionRequest
   | ModelInspectActionRequest

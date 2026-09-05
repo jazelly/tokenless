@@ -550,6 +550,14 @@ async function visibleAttachmentEvidence(
         })
       return [...imageEvidence, ...fileEvidence]
     }
+    if (providerId === 'github-copilot' && document.querySelector('button[class*="ImageAttachButton-module__attachButton"]')) {
+      const draft = (document.querySelector('textarea#copilot-chat-textarea') as HTMLTextAreaElement | null)?.value ?? ''
+      return Array.from(draft.matchAll(/!\[([^\]\n]+)\]\(https:\/\/github\.com\/user-attachments\/assets\/[a-f0-9-]+\)/gu)).map((match, index) => ({
+        id: `github-copilot-agent-image|${index}|${match[1]}`,
+        extensions: expectedExtensions.filter((extension) => match[1]!.toLowerCase().endsWith(extension)),
+        ready: true,
+      }))
+    }
     const selectors = [
       '[data-testid*="attachment" i]',
       '[data-testid*="upload" i]',

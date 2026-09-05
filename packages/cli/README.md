@@ -117,6 +117,7 @@ Implicit normal runs keep compatible provider alternatives for the current execu
 | Dola | Experimental | Sign-in required |
 | Arena | Supported | Sign-in required |
 | Meta AI | Experimental | Sign-in required |
+| GitHub Copilot | Experimental | Sign-in required |
 
 Prompt submission and response reading are the shared baseline. Files, citations, model or effort controls, conversation continuation, and Workspaces depend on the visible provider, profile, and account state. Meta AI chat and file upload are experimentally routeable from a selected signed-in profile; Instant/Thinking selection is available, while image generation remains unadvertised until the CLI exposes its artifact lifecycle.
 
@@ -131,6 +132,8 @@ tokenless provider-action \
 ```
 
 Unsupported, ambiguous, or unproven behavior fails closed.
+
+[GitHub Copilot controls](../../docs/github-copilot.md): Ask / Agent, repository / Project, model access, files, AI credits.
 
 ## Qwen Modes
 

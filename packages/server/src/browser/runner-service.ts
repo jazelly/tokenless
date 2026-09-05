@@ -1693,6 +1693,12 @@ function liveInspectionTarget(capability: TaskCapabilityId, provider: ProviderId
   providerCapability: ProviderCapabilityId
   scope: 'overall' | 'native'
 } | null {
+  if (provider === 'github-copilot' && (capability === TASK_CAPABILITIES.AGENT_EXECUTE || capability === TASK_CAPABILITIES.SEARCH_WEB)) {
+    return { providerCapability: PROVIDER_CAPABILITIES.GITHUB_COPILOT_MODE, scope: 'overall' }
+  }
+  if (provider === 'github-copilot' && capability === TASK_CAPABILITIES.IMAGE_INPUT) {
+    return { providerCapability: PROVIDER_CAPABILITIES.FILE_UPLOAD, scope: 'overall' }
+  }
   if (
     capability === TASK_CAPABILITIES.CONVERSATION_CHAT ||
     capability === TASK_CAPABILITIES.CONVERSATION_CONTINUE

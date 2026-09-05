@@ -83,6 +83,41 @@ const responseReadLifecycle = Object.freeze({
 } satisfies VisibleActionLifecycle)
 
 export const VISIBLE_ACTION_CATALOG = Object.freeze({
+  [VISIBLE_ACTIONS.GITHUB_COPILOT_MODE_INSPECT]: defineAction({
+    action: VISIBLE_ACTIONS.GITHUB_COPILOT_MODE_INSPECT,
+    lifecycle: gatedReadOnly,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.GITHUB_COPILOT_MODE],
+    validatePayload: validateEmptyPayload,
+  }),
+  [VISIBLE_ACTIONS.GITHUB_COPILOT_MODE_SELECT]: defineAction({
+    action: VISIBLE_ACTIONS.GITHUB_COPILOT_MODE_SELECT,
+    lifecycle: reconstructableGatedMutation,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.GITHUB_COPILOT_MODE],
+    validatePayload(payload) {
+      if (payload.mode !== 'ask' && payload.mode !== 'agent') {
+        throw tokenlessError('invalid_github_copilot_mode', 'GitHub Copilot mode must be ask or agent.', { retryable: false })
+      }
+      return { mode: payload.mode }
+    },
+  }),
+  [VISIBLE_ACTIONS.GITHUB_COPILOT_REPOSITORY_INSPECT]: defineAction({
+    action: VISIBLE_ACTIONS.GITHUB_COPILOT_REPOSITORY_INSPECT,
+    lifecycle: gatedReadOnly,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.GITHUB_COPILOT_REPOSITORY],
+    validatePayload: validateEmptyPayload,
+  }),
+  [VISIBLE_ACTIONS.GITHUB_COPILOT_REPOSITORY_SELECT]: defineAction({
+    action: VISIBLE_ACTIONS.GITHUB_COPILOT_REPOSITORY_SELECT,
+    lifecycle: reconstructableGatedMutation,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.GITHUB_COPILOT_REPOSITORY],
+    validatePayload: validateSelectionPayload,
+  }),
+  [VISIBLE_ACTIONS.GITHUB_COPILOT_USAGE_INSPECT]: defineAction({
+    action: VISIBLE_ACTIONS.GITHUB_COPILOT_USAGE_INSPECT,
+    lifecycle: gatedReadOnly,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.GITHUB_COPILOT_USAGE],
+    validatePayload: validateEmptyPayload,
+  }),
   [VISIBLE_ACTIONS.CAPABILITY_INSPECT]: defineAction({
     action: VISIBLE_ACTIONS.CAPABILITY_INSPECT,
     lifecycle: gatedReadOnly,

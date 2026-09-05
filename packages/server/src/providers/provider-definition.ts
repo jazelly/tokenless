@@ -254,8 +254,12 @@ export function providerCapabilities(options: {
   doubaoControls?: boolean
   kimiSearchControl?: boolean
   kimiLibraryControls?: boolean
+  githubCopilotControls?: boolean
 } = {}): Readonly<Record<ProviderCapabilityId, ProviderCapabilityStrategy>> {
   return Object.freeze({
+    [PROVIDER_CAPABILITIES.GITHUB_COPILOT_MODE]: providerSpecificControlStrategy(PROVIDER_CAPABILITIES.GITHUB_COPILOT_MODE, 'github-copilot-mode', options.githubCopilotControls === true),
+    [PROVIDER_CAPABILITIES.GITHUB_COPILOT_REPOSITORY]: providerSpecificControlStrategy(PROVIDER_CAPABILITIES.GITHUB_COPILOT_REPOSITORY, 'github-copilot-repository', options.githubCopilotControls === true),
+    [PROVIDER_CAPABILITIES.GITHUB_COPILOT_USAGE]: providerSpecificControlStrategy(PROVIDER_CAPABILITIES.GITHUB_COPILOT_USAGE, 'github-copilot-usage', options.githubCopilotControls === true),
     [PROVIDER_CAPABILITIES.CAPABILITY_INSPECT]: Object.freeze({
       capability: PROVIDER_CAPABILITIES.CAPABILITY_INSPECT,
       availability: 'available',
