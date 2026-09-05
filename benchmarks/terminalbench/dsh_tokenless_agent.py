@@ -94,6 +94,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         token_estimator_node: str,
         token_estimator_script: str,
         tokenless_home: str,
+        provider: str = "auto",
     ) -> None:
         super().__init__(address, _ScopedBridgeHandler)
         parsed = urlsplit(daemon_url)
@@ -117,6 +118,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         self.control_token = control_token
         self.channel_token = channel_token
         self.expected_profile = profile
+        self.expected_provider = provider
         if PROVIDER_ID_PATTERN.fullmatch(semantic_preference) is None:
             raise ValueError("Terminal-Bench semantic preference is invalid.")
         self.semantic_preference = semantic_preference
@@ -373,10 +375,10 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             value = self._json_object(body)
             if (
                 set(value) != {"provider", "profileId"}
-                or value.get("provider") != "auto"
+                or value.get("provider") != self.expected_provider
                 or value.get("profileId") != self.expected_profile
             ):
-                raise ValueError("provider binding is not the expected auto profile")
+                raise ValueError("provider binding does not match the selected provider and profile")
             if self._provider_binding_ref is not None:
                 raise ValueError("provider binding was already accepted")
             return {"kind": "bind"}
@@ -603,15 +605,16 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         self, body: bytes | None, audit_sequence: int | None = None
     ) -> bytes:
         value = self._json_object(body)
-        if value.get("model") != "tokenless/auto":
-            raise ValueError("DSH parent completion must use tokenless/auto")
+        if value.get("model") != f"tokenless/{self.expected_provider}":
+            raise ValueError("DSH parent completion must use the selected Tokenless API model")
         tokenless = value.get("tokenless")
         if tokenless is None:
             tokenless = {}
         if not isinstance(tokenless, dict):
             raise ValueError("DSH parent tokenless options are invalid")
         tokenless = dict(tokenless)
-        tokenless["semantic_preference"] = self.semantic_preference
+        if self.expected_provider == "auto":
+            tokenless["semantic_preference"] = self.semantic_preference
         value["tokenless"] = tokenless
         if self.final_only_parent_completion_due():
             value["tool_choice"] = "none"
@@ -621,7 +624,8 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
 
     def decorate_bootstrap_body(self, body: bytes | None) -> bytes:
         value = self._json_object(body)
-        value["semanticPreference"] = self.semantic_preference
+        if self.expected_provider == "auto":
+            value["semanticPreference"] = self.semantic_preference
         return json.dumps(value, separators=(",", ":")).encode("utf-8")
 
     @staticmethod
@@ -1504,8 +1508,12 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
             self.semantic_manifest, self._manifest
         )
         if "provider" in kwargs:
-            raise ValueError("Terminal-Bench DeepSeek Harness agent does not accept a fixed provider; use tokenless/auto.")
+            raise ValueError("Select the provider through the Harbor model_name, not a provider kwarg.")
         super().__init__(*args, **kwargs)
+        model = self.model_name or "tokenless/auto"
+        if not model.startswith("tokenless/") or PROVIDER_ID_PATTERN.fullmatch(model[10:]) is None:
+            raise ValueError("Terminal-Bench model_name must be tokenless/auto or tokenless/<provider>.")
+        self.provider = model[10:]
 
         for label, file_path in (
             ("runtime_archive", self.runtime_archive),
@@ -1761,7 +1769,7 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
                 }
             },
         }
-        model = "tokenless/auto"
+        model = f"tokenless/{self.provider}"
         patch = "\n".join(
             [
                 "- id: system-prompt",
@@ -1803,7 +1811,7 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
                 "        nodeExecutable: node",
                 "        cliScript: /installed-agent/runtime/node_modules/tokenless/dist/src/tokenless.mjs",
                 "        tokenlessHome: /tmp/tokenless-harness-home",
-                "        provider: auto",
+                f"        provider: {self.provider}",
                 f"        profile: {json.dumps(self.profile)}",
                 "        timeoutMs: 600000",
                 "        disposeGraceMs: 3000",
@@ -1858,6 +1866,7 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
             str(self.token_estimator_node),
             str(self.token_estimator_script),
             self.tokenless_home,
+            self.provider,
         )
         bridge_thread = threading.Thread(
             target=bridge.serve_forever,
@@ -1998,8 +2007,8 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
             "protocol": CHANNEL_PROTOCOL,
             "auditProtocol": AUDIT_PROTOCOL,
             "dshRevision": DSH_REVISION,
-            "model": "tokenless/auto",
-            "routingMode": "auto",
+            "model": f"tokenless/{self.provider}",
+            "routingMode": "auto" if self.provider == "auto" else "fixed",
             "semanticManifestDigest": self.semantic_manifest_digest,
             "semanticPreference": getattr(self, "current_semantic_preference", None),
             "taskScopedBridge": True,

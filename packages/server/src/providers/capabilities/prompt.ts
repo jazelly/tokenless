@@ -202,6 +202,15 @@ async function promptInputDiagnostics(page: Page) {
 }
 
 async function dismissProviderAnnouncement(page: Page, provider: ProviderDomDefinition) {
+  if (provider.descriptor.id === 'chatgpt') {
+    const dialog = page.locator('[role="dialog"], [role="alertdialog"]')
+      .filter({ visible: true, hasText: /temporarily limited access to your conversations to protect your data/i })
+      .last()
+    if (!await dialog.isVisible({ timeout: 100 }).catch(() => false)) return
+    await dialog.getByRole('button', { name: 'Got it', exact: true }).click({ timeout: 5000 })
+    await dialog.waitFor({ state: 'hidden', timeout: 2000 })
+    return
+  }
   if (provider.descriptor.id === 'claude') {
     const notNow = page.locator('button')
       .filter({ visible: true, hasText: /^\s*Not now\s*$/u })
@@ -517,6 +526,7 @@ async function waitForActionableSubmitControl(
   let attempt = 0
   while (Date.now() <= deadline) {
     assertNotAborted(signal)
+    if (provider.descriptor.id === 'chatgpt') await dismissProviderAnnouncement(page, provider)
     const button = await firstEnabledLocator(page, provider.submitSelectors)
     if (button) {
       const trialTimeoutMs = Math.min(2_000, Math.max(1, deadline - Date.now()))
