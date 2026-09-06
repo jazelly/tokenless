@@ -24,7 +24,9 @@ from harbor.agents.installed.base import (
     with_prompt_template,
 )
 from harbor.environments.base import BaseEnvironment
+from harbor.constants import PACKAGE_CACHE_DIR
 from harbor.models.agent.context import AgentContext
+from harbor.models.task.task import strip_canary
 
 
 DSH_REVISION = "47f943859bef60e4160492346772ded9b24f765a"
@@ -1671,13 +1673,27 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
         return result, manifest_digest
 
     def _validate_instruction(self, instruction: str) -> dict[str, Any]:
-        digest = "sha256:" + hashlib.sha256(instruction.encode("utf-8")).hexdigest()
-        if digest not in self._manifest.values():
+        task = json.loads((self.logs_dir.parent / "config.json").read_text())["task"]
+        name = task["name"].removeprefix("terminal-bench/")
+        task_refs = json.loads(self.task_manifest.read_text())["taskRefs"]
+        if (
+            name not in self._manifest
+            or task["name"] != f"terminal-bench/{name}"
+            or task.get("ref") != task_refs[name]
+        ):
+            raise ValueError("The Harbor task is not in the pinned Terminal-Bench 4.0 dataset.")
+        instruction_path = (
+            PACKAGE_CACHE_DIR / "terminal-bench" / name
+            / task_refs[name].removeprefix("sha256:") / "instruction.md"
+        )
+        raw_instruction = instruction_path.read_text(encoding="utf-8")
+        digest = "sha256:" + hashlib.sha256(raw_instruction.encode("utf-8")).hexdigest()
+        if digest != self._manifest[name] or instruction != strip_canary(raw_instruction):
             raise ValueError("The Harbor instruction is not one of the pinned Terminal-Bench 4.0 task instructions.")
         semantic = self._semantic_manifest.get(digest)
         if semantic is None:
             raise ValueError("The Harbor instruction has no semantic preference in the pinned manifest.")
-        if semantic["truncated"] != (len(instruction) > 4_000):
+        if semantic["truncated"] != (len(raw_instruction) > 4_000):
             raise ValueError("The semantic manifest truncation observation does not match the official instruction.")
         return semantic
 

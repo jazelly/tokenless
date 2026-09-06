@@ -354,9 +354,11 @@ async function ensureHostDaemon(homeDir, explicitDaemonUrl) {
   if (config?.apiProxy?.executionMode !== 'browser') {
     throw new Error('The DeepSeek Harness lane requires browser execution mode in the selected Tokenless API home.')
   }
-  const daemon = await runtime.ensureDaemonReady({
+  const daemonUrl = runtime.daemonUrl(explicitDaemonUrl ?? config.daemonUrl ?? undefined)
+  const ready = await runtime.probeDaemonReady({ homeDir, daemonUrl, timeoutMs: 10_000 })
+  const daemon = ready.ok ? ready : await runtime.ensureDaemonReady({
     homeDir,
-    daemonUrl: runtime.daemonUrl(explicitDaemonUrl ?? config.daemonUrl ?? undefined),
+    daemonUrl,
   })
   return { ...daemon, executionMode: config.apiProxy.executionMode }
 }
