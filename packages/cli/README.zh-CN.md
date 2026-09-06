@@ -1,8 +1,52 @@
-# Tokenless CLI
+# Tokenless API CLI
 
-`tokenless` 目前让 agent 通过本机 CLI 使用你正在运行的 Google Chrome 或 Brave Browser 中可见的 AI 网站。在该 visible-browser mode 中，provider 凭据和浏览器状态保留在本机所选浏览器中。
+Tokenless Web Harness 的 CLI 与本地 API 入口，让你已有的网页大模型账号为 Agent 完成任务。
 
 [English](README.md) · [命令参考](https://github.com/jazelly/tokenless/blob/main/COMMANDS.zh-CN.md) · [Capability Matrix](https://github.com/jazelly/tokenless/blob/main/docs/capability-matrix.zh-CN.md) · [隐私](https://github.com/jazelly/tokenless/blob/main/PRIVACY.zh-CN.md)
+
+## 三种使用方式
+
+| 用法 | 由谁执行任务流程 |
+| --- | --- |
+| Tokenless Harness + API | Tokenless Harness 管理任务，通过 Tokenless API 访问网页大模型。 |
+| 自选 Harness + Tokenless API | 自己的 Harness 保留工具与流程，使用 Tokenless API 作为模型接口。 |
+| 自选 Harness + Tokenless Skill | 在原有工作流中按需调用 Skill，只交出选定任务。 |
+
+[查看 Dashboard 与三种用法图示](https://github.com/jazelly/tokenless/blob/main/README.zh-CN.md#三种使用方式)。
+
+## Provider 清单
+
+当前目录共 43 个 provider：15 个浏览器条目，以及 28 个仅 Direct 模式的条目。
+
+- **已支持的浏览器路由**：ChatGPT、Claude、Gemini、Grok、Arena。
+- **实验性浏览器路由**：Qwen / 千问、DeepSeek、Perplexity、Z.ai / GLM、Doubao / 豆包、Kimi、Dola、Meta AI、GitHub Copilot。
+- **待验证**：Microsoft Copilot。
+
+<details>
+<summary>查看 28 个仅 Direct 模式的 provider</summary>
+
+以下为实验性 G4F 映射；目录登记不等于已通过逐项真实运行验证。另有 12 个浏览器 provider 也注册了 Direct 入口，共 40 个 Direct 映射。
+
+| Provider | ID | Provider | ID |
+| --- | --- | --- | --- |
+| Black Forest Labs | `black-forest-labs` | Blackbox AI | `blackbox` |
+| Cerebras | `cerebras` | Cloudflare AI | `cloudflare` |
+| Cohere | `cohere` | DeepInfra | `deepinfra` |
+| ElevenLabs | `elevenlabs` | Fenay AI | `fenay-ai` |
+| GLHF | `glhf` | Groq | `groq` |
+| Hugging Face | `hugging-face` | MiniMax | `minimax` |
+| NVIDIA | `nvidia` | Ollama | `ollama` |
+| OpenRouter | `openrouter` | Opera Aria | `opera-aria` |
+| Phind AI | `phind` | Pi | `pi` |
+| Pollinations | `pollinations` | Puter | `puter` |
+| Replicate | `replicate` | Sber GigaChat | `gigachat` |
+| Stability AI | `stability-ai` | Teach Anything | `teach-anything` |
+| TheB.AI | `theb-ai` | Together AI | `together` |
+| WhiteRabbitNeo | `whiterabbitneo` | YQCloud | `yqcloud` |
+
+</details>
+
+[完整清单、模式与支持范围](https://github.com/jazelly/tokenless/blob/main/README.zh-CN.md#providers)。
 
 ## 安装
 

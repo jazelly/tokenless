@@ -1,8 +1,52 @@
-# Tokenless CLI
+# Tokenless API CLI
 
-`tokenless` currently gives agents local CLI access to visible AI websites by attaching Playwright to the user's running Google Chrome or Brave Browser. In this visible-browser mode, provider credentials and browser state stay in the selected browser on the user's machine.
+The CLI and local API entry point for the Tokenless Web Harness. Put your existing web LLM accounts to work for your agents.
 
 [中文](README.zh-CN.md) · [Commands](https://github.com/jazelly/tokenless/blob/main/COMMANDS.md) · [Capability Matrix](https://github.com/jazelly/tokenless/blob/main/docs/capability-matrix.md) · [Capability Matrix 中文](https://github.com/jazelly/tokenless/blob/main/docs/capability-matrix.zh-CN.md) · [中文命令参考](https://github.com/jazelly/tokenless/blob/main/COMMANDS.zh-CN.md) · [Privacy](https://github.com/jazelly/tokenless/blob/main/PRIVACY.md)
+
+## Three ways to use Tokenless
+
+| Workflow | Who runs the task |
+| --- | --- |
+| Tokenless Harness + API | Tokenless Harness manages the task and accesses web LLMs through Tokenless API. |
+| Your Harness + Tokenless API | Your Harness keeps its tools and loop; Tokenless API supplies model access. |
+| Your Harness + Tokenless skill | Invoke the skill on demand for selected tasks in your existing workflow. |
+
+[See the Dashboard and illustrated workflows](https://github.com/jazelly/tokenless/blob/main/README.md#three-ways-to-use-tokenless).
+
+## Provider catalog
+
+The current catalog contains 43 providers: 15 browser entries and 28 additional Direct-only entries.
+
+- **Supported browser routes**: ChatGPT, Claude, Gemini, Grok, Arena.
+- **Experimental browser routes**: Qwen / 千问, DeepSeek, Perplexity, Z.ai / GLM, Doubao / 豆包, Kimi, Dola, Meta AI, GitHub Copilot.
+- **Awaiting verification**: Microsoft Copilot.
+
+<details>
+<summary>View the 28 Direct-only providers</summary>
+
+These are experimental G4F mappings, not a claim that every provider has passed a real run. Twelve browser providers also have Direct entry points, for 40 Direct mappings in total.
+
+| Provider | ID | Provider | ID |
+| --- | --- | --- | --- |
+| Black Forest Labs | `black-forest-labs` | Blackbox AI | `blackbox` |
+| Cerebras | `cerebras` | Cloudflare AI | `cloudflare` |
+| Cohere | `cohere` | DeepInfra | `deepinfra` |
+| ElevenLabs | `elevenlabs` | Fenay AI | `fenay-ai` |
+| GLHF | `glhf` | Groq | `groq` |
+| Hugging Face | `hugging-face` | MiniMax | `minimax` |
+| NVIDIA | `nvidia` | Ollama | `ollama` |
+| OpenRouter | `openrouter` | Opera Aria | `opera-aria` |
+| Phind AI | `phind` | Pi | `pi` |
+| Pollinations | `pollinations` | Puter | `puter` |
+| Replicate | `replicate` | Sber GigaChat | `gigachat` |
+| Stability AI | `stability-ai` | Teach Anything | `teach-anything` |
+| TheB.AI | `theb-ai` | Together AI | `together` |
+| WhiteRabbitNeo | `whiterabbitneo` | YQCloud | `yqcloud` |
+
+</details>
+
+[Full provider list, modes, and support boundaries](https://github.com/jazelly/tokenless/blob/main/README.md#providers).
 
 ## Install
 

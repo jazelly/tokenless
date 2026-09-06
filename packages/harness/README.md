@@ -1,4 +1,6 @@
-# Tokenless Web Agent Harness
+# Tokenless Harness
+
+The Web Harness runtime for Tokenless: it runs agent tasks, manages tool continuation, and accesses web LLMs through Tokenless API. This is the main runtime workflow; callers with their own Harness can instead connect to the API or invoke the skill on demand. [Compare the three workflows](../../README.md#three-ways-to-use-tokenless).
 
 This private workspace package owns Tokenless agent adapters, Harness context persistence, and the V1 Skill preparation slice. It remains independent of provider DOM, Playwright, profiles, and provider database internals.
 

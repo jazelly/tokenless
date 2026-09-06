@@ -7,7 +7,7 @@
 <p align="center"><strong>让你已有的网页大模型账号，为 Agent 完成任务。</strong></p>
 
 <p align="center">
-  <a href="#三条命令开始使用">快速开始</a> · <a href="#什么是-web-harness">什么是 Web Harness</a> · <a href="docs/capability-matrix.zh-CN.md">支持的能力</a> · <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a>
+  <a href="#三条命令开始使用">快速开始</a> · <a href="#什么是-web-harness">什么是 Web Harness</a> · <a href="#providers">Providers</a> · <a href="docs/capability-matrix.zh-CN.md">支持的能力</a> · <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a>
 </p>
 
 <p align="center">
@@ -48,33 +48,69 @@
 
 <sub>AI 生成的用途示意图；具体能力以所选 provider 的已验证支持为准。</sub>
 
-## 13 家 provider，一个本地接口
+<a id="providers"></a>
 
-目前有 5 家 provider 受支持，另外 8 家处于实验阶段；只展示经过验证的工作流。
+## Providers · 43 个目录条目
+
+15 个浏览器 provider，另有 28 个仅 Direct 模式的 provider。以下按当前注册目录列出，具体可用能力以验证状态为准。
+
+### 浏览器模式
 
 <table>
   <tr>
-    <td align="center" width="20%"><img src="https://cdn.oaistatic.com/assets/favicon-miwirzcw.ico" alt="ChatGPT" width="32" height="32"><br><strong>ChatGPT</strong><br><sub>已支持</sub></td>
-    <td align="center" width="20%"><img src="https://claude.ai/favicon.ico" alt="Claude" width="32" height="32"><br><strong>Claude</strong><br><sub>已支持</sub></td>
-    <td align="center" width="20%"><img src="https://www.gstatic.com/lamda/images/gemini_sparkle_aurora_33f86dc0c0257da337c63.svg" alt="Gemini" width="32" height="32"><br><strong>Gemini</strong><br><sub>已支持</sub></td>
-    <td align="center" width="20%"><img src="https://grok.com/images/favicon.svg" alt="Grok" width="32" height="32"><br><strong>Grok</strong><br><sub>已支持</sub></td>
-    <td align="center" width="20%"><img src="https://assets.alicdn.com/g/qwenweb/qwen-chat-fe/0.2.83/favicon.png" alt="Qwen" width="32" height="32"><br><strong>Qwen / 千问</strong><br><sub>实验性</sub></td>
+    <td align="center" width="20%"><a href="https://chatgpt.com/"><img src="assets/providers/chatgpt.ico" alt="ChatGPT" width="32" height="32"><br><strong>ChatGPT</strong></a><br><sub>已支持</sub></td>
+    <td align="center" width="20%"><a href="https://claude.ai/new"><img src="assets/providers/claude.ico" alt="Claude" width="32" height="32"><br><strong>Claude</strong></a><br><sub>已支持</sub></td>
+    <td align="center" width="20%"><a href="https://gemini.google.com/app"><img src="assets/providers/gemini.svg" alt="Gemini" width="32" height="32"><br><strong>Gemini</strong></a><br><sub>已支持</sub></td>
+    <td align="center" width="20%"><a href="https://grok.com/"><img src="assets/providers/grok.svg" alt="Grok" width="32" height="32"><br><strong>Grok</strong></a><br><sub>已支持</sub></td>
+    <td align="center" width="20%"><a href="https://chat.qwen.ai/"><img src="assets/providers/qwen.png" alt="Qwen / 千问" width="32" height="32"><br><strong>Qwen / 千问</strong></a><br><sub>实验性</sub></td>
   </tr>
   <tr>
-    <td align="center" width="20%"><img src="https://cdn.simpleicons.org/deepseek/4D6BFE" alt="DeepSeek" width="32" height="32"><br><strong>DeepSeek</strong><br><sub>实验性</sub></td>
-    <td align="center" width="20%"><img src="https://cdn.simpleicons.org/perplexity/20808D" alt="Perplexity" width="32" height="32"><br><strong>Perplexity</strong><br><sub>实验性</sub></td>
-    <td align="center" width="20%"><img src="https://z-cdn.chatglm.cn/z-ai/static/logo.svg" alt="Z.ai" width="32" height="32"><br><strong>Z.ai / GLM</strong><br><sub>实验性</sub></td>
-    <td align="center" width="20%"><img src="https://lf-flow-web-cdn.doubao.com/obj/flow-doubao/favicon/new-doubao/128x128.png" alt="Doubao" width="32" height="32"><br><strong>Doubao / 豆包</strong><br><sub>实验性</sub></td>
-    <td align="center" width="20%"><img src="https://www.kimi.com/favicon-light.ico" alt="Kimi" width="32" height="32"><br><strong>Kimi</strong><br><sub>实验性</sub></td>
+    <td align="center" width="20%"><a href="https://chat.deepseek.com/"><img src="assets/providers/deepseek.svg" alt="DeepSeek" width="32" height="32"><br><strong>DeepSeek</strong></a><br><sub>实验性</sub></td>
+    <td align="center" width="20%"><a href="https://www.perplexity.ai/"><img src="assets/providers/perplexity.svg" alt="Perplexity" width="32" height="32"><br><strong>Perplexity</strong></a><br><sub>实验性</sub></td>
+    <td align="center" width="20%"><a href="https://chat.z.ai/"><img src="assets/providers/zai.svg" alt="Z.ai / GLM" width="32" height="32"><br><strong>Z.ai / GLM</strong></a><br><sub>实验性</sub></td>
+    <td align="center" width="20%"><a href="https://www.doubao.com/chat/"><img src="assets/providers/doubao.png" alt="Doubao / 豆包" width="32" height="32"><br><strong>Doubao / 豆包</strong></a><br><sub>实验性</sub></td>
+    <td align="center" width="20%"><a href="https://www.kimi.ai/"><img src="assets/providers/kimi.ico" alt="Kimi" width="32" height="32"><br><strong>Kimi</strong></a><br><sub>实验性</sub></td>
   </tr>
   <tr>
-    <td align="center" width="20%"><img src="https://sf-flow-web-cdn.ciciai.com/obj/ocean-flow-web-sg/dola_web/favicon-dola.png" alt="Dola" width="32" height="32"><br><strong>Dola</strong><br><sub>实验性</sub></td>
-    <td align="center" width="20%"><img src="https://arena.ai/favicon.ico" alt="Arena" width="32" height="32"><br><strong>Arena</strong><br><sub>已支持</sub></td>
-    <td align="center" width="20%"><img src="https://meta.ai/favicon.ico" alt="Meta AI" width="32" height="32"><br><strong>Meta AI</strong><br><sub>实验性</sub></td>
+    <td align="center" width="20%"><a href="https://www.dola.com/chat"><img src="assets/providers/dola.png" alt="Dola" width="32" height="32"><br><strong>Dola</strong></a><br><sub>实验性</sub></td>
+    <td align="center" width="20%"><a href="https://arena.ai/text/direct"><img src="assets/providers/arena.ico" alt="Arena" width="32" height="32"><br><strong>Arena</strong></a><br><sub>已支持</sub></td>
+    <td align="center" width="20%"><a href="https://meta.ai/"><img src="assets/providers/meta.ico" alt="Meta AI" width="32" height="32"><br><strong>Meta AI</strong></a><br><sub>实验性</sub></td>
+    <td align="center" width="20%"><a href="https://copilot.microsoft.com/"><img src="assets/providers/microsoft-copilot.ico" alt="Microsoft Copilot" width="32" height="32"><br><strong>Microsoft Copilot</strong></a><br><sub>待验证</sub></td>
+    <td align="center" width="20%"><a href="https://github.com/copilot"><img src="assets/providers/github-copilot.svg" alt="GitHub Copilot" width="32" height="32"><br><strong>GitHub Copilot</strong></a><br><sub>实验性</sub></td>
   </tr>
 </table>
 
-每家 provider 已验证的工作流见 [Capability Matrix](docs/capability-matrix.zh-CN.md)。
+Microsoft Copilot 已注册，目前尚无已验证的浏览器能力路由。其余条目按浏览器路由标注为 5 家已支持、9 家实验性。
+
+<details>
+<summary>Direct 模式：查看全部 40 个映射</summary>
+
+通过 G4F 映射，上面这些 provider 也提供 Direct 入口：ChatGPT, Claude, Gemini, Grok, Qwen / 千问, DeepSeek, Perplexity, Z.ai / GLM, Arena, Meta AI, Microsoft Copilot, GitHub Copilot.
+
+另有以下 **28 个仅 Direct 模式的目录条目**；这些条目均为实验性映射，登记不等于已通过逐项真实运行验证。
+
+| Provider | ID | Provider | ID |
+| --- | --- | --- | --- |
+| Black Forest Labs | `black-forest-labs` | Blackbox AI | `blackbox` |
+| Cerebras | `cerebras` | Cloudflare AI | `cloudflare` |
+| Cohere | `cohere` | DeepInfra | `deepinfra` |
+| ElevenLabs | `elevenlabs` | Fenay AI | `fenay-ai` |
+| GLHF | `glhf` | Groq | `groq` |
+| Hugging Face | `hugging-face` | MiniMax | `minimax` |
+| NVIDIA | `nvidia` | Ollama | `ollama` |
+| OpenRouter | `openrouter` | Opera Aria | `opera-aria` |
+| Phind AI | `phind` | Pi | `pi` |
+| Pollinations | `pollinations` | Puter | `puter` |
+| Replicate | `replicate` | Sber GigaChat | `gigachat` |
+| Stability AI | `stability-ai` | Teach Anything | `teach-anything` |
+| TheB.AI | `theb-ai` | Together AI | `together` |
+| WhiteRabbitNeo | `whiterabbitneo` | YQCloud | `yqcloud` |
+
+[Direct 模式接入与限制](docs/g4f-direct-provider-service.zh-CN.md)。
+
+</details>
+
+[查看各 provider 已验证的能力](docs/capability-matrix.zh-CN.md)。
 
 ## 三条命令开始使用
 
@@ -86,12 +122,12 @@ tokenless setup
 tokenless run --provider chatgpt --prompt "Review this proposal."
 ```
 
-Setup 需要 `uv` 来准备 G4F runtime，并会自动同步配套 skills；升级也会同步。仅刷新 skills 可运行 `tokenless skills sync --json`。Windows 不安装 macOS 菜单栏 App，macOS 的菜单栏 App 为独立可选安装。
-
 Setup 会自动打开本地 Dashboard，之后可随时用 `tokenless dashboard` 再次打开。
 
 <details>
 <summary>浏览器准备与更新</summary>
+
+Setup 需要 `uv` 来准备 G4F runtime，并会自动同步配套 skills；升级也会同步。仅刷新 skills 可运行 `tokenless skills sync --json`。Windows 不安装 macOS 菜单栏 App，macOS 的菜单栏 App 为独立可选安装。
 
 Native mode 使用当前版本的 Chrome 或 Brave；在 `chrome://inspect/#remote-debugging` 或 `brave://inspect/#remote-debugging` 启用 remote debugging，并确认浏览器提示。Setup 也提供 [Anti-Detect 选项](COMMANDS.zh-CN.md#tokenless-setup)。
 

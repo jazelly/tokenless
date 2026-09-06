@@ -1,10 +1,11 @@
-# Tokenless Documentation
+# Tokenless Web Harness Documentation
 
 This index separates user guidance, stable product contracts, implementation architecture, provider research, and future roadmaps so each document has one clear responsibility.
 
 ## Start Here
 
-- [README](../README.md) — product overview, installation, and first run.
+- [README](../README.md) — Web Harness, Dashboard, three workflows, and quick start.
+- [Provider catalog](../README.md#providers) — all 43 catalog entries, browser and Direct modes, and verification status.
 - [CLI Commands](../COMMANDS.md) — complete command and option reference.
 - [Updates](updates.md) — unified CLI and macOS app updates, configuration preservation, and database migrations.
 - [Capability Matrix](capability-matrix.md) — canonical outcomes, current provider mappings, support states, and extension rules.

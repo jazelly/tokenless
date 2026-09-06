@@ -1,10 +1,11 @@
-# Tokenless 文档
+# Tokenless Web Harness 文档
 
 本索引将用户指南、稳定产品契约、implementation architecture、provider research 与未来 roadmap 分开，使每份文档只有一个明确职责。
 
 ## 从这里开始
 
-- [README](../README.zh-CN.md) — 产品概览、安装与首次运行。
+- [README](../README.zh-CN.md) — Web Harness、Dashboard、三种使用方式与快速开始。
+- [Provider 清单](../README.zh-CN.md#providers) — 全部 43 个目录条目、浏览器与 Direct 模式及验证状态。
 - [CLI 命令](../COMMANDS.zh-CN.md) — 完整 command 与 option reference。
 - [更新指南](updates.zh-CN.md) — 统一 CLI 与 macOS App 更新、配置保留及数据库 migration。
 - [Capability Matrix](capability-matrix.zh-CN.md) — canonical outcomes、当前 provider mappings、support states 与扩展规则。

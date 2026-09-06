@@ -7,7 +7,7 @@
 <p align="center"><strong>Put your existing web LLM accounts to work for your agents.</strong></p>
 
 <p align="center">
-  <a href="#start-in-three-commands">Quick start</a> · <a href="#what-is-a-web-harness">What is Web Harness?</a> · <a href="docs/capability-matrix.md">Capabilities</a> · <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a>
+  <a href="#start-in-three-commands">Quick start</a> · <a href="#what-is-a-web-harness">What is Web Harness?</a> · <a href="#providers">Providers</a> · <a href="docs/capability-matrix.md">Capabilities</a> · <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a>
 </p>
 
 <p align="center">
@@ -46,35 +46,71 @@ Add the Tokenless skill to your Harness; invoke it for selected tasks and bring 
 
 </details>
 
-<sub>AI-generated use-case illustration. Available capabilities depend on the selected provider’s verified support.</sub>
+<sub>AI-generated use-case illustrations. Available capabilities depend on the selected provider’s verified support.</sub>
 
-## 13 providers. One local interface.
+<a id="providers"></a>
 
-Five providers are supported today; eight more are experimental. Only verified workflows are advertised.
+## Providers · 43 catalog entries
+
+15 browser providers, plus 28 additional Direct-only providers. Listed from the current registry; available capabilities depend on verification.
+
+### Browser mode
 
 <table>
   <tr>
-    <td align="center" width="20%"><img src="https://cdn.oaistatic.com/assets/favicon-miwirzcw.ico" alt="ChatGPT" width="32" height="32"><br><strong>ChatGPT</strong><br><sub>Supported</sub></td>
-    <td align="center" width="20%"><img src="https://claude.ai/favicon.ico" alt="Claude" width="32" height="32"><br><strong>Claude</strong><br><sub>Supported</sub></td>
-    <td align="center" width="20%"><img src="https://www.gstatic.com/lamda/images/gemini_sparkle_aurora_33f86dc0c0257da337c63.svg" alt="Gemini" width="32" height="32"><br><strong>Gemini</strong><br><sub>Supported</sub></td>
-    <td align="center" width="20%"><img src="https://grok.com/images/favicon.svg" alt="Grok" width="32" height="32"><br><strong>Grok</strong><br><sub>Supported</sub></td>
-    <td align="center" width="20%"><img src="https://assets.alicdn.com/g/qwenweb/qwen-chat-fe/0.2.83/favicon.png" alt="Qwen" width="32" height="32"><br><strong>Qwen / 千问</strong><br><sub>Experimental</sub></td>
+    <td align="center" width="20%"><a href="https://chatgpt.com/"><img src="assets/providers/chatgpt.ico" alt="ChatGPT" width="32" height="32"><br><strong>ChatGPT</strong></a><br><sub>Supported</sub></td>
+    <td align="center" width="20%"><a href="https://claude.ai/new"><img src="assets/providers/claude.ico" alt="Claude" width="32" height="32"><br><strong>Claude</strong></a><br><sub>Supported</sub></td>
+    <td align="center" width="20%"><a href="https://gemini.google.com/app"><img src="assets/providers/gemini.svg" alt="Gemini" width="32" height="32"><br><strong>Gemini</strong></a><br><sub>Supported</sub></td>
+    <td align="center" width="20%"><a href="https://grok.com/"><img src="assets/providers/grok.svg" alt="Grok" width="32" height="32"><br><strong>Grok</strong></a><br><sub>Supported</sub></td>
+    <td align="center" width="20%"><a href="https://chat.qwen.ai/"><img src="assets/providers/qwen.png" alt="Qwen / 千问" width="32" height="32"><br><strong>Qwen / 千问</strong></a><br><sub>Experimental</sub></td>
   </tr>
   <tr>
-    <td align="center" width="20%"><img src="https://cdn.simpleicons.org/deepseek/4D6BFE" alt="DeepSeek" width="32" height="32"><br><strong>DeepSeek</strong><br><sub>Experimental</sub></td>
-    <td align="center" width="20%"><img src="https://cdn.simpleicons.org/perplexity/20808D" alt="Perplexity" width="32" height="32"><br><strong>Perplexity</strong><br><sub>Experimental</sub></td>
-    <td align="center" width="20%"><img src="https://z-cdn.chatglm.cn/z-ai/static/logo.svg" alt="Z.ai" width="32" height="32"><br><strong>Z.ai / GLM</strong><br><sub>Experimental</sub></td>
-    <td align="center" width="20%"><img src="https://lf-flow-web-cdn.doubao.com/obj/flow-doubao/favicon/new-doubao/128x128.png" alt="Doubao" width="32" height="32"><br><strong>Doubao / 豆包</strong><br><sub>Experimental</sub></td>
-    <td align="center" width="20%"><img src="https://www.kimi.com/favicon-light.ico" alt="Kimi" width="32" height="32"><br><strong>Kimi</strong><br><sub>Experimental</sub></td>
+    <td align="center" width="20%"><a href="https://chat.deepseek.com/"><img src="assets/providers/deepseek.svg" alt="DeepSeek" width="32" height="32"><br><strong>DeepSeek</strong></a><br><sub>Experimental</sub></td>
+    <td align="center" width="20%"><a href="https://www.perplexity.ai/"><img src="assets/providers/perplexity.svg" alt="Perplexity" width="32" height="32"><br><strong>Perplexity</strong></a><br><sub>Experimental</sub></td>
+    <td align="center" width="20%"><a href="https://chat.z.ai/"><img src="assets/providers/zai.svg" alt="Z.ai / GLM" width="32" height="32"><br><strong>Z.ai / GLM</strong></a><br><sub>Experimental</sub></td>
+    <td align="center" width="20%"><a href="https://www.doubao.com/chat/"><img src="assets/providers/doubao.png" alt="Doubao / 豆包" width="32" height="32"><br><strong>Doubao / 豆包</strong></a><br><sub>Experimental</sub></td>
+    <td align="center" width="20%"><a href="https://www.kimi.ai/"><img src="assets/providers/kimi.ico" alt="Kimi" width="32" height="32"><br><strong>Kimi</strong></a><br><sub>Experimental</sub></td>
   </tr>
   <tr>
-    <td align="center" width="20%"><img src="https://sf-flow-web-cdn.ciciai.com/obj/ocean-flow-web-sg/dola_web/favicon-dola.png" alt="Dola" width="32" height="32"><br><strong>Dola</strong><br><sub>Experimental</sub></td>
-    <td align="center" width="20%"><img src="https://arena.ai/favicon.ico" alt="Arena" width="32" height="32"><br><strong>Arena</strong><br><sub>Supported</sub></td>
-    <td align="center" width="20%"><img src="https://meta.ai/favicon.ico" alt="Meta AI" width="32" height="32"><br><strong>Meta AI</strong><br><sub>Experimental</sub></td>
+    <td align="center" width="20%"><a href="https://www.dola.com/chat"><img src="assets/providers/dola.png" alt="Dola" width="32" height="32"><br><strong>Dola</strong></a><br><sub>Experimental</sub></td>
+    <td align="center" width="20%"><a href="https://arena.ai/text/direct"><img src="assets/providers/arena.ico" alt="Arena" width="32" height="32"><br><strong>Arena</strong></a><br><sub>Supported</sub></td>
+    <td align="center" width="20%"><a href="https://meta.ai/"><img src="assets/providers/meta.ico" alt="Meta AI" width="32" height="32"><br><strong>Meta AI</strong></a><br><sub>Experimental</sub></td>
+    <td align="center" width="20%"><a href="https://copilot.microsoft.com/"><img src="assets/providers/microsoft-copilot.ico" alt="Microsoft Copilot" width="32" height="32"><br><strong>Microsoft Copilot</strong></a><br><sub>Awaiting verification</sub></td>
+    <td align="center" width="20%"><a href="https://github.com/copilot"><img src="assets/providers/github-copilot.svg" alt="GitHub Copilot" width="32" height="32"><br><strong>GitHub Copilot</strong></a><br><sub>Experimental</sub></td>
   </tr>
 </table>
 
-See the [Capability Matrix](docs/capability-matrix.md) for the verified workflows behind each provider.
+Microsoft Copilot is registered but has no verified browser capability route yet. The other browser entries comprise 5 supported and 9 experimental providers.
+
+<details>
+<summary>Direct mode: view all 40 mappings</summary>
+
+G4F also maps these browser providers to Direct entry points: ChatGPT, Claude, Gemini, Grok, Qwen / 千问, DeepSeek, Perplexity, Z.ai / GLM, Arena, Meta AI, Microsoft Copilot, GitHub Copilot.
+
+The following **28 additional entries are Direct-only**. These are experimental mappings; catalog membership does not mean each has passed a real-provider run.
+
+| Provider | ID | Provider | ID |
+| --- | --- | --- | --- |
+| Black Forest Labs | `black-forest-labs` | Blackbox AI | `blackbox` |
+| Cerebras | `cerebras` | Cloudflare AI | `cloudflare` |
+| Cohere | `cohere` | DeepInfra | `deepinfra` |
+| ElevenLabs | `elevenlabs` | Fenay AI | `fenay-ai` |
+| GLHF | `glhf` | Groq | `groq` |
+| Hugging Face | `hugging-face` | MiniMax | `minimax` |
+| NVIDIA | `nvidia` | Ollama | `ollama` |
+| OpenRouter | `openrouter` | Opera Aria | `opera-aria` |
+| Phind AI | `phind` | Pi | `pi` |
+| Pollinations | `pollinations` | Puter | `puter` |
+| Replicate | `replicate` | Sber GigaChat | `gigachat` |
+| Stability AI | `stability-ai` | Teach Anything | `teach-anything` |
+| TheB.AI | `theb-ai` | Together AI | `together` |
+| WhiteRabbitNeo | `whiterabbitneo` | YQCloud | `yqcloud` |
+
+[Direct setup and limits](docs/g4f-direct-provider-service.md).
+
+</details>
+
+[Check verified capabilities for each provider](docs/capability-matrix.md).
 
 ## Start in three commands
 
@@ -86,12 +122,12 @@ tokenless setup
 tokenless run --provider chatgpt --prompt "Review this proposal."
 ```
 
-Setup requires `uv` for the G4F runtime and synchronizes matching skills; upgrades sync them too. Use `tokenless skills sync --json` to refresh skills alone. The macOS menu app is a separate optional install and is not installed on Windows.
-
 Setup opens the local dashboard. Reopen it anytime with `tokenless dashboard`.
 
 <details>
 <summary>Browser preparation and updates</summary>
+
+Setup requires `uv` for the G4F runtime and synchronizes matching skills; upgrades sync them too. Use `tokenless skills sync --json` to refresh skills alone. The macOS menu app is a separate optional install and is not installed on Windows.
 
 For native mode, use a current Chrome or Brave, enable remote debugging at `chrome://inspect/#remote-debugging` or `brave://inspect/#remote-debugging`, and approve the browser prompt. Setup also offers an [Anti-Detect option](COMMANDS.md#tokenless-setup).
 

@@ -1,6 +1,6 @@
-# Tokenless macOS menu bar app
+# Tokenless API macOS menu bar app
 
-The local macOS menu bar app provides a native SwiftUI surface for the Tokenless daemon:
+The local macOS menu bar app provides a native SwiftUI surface for the Tokenless API daemon:
 
 - status and daemon version;
 - dashboard and the ten most recent conversations;
@@ -17,7 +17,7 @@ npm run install:macos-menu
 
 `build:macos-menu` first builds the CLI and then creates `dist/macos/Tokenless.app`, a versioned `dist/macos/tokenless-macos-darwin-arm64-v<version>.zip`, and its matching `.sha256` file. It targets macOS 13 or newer and contains its own arm64 Node runtime, CLI, daemon, and production Node dependencies. It does not use the installing machine's Node, nvm, Homebrew, or a global `tokenless` command.
 
-`npm run install:macos-menu` rebuilds the bundle, copies it to a sibling staging path, validates the app directory, menu executable, embedded Node runtime, and embedded CLI, then replaces `~/Applications/Tokenless.app`. If an installed menu app is running, the installer finds only that exact executable path, sends `SIGTERM`, and waits briefly for it to exit; it does not stop the Tokenless daemon. The old app is kept at a sibling backup path until the new bundle passes validation and LaunchServices accepts the launch. If staging, replacement, validation, or launch acceptance fails, the old bundle is restored and relaunched when it was running before the upgrade.
+`npm run install:macos-menu` rebuilds the bundle, copies it to a sibling staging path, validates the app directory, menu executable, embedded Node runtime, and embedded CLI, then replaces `~/Applications/Tokenless.app`. If an installed menu app is running, the installer finds only that exact executable path, sends `SIGTERM`, and waits briefly for it to exit; it does not stop the Tokenless API daemon. The old app is kept at a sibling backup path until the new bundle passes validation and LaunchServices accepts the launch. If staging, replacement, validation, or launch acceptance fails, the old bundle is restored and relaunched when it was running before the upgrade.
 
 On a first install there is no old bundle to restore. A successful run removes this command's staging and backup paths and leaves only `~/Applications/Tokenless.app`. LaunchServices accepting `open -a` confirms that macOS accepted the launch request; it cannot detect a crash that happens after that point, so the installer does not claim post-launch crash rollback.
 

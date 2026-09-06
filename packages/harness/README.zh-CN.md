@@ -1,4 +1,6 @@
-# Tokenless Web Agent Harness
+# Tokenless Harness
+
+Tokenless 的 Web Harness 运行时：执行 Agent 任务、管理工具续轮，并通过 Tokenless API 访问网页大模型。这是三种用法中的主流运行方式；自带 Harness 的调用方也可以选择 API 接入或按需调用 Skill。[查看三种用法](../../README.zh-CN.md#三种使用方式)。
 
 这个 private workspace package 负责 Tokenless agent adapter、Harness context persistence 与 V1 Skill preparation slice。它独立于 provider DOM、Playwright、profile 和 provider database internals。
 
