@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte'
   import { Activity, CircleHelp, RefreshCw } from '@lucide/svelte'
   import TokenUnit from '../components/TokenUnit.svelte'
   import MetricCard from '../components/MetricCard.svelte'
@@ -43,6 +44,7 @@
   let analytics = $state<DashboardAnalytics | null>(null)
   let loading = $state(true)
   let loadError = $state('')
+  let matrixDetail = $state<{ provider: string; family: string; x: number; y: number } | null>(null)
   let requestSequence = 0
   let activityKey = $derived(`${snapshot.jobs[0]?.updatedAt ?? ''}:${snapshot.outputSavings.summary.lastMeasuredAt ?? ''}`)
   let topProvider = $derived(analytics?.providers[0] ?? null)
@@ -60,6 +62,7 @@
   async function loadAnalytics(profile: string, selectedRange: DashboardAnalyticsRange, _activity: string) {
     const sequence = ++requestSequence
     loading = true
+    matrixDetail = null
     loadError = ''
     try {
       const result = await actions.getAnalytics(profile, selectedRange)
@@ -126,6 +129,27 @@
     const cell = matrixCell(provider, family)
     if (cell?.finishedJobs) return `${providerName(provider)} · ${capabilityFamilyLabel(language, family)} · ${formatNumber(cell.finishedJobs, language)} ${t('routedRequirements')}. ${t('matrixCellOutcomes', { succeeded: cell.succeededJobs, failed: cell.failedJobs, canceled: cell.canceledJobs })}`
     return `${providerName(provider)} · ${capabilityFamilyLabel(language, family)} · ${t(supportsFamily(provider, family) ? 'supportedUnused' : 'unsupportedCapability')}`
+  }
+
+  async function showMatrixDetail(event: Event, provider: string, family: string) {
+    const button = event.currentTarget as HTMLButtonElement
+    const body = button.closest('.capability-heatmap-body')!.getBoundingClientRect()
+    const cell = button.getBoundingClientRect()
+    matrixDetail = {
+      provider, family,
+      x: Math.max(0, Math.min(cell.left - body.left + cell.width / 2 - 140, body.width - 280)),
+      y: cell.bottom - body.top + 8,
+    }
+    await tick()
+    if (matrixDetail?.provider !== provider || matrixDetail?.family !== family) return
+    const tooltip = document.getElementById('capability-demand-tooltip')!.getBoundingClientRect()
+    if (tooltip.bottom > window.innerHeight - 12) {
+      matrixDetail.y = Math.max(12 - body.top, cell.top - body.top - tooltip.height - 8)
+    }
+  }
+
+  function hideMatrixDetail(event: PointerEvent) {
+    if (document.activeElement !== event.currentTarget) matrixDetail = null
   }
 
   function heatLevel(count: number) {
@@ -207,21 +231,41 @@
 
     <section class="analytics-panel capability-matrix-panel" data-testid="capability-usage-matrix">
       <header class="analytics-panel-header">{@render chartTitle(t('capabilityUsageMatrix'), t('capabilityUsageMatrixHelp'))}</header>
-      <p class="analytics-unit-note">{t('capabilityCountUnit')}</p>
-      <div class="capability-matrix-scroll"><div class="capability-matrix" style={`--family-count:${families.length}`}>
-        <div class="capability-matrix-corner">{t('provider')}</div>
-        {#each families as family}<div class="capability-matrix-family">{capabilityFamilyLabel(language, family)}</div>{/each}
-        {#each analytics.providers as provider}
-          <div class="capability-matrix-provider">{providerName(provider.provider)}</div>
-          {#each families as family}
-            {@const cell = matrixCell(provider.provider, family)}
-            {@const supported = supportsFamily(provider.provider, family)}
-            {@const level = heatLevel(cell?.finishedJobs ?? 0)}
-            <div class:used={Boolean(cell?.finishedJobs)} class:supported class:absent={!cell?.finishedJobs && !supported} class="capability-matrix-cell" style={`--cell-fill:var(--heat-${level});--cell-ink:var(--heat-ink-${level})`} title={capabilityTitle(provider.provider, family)} role="img" aria-label={capabilityTitle(provider.provider, family)}><span class="capability-matrix-value">{cell?.finishedJobs ? formatNumber(cell.finishedJobs, language) : supported ? '0' : '—'}</span></div>
-          {/each}
-        {:else}<div class="analytics-empty capability-matrix-empty">{t('noCapabilityUsage')}</div>{/each}
-      </div></div>
-      <div class="matrix-legend"><span><i class="matrix-key used" aria-hidden="true"></i>{t('matrixUsedLegend')}</span><span><i class="matrix-key" aria-hidden="true"></i>{t('matrixZeroLegend')}</span><span><i class="matrix-key absent" aria-hidden="true">—</i>{t('matrixAbsentLegend')}</span></div>
+      <p class="analytics-unit-note">{t('matrixReadingHint')}</p>
+      <div class="capability-heatmap-body">
+        <div class="capability-matrix" style={`--family-count:${families.length}`}>
+          <div class="capability-matrix-corner">{t('provider')}</div>
+          {#each families as family}<div class="capability-matrix-family">{t(`matrixFamily_${family}` as MessageKey)}</div>{/each}
+          {#each analytics.providers as provider}
+            <div class="capability-matrix-provider">{providerName(provider.provider)}</div>
+            {#each families as family}
+              {@const cell = matrixCell(provider.provider, family)}
+              {@const supported = supportsFamily(provider.provider, family)}
+              {@const active = matrixDetail?.provider === provider.provider && matrixDetail?.family === family}
+              <button type="button" class:used={Boolean(cell?.finishedJobs)} class:absent={!cell?.finishedJobs && !supported} class:inspected={active} class="capability-matrix-cell" style={`--cell-fill:var(--demand-${heatLevel(cell?.finishedJobs ?? 0)})`} aria-label={capabilityTitle(provider.provider, family)} aria-describedby={active ? 'capability-demand-tooltip' : undefined}
+                onpointerenter={(event) => showMatrixDetail(event, provider.provider, family)} onpointerleave={hideMatrixDetail}
+                onfocus={(event) => showMatrixDetail(event, provider.provider, family)} onblur={() => matrixDetail = null}
+                onclick={(event) => showMatrixDetail(event, provider.provider, family)} onkeydown={(event) => { if (event.key === 'Escape') matrixDetail = null }}></button>
+            {/each}
+          {:else}<div class="analytics-empty capability-matrix-empty">{t('noCapabilityUsage')}</div>{/each}
+        </div>
+        {#if matrixDetail}
+          {@const cell = matrixCell(matrixDetail.provider, matrixDetail.family)}
+          <div class="capability-demand-tooltip" id="capability-demand-tooltip" role="tooltip" style={`left:${matrixDetail.x}px;top:${matrixDetail.y}px`}>
+            <strong>{providerName(matrixDetail.provider)} · {capabilityFamilyLabel(language, matrixDetail.family)}</strong>
+            <span class="demand-tooltip-count">{formatNumber(cell?.finishedJobs ?? 0, language)} <span>{t('routedRequirements')}</span></span>
+            {#if cell?.finishedJobs}<span>{t('matrixCellOutcomes', { succeeded: cell.succeededJobs, failed: cell.failedJobs, canceled: cell.canceledJobs })}</span>
+            {:else}<span>{t(supportsFamily(matrixDetail.provider, matrixDetail.family) ? 'supportedUnused' : 'unsupportedCapability')}</span>{/if}
+            <span class="demand-tooltip-definition">{t('matrixTooltipMeaning')}</span>
+          </div>
+        {/if}
+      </div>
+      <div class="matrix-legend">
+        <span class="matrix-intensity-scale">{t('matrixLess')}{#each [1, 2, 3, 4, 5] as level}<i class="matrix-key" style={`background:var(--demand-${level})`} aria-hidden="true"></i>{/each}{t('matrixMore')}</span>
+        <span><i class="matrix-key empty" aria-hidden="true"></i>{t('matrixZeroLegend')}</span>
+        <span><i class="matrix-key absent" aria-hidden="true"></i>{t('matrixAbsentLegend')}</span>
+      </div>
+      <p class="matrix-count-note">{t('matrixCountMeaning')}</p>
     </section>
 
     <div class="analytics-two-column analytics-bottom-grid">

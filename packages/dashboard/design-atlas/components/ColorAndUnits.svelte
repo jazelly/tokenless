@@ -22,7 +22,7 @@
   let values = $state<Record<string, string>>({})
   onMount(() => {
     const css = getComputedStyle(document.documentElement)
-    const names = [...hues.map(hue => `data-${hue}`), ...stones.map(n => `stone-${n}`), ...statuses.map(s => `status-${s.id}`), ...Array.from({ length: 5 }, (_, i) => `heat-${i + 1}`)]
+    const names = [...hues.map(hue => `data-${hue}`), ...stones.map(n => `stone-${n}`), ...statuses.map(s => `status-${s.id}`), ...Array.from({ length: 5 }, (_, i) => `demand-${i + 1}`)]
     values = Object.fromEntries(names.map(name => [name, css.getPropertyValue(`--${name}`).trim().toUpperCase()]))
   })
 </script>
@@ -36,7 +36,7 @@
 
   <section class="foundation-panel brand-intro">
     <div class="brand-sample"><TokenIcon size={64} /><span>DATA / TABLEAU BLUE</span><strong>{values['data-blue']}</strong></div>
-    <div><p class="eyebrow">{text('Interface + data', '界面基底 + 数据强调色')}</p><h2>{text('A warm frame. Colorful data.', '暖色基底，彩色数据。')}</h2><p>{text('Graphite #171715 and warm paper #F6F5F2 anchor the interface. Tableau blue carries the main data series. The first seven Tableau 10 colors identify capability categories in their published order; ColorBrewer Blues provides the quantity scale.', '石墨色 #171715 与暖纸色 #F6F5F2 构成界面基底。Tableau 蓝用于主要数据系列。Tableau 10 的前七色按原始顺序区分能力类别，ColorBrewer Blues 用于数量色阶。')}</p><div class="palette-ribbon" aria-hidden="true">{#each hues as hue}<i style={`background:var(--data-${hue})`}></i>{/each}</div><a class="preview-link" href={`/?path=/story/overview-usage-analytics--${language === 'zh-CN' ? 'chinese' : 'default'}`} target="_top">{text('View the Dashboard with this palette →', '查看这套色板在 Dashboard 中的效果 →')}</a></div>
+    <div><p class="eyebrow">{text('Interface + data', '界面基底 + 数据强调色')}</p><h2>{text('A warm frame. Colorful data.', '暖色基底，彩色数据。')}</h2><p>{text('Graphite #171715 and warm paper #F6F5F2 anchor the interface. Tableau blue carries the main data series. The first seven Tableau 10 colors identify capability categories in their published order; ColorBrewer Greens provides the demand heatmap scale.', '石墨色 #171715 与暖纸色 #F6F5F2 构成界面基底。Tableau 蓝用于主要数据系列。Tableau 10 的前七色按原始顺序区分能力类别，ColorBrewer Greens 用于需求热力图。')}</p><div class="palette-ribbon" aria-hidden="true">{#each hues as hue}<i style={`background:var(--data-${hue})`}></i>{/each}</div><a class="preview-link" href={`/?path=/story/overview-usage-analytics--${language === 'zh-CN' ? 'chinese' : 'default'}`} target="_top">{text('View the Dashboard with this palette →', '查看这套色板在 Dashboard 中的效果 →')}</a></div>
   </section>
 
   <section class="foundation-panel" data-testid="categorical-palette">
@@ -47,11 +47,11 @@
   </section>
 
   <section class="foundation-panel">
-    <div class="section-heading"><span>02</span><h2>{text('Quantity · ColorBrewer Blues', '数量 · ColorBrewer Blues')}</h2></div>
-    <p>{text('Heatmaps use five fixed steps from light to dark, relative to the largest visible count. Darker means more demand, not better results. Use this sequential scale for the demand matrix. Category charts use the seven distinct hues above; keep their labels and segment separators visible.', '热力图相对于当前最大计数，使用固定的五档色阶。越深表示需求越多，不表示结果越好。需求矩阵使用这套连续色阶。类别图表使用上方七种不同色相，并保留文字图例和分段边界。')}</p>
-    <p class="source-links">{text('Source:', '来源：')} <a href="https://d3js.org/d3-scale-chromatic/sequential" target="_blank" rel="noreferrer">D3 schemeBlues[5] / ColorBrewer</a></p>
-    <div class="heat-scale">{#each [4, 16, 31, 56, 76] as count, i}<div><strong style={`background:var(--heat-${i + 1});color:var(--heat-ink-${i + 1})`}>{count}</strong><code>{values[`heat-${i + 1}`]}</code></div>{/each}</div>
-    <small>{text('Illustrative requirement counts; not live usage. All five text/fill pairs meet 4.5:1 contrast.', '示例能力需求次数，不是实际用量。五档数字与底色的对比度均达到 4.5:1。')}</small>
+    <div class="section-heading"><span>02</span><h2>{text('Demand · contribution heatmap', '需求 · 贡献图式热力图')}</h2></div>
+    <p>{text('Compact squares use ColorBrewer Greens[5], relative to the largest visible count. Darker means more demand, not greater success. Keep counts in hover, focus, or tap details. The rows are providers and columns are capabilities, not calendar dates.', '紧凑方格使用 ColorBrewer Greens[5]，相对于当前最大计数分为五档。越深表示需求越多，不表示成功率越高。次数在悬停、聚焦或点按时显示。行是 Provider，列是能力类别，不是日历日期。')}</p>
+    <p class="source-links">{text('Source:', '来源：')} <a href="https://d3js.org/d3-scale-chromatic/sequential" target="_blank" rel="noreferrer">D3 schemeGreens[5] / ColorBrewer</a></p>
+    <div class="demand-scale">{#each [4, 16, 31, 56, 76] as count, i}<div><button type="button" class="hover-tooltip" style={`background:var(--demand-${i + 1})`} aria-label={`${count} ${text('capability requirements', '次能力需求')}`}><span class="hover-tooltip-content" role="tooltip" aria-hidden="true">{count} {text('capability requirements', '次能力需求')}</span></button><code>{values[`demand-${i + 1}`]}</code></div>{/each}</div>
+    <small>{text('Illustrative requirement counts, not live usage, API calls, or tokens. No numbers inside the squares. Keep neutral empty cells distinct from dashed cells without a connected route.', '示例能力需求次数，不是实际用量、API 调用次数或 tokens。方格内部不常驻数字。中性空格表示无需求，虚线格表示无需求且未接入。')}</small>
   </section>
 
   <section class="foundation-panel">
@@ -97,9 +97,9 @@
   .palette-ribbon i { width: 30px; height: 8px; border-radius: 2px; }
   .source-links a { color: var(--chart-primary); text-underline-offset: 3px; }
   .preview-link { display: inline-block; margin-top: 18px; color: var(--chart-primary); font-size: 12px; text-underline-offset: 3px; }
-  .heat-scale { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin: 24px 0 16px; }
-  .heat-scale strong { display: grid; height: 64px; place-items: center; border-radius: 5px; font-size: 18px; }
-  .heat-scale code { text-align: center; }
+  .demand-scale { display: flex; flex-wrap: wrap; gap: 16px; margin: 24px 0 16px; }
+  .demand-scale > div { text-align: center; }
+  .demand-scale button { width: 32px; height: 32px; border: 1px solid var(--line-soft); border-radius: 5px; cursor: pointer; }
   .status-grid i { width: 12px; height: 12px; border-radius: 3px; }
   .status-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 24px; }
   .status-grid > div { padding: 20px; border: 1px solid var(--status-line); border-radius: 6px; background: var(--status-surface); }

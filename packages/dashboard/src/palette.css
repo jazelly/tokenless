@@ -58,17 +58,11 @@
   --chart-family-5: var(--data-yellow);
   --chart-family-6: var(--data-purple);
 
-  /* ColorBrewer Blues[5], distributed by D3; quantity increases with darkness.
-     https://d3js.org/d3-scale-chromatic/sequential */
-  --heat-1: #eff3ff;
-  --heat-2: #bdd7e7;
-  --heat-3: #6baed6;
-  --heat-4: #3182bd;
-  --heat-5: #08519c;
-  --heat-ink-1: var(--ink);
-  --heat-ink-2: var(--ink);
-  --heat-ink-3: var(--ink);
-  /* Pure black is required here to reach 4.5:1 on the published fourth blue. */
-  --heat-ink-4: #000000;
-  --heat-ink-5: var(--stone-0);
+  /* ColorBrewer Greens[5]: demand intensity, independent of outcome status. */
+  --demand-empty: var(--stone-100);
+  --demand-1: #edf8e9;
+  --demand-2: #bae4b3;
+  --demand-3: #74c476;
+  --demand-4: #31a354;
+  --demand-5: #006d2c;
 }
