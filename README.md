@@ -4,7 +4,7 @@
 
 <h1 align="center">Web Harness</h1>
 
-<p align="center"><strong>Put your existing AI web accounts to work for your agents.</strong></p>
+<p align="center"><strong>Put your existing web LLM accounts to work for your agents.</strong></p>
 
 <p align="center">
   <a href="#start-in-three-commands">Quick start</a> · <a href="#what-is-a-web-harness">What is Web Harness?</a> · <a href="docs/capability-matrix.md">Capabilities</a> · <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a>
@@ -29,7 +29,7 @@ Give Tokenless Harness a task; it manages execution through Tokenless API and re
 
 Keep your Harness’s agent loop, tools, and sessions; connect its model interface to Tokenless API.
 
-![Choose your own Harness → connect Tokenless API to your AI web accounts → replies return to your Harness](assets/bring-your-harness-en.png)
+![Choose your own Harness → connect Tokenless API to your web LLM accounts → replies return to your Harness](assets/bring-your-harness-en.png)
 
 [API setup and compatibility limits](docs/api-proxy-integration.md) · [Harness integration](docs/harness-integrations.md)
 
@@ -101,11 +101,11 @@ Already installed? Run `tokenless upgrade --check`, then `tokenless upgrade`. Se
 
 ## What is a Web Harness?
 
-We call **the layer that turns AI websites into an agent’s working environment** a **Web Harness**. Tokenless lets agents submit tasks through your existing web accounts, use supported website capabilities, and bring results back into your workflow.
+We call **the layer that turns web LLMs into an agent’s working environment** a **Web Harness**. Tokenless lets agents submit tasks through your existing web LLM accounts, use supported website capabilities, and bring results back into your workflow.
 
 | What you want to do | What Tokenless handles |
 | --- | --- |
-| Put web AI to work for your agent | Submit prompts, read responses, and continue supported conversations. |
+| Put web LLMs to work for your agent | Submit prompts, read responses, and continue supported conversations. |
 | Work with your own material | Use attachments, citations, and controls verified for the selected provider. |
 | Connect an app and follow progress | Run tasks through the CLI or local compatible APIs; view history and usage in Dashboard. |
 

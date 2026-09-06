@@ -4,7 +4,7 @@
 
 <h1 align="center">Web Harness</h1>
 
-<p align="center"><strong>让你已有的 AI 网页账号，为 Agent 完成任务。</strong></p>
+<p align="center"><strong>让你已有的网页大模型账号，为 Agent 完成任务。</strong></p>
 
 <p align="center">
   <a href="#三条命令开始使用">快速开始</a> · <a href="#什么是-web-harness">什么是 Web Harness</a> · <a href="docs/capability-matrix.zh-CN.md">支持的能力</a> · <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a>
@@ -29,7 +29,7 @@
 
 保留自己的 Harness、工具和会话，把模型接口接到 Tokenless API；任务流程仍由你的 Harness 管理。
 
-![自选智能体框架 → 通过 Tokenless API 接入智能助手网页账号 → 回复回到自己的框架](assets/bring-your-harness-zh-CN.png)
+![自选智能体框架 → 通过 Tokenless API 接入网页大模型账号 → 回复回到自己的框架](assets/bring-your-harness-zh-CN.png)
 
 [API 接入与兼容范围](docs/api-proxy-integration.zh-CN.md) · [Harness 集成](docs/harness-integrations.zh-CN.md)
 
@@ -101,11 +101,11 @@ Native mode 使用当前版本的 Chrome 或 Brave；在 `chrome://inspect/#remo
 
 ## 什么是 Web Harness？
 
-我们把**将 AI 网站变成 Agent 工作环境的这一层**称为 **Web Harness**。Tokenless 让 Agent 通过你已有的网页账号提交任务、使用已支持的网页能力，并把结果带回当前工作流。
+我们把**将网页大模型变成 Agent 工作环境的这一层**称为 **Web Harness**。Tokenless 让 Agent 通过你已有的网页大模型账号提交任务、使用已支持的网页能力，并把结果带回当前工作流。
 
 | 你想做什么 | Tokenless 为你完成什么 |
 | --- | --- |
-| 让 Agent 使用网页 AI | 提交 prompt、读取回复，并延续受支持的对话。 |
+| 让 Agent 使用网页大模型 | 提交 prompt、读取回复，并延续受支持的对话。 |
 | 带着材料完成任务 | 使用所选 provider 已支持的附件、引用和控制选项。 |
 | 接入应用并查看进度 | 通过 CLI 或本地兼容 API 发起任务，在 Dashboard 查看记录与用量。 |
 
