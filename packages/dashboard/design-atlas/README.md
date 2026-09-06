@@ -48,7 +48,9 @@ A change to shared UI appears in Storybook and in the next Dashboard build. Cont
 ## Color and unit rules
 
 - Base the interface on graphite `#171715` and warm paper `#F6F5F2`; reuse `src/palette.css` instead of introducing chart hex values. Foundations / Color & units displays the actual shared values.
-- Quantity charts use the warm graphite scale. Heatmaps have five fixed levels relative to the selected maximum, with dark or light text chosen for contrast. Category colors use the fixed family mapping and visible labels.
-- Sage, ochre, and clay are reserved for success, warning, and failure. Use their paired surface and border colors, and retain a status label or icon. Provider brand artwork keeps its own identity.
+- Data charts complement the warm neutral interface with sea teal `#287D83`, blue `#587BC1`, violet `#8665AD`, rose `#B56D8B`, ochre `#B08A3E`, olive `#7F8B4B`, and slate blue `#6D90A5`. Use the fixed family mapping for categories and a five-step sea-teal scale for heatmap quantities; retain labels and choose dark or light text for contrast.
+- The status palette uses sage, ochre, and clay for success, warning, and failure; these status tokens are separate from category colors. Use their paired surface and border colors, and retain a status label or icon. Provider brand artwork keeps its own identity.
 - The circled T with a short crossbar is a product-specific **tokens** unit, not a standardized currency sign. Use `TokenUnit` beside token quantities and `TokenIcon` inside already-labeled controls; preserve full units in accessible labels and help.
 - Capability demand uses **requirement counts**, never the token icon. Each distinct capability counts once per finished job, including failed and canceled jobs; a job can count more than once in a family. Zero means connected with no recorded demand; a dash means no demand or connected route.
+
+Data-color roles follow the [Carbon distinction between categorical, sequential, and alert palettes](https://carbondesignsystem.com/data-visualization/color-palettes/); our exact colors are selected for the warm Dashboard interface.

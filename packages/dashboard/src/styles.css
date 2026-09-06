@@ -134,7 +134,7 @@ main#main:focus { outline: none; }
 .stacked-day-chart { display: grid; height: 220px; align-items: end; gap: min(3px, .25vw); padding: 22px 18px 0; }
 .stacked-day-column { display: flex; height: 100%; min-width: 0; flex-direction: column-reverse; justify-content: flex-start; overflow: hidden; border-radius: 2px 2px 0 0; background: var(--surface-muted); }
 .stacked-day-column > span { display: block; min-height: 0; outline: 1px solid var(--surface); outline-offset: -1px; }
-.outcome-succeeded { background: var(--chart-primary); }
+.outcome-succeeded { background: var(--status-success); }
 .outcome-failed { background: var(--red); }
 .outcome-canceled { background: var(--chart-unknown); }
 .chart-date-axis { display: flex; justify-content: space-between; padding: 6px 18px 0; color: var(--muted); font-size: 9px; }
@@ -760,3 +760,10 @@ pre { max-width: 100%; max-height: 260px; overflow: auto; margin: 0; padding: 12
 .token-quantity { position: relative; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .analytics-panel-header > .token-quantity { font-size: 23px; font-weight: 650; letter-spacing: -.04em; }
 .analytics-panel-header .token-unit > .hover-tooltip-content { right: 0; left: auto; }
+
+/* Data accents use the shared palette; primary text stays graphite. */
+.top-header-savings .token-icon, .analytics-panel-header > .token-quantity { color: var(--chart-primary); }
+.analytics-kpi-icon { color: var(--chart-primary); background: color-mix(in srgb, var(--chart-primary) 10%, var(--surface)); }
+.analytics-kpi-icon[data-metric="provider"] { color: var(--data-blue); background: color-mix(in srgb, var(--data-blue) 10%, var(--surface)); }
+.analytics-kpi-icon[data-metric="success"] { color: var(--status-success); background: var(--status-success-surface); }
+.analytics-kpi-icon[data-metric="capability"] { color: var(--data-violet); background: color-mix(in srgb, var(--data-violet) 10%, var(--surface)); }

@@ -38,20 +38,27 @@
   --amber: var(--status-warning);
   --red: var(--status-danger);
 
-  /* One fixed warm-graphite scale for quantity; never rainbow categories. */
-  --chart-primary: var(--stone-950);
-  --chart-secondary: var(--stone-500);
+  /* Data colors complement the warm neutral interface; each family has a fixed hue. */
+  --data-teal: #287d83;
+  --data-blue: #587bc1;
+  --data-violet: #8665ad;
+  --data-rose: #b56d8b;
+  --data-ochre: #b08a3e;
+  --data-olive: #7f8b4b;
+  --data-slate: #6d90a5;
+  --chart-primary: var(--data-teal);
+  --chart-secondary: var(--data-violet);
   --chart-unknown: var(--stone-300);
-  --chart-family-0: var(--stone-950);
-  --chart-family-1: var(--stone-700);
-  --chart-family-2: var(--stone-500);
-  --chart-family-3: var(--stone-300);
-  --chart-family-4: var(--stone-800);
-  --chart-family-5: var(--stone-600);
-  --chart-family-6: var(--stone-400);
-  --heat-1: var(--stone-100);
-  --heat-2: var(--stone-200);
-  --heat-3: var(--stone-300);
-  --heat-4: var(--stone-600);
-  --heat-5: var(--stone-950);
+  --chart-family-0: var(--data-teal);
+  --chart-family-1: var(--data-blue);
+  --chart-family-2: var(--data-violet);
+  --chart-family-3: var(--data-rose);
+  --chart-family-4: var(--data-ochre);
+  --chart-family-5: var(--data-olive);
+  --chart-family-6: var(--data-slate);
+  --heat-1: #e7f3f1;
+  --heat-2: #c7e3df;
+  --heat-3: #91c4be;
+  --heat-4: #337673;
+  --heat-5: #1d5757;
 }

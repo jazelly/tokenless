@@ -9,7 +9,7 @@
 </script>
 
 <article>
-  <span class="analytics-kpi-icon">
+  <span class="analytics-kpi-icon" data-metric={icon}>
     {#if icon === 'provider'}<UsersRound size={17} />
     {:else if icon === 'success'}<CheckCircle2 size={17} />
     {:else if icon === 'capability'}<Layers3 size={17} />
