@@ -1178,7 +1178,9 @@ export class JobStore {
     const since = new Date(nowMs - OBSERVED_RATE_LIMIT_WINDOW_SECONDS.week * 1000).toISOString()
     let latest: ObservedRateLimit | null = null
     for (const row of this.all(
-      `SELECT provider, status, request_json, error_json, blocker_json, provider_submitted_at, updated_at
+      `SELECT provider, status,
+         request_json -> '$.routingObservation' AS routing_observation_json,
+         error_json, blocker_json, provider_submitted_at, updated_at
        FROM jobs
        WHERE profile_id = ? AND updated_at > ? AND updated_at <= ?
        ORDER BY updated_at ASC, job_id ASC`,
@@ -1186,8 +1188,7 @@ export class JobStore {
       since,
       now,
     )) {
-      const request = jsonRecord(parseJson(row.request_json))
-      const routingObservation = jsonRecord(request?.routingObservation)
+      const routingObservation = jsonRecord(parseOptionalJson(row.routing_observation_json))
       if (routingObservation?.protocol === 'tokenless.provider-routing-observation.v1' && Array.isArray(routingObservation.attempts)) {
         for (const attempt of routingObservation.attempts) {
           const candidate = observedRateLimitFromRoutingAttempt(attempt, providerId)
