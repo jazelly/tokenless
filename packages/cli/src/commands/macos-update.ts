@@ -9,6 +9,7 @@ import { promisify } from 'node:util'
 
 import { tokenlessPackageVersion } from '#tokenless-server/platform-package.js'
 import { stopDaemon } from '../bootstrap/runtime.js'
+import { installTokenlessSkills, type TokenlessSkillCheck } from '../bootstrap/setup-workflow.js'
 import { compareSemanticVersions, isSemanticVersion } from '../http/version-check.js'
 import {
   findRunningMenuPids,
@@ -57,6 +58,7 @@ export type MacOSAppRuntimeProof = {
   ok: true
   version: string
   databaseVersion: number
+  skills: TokenlessSkillCheck
   daemon: { version: string; pid: number; url: string }
   api: { ok: true }
 }
@@ -69,6 +71,7 @@ export type MacOSAppUpdateResult = {
   afterVersion: string | null
   asset?: MacOSAppUpdateAsset
   runtime?: MacOSAppRuntimeProof
+  skills?: TokenlessSkillCheck
   error?: UpdateError
 }
 
@@ -206,7 +209,7 @@ export async function runMacOSAppUpdate(options: MacOSAppUpdateOptions): Promise
         if (check.ok && check.latest !== null) {
           const comparison = compareSemanticVersions(beforeVersion, check.latest)
           if (comparison === 0) {
-            return { ok: true, channel: 'macos', status: 'up_to_date', beforeVersion, afterVersion: beforeVersion, ...(check.asset === undefined ? {} : { asset: check.asset }) }
+            return { ok: true, channel: 'macos', status: 'up_to_date', beforeVersion, afterVersion: beforeVersion, skills: (await installTokenlessSkills()).check, ...(check.asset === undefined ? {} : { asset: check.asset }) }
           }
           if (comparison !== null && comparison > 0) {
             throw codedError('macos_app_downgrade_rejected', 'The selected macOS app release is older than the running version.', false)
@@ -385,12 +388,13 @@ async function activateNewRuntime({
   let payload: any
   try { payload = JSON.parse(stdout) } catch { throw codedError('macos_app_runtime_proof_invalid', 'The new Tokenless runtime returned invalid activation proof.', false) }
   const daemon = isRecord(payload?.daemon) ? payload.daemon : null
-  if (payload?.ok !== true || typeof payload.version !== 'string' || !Number.isInteger(payload.databaseVersion) || payload.databaseVersion < 0 || typeof daemon?.version !== 'string' || !Number.isInteger(daemon.pid) || daemon.pid <= 0 || typeof daemon.url !== 'string' || payload.api?.ok !== true) throw codedError('macos_app_runtime_proof_invalid', 'The new Tokenless runtime did not prove daemon, database, and API readiness.', false)
+  if (payload?.ok !== true || typeof payload.version !== 'string' || !Number.isInteger(payload.databaseVersion) || payload.databaseVersion < 0 || typeof daemon?.version !== 'string' || !Number.isInteger(daemon.pid) || daemon.pid <= 0 || typeof daemon.url !== 'string' || payload.api?.ok !== true || payload.skills?.ok !== true) throw codedError('macos_app_runtime_proof_invalid', 'The new Tokenless runtime did not prove daemon, database, and API readiness.', false)
   if (payload.version !== expectedVersion || daemon.version !== payload.version) throw codedError('macos_app_runtime_version_mismatch', 'The activated Tokenless runtime version did not match the release.', false)
   return {
     ok: true as const,
     version: payload.version,
     databaseVersion: payload.databaseVersion,
+    skills: payload.skills as TokenlessSkillCheck,
     daemon: { version: daemon.version, pid: daemon.pid, url: daemon.url },
     api: { ok: true as const },
   }

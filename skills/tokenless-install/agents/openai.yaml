@@ -1,4 +1,4 @@
 interface:
-  display_name: "Tokenless API Install / 安装"
-  short_description: "Install and verify Tokenless API / 安装与验证"
+  display_name: "Tokenless API Install, Setup & Upgrade / 安装配置升级"
+  short_description: "Install, setup, upgrade, and sync skills / 安装配置升级与同步"
   default_prompt: "Use $tokenless-install to inspect my platform and installation channel, perform the requested Tokenless API maintenance, and verify the result. / 使用 $tokenless-install 检查平台与安装渠道，执行请求的 Tokenless API 维护并验证结果。"

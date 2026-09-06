@@ -10,6 +10,7 @@ import { CURRENT_DATABASE_SCHEMA_VERSION } from '#tokenless-shared/database/migr
 import { listDaemonJobs } from '../http/daemon-client.js'
 import { ensureDaemonReady, stopDaemon } from './runtime.js'
 import { tokenlessHome } from './home.js'
+import { installTokenlessSkills } from './setup-workflow.js'
 
 // Both package installers invoke this file from the newly installed runtime.
 // Never run setup here: upgrading software must preserve the user's choices.
@@ -38,12 +39,14 @@ export async function completeUpgrade({
       code: 'database_schema_incompatible', retryable: false,
     })
   }
+  const { check: skills } = await installTokenlessSkills()
   const ready = await ensureDaemonReady({ homeDir, daemonUrl: selectedUrl, timeoutMs })
   await listDaemonJobs({ homeDir, daemonUrl: ready.url, limit: 1 })
   return {
     ok: true,
     version: tokenlessPackageVersion(),
     databaseVersion,
+    skills,
     daemon: { version: ready.body?.version, pid: ready.pid, url: ready.url },
     api: { ok: true },
   }

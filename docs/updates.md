@@ -28,12 +28,25 @@ An older macOS app that only shows a manual-install message must be replaced onc
 1. Acquire and verify the selected package before replacing the installed software.
 2. Stop only the verified Tokenless API daemon for the selected home and, for a macOS update, the selected menu app.
 3. Replace the package, then invoke the newly installed runtime.
-4. Prepare runtime dependencies only when already enabled, apply [database migrations](database-migrations.md), and start the new daemon.
+4. Prepare runtime dependencies only when already enabled, apply [database migrations](database-migrations.md), synchronize the bundled agent skills, and start the new daemon.
 5. Verify the running version, schema version, and an authenticated local API request before reporting success.
 
-Upgrade does not rerun setup, enable providers, change browser bindings, reset configuration, replace browser profiles, or reinstall global agent skills. Configured native browsers remain user-owned.
+Upgrade synchronizes both bundled agent skills, including when the software version is already current. It does not rerun setup, enable providers, change browser bindings, reset configuration, or replace browser profiles. Configured native browsers remain user-owned.
 
 Failures stop with an error. There is no automatic retry, task replay, or database downgrade. Once a database has been migrated, restoring an old executable is not a complete rollback; do not run older releases against a newer schema.
+
+## Agent skills
+
+Both the npm package and macOS app contain the matching `tokenless` and `tokenless-install` skills. Install, setup, and upgrade share one local synchronizer; skill updates do not depend on a separate GitHub download or global npm inside the app.
+
+```bash
+# Refresh only the installed version's skills; no setup or daemon restart:
+tokenless skills sync --json
+# Source checkout, after pulling and building the CLI:
+npm run sync:skill
+```
+
+Synchronization replaces only these two skill directories under `~/.agents/skills` and existing supported agent roots, including full resources and default prompts. Doctor checks their complete contents against the installed package; reload the agent session if it already loaded older instructions. Package users receive new skill contents through release automation, while source users must sync after pulling changes.
 
 ## Local packages
 

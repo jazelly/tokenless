@@ -28,12 +28,25 @@ macOS 菜单使用相同的检查与更新实现。仅有 npm 新版本不代表
 1. 获取并验证所选安装包，再替换已安装的软件。
 2. 只停止所选 home 下身份已验证的 Tokenless API daemon；macOS 更新还会停止所选菜单应用。
 3. 替换安装包，然后调用新安装的 runtime。
-4. 仅为已启用的 runtime 准备依赖，执行[数据库迁移](database-migrations.zh-CN.md)，启动新版 daemon。
+4. 仅为已启用的 runtime 准备依赖，执行[数据库迁移](database-migrations.zh-CN.md)，同步内置 agent skills，并启动新版 daemon。
 5. 验证运行版本、schema 版本及经过身份认证的本地 API 请求，再报告成功。
 
-Upgrade 不重跑 Setup、不启用 provider、不改变浏览器绑定、不重置配置、不替换浏览器 profile，也不重新安装全局 agent skills。配置的 native 浏览器仍由用户管理。
+Upgrade 会同步两个内置 agent skills，即使软件已是当前版本也会同步。它不重跑 Setup、不启用 provider、不改变浏览器绑定、不重置配置，也不替换浏览器 profile。配置的 native 浏览器仍由用户管理。
 
 失败时明确停止，不自动重试、重放任务或降级数据库。数据库迁移后，仅恢复旧可执行程序不构成完整回滚；不要用旧版程序打开新版 schema。
+
+## Agent skills
+
+npm 包与 macOS App 都包含配套的 `tokenless` 和 `tokenless-install` skills。Install、Setup 和 Upgrade 共用同一段本地同步逻辑，不依赖单独从 GitHub 下载，也不要求 App 使用全局 npm。
+
+```bash
+# 只刷新已安装版本的 skills，不运行 setup 或重启 daemon：
+tokenless skills sync --json
+# 源码用户拉取更新并构建 CLI 后：
+npm run sync:skill
+```
+
+同步只替换 `~/.agents/skills` 及已有受支持 agent 目录中的这两个 skill，包含完整资源与默认提示。Doctor 会与安装包逐文件比较；若 agent 已加载旧指令，请重新加载会话。安装包用户通过 release automation 收到新版 skill，源码用户在拉取更新后需要执行同步。
 
 ## 本地安装包
 

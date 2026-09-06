@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { tokenlessPackageVersion } from '#tokenless-server/platform-package.js'
 import { stopDaemon } from '../bootstrap/runtime.js'
 import { tokenlessHome } from '../bootstrap/home.js'
+import { installTokenlessSkills } from '../bootstrap/setup-workflow.js'
 import {
   checkMacOSAppUpdate,
   detectEmbeddedMacOSApp,
@@ -41,7 +42,7 @@ export type UpgradeCheckResult = {
 }
 
 export type UpgradeProgressEvent = {
-  phase: 'check' | 'acquire' | 'stopDaemon' | 'resolveGlobalCli' | 'npmInstall' | 'runtimeInstall'
+  phase: 'check' | 'acquire' | 'stopDaemon' | 'resolveGlobalCli' | 'npmInstall' | 'runtimeInstall' | 'skills'
   label: string
   status: 'started' | 'succeeded' | 'failed'
   errorCode?: string
@@ -52,6 +53,7 @@ type PackageManifest = { name: string; version: string; bin?: string | Record<st
 type PhaseResult = { ok: boolean; error?: { code: string; message: string; retryable: boolean }; [key: string]: unknown }
 
 const PHASE_LABELS: Record<UpgradeProgressEvent['phase'], CliMessageKey> = {
+  skills: 'upgradePhaseSkills',
   check: 'upgradePhaseCheck',
   acquire: 'upgradePhaseAcquire',
   stopDaemon: 'upgradePhaseStopDaemon',
@@ -133,8 +135,15 @@ export async function runUpgradeCommand(args: UpgradeArgs, dependencies: Upgrade
     return finish(result)
   }
   if (comparison === 0 && args.package === undefined) {
+    emit(dependencies, 'skills', 'started')
+    try {
+      result.phases.skills = (await installTokenlessSkills()).check
+    } catch (error) {
+      result.phases.skills = phaseError((error as { code?: string }).code ?? 'tokenless_skill_install_failed', formatError(error))
+    }
+    emit(dependencies, 'skills', result.phases.skills.ok ? 'succeeded' : 'failed', result.phases.skills)
     result.cli.afterVersion = beforeVersion
-    result.status = 'up_to_date'
+    if (result.phases.skills.ok) result.status = 'up_to_date'
     return finish(result)
   }
 
@@ -208,6 +217,7 @@ export function formatUpgradeSummary(result: Record<string, any>) {
   }
   const failed = Object.entries(result.phases ?? {}).find(([, phase]) => (phase as PhaseResult)?.ok !== true) as [string, PhaseResult] | undefined
   const failedLabel: CliMessageKey | undefined = failed === undefined ? undefined : ({
+    skills: 'upgradePhaseSkills',
     check: 'upgradePhaseCheck',
     acquire: 'upgradePhaseAcquire',
     stopDaemon: 'upgradePhaseStopDaemon',
@@ -384,10 +394,10 @@ async function activateInstalledRuntime({ packageDir, homeDir, daemonUrl, timeou
     let payload: any
     try { payload = JSON.parse(processResult.stdout) } catch { return phaseError('upgrade_activation_json_invalid', 'The newly installed runtime returned invalid JSON.') }
     if (payload?.version !== expectedVersion) return phaseError('upgrade_activation_version_mismatch', 'The activated runtime version did not match the selected update.')
-    if (payload?.ok !== true || typeof payload.version !== 'string' || !Number.isSafeInteger(payload.databaseVersion) || payload.databaseVersion < 1 || payload.daemon?.version !== payload.version || payload.api?.ok !== true) {
+    if (payload?.ok !== true || typeof payload.version !== 'string' || !Number.isSafeInteger(payload.databaseVersion) || payload.databaseVersion < 1 || payload.daemon?.version !== payload.version || payload.api?.ok !== true || payload.skills?.ok !== true) {
       return phaseError('upgrade_activation_unhealthy', 'The newly installed runtime did not prove database, daemon, and API readiness.')
     }
-    return { ok: true, payload: { version: payload.version, databaseVersion: payload.databaseVersion, daemon: payload.daemon, api: payload.api } }
+    return { ok: true, payload: { version: payload.version, databaseVersion: payload.databaseVersion, skills: payload.skills, daemon: payload.daemon, api: payload.api } }
   } catch (error) {
     return phaseError('upgrade_activation_failed', formatError(error), true)
   }

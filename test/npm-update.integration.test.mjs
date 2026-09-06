@@ -19,6 +19,8 @@ test('an installed npm CLI upgrades a running daemon with a local archive and pr
   const npmPrefix = path.join(workspace, 'npm-prefix')
   const npmCache = path.join(workspace, 'npm-cache')
   const homeDir = path.join(workspace, 'home')
+  const skillHome = path.join(workspace, 'agent-home')
+  fs.mkdirSync(path.join(skillHome, '.codex'), { recursive: true })
   const checkHome = path.join(workspace, 'check-home')
   const noConsentHome = path.join(workspace, 'no-consent-home')
   fs.mkdirSync(npmPrefix, { recursive: true })
@@ -43,7 +45,7 @@ test('an installed npm CLI upgrades a running daemon with a local archive and pr
     const newArchive = path.join(packDir, npmPack(newPackageDir, packDir, npmPackEnvironment).filename)
     assert.notEqual(newArchive, oldArchive)
 
-    const npmEnvironmentForInstall = npmEnvironment(npmPrefix, npmCache)
+    const npmEnvironmentForInstall = { ...npmEnvironment(npmPrefix, npmCache), TOKENLESS_SETUP_SKILL_HOME: skillHome }
     npmExecFileSync([
       'install', '--global', oldArchive, '--no-audit', '--no-fund',
     ], { cwd: workspace, env: npmEnvironmentForInstall })
@@ -69,6 +71,7 @@ test('an installed npm CLI upgrades a running daemon with a local archive and pr
     assert.equal(checkPayload.updateAvailable, true)
     assert.equal(checkPayload.artifact.version, targetVersion)
     assert.equal(fs.existsSync(checkHome), false, 'check must not create a Tokenless home')
+    assert.equal(fs.existsSync(path.join(skillHome, '.agents')), false, 'check must not synchronize skills')
 
     const noConsent = runCli(oldCli, [
       'upgrade', '--package', newArchive, '--home', noConsentHome, '--json',
@@ -76,6 +79,12 @@ test('an installed npm CLI upgrades a running daemon with a local archive and pr
     assert.equal(noConsent.status, 1, noConsent.stderr || noConsent.stdout)
     assert.equal(JSON.parse(noConsent.stdout).error.code, 'upgrade_confirmation_required')
     assert.equal(fs.existsSync(noConsentHome), false, 'a rejected update must not create a home')
+
+    const sync = runCli(oldCli, ['skills', 'sync', '--json'], workspace, npmEnvironmentForInstall)
+    assert.equal(sync.status, 0, sync.stderr || sync.stdout)
+    assert.equal(JSON.parse(sync.stdout).ok, true)
+    const installedPrompt = path.join(skillHome, '.codex', 'skills', 'tokenless-install', 'agents', 'openai.yaml')
+    fs.appendFileSync(installedPrompt, '\n# Locally stale prompt\n')
 
     const { writeTokenlessConfig } = await import('../packages/cli/dist/server/src/persistence/config.js')
     const { ManagedProfileRegistry } = await import('../packages/cli/dist/server/src/browser/profiles/registry.js')
@@ -118,6 +127,14 @@ test('an installed npm CLI upgrades a running daemon with a local archive and pr
     assert.equal(updatePayload.phases.runtimeInstall.payload.databaseVersion, 1)
     assert.equal(updatePayload.phases.runtimeInstall.payload.daemon.version, targetVersion)
     assert.equal(updatePayload.phases.runtimeInstall.payload.api.ok, true)
+    assert.equal(updatePayload.phases.runtimeInstall.payload.skills.ok, true)
+    assert.equal(updatePayload.phases.runtimeInstall.payload.skills.version, targetVersion)
+    for (const agent of ['.agents', '.codex']) {
+      assert.deepEqual(
+        fs.readFileSync(path.join(skillHome, agent, 'skills', 'tokenless-install', 'agents', 'openai.yaml')),
+        fs.readFileSync(path.join(installedPackageDir, 'dist', 'skills', 'tokenless-install', 'agents', 'openai.yaml')),
+      )
+    }
 
     const updatedRuntime = await import(`${pathToFileURL(path.join(installedPackageDir, 'dist', 'src', 'index.js')).href}?npm-update=${Date.now()}`)
     const newReady = await waitForReady(updatedRuntime.probeDaemonReady, null, homeDir, daemonUrl)

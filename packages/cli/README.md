@@ -16,6 +16,8 @@ tokenless setup
 tokenless doctor --json
 ```
 
+Setup requires `uv` for the G4F runtime and synchronizes matching skills; upgrades sync them too. Use `tokenless skills sync --json` to refresh skills alone. The macOS menu app is a separate optional install and is not installed on Windows.
+
 Before browser use, open `chrome://inspect/#remote-debugging` in the Google Chrome instance you already use or `brave://inspect/#remote-debugging` in Brave, enable remote debugging, and approve the browser's connection prompt. Setup asks about Anti-Detect mode, then lets native-mode users choose Chrome or Brave. If browser discovery fails, setup still completes and tells the user how to add an executable path; provider checks wait until browser access is available.
 
 For a clean non-interactive profile:

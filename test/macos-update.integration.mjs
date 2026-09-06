@@ -30,6 +30,8 @@ test('real isolated macOS app update replaces the complete bundle and preserves 
 
   const isolatedRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-macos-update-real-')))
   const homeDir = path.join(isolatedRoot, 'tokenless-home')
+  const skillHome = path.join(isolatedRoot, 'agent-home')
+  fs.mkdirSync(path.join(skillHome, '.codex'), { recursive: true })
   const appPath = path.join(isolatedRoot, 'Tokenless.app')
   const daemonPort = await freePort()
   const daemonUrl = `http://127.0.0.1:${daemonPort}`
@@ -75,6 +77,7 @@ test('real isolated macOS app update replaces the complete bundle and preserves 
       homeDir,
     ], {
       cwd: repositoryRoot,
+      env: { ...process.env, TOKENLESS_SETUP_SKILL_HOME: skillHome },
       encoding: 'utf8',
       timeout: 180_000,
     })
@@ -89,6 +92,11 @@ test('real isolated macOS app update replaces the complete bundle and preserves 
     assert.equal(payload.runtime.version, cliManifest.version)
     assert.equal(payload.runtime.daemon.version, cliManifest.version)
     assert.equal(payload.runtime.api.ok, true)
+    assert.equal(payload.runtime.skills.ok, true)
+    assert.deepEqual(
+      fs.readFileSync(path.join(skillHome, '.codex', 'skills', 'tokenless-install', 'agents', 'openai.yaml')),
+      fs.readFileSync(path.join(appPath, 'Contents', 'Resources', 'runtime', 'cli', 'dist', 'skills', 'tokenless-install', 'agents', 'openai.yaml')),
+    )
     assert.ok(Number.isSafeInteger(payload.runtime.databaseVersion))
     assert.equal(fs.existsSync(appPath), true)
     assert.equal(findRunningMenuPids(executablePath).includes(oldPid), false)

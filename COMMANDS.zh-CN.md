@@ -11,6 +11,7 @@
 | `tokenless help` | 显示内置命令摘要。 | 否 |
 | `tokenless --version` | 输出当前安装的 CLI 版本。 | 否 |
 | `tokenless install` | 底层本地 runtime provisioning；日常维护请使用 `tokenless upgrade`。 | 否 |
+| `tokenless skills sync` | 同步安装包内的两个 agent skills。 | 无 |
 | `tokenless setup` | 配置 skills、浏览器、profiles、daemon，并执行一次 provider 登录检查。 | 是 |
 | `tokenless agents <install\|status\|inspect\|uninstall> codex` | 管理可选的 Codex guidance、native hooks 和精确 Harness context binding。 | 否 |
 | `tokenless dashboard` | 打开本地 Web Dashboard，或输出可直接访问的 loopback URL。 | 否 |
@@ -141,7 +142,19 @@ tokenless install --browsers chrome,edge --json
 
 该命令不会更新全局 npm CLI，不会配置 managed profile，也不会检查 provider 登录状态。直接使用本命令时，完成后仍需运行 `tokenless setup`。
 
+### `tokenless skills sync`
+
+将当前安装包内的 `tokenless` 与 `tokenless-install` 完整同步到 `~/.agents/skills` 和已有受支持 agent 目录。包含默认提示及资源；不下载远端 skill、不修改配置、不启动 daemon，也不访问 provider。
+
+```bash
+tokenless skills sync --json
+```
+
+Install、Setup 和 Upgrade 共用此同步逻辑，Upgrade 在软件已是当前版本时也同步。Doctor 与安装包逐文件核对；源码用户拉取并构建 CLI 后运行 `npm run sync:skill`，agent 已加载旧 skill 时需重新加载会话。
+
 ### `tokenless setup`
+
+需要 PATH 中有 `uv`，用于准备当前 setup 启用的 G4F Python runtime。
 
 执行完整 onboarding：先询问是否使用 Anti-Detect；native mode 选择用户自行提供的 Chrome 或 Brave，否则准备 CloakBrowser；然后创建或选择逻辑 Tokenless profile、保存配置、upsert 全局 Tokenless agent skills、将 daemon 对齐已安装 CLI 版本，并在 browser access 可用时检查 enabled providers。使用 `--install-codex` 时，setup 会在保存 preferences 之后、skill maintenance 之前显式安装 Tokenless guidance 与 hooks；不带该 flag 时不会安装，非交互运行也不会静默安装。Codex `/hooks` 中的手工信任仍然是必需步骤。Skill maintenance 以 `~/.agents/skills` 为 canonical，并刷新已经存在的常见 agent root（包括 `~/.codex/skills` 和 `~/.claude/skills`）中的 direct copy；同时修复 legacy 的 `~/.agent/skills`。npm postinstall、daemon startup 和普通 job execution 都不会下载 browser。如果尚未配置语言，setup 会检测系统 locale：中文 locale 选择 `zh-CN`，其他情况选择 `en`，并将结果写入 config。
 

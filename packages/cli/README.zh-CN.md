@@ -16,6 +16,8 @@ tokenless setup
 tokenless doctor --json
 ```
 
+Setup 需要 `uv` 来准备 G4F runtime，并会自动同步配套 skills；升级也会同步。仅刷新 skills 可运行 `tokenless skills sync --json`。Windows 不安装 macOS 菜单栏 App，macOS 的菜单栏 App 为独立可选安装。
+
 在使用 browser 功能前，请在日常使用的 Google Chrome 中打开 `chrome://inspect/#remote-debugging`，或在 Brave 中打开 `brave://inspect/#remote-debugging`，启用 remote debugging，并在浏览器出现提示时确认连接。
 
 Setup 会先询问是否使用 Anti-Detect mode，再让 native-mode 用户选择 Chrome 或 Brave。Browser discovery 失败时 setup 仍会完成并提示添加 executable path；在 browser access 可用前不会运行 provider 检查。

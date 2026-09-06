@@ -107,6 +107,7 @@ import { paintCliText, resolveCliColorEnabled, type CliColor } from './output/cl
 import { DAEMON_CONTROL_API_REVISION, DAEMON_TASK_STATE_SCHEMA_ID } from '#tokenless-server/schema-ids.js'
 import {
   inspectTokenlessSkills,
+  installTokenlessSkills,
 } from './bootstrap/setup-workflow.js'
 import { reconcileTokenlessMaintenance } from './bootstrap/maintenance.js'
 import {
@@ -323,7 +324,7 @@ try {
   } else {
     command = argv[0]?.startsWith('-') ? 'prompt' : (argv.shift() ?? 'help')
   }
-  const subcommand = (command === 'profiles' || command === 'daemon' || command === 'capabilities' || command === 'limits' || command === 'savings' || command === 'api-proxy' || command === 'agents' || command === 'agent' || command === 'featurebench' || command === 'menubar') && argv[0] && !argv[0].startsWith('-')
+  const subcommand = (command === 'skills' || command === 'profiles' || command === 'daemon' || command === 'capabilities' || command === 'limits' || command === 'savings' || command === 'api-proxy' || command === 'agents' || command === 'agent' || command === 'featurebench' || command === 'menubar') && argv[0] && !argv[0].startsWith('-')
     ? argv.shift()
     : undefined
   const agentTarget = command === 'agents' && argv[0] && !argv[0].startsWith('-')
@@ -394,6 +395,10 @@ try {
     await stateCommand(args)
   } else if (command === 'cancel') {
     await cancelCommand(args)
+  } else if (command === 'skills') {
+    const { check } = await installTokenlessSkills()
+    if (args.json) printPayload(check, args)
+    else console.log(t('skillsSynced', { version: check.version }))
   } else if (command === 'setup') {
     await setupCommand(args)
   } else if (command === 'install') {
@@ -5448,6 +5453,7 @@ function createCommandContracts(): CommandContract[] {
     { command: 'status', usage: ['tokenless status (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'jobId', 'projectName', 'chatName', 'limit', 'agentKind', 'agentSessionId'] },
     { command: 'cancel', usage: ['tokenless cancel --job-id <job-id> --json'], options: ['home', 'json', 'jobId', 'daemonUrl', 'daemonStartTimeoutMs', 'cancelTimeoutMs'] },
     { command: 'setup', usage: ['tokenless setup [--browser <chrome|brave|cloak>|--anti-detect] [--browser-executable-path <absolute-path>] [--install-codex [--codex-home <dir>]] [--profile <slug>] [--provider-whitelist <list>] [--no-open] [--defaults] --json'], options: ['home', 'json', 'quiet', 'browser', 'browserExecutablePath', 'antiDetect', 'profile', 'providerWhitelist', 'noOpen', 'daemonUrl', 'daemonStartTimeoutMs', 'cancelTimeoutMs', 'timeoutMs', 'targetUrl', 'setDefault', 'setupDefaults', 'installCodex', 'codexHome'] },
+    { command: 'skills', subcommand: 'sync', usage: ['tokenless skills sync [--json]'], options: ['json'] },
     { command: 'install', usage: ['tokenless install [--browser <browser>|--browsers <list>] [--repair-browser] --json'], options: ['home', 'json', 'browser', 'browsers', 'repairBrowser', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'upgrade', usage: ['tokenless upgrade [--check | --yes] [--package <local-archive>] [--json] [--home <dir>] [--daemon-url <url>]'], options: ['check', 'yes', 'package', 'json', 'home', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'doctor', usage: ['tokenless doctor --json'], options: ['home', 'json', 'browser', 'daemonUrl'] },
@@ -6846,6 +6852,7 @@ function usage(args: CliArgs) {
       commands: [
         'tokenless daemon stop [--json]',
         'tokenless doctor --json',
+        'tokenless skills sync --json',
         'tokenless savings status --json',
         'tokenless upgrade [--json]',
         'tokenless help',

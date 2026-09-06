@@ -11,6 +11,7 @@ This document is the public inventory of the `tokenless` command-line interface.
 | `tokenless help` | Show the built-in command summary. | None |
 | `tokenless --version` | Print the installed CLI version. | None |
 | `tokenless install` | Low-level local runtime provisioning; use `tokenless upgrade` for normal maintenance. | None |
+| `tokenless skills sync` | Synchronize the two bundled agent skills. | None |
 | `tokenless setup` | Configure skills, browser, profiles, daemon, and one-time provider sign-in checks. | Yes |
 | `tokenless agents <install\|status\|inspect\|uninstall> codex` | Manage the optional Codex guidance, native hooks, and exact Harness context binding. | None |
 | `tokenless dashboard` | Open the local web control plane, or print its direct loopback URL. | None |
@@ -141,7 +142,19 @@ Main options:
 
 This command does not update the global npm CLI, configure a managed profile, or check provider sign-in. Run `tokenless setup` afterward when using it directly.
 
+### `tokenless skills sync`
+
+Synchronizes the complete bundled `tokenless` and `tokenless-install` skills into `~/.agents/skills` and existing supported agent roots. Includes default prompts and resources; does not download remote skills, change configuration, start a daemon, or access providers.
+
+```bash
+tokenless skills sync --json
+```
+
+Install, setup, and upgrade share this synchronizer; upgrade also syncs when the software is already current. Doctor compares every file with the installed package. Source users run `npm run sync:skill` after pulling and building the CLI; reload agent sessions that already loaded older skills.
+
 ### `tokenless setup`
+
+Requires `uv` on PATH to prepare the G4F Python runtime enabled by current setup.
 
 Runs the complete onboarding flow: asks about Anti-Detect, selects a user-supplied Chrome or Brave for native mode or prepares CloakBrowser, creates or selects a logical Tokenless profile, saves configuration, upserts the global Tokenless agent skills, reconciles the daemon to the installed CLI version, and checks enabled providers when browser access is available. With `--install-codex`, setup explicitly installs Tokenless guidance and hooks after preferences are saved and before skill maintenance; setup without the flag never installs them, including non-interactive runs. Manual trust in Codex `/hooks` remains required. Skill maintenance keeps `~/.agents/skills` canonical and refreshes direct copies for already-present common agent roots, including `~/.codex/skills` and `~/.claude/skills`; it also repairs the legacy `~/.agent/skills` location. No browser is downloaded by npm postinstall, daemon startup, or ordinary job execution. If no language preference exists, setup detects the system locale, selects `zh-CN` for Chinese locales or `en` otherwise, and persists it in config.
 

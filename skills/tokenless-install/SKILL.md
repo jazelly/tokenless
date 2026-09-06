@@ -39,6 +39,7 @@ The standalone macOS app does not require global Node or npm to run. Its base bu
    ```bash
    npm install --global tokenless@latest
    tokenless --version
+   tokenless skills sync --json
    ```
 
    Invoke the installed `tokenless` command, never `npx tokenless`. npm installation alone does not configure profiles, install the menu app, or download browsers.
@@ -55,7 +56,7 @@ The standalone macOS app does not require global Node or npm to run. Its base bu
 
 5. Run `tokenless doctor --json` separately after installation/setup. Report CLI installation, runtime health, setup `status`, and provider readiness separately. `action_required`, missing browser/profile, or sign-in work means onboarding is still incomplete even if software installation succeeded.
 
-Setup installs both GitHub-backed agent skills, prepares the selected browser, saves configuration, prepares G4F, reconciles the daemon, and checks enabled providers when the browser resolves. It can open provider review tabs. Do not run it just to check versions, refresh skills, or upgrade software.
+Setup synchronizes both bundled agent skills, prepares the selected browser, saves configuration, prepares G4F, reconciles the daemon, and checks enabled providers when the browser resolves. It can open provider review tabs. Do not run it just to check versions, refresh skills, or upgrade software.
 
 Native mode uses user-installed Chrome or Brave and connects to the running browser; it does not copy/import a browser profile or download Chrome/Brave. Enable remote debugging at `chrome://inspect/#remote-debugging` or `brave://inspect/#remote-debugging` and let the user approve the connection prompt. Use `--browser-executable-path <absolute-path>` when discovery needs an explicit installed path. Native mode is headed-only.
 
@@ -81,28 +82,35 @@ tokenless upgrade --yes --json
 - Embedded macOS CLI / menu app: use the app's update action or embedded runtime to replace the whole bundle. Upgrading global npm does not update the app, and the app does not run a global npm upgrade.
 - Source checkout / linked development CLI: update and rebuild the selected checkout within the requested scope. Do not bypass the updater's global-install identity checks.
 
-Upgrade prepares dependencies only when already enabled, applies bundled database migrations, starts the new daemon, and verifies running version, database version, and an authenticated local API request. It does not rerun setup, change browser/provider choices, replace profiles, reinstall global skills, or run doctor. Run `tokenless doctor --json` separately when installation health verification is requested.
+Upgrade prepares dependencies only when already enabled, applies bundled database migrations, starts the new daemon, and verifies running version, database version, and an authenticated local API request. It does not rerun setup, change browser/provider choices, replace profiles, or run doctor. It synchronizes both skills from the installed package, including when the software is already up to date. Run `tokenless doctor --json` separately when installation health verification is requested.
 
-For npm results, inspect `ok`, `status`, and the returned `phases`; an update includes `runtimeInstall` activation proof. For macOS results, inspect `ok`, `status`, and `runtime` when updated. `up_to_date` is successful without replacement or activation phases. Do not require the old `skills` or `doctor` upgrade phases.
+For npm results, inspect `ok`, `status`, and the returned `phases`; an update includes `runtimeInstall` activation proof. For macOS results, inspect `ok`, `status`, and `runtime` when updated. `up_to_date` is successful without replacement or runtime activation, but still includes skill synchronization proof (`phases.skills` for npm, `skills` for macOS). Updated runtime proof includes `skills.ok: true`. Do not require a `doctor` upgrade phase.
 
 When an update fails, report the first failed phase or returned error code. Earlier phases may have taken effect; do not claim rollback, automatically retry, or downgrade against a migrated database. An explicitly supplied local package uses `--package <absolute-path>` with `--yes --json`: `.tgz` for npm, matching release ZIP for the embedded macOS app.
+
+## Skill distribution and synchronization
+
+The npm package and macOS app bundle include `tokenless` and `tokenless-install` under the CLI's `dist/skills`. Install/setup and upgrade use the same local synchronizer; no global npm or separate skills CLI is needed to sync the embedded app's skills.
+
+- Fresh npm install: run `tokenless skills sync --json` after npm; setup also syncs when onboarding continues.
+- Upgrade: run the installed channel's `tokenless upgrade --yes --json`; the new package supplies its matching skills. `upgrade --check` never writes skill files.
+- Skill-only repair or a newly installed agent: run `tokenless skills sync --json`. It restores the installed version, not an unreleased GitHub branch.
+- Source checkout: after pulling changes and building the CLI, run `npm run sync:skill`. It uses the repository's `skills/` source and the same synchronizer. Pulling Git alone does not refresh global copies.
+
+The canonical copy lives in `~/.agents/skills`. Existing Codex, Claude Code, Cursor, Copilot, Gemini CLI, Hermes, OpenCode, Pi, Windsurf, and legacy `.agent` roots receive complete copies, including `agents/openai.yaml` and supporting resources. Configured Codex/Claude/OpenCode roots are respected. Only the two product-owned skill directories are replaced; unrelated skills and agent instructions stay intact.
+
+Doctor compares every skill file against the installed package. Reload or start a new agent session after sync if it has already loaded the old instructions. To distribute a skill change to other package users, include it in a release through repository release automation; local edits or local sync do not publish it.
 
 ## Doctor and targeted repair
 
 Start with `tokenless doctor --json` and repair only the reported boundary:
 
 - Missing CLI or a CLI too old to expose `upgrade`: install `tokenless@latest` globally for the npm channel, then inspect that installed CLI's help. Do not replace an app runtime with npm.
-- Missing/stale skills: upgrade does not refresh them. Reinstall the GitHub-backed skills with the skills CLI, then check doctor again:
-
-  ```bash
-  npx --yes skills add jazelly/tokenless --skill tokenless --skill tokenless-install --global --yes --agent universal
-  ```
-
-  The canonical root is `~/.agents/skills`. If doctor identifies stale copies for an installed agent, target that agent with the skills CLI as well. Do not rerun full setup merely to refresh skill files.
+- Missing/stale skills: run `tokenless skills sync --json`, then doctor. This copies the installed package's complete skills without setup, network access, daemon restart, or browser changes.
 - Browser missing: resolve the selected user-installed browser or its configured executable path; do not silently switch browsers or download a replacement.
 - Missing profile or requested preference changes: use the setup workflow with the user's selected choices. Never reset/delete profiles or import browser data as an installation repair.
 - Runtime provisioning failure: `tokenless install --browser <selected-browser> --json` is the low-level provisioning command. It writes runtime preferences, enables/prepares G4F, refreshes skills, and reconciles the daemon; use it only for a requested repair requiring those effects. It does not upgrade the CLI or configure provider sign-in.
-- Unknown or contradictory output: report the failed check and stop guessing. An unchanged-version upgrade may do nothing; do not repeat it as a generic repair.
+- Unknown or contradictory output: report the failed check and stop guessing. An unchanged-version upgrade synchronizes skills but does not reactivate the daemon; do not repeat it as a generic runtime repair.
 
 Doctor is read-only and does not open/close browser windows or refresh provider observations. A stopped daemon can be healthy (`ok: true`, `running: false`); do not label that an installation failure or claim it is running. Provider observations may be stale, and doctor success alone does not prove a provider is currently signed in or usable.
 
