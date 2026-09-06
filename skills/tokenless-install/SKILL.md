@@ -1,97 +1,124 @@
 ---
 name: tokenless-install
-description: Install, upgrade, repair, and verify Tokenless, its agent skills, and local Playwright runtime. Use only when the user explicitly asks for installation, upgrade, repair, browser sign-in handoff, a failed doctor check, or an installation integrity check.
+description: Install, upgrade, repair, and verify Tokenless API CLI, agent skills, browser/runtime dependencies, and the optional macOS menu app. Use for requested installation, upgrades, setup, browser sign-in handoff, or installation health checks.
 ---
 
-# Tokenless installation and maintenance
+# Tokenless API installation and maintenance
 
-Use this workflow only for the maintenance task the user explicitly requested; it is not a prerequisite for every provider job. Execute the documented noninteractive maintenance and verification commands yourself. Managed-profile initialization and import are user-run workflows outside the agent session: never initiate either one or traverse providers on the user's behalf. Report status, manual actions, and final results in the user's preferred language, inferred from the conversation.
+Match the requested task: install prepares software, setup changes user choices, and upgrade replaces software while preserving those choices. An audit or version check does not authorize running setup or an upgrade. Report results and user actions in the user's preferred language.
 
-## Install
+## Platform and installation channel
 
-1. Require Node.js 22.13 or newer:
+Identify the OS, architecture, and installation channel from the host and executable location before choosing commands. When Node is available:
+
+```bash
+node -p "process.platform + '-' + process.arch"
+```
+
+| Platform / installation | Required path | macOS menu app |
+| --- | --- | --- |
+| Windows x64 (prerelease) | npm CLI, local daemon, and selected browser/runtime dependencies | Do not install, build, update, or require it. |
+| Apple Silicon macOS, npm CLI | npm CLI, local daemon, and selected browser/runtime dependencies | Separate, optional installation; npm install/setup does not install it. |
+| Apple Silicon macOS 13+, standalone app | App bundle with embedded Node, CLI, daemon, and Node dependencies | Update the entire app through its own runtime. |
+
+Do not infer release support for another platform from a browser artifact alone. Report an unsupported platform instead of substituting a macOS archive. Windows commands run in PowerShell or a normal terminal; do not use Bash installers, Swift, LaunchServices, Keychain steps, or `~/Applications/Tokenless.app` there.
+
+The standalone macOS app does not require global Node or npm to run. Its base bundle excludes browser binaries and the G4F Python environment. For an explicitly requested app install, use the matching versioned release ZIP and SHA-256 checksum. For an explicitly requested source build on Apple Silicon macOS, the repository command is `npm run install:macos-menu`; it builds, installs to `~/Applications/Tokenless.app`, and launches the app. Verify the menu and daemon afterward. System security approval remains user-controlled.
+
+## Fresh CLI installation and setup
+
+1. Check Node.js 22.13+ and npm:
 
    ```bash
    node --version
+   npm --version
    ```
 
-   If it is missing or older, report the exact requirement and stop until the user installs it.
-
-2. Install the latest CLI:
+2. Install the CLI only when installation is requested:
 
    ```bash
    npm install --global tokenless@latest
+   tokenless --version
    ```
 
-   After installation, invoke only the global `tokenless` command. Never run the
-   Tokenless CLI through `npx tokenless` or `npx tokenless@latest`.
+   Invoke the installed `tokenless` command, never `npx tokenless`. npm installation alone does not configure profiles, install the menu app, or download browsers.
 
-3. Run the canonical maintenance workflow to reconcile the global skills and matching local daemon:
+3. For requested onboarding, check `uv --version`: current setup enables G4F and uses `uv sync` to prepare its pinned Python environment and provider dependencies. If a prerequisite is missing, install it within the authorized installation scope or report the exact missing prerequisite; do not claim setup completed.
+
+4. Use `tokenless setup` for interactive user choices. When the browser/profile choices are already known and non-interactive setup is requested, use the current flags, for example:
 
    ```bash
-   tokenless upgrade --json
+   tokenless setup --browser chrome --profile <slug> --defaults --json
    ```
 
-`upgrade` already runs the final read-only `doctor --json` check. Report full success only when its top-level result is `ok: true` and its `npmInstall`, `resolveGlobalCli`, `skills`, `runtimeInstall`, and `doctor` phases are healthy. Summarize skill, browser, managed profile, daemon, worker, and provider readiness without exposing account identity or authentication data. If the CLI, skills, and local runtime phases succeed but doctor reports that no managed profile exists, report that the CLI installation completed and provider readiness is pending user-run profile initialization. Do not start that workflow for the user.
+   Replace `<slug>` with the selected logical profile. Preserve an existing selection; do not invent another profile during maintenance. `--provider-whitelist <list>` selects enabled providers. `--no-open` suppresses the dashboard opening, not provider checks. Do not use the removed `--fresh` or browser-profile import workflow.
 
-## User handoff
+5. Run `tokenless doctor --json` separately after installation/setup. Report CLI installation, runtime health, setup `status`, and provider readiness separately. `action_required`, missing browser/profile, or sign-in work means onboarding is still incomplete even if software installation succeeded.
 
-Run the CLI step first. Pause only for a user-only browser action such as signing in, CAPTCHA, plan or permission UI, or provider confirmation.
+Setup installs both GitHub-backed agent skills, prepares the selected browser, saves configuration, prepares G4F, reconciles the daemon, and checks enabled providers when the browser resolves. It can open provider review tabs. Do not run it just to check versions, refresh skills, or upgrade software.
 
-Report the handoff in the user's preferred language with exactly three short parts:
+Native mode uses user-installed Chrome or Brave and connects to the running browser; it does not copy/import a browser profile or download Chrome/Brave. Enable remote debugging at `chrome://inspect/#remote-debugging` or `brave://inspect/#remote-debugging` and let the user approve the connection prompt. Use `--browser-executable-path <absolute-path>` when discovery needs an explicit installed path. Native mode is headed-only.
 
-1. **Completed locally:** state which installation steps succeeded.
-2. **Action needed:** give the exact visible action and name the managed profile and provider when known.
-3. **Next verification:** ask the user to reply when finished, then run `tokenless profiles status --profile <slug> --provider <id> --json` and `tokenless doctor --json`.
-
-Keep authentication data inside the managed profile. Never ask for a cookie, browser-storage value, password, hidden header, or other secret. Do not bypass login, CAPTCHA, copy consent, or provider confirmation.
-
-Use `profiles open` only for headed browser handoff. It always opens a visible browser window. If a job was parked from a headless run, tell the user to resume the same job with `tokenless resume --job-id <job-id> --browser-visibility headed --json` instead of starting over.
-
-`doctor` is read-only. It does not open or close browser windows, and Chromium sandbox stays enabled in both headless and headed modes.
+Download CloakBrowser only for a selected Anti-Detect setup (`--browser cloak` or `--anti-detect`). Optional Codex guidance/hooks require `--install-codex`; `--codex-home <dir>` requires that flag. Ordinary setup does not install hooks, and users must trust installed hooks in Codex `/hooks` themselves.
 
 ## Upgrade
 
-When `tokenless upgrade` is available, it is the canonical upgrade path. The command itself is prompt-free and does not read answers from stdin. Agents must use its structured automation form instead of composing separate npm, skill, runtime, or doctor commands:
+Check the selected installation without changing it:
 
 ```bash
-tokenless upgrade --json
+tokenless upgrade --check --json
 ```
 
-The command owns this order:
-
-1. Install `tokenless@latest` globally with npm.
-2. Resolve and verify the installed package, version, binary declaration, and exact CLI entrypoint before handing off to new code.
-3. Use that verified new CLI's shared maintenance reconciler to upsert both
-   GitHub-backed Tokenless agent skills globally and reconcile the matching
-   packaged daemon runtime.
-4. Use the same new CLI to run the final read-only `doctor --json` check.
-
-Do not initialize, import, reset, or replace a managed profile before or after an upgrade. If the returned doctor result identifies a profile or provider problem, report it as a user-run follow-up. Upgrade does not sign in to providers or alter managed profiles.
-
-For a pre-upgrade CLI that reports `upgrade` as an unknown command, bootstrap the canonical command exactly once:
+For an authorized update, explain that the daemon restarts and active tasks may be interrupted, then use the non-interactive form:
 
 ```bash
-npm install --global tokenless@latest
-tokenless upgrade --json
+tokenless upgrade --yes --json
 ```
 
-After that bootstrap, always use `tokenless upgrade --json`; do not keep maintaining a parallel manual upgrade recipe.
+`--json` alone does not confirm an update; it fails with `upgrade_confirmation_required`. Do not request confirmation again when the user has already authorized the update. A check-only request remains read-only.
 
-`--json` selects machine-readable output; it is not a different upgrade workflow or a version selector. Do not allocate a TTY, answer prompts, or add a separate noninteractive command. Human users may omit the flag and run `tokenless upgrade` for concise progress and a summary; agents and CI keep `--json` so stdout contains one structured result.
+- Global npm CLI: acquire the exact checked package version, verify the global installation, stop the verified daemon, replace the package, and activate the new runtime.
+- Embedded macOS CLI / menu app: use the app's update action or embedded runtime to replace the whole bundle. Upgrading global npm does not update the app, and the app does not run a global npm upgrade.
+- Source checkout / linked development CLI: update and rebuild the selected checkout within the requested scope. Do not bypass the updater's global-install identity checks.
 
-Report completion only when the top-level result has `ok: true`, every returned phase is healthy, and the nested doctor result is healthy. When `ok` is false, report the first failed phase, its stable error code, and any returned follow-up. Earlier successful phases may remain installed; do not claim rollback. Fix only the reported boundary and rerun the canonical command. If npm installation or global CLI verification fails, later phases are intentionally absent. Once the new CLI is verified, the command still attempts the final doctor check after a skill or runtime failure so the user receives a complete diagnostic.
+Upgrade prepares dependencies only when already enabled, applies bundled database migrations, starts the new daemon, and verifies running version, database version, and an authenticated local API request. It does not rerun setup, change browser/provider choices, replace profiles, reinstall global skills, or run doctor. Run `tokenless doctor --json` separately when installation health verification is requested.
 
-## Doctor and repair
+For npm results, inspect `ok`, `status`, and the returned `phases`; an update includes `runtimeInstall` activation proof. For macOS results, inspect `ok`, `status`, and `runtime` when updated. `up_to_date` is successful without replacement or activation phases. Do not require the old `skills` or `doctor` upgrade phases.
 
-Run `tokenless doctor --json` first and use its exact failed check as the repair boundary:
+When an update fails, report the first failed phase or returned error code. Earlier phases may have taken effect; do not claim rollback, automatically retry, or downgrade against a migrated database. An explicitly supplied local package uses `--package <absolute-path>` with `--yes --json`: `.tgz` for npm, matching release ZIP for the embedded macOS app.
 
-- Node.js failure: require Node.js 22.13 or newer.
-- CLI, daemon, or Playwright worker failure: run `tokenless upgrade --json`, then inspect its nested doctor result.
-- Browser failure: require a supported installed browser selected by the user; do not silently substitute another browser.
-- Missing default profile: report that the user must initialize a managed profile manually. Do not create one for them.
-- Profile import failure: report the copy error and tell the user that import must be retried manually. Never inspect, copy, or mutate the source profile.
-- Provider unauthenticated or visibly blocked: run `tokenless profiles open --profile <slug> --provider <id>`, use the user handoff, then rerun `profiles status` and `doctor`.
-- Unknown or contradictory output: report the exact failed check and stop instead of guessing, weakening validation, or switching runtime paths.
+## Doctor and targeted repair
 
-Neither this skill nor the agent may inspect, print, log, export, or transmit authentication state.
+Start with `tokenless doctor --json` and repair only the reported boundary:
+
+- Missing CLI or a CLI too old to expose `upgrade`: install `tokenless@latest` globally for the npm channel, then inspect that installed CLI's help. Do not replace an app runtime with npm.
+- Missing/stale skills: upgrade does not refresh them. Reinstall the GitHub-backed skills with the skills CLI, then check doctor again:
+
+  ```bash
+  npx --yes skills add jazelly/tokenless --skill tokenless --skill tokenless-install --global --yes --agent universal
+  ```
+
+  The canonical root is `~/.agents/skills`. If doctor identifies stale copies for an installed agent, target that agent with the skills CLI as well. Do not rerun full setup merely to refresh skill files.
+- Browser missing: resolve the selected user-installed browser or its configured executable path; do not silently switch browsers or download a replacement.
+- Missing profile or requested preference changes: use the setup workflow with the user's selected choices. Never reset/delete profiles or import browser data as an installation repair.
+- Runtime provisioning failure: `tokenless install --browser <selected-browser> --json` is the low-level provisioning command. It writes runtime preferences, enables/prepares G4F, refreshes skills, and reconciles the daemon; use it only for a requested repair requiring those effects. It does not upgrade the CLI or configure provider sign-in.
+- Unknown or contradictory output: report the failed check and stop guessing. An unchanged-version upgrade may do nothing; do not repeat it as a generic repair.
+
+Doctor is read-only and does not open/close browser windows or refresh provider observations. A stopped daemon can be healthy (`ok: true`, `running: false`); do not label that an installation failure or claim it is running. Provider observations may be stale, and doctor success alone does not prove a provider is currently signed in or usable.
+
+## Browser handoff and verification
+
+For the selected provider's sign-in or permission follow-up:
+
+```bash
+tokenless profiles open --profile <slug> --provider <id>
+```
+
+Tell the user what completed, the exact visible action needed, and what will be verified afterward. Pause for user-only sign-in, CAPTCHA, plan/permission UI, Keychain, or provider confirmation. After the user finishes, verify the same profile/provider:
+
+```bash
+tokenless profiles status --profile <slug> --provider <id> --json
+tokenless doctor --json
+```
+
+Keep authentication in the selected browser. Installation work does not authorize inspecting, importing, exporting, printing, or transmitting cookies, browser storage, passwords, hidden headers, or other session secrets. Preserve browser profiles, resident browsers, and sandboxing. Summaries must omit authentication data and unrelated account content.
