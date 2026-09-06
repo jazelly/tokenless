@@ -46,13 +46,14 @@ const enMessages = {
     savingsEnabled: 'Output savings measurement is enabled.', savingsDisabled: 'Output savings measurement is disabled.', tokenizerNotInstalled: 'Not installed', tokenizerReady: 'The output savings tokenizer runtime is ready.', tokenizerUnavailable: 'Output savings is enabled, but its tokenizer runtime is unavailable.',
     savingsSummaryUnavailable: 'Token summary statistics are unavailable.', turnOnToReview: 'Turn it on to review how many output tokens Tokenless has saved.', savingsUnavailableTooltip: 'Token summary statistics are unavailable. Turn it on to review output tokens saved.', tokenizerPreparesOnFirstResponse: 'The tokenizer will be prepared when Tokenless measures the first visible response.', manageOutputSavings: 'Manage in System',
     confirmClearSavings: 'Clear all saved output savings measurements? This cannot be undone.', confirmUninstallTokenizer: 'Disable output savings and remove the local tokenizer runtime?', tokensSavedShort: 'tokens saved',
+    tokenUnitHelp: 'Tokens · model text units. The circled T is the Tokenless API unit icon, not a currency symbol. A token is not necessarily a word or character.', capabilityCountUnit: 'Unit: capability requirements · includes failed and canceled jobs', jobsCountUnit: 'Unit: jobs', estimatedTokenUnit: 'Unit: tokens · estimated visible output', matrixUsedLegend: 'Darker = more requirements', matrixZeroLegend: '0 = connected, no recorded demand', matrixAbsentLegend: '— = no recorded demand or connected route', matrixCellOutcomes: '{succeeded} succeeded · {failed} failed · {canceled} canceled (requirement counts)',
     analyticsTitle: 'Usage analytics', analyticsLoading: 'Loading usage analytics…', analyticsUnavailable: 'Usage analytics could not be loaded.', retryAnalytics: 'Try again',
     range7d: '7D', range30d: '30D', range90d: '90D', range1y: '1Y', rangeAll: 'All', utcDays: 'Daily buckets use UTC.', selectedRange: 'Selected range',
     mostUsedProvider: 'Most used provider', completedJobs: 'Completed jobs', successRate: 'Success rate', capabilityBreadth: 'Capability breadth', capabilityBreadthValue: '{used} of {total} used', noUsageYet: 'No completed usage yet',
-    cumulativeSavings: 'Cumulative output savings', cumulativeSavingsHelp: 'Visible assistant output measured locally; unmeasured periods are excluded.', addedInRange: 'added in range', measurementCoverage: 'Measurement coverage',
-    dailyOutcomes: 'Daily job outcomes', dailyOutcomesHelp: 'Succeeded, failed, and canceled jobs by terminal day.', canceled: 'Canceled',
-    capabilityUsageMatrix: 'Provider × capability matrix', capabilityUsageMatrixHelp: 'Cell intensity shows routed requirements. An outline marks catalog support without observed use.', routedRequirements: 'routed requirements', supportedUnused: 'Supported, not used', unsupportedCapability: 'No catalog route',
-    capabilityMix: 'Capability mix over time', capabilityMixHelp: 'One job may contribute to more than one capability family.', topCapabilities: 'Top capabilities', topCapabilitiesHelp: 'Effective requirements recorded on completed jobs.',
+    cumulativeSavings: 'Cumulative output savings', cumulativeSavingsHelp: 'Unit: tokens (circled T). A token is a piece of text processed by a model, not a word or character. This chart estimates visible assistant output locally; it is not provider-billed usage or money saved. The cumulative total includes measurements before the selected range; unmeasured output is excluded.', addedInRange: 'added in range', measurementCoverage: 'Measurement coverage',
+    dailyOutcomes: 'Daily job outcomes', dailyOutcomesHelp: 'Unit: jobs. Each job counts once on the UTC day it ends, grouped as succeeded, failed, or canceled. Running jobs are excluded.', canceled: 'Canceled',
+    capabilityUsageMatrix: 'Capability demand by provider', capabilityUsageMatrixHelp: 'Unit: capability requirements, not tokens. Each distinct capability requested by a finished job counts once. A job requesting file upload and document input adds 2 to Input. Succeeded, failed, and canceled jobs all count; running jobs do not. Counts follow the selected range and profile and do not prove successful execution.', routedRequirements: 'capability requirements', supportedUnused: 'Connected capability; no recorded demand in this range', unsupportedCapability: 'No recorded demand or connected route; this does not describe the provider website',
+    capabilityMix: 'Capability mix over time', capabilityMixHelp: 'Unit: capability requirements per UTC day. Each distinct requested capability counts once per finished job, including failed and canceled jobs. One job can count in several categories, or more than once in one category. Shades identify categories; their totals do not equal job counts.', topCapabilities: 'Top capabilities', topCapabilitiesHelp: 'Unit: capability requirements. Each distinct capability counts once per finished job, including failed and canceled jobs. Ranked by demand in the selected range and profile, not successful executions.',
     executionMix: 'Execution mode mix', unknownMode: 'Unknown mode',
     noMeasuredSavings: 'No measured savings in this range', noCapabilityUsage: 'No capability requirements were recorded in this range', noProviderUsage: 'No provider usage in this range',
     offlineShort: 'Offline', menu: 'Menu', mainContent: 'Main content', profileList: 'Profile list', navigation: 'Navigation',
@@ -108,13 +109,14 @@ const zhMessages: Record<keyof typeof enMessages, string> = {
     savingsEnabled: '输出节省计量已启用。', savingsDisabled: '输出节省计量已停用。', tokenizerNotInstalled: '未安装', tokenizerReady: '输出节省 tokenizer 运行时已就绪。', tokenizerUnavailable: '输出节省已启用，但 tokenizer 运行时不可用。',
     savingsSummaryUnavailable: 'Token 汇总统计不可用。', turnOnToReview: '开启后即可查看 Tokenless 已节省多少 output token。', savingsUnavailableTooltip: 'Token 汇总统计不可用；开启后即可查看已节省的 output token。', tokenizerPreparesOnFirstResponse: 'Tokenless 首次计量可见响应时会准备 tokenizer。', manageOutputSavings: '在系统中管理',
     confirmClearSavings: '清空全部输出节省计量记录？此操作无法撤销。', confirmUninstallTokenizer: '停用输出节省并移除本地 tokenizer 运行时？', tokensSavedShort: 'token 已节省',
+    tokenUnitHelp: 'tokens · 模型处理文本的计量单位。圆框 T 是 Tokenless API 的单位图标，不是货币符号。一个 token 不一定对应一个字或一个词。', capabilityCountUnit: '单位：能力需求次数 · 包含失败和取消的任务', jobsCountUnit: '单位：任务数', estimatedTokenUnit: '单位：tokens · 按可见输出估算', matrixUsedLegend: '颜色越深，需求次数越多', matrixZeroLegend: '0 = 已接入，本期无需求记录', matrixAbsentLegend: '— = 无需求记录且未接入', matrixCellOutcomes: '成功 {succeeded} · 失败 {failed} · 取消 {canceled}（能力需求次数）',
     analyticsTitle: '使用分析', analyticsLoading: '正在读取使用分析…', analyticsUnavailable: '无法读取使用分析。', retryAnalytics: '重试',
     range7d: '7 天', range30d: '30 天', range90d: '90 天', range1y: '1 年', rangeAll: '全部', utcDays: '每日数据按 UTC 划分。', selectedRange: '所选范围',
     mostUsedProvider: '最常用 Provider', completedJobs: '已结束任务', successRate: '成功率', capabilityBreadth: 'Capability 广度', capabilityBreadthValue: '已使用 {used}/{total}', noUsageYet: '还没有已完成的使用记录',
-    cumulativeSavings: '累计输出节省', cumulativeSavingsHelp: '基于本地测量的可见 assistant 输出；未测量时段不计入。', addedInRange: '所选范围新增', measurementCoverage: '测量覆盖',
-    dailyOutcomes: '每日任务结果', dailyOutcomesHelp: '按终止日期展示成功、失败和取消的任务。', canceled: '已取消',
-    capabilityUsageMatrix: 'Provider × Capability 矩阵', capabilityUsageMatrixHelp: '颜色深浅表示实际 route requirement；只有边框表示 catalog 支持但没有使用。', routedRequirements: '次 route requirement', supportedUnused: '支持但未使用', unsupportedCapability: 'Catalog 中没有 route',
-    capabilityMix: 'Capability 构成趋势', capabilityMixHelp: '一个任务可能同时计入多个 capability 分类。', topCapabilities: '最常用 Capability', topCapabilitiesHelp: '来自已结束任务记录的 effective requirements。',
+    cumulativeSavings: '累计输出节省', cumulativeSavingsHelp: '单位是 tokens（圆框 T 图标），表示模型处理的文本片段，不等于字数或词数。此图按可见回复在本地估算，不是 Provider 账单用量或节省金额。累计值包含所选时间之前的计量，未计量的输出不计入。', addedInRange: '所选范围新增', measurementCoverage: '测量覆盖',
+    dailyOutcomes: '每日任务结果', dailyOutcomesHelp: '单位是任务数。每个任务在结束的 UTC 日期计 1 次，分为成功、失败、取消。运行中的任务不计入。', canceled: '已取消',
+    capabilityUsageMatrix: '各 Provider 的能力需求次数', capabilityUsageMatrixHelp: '单位是能力需求次数，不是 tokens。已结束任务中，每种不同的能力需求各计 1 次。例如一个任务同时要求上传文件和文档输入，就给「输入」计 2 次。成功、失败、取消都计入，运行中不计入。统计跟随所选时间和 Profile，不代表能力已执行成功。', routedRequirements: '次能力需求', supportedUnused: '已接入该类能力，但所选时间内无需求记录', unsupportedCapability: '无需求记录且未接入该类能力；不表示 Provider 官网不支持',
+    capabilityMix: 'Capability 构成趋势', capabilityMixHelp: '单位是每天的能力需求次数，按 UTC 分组。每个已结束任务的每种不同能力需求各计 1 次，失败和取消也计入。同一任务可计入多类，也可在同一类计多次；色阶区分类别，总和不等于任务数。', topCapabilities: '最常用 Capability', topCapabilitiesHelp: '单位是能力需求次数。每个已结束任务的每种不同能力各计 1 次，失败和取消也计入。按所选时间与 Profile 内的需求次数排名，不是成功执行次数。',
     executionMix: '执行模式构成', unknownMode: '未知模式',
     noMeasuredSavings: '所选范围内没有已测量输出', noCapabilityUsage: '所选范围内没有记录 capability requirement', noProviderUsage: '所选范围内没有 provider 使用记录',
     offlineShort: '离线', menu: '菜单', mainContent: '主要内容', profileList: 'Profile 列表', navigation: '导航',
@@ -175,9 +177,9 @@ const capabilityFamilyZh: Record<string, string> = {
   input: '输入',
   retrieval_reasoning: '检索与推理',
   media_generation: '媒体生成',
-  artifact_generation: '产物生成',
-  workspace_knowledge: 'Workspace 与知识',
-  evidence_lifecycle: '证据与生命周期',
+  artifact_generation: '文档与网页',
+  workspace_knowledge: '项目与知识',
+  evidence_lifecycle: '引用与任务控制',
 }
 
 const stateEn: Record<string, string> = {
@@ -290,7 +292,8 @@ export function capabilityText(language: Language, capability: JsonRecord) {
 }
 
 export function capabilityFamilyLabel(language: Language, family: string) {
-  return language === 'zh-CN' ? capabilityFamilyZh[family] ?? family : family.replaceAll('_', ' ')
+  const labels: Record<string, string> = { conversation: 'Conversation', input: 'Input', retrieval_reasoning: 'Search & reasoning', media_generation: 'Media creation', artifact_generation: 'Documents & websites', workspace_knowledge: 'Projects & knowledge', evidence_lifecycle: 'Citations & task controls' }
+  return language === 'zh-CN' ? capabilityFamilyZh[family] ?? family : labels[family] ?? family.replaceAll('_', ' ')
 }
 
 export function stateLabel(language: Language, value: unknown) {

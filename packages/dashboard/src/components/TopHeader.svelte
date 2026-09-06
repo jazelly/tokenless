@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { Activity, CircleCheck, Coins, Hand, Play, Settings } from '@lucide/svelte'
+  import { Activity, CircleCheck, Hand, Play, Settings } from '@lucide/svelte'
+  import TokenIcon from './TokenIcon.svelte'
   import ProfileSwitcher from './ProfileSwitcher.svelte'
   import { formatNumber } from '../formatting.js'
   import { stateLabel, type MessageKey } from '../i18n/index.js'
@@ -33,7 +34,7 @@
     ? t('savingsUnavailableTooltip')
     : !savingsReady
       ? t('tokenizerPreparesOnFirstResponse')
-      : `${t('estimatedTokensSaved')}: ${savingsValue} · ${t('measuredResponses')}: ${formatNumber(snapshot.outputSavings.summary.responseCount, language)}`)
+      : `${t('estimatedTokensSaved')}: ${savingsValue} tokens · ${t('measuredResponses')}: ${formatNumber(snapshot.outputSavings.summary.responseCount, language)}`)
   let jobsHelp = $derived(`${t('runtime')}: ${runtimeLabel} · ${formatNumber(snapshot.runtime.activeJobCount, language)} ${t('activeUnit')} · ${t('waitingJobs')}: ${formatNumber(waitingJobs, language)} · ${t('finishedJobs')}: ${formatNumber(finishedJobs, language)}`)
 </script>
 
@@ -45,7 +46,7 @@
     data-state={savingsState}
   >
     <a class="top-header-control hover-tooltip tooltip-below" href={`/dashboard/system/?profile=${encodeURIComponent(selectedProfile)}`} aria-label={`${savingsHelp} · ${t('manageOutputSavings')}`} data-dashboard-section="system">
-      <Coins size={16} aria-hidden="true" />
+      <TokenIcon size={18} />
       <strong class="top-header-value" data-testid="header-tokens-saved">{savingsValue}</strong>
       <span class="hover-tooltip-content" role="tooltip" aria-hidden="true">{savingsHelp}</span>
     </a>

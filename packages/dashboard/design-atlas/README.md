@@ -23,7 +23,9 @@ This builds a standalone Storybook in `design-atlas-static/`.
 | Navigation, header composition, loading/offline/fatal layout | `src/Dashboard.svelte` |
 | Page layout and interactions | `src/views/*.svelte` |
 | Shared components, including the profile picker and metric card | `src/components/*.svelte` |
-| Colors, typography, spacing, and responsive rules | `src/styles.css` and component-local styles |
+| Palette and semantic color roles | `src/palette.css` → Foundations / Color & units |
+| Token unit icon and accessible help | `src/components/TokenIcon.svelte` and `TokenUnit.svelte` |
+| Typography, spacing, and responsive rules | `src/styles.css` and component-local styles |
 | Product copy | `src/i18n/index.ts` |
 | Example data, initial state, and review scenarios | `design-atlas/preview-data.ts`, `preview-state.svelte.ts`, and `*.stories.ts` |
 
@@ -42,3 +44,11 @@ A change to shared UI appears in Storybook and in the next Dashboard build. Cont
 ## Verification
 
 `npm run lint --workspace packages/dashboard` checks the application, Atlas, and Storybook configuration together. Verify visible changes in Storybook and the built Dashboard; local example data does not prove backend behavior.
+
+## Color and unit rules
+
+- Base the interface on graphite `#171715` and warm paper `#F6F5F2`; reuse `src/palette.css` instead of introducing chart hex values. Foundations / Color & units displays the actual shared values.
+- Quantity charts use the warm graphite scale. Heatmaps have five fixed levels relative to the selected maximum, with dark or light text chosen for contrast. Category colors use the fixed family mapping and visible labels.
+- Sage, ochre, and clay are reserved for success, warning, and failure. Use their paired surface and border colors, and retain a status label or icon. Provider brand artwork keeps its own identity.
+- The circled T with a short crossbar is a product-specific **tokens** unit, not a standardized currency sign. Use `TokenUnit` beside token quantities and `TokenIcon` inside already-labeled controls; preserve full units in accessible labels and help.
+- Capability demand uses **requirement counts**, never the token icon. Each distinct capability counts once per finished job, including failed and canceled jobs; a job can count more than once in a family. Zero means connected with no recorded demand; a dash means no demand or connected route.

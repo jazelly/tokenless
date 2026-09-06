@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Activity, CircleHelp, RefreshCw } from '@lucide/svelte'
+  import TokenUnit from '../components/TokenUnit.svelte'
   import MetricCard from '../components/MetricCard.svelte'
   import { capabilityFamilyLabel, capabilityText, type MessageKey } from '../i18n/index.js'
   import { formatNumber } from '../formatting.js'
@@ -123,8 +124,12 @@
 
   function capabilityTitle(provider: string, family: string) {
     const cell = matrixCell(provider, family)
-    if (cell) return `${providerName(provider)} · ${capabilityFamilyLabel(language, family)} · ${formatNumber(cell.finishedJobs, language)} ${t('routedRequirements')}`
+    if (cell?.finishedJobs) return `${providerName(provider)} · ${capabilityFamilyLabel(language, family)} · ${formatNumber(cell.finishedJobs, language)} ${t('routedRequirements')}. ${t('matrixCellOutcomes', { succeeded: cell.succeededJobs, failed: cell.failedJobs, canceled: cell.canceledJobs })}`
     return `${providerName(provider)} · ${capabilityFamilyLabel(language, family)} · ${t(supportsFamily(provider, family) ? 'supportedUnused' : 'unsupportedCapability')}`
+  }
+
+  function heatLevel(count: number) {
+    return Math.max(1, Math.min(5, Math.ceil(count / matrixMaximum * 5)))
   }
 
   function familyColor(family: string) {
@@ -159,10 +164,11 @@
   {:else if analytics}
     <div class="analytics-two-column">
       <figure class="analytics-panel chart-panel" data-testid="analytics-cumulative-chart">
-        <header class="analytics-panel-header">{@render chartTitle(t('cumulativeSavings'), `${t('cumulativeSavingsHelp')} ${t('measurementCoverage')}: ${formatCoverage(analytics.measurementCoverage.firstMeasuredAt)}–${formatCoverage(analytics.measurementCoverage.lastMeasuredAt)}. ${t('utcDays')}`)}<strong>{analytics.daily.length ? formatNumber(analytics.daily.at(-1)?.cumulativeEstimatedOutputTokens ?? 0, language) : '—'}</strong></header>
+        <header class="analytics-panel-header">{@render chartTitle(t('cumulativeSavings'), `${t('cumulativeSavingsHelp')} ${t('measurementCoverage')}: ${formatCoverage(analytics.measurementCoverage.firstMeasuredAt)}–${formatCoverage(analytics.measurementCoverage.lastMeasuredAt)}. ${t('utcDays')}`)}<span class="token-quantity"><strong>{analytics.daily.length ? formatNumber(analytics.daily.at(-1)?.cumulativeEstimatedOutputTokens ?? 0, language) : '—'}</strong><TokenUnit {language} size={20} /></span></header>
+        <p class="analytics-unit-note">{t('estimatedTokenUnit')}</p>
         {#if analytics.daily.some((entry) => entry.cumulativeEstimatedOutputTokens > 0)}
           <svg class="analytics-line-chart" viewBox="0 0 740 238" role="img" aria-label={t('cumulativeSavings')}>
-            <defs><linearGradient id="analytics-line-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="var(--chart-blue)" stop-opacity=".28"/><stop offset="1" stop-color="var(--chart-blue)" stop-opacity="0"/></linearGradient></defs>
+            <defs><linearGradient id="analytics-line-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="var(--chart-primary)" stop-opacity=".28"/><stop offset="1" stop-color="var(--chart-primary)" stop-opacity="0"/></linearGradient></defs>
             {#each [0, .25, .5, .75, 1] as tick}
               <line x1={lineChart.left} x2={lineChart.right} y1={lineChart.bottom - tick * (lineChart.bottom - lineChart.top)} y2={lineChart.bottom - tick * (lineChart.bottom - lineChart.top)} class="chart-grid-line" />
               <text x="45" y={lineChart.bottom - tick * (lineChart.bottom - lineChart.top) + 4} text-anchor="end">{formatNumber(Math.round(lineMaximum * tick), language)}</text>
@@ -170,17 +176,18 @@
             <path d={areaPath()} class="chart-area" /><path d={linePath()} class="chart-line" />
             {#each analytics.daily as point, index}
               {#if analytics.daily.length <= 45 || index === 0 || index === analytics.daily.length - 1 || index % Math.ceil(analytics.daily.length / 24) === 0}
-                <circle cx={lineX(index)} cy={lineY(point.cumulativeEstimatedOutputTokens)} r="3.2"><title>{formatDay(point.day)} · +{formatNumber(point.estimatedOutputTokens, language)} · {formatNumber(point.cumulativeEstimatedOutputTokens, language)}</title></circle>
+                <circle cx={lineX(index)} cy={lineY(point.cumulativeEstimatedOutputTokens)} r="3.2"><title>{formatDay(point.day)} · +{formatNumber(point.estimatedOutputTokens, language)} tokens · {formatNumber(point.cumulativeEstimatedOutputTokens, language)} tokens</title></circle>
               {/if}
             {/each}
             <text x={lineChart.left} y="230">{formatDay(analytics.range.fromDay)}</text><text x={lineChart.right} y="230" text-anchor="end">{formatDay(analytics.range.toDay)}</text>
           </svg>
         {:else}<div class="analytics-empty chart-empty">{t('noMeasuredSavings')}</div>{/if}
-        <figcaption><span><strong>+{formatNumber(analytics.totals.estimatedOutputTokens, language)}</strong> {t('addedInRange')}</span></figcaption>
+        <figcaption><span><strong class="token-quantity">+{formatNumber(analytics.totals.estimatedOutputTokens, language)}<TokenUnit {language} /></strong> {t('addedInRange')}</span></figcaption>
       </figure>
 
       <figure class="analytics-panel chart-panel" data-testid="analytics-outcomes-chart">
         <header class="analytics-panel-header">{@render chartTitle(t('dailyOutcomes'), t('dailyOutcomesHelp'))}</header>
+        <p class="analytics-unit-note">{t('jobsCountUnit')}</p>
         <div class="stacked-day-chart" style={`grid-template-columns:repeat(${analytics.daily.length}, minmax(2px, 1fr))`}>
           {#each analytics.daily as point}
             <div class="stacked-day-column" title={`${formatDay(point.day)} · ${point.succeededJobs} ${t('succeeded')} · ${point.failedJobs} ${t('failed')} · ${point.canceledJobs} ${t('canceled')}`}><span class="outcome-succeeded" style={`height:${point.succeededJobs / outcomeMaximum * 100}%`}></span><span class="outcome-failed" style={`height:${point.failedJobs / outcomeMaximum * 100}%`}></span><span class="outcome-canceled" style={`height:${point.canceledJobs / outcomeMaximum * 100}%`}></span></div>
@@ -200,6 +207,7 @@
 
     <section class="analytics-panel capability-matrix-panel" data-testid="capability-usage-matrix">
       <header class="analytics-panel-header">{@render chartTitle(t('capabilityUsageMatrix'), t('capabilityUsageMatrixHelp'))}</header>
+      <p class="analytics-unit-note">{t('capabilityCountUnit')}</p>
       <div class="capability-matrix-scroll"><div class="capability-matrix" style={`--family-count:${families.length}`}>
         <div class="capability-matrix-corner">{t('provider')}</div>
         {#each families as family}<div class="capability-matrix-family">{capabilityFamilyLabel(language, family)}</div>{/each}
@@ -208,15 +216,18 @@
           {#each families as family}
             {@const cell = matrixCell(provider.provider, family)}
             {@const supported = supportsFamily(provider.provider, family)}
-            <div class:used={Boolean(cell?.finishedJobs)} class:supported class="capability-matrix-cell" style={`--cell-opacity:${cell ? .18 + cell.finishedJobs / matrixMaximum * .72 : 0}`} title={capabilityTitle(provider.provider, family)} role="img" aria-label={capabilityTitle(provider.provider, family)}>{cell?.finishedJobs ? formatNumber(cell.finishedJobs, language) : ''}</div>
+            {@const level = heatLevel(cell?.finishedJobs ?? 0)}
+            <div class:used={Boolean(cell?.finishedJobs)} class:supported class:absent={!cell?.finishedJobs && !supported} class="capability-matrix-cell" style={`--cell-fill:var(--heat-${level});--cell-ink:var(--stone-${level >= 4 ? 0 : 950})`} title={capabilityTitle(provider.provider, family)} role="img" aria-label={capabilityTitle(provider.provider, family)}><span class="capability-matrix-value">{cell?.finishedJobs ? formatNumber(cell.finishedJobs, language) : supported ? '0' : '—'}</span></div>
           {/each}
         {:else}<div class="analytics-empty capability-matrix-empty">{t('noCapabilityUsage')}</div>{/each}
       </div></div>
+      <div class="matrix-legend"><span><i class="matrix-key used" aria-hidden="true"></i>{t('matrixUsedLegend')}</span><span><i class="matrix-key" aria-hidden="true"></i>{t('matrixZeroLegend')}</span><span><i class="matrix-key absent" aria-hidden="true">—</i>{t('matrixAbsentLegend')}</span></div>
     </section>
 
     <div class="analytics-two-column analytics-bottom-grid">
       <figure class="analytics-panel chart-panel" data-testid="capability-mix-chart">
         <header class="analytics-panel-header">{@render chartTitle(t('capabilityMix'), t('capabilityMixHelp'))}</header>
+        <p class="analytics-unit-note">{t('capabilityCountUnit')}</p>
         {#if analytics.capabilityFamilies.length}
           <div class="stacked-day-chart capability-day-chart" style={`grid-template-columns:repeat(${analytics.daily.length}, minmax(2px, 1fr))`}>
             {#each analytics.daily as point}

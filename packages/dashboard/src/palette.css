@@ -1,0 +1,57 @@
+/* Shared by the production Dashboard and Design Atlas. */
+:root {
+  --stone-0: #ffffff;
+  --stone-50: #f6f5f2;
+  --stone-100: #f1f0ed;
+  --stone-150: #ebeae6;
+  --stone-200: #deddd8;
+  --stone-300: #c5c3bb;
+  --stone-400: #a6a399;
+  --stone-500: #858177;
+  --stone-600: #69665e;
+  --stone-700: #504e47;
+  --stone-800: #393832;
+  --stone-900: #282823;
+  --stone-950: #171715;
+
+  /* Status colors are reserved for outcomes and actionable states. */
+  --status-success: #48634f;
+  --status-success-surface: #edf2ed;
+  --status-success-line: #c8d5c9;
+  --status-warning: #846329;
+  --status-warning-surface: #f7f1e5;
+  --status-warning-line: #dfd0af;
+  --status-danger: #9a5149;
+  --status-danger-surface: #f7edeb;
+  --status-danger-line: #e1c7c2;
+
+  --canvas: var(--stone-50);
+  --surface: var(--stone-0);
+  --surface-muted: var(--stone-100);
+  --surface-strong: var(--stone-150);
+  --ink: var(--stone-950);
+  --muted: var(--stone-600);
+  --subtle: var(--stone-500);
+  --line: var(--stone-200);
+  --line-soft: var(--stone-150);
+  --green: var(--status-success);
+  --amber: var(--status-warning);
+  --red: var(--status-danger);
+
+  /* One fixed warm-graphite scale for quantity; never rainbow categories. */
+  --chart-primary: var(--stone-950);
+  --chart-secondary: var(--stone-500);
+  --chart-unknown: var(--stone-300);
+  --chart-family-0: var(--stone-950);
+  --chart-family-1: var(--stone-700);
+  --chart-family-2: var(--stone-500);
+  --chart-family-3: var(--stone-300);
+  --chart-family-4: var(--stone-800);
+  --chart-family-5: var(--stone-600);
+  --chart-family-6: var(--stone-400);
+  --heat-1: var(--stone-100);
+  --heat-2: var(--stone-200);
+  --heat-3: var(--stone-300);
+  --heat-4: var(--stone-600);
+  --heat-5: var(--stone-950);
+}

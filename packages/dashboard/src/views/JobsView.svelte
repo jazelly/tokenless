@@ -1,4 +1,5 @@
 <script lang="ts">
+  import TokenUnit from '../components/TokenUnit.svelte'
   import { ArrowLeft, Clock3, ExternalLink, Search, SlidersHorizontal, X } from '@lucide/svelte'
   import { onMount, tick } from 'svelte'
   import ProviderIdentity from '../components/ProviderIdentity.svelte'
@@ -212,7 +213,7 @@
               <span><span class={`job-state ${detail.status}`}></span>{stateLabel(language, detail.status)}</span>
               {#each detail.providers ?? [detail.provider] as providerId}<ProviderIdentity provider={providerId} label={providerLabel(providerId)} />{/each}
               <span>{detail.executionMode === 'browser' ? t('browserMode') : detail.executionMode === 'direct' ? t('directMode') : '—'}</span>
-              {#if typeof detail.estimatedTokens === 'number'}<span>≈{formatNumber(detail.estimatedTokens, language)} {t('estimatedTokensShort')}</span>{/if}
+              {#if typeof detail.estimatedTokens === 'number'}<span class="token-quantity" aria-label={`${t('estimatedTokens')}: ${formatNumber(detail.estimatedTokens, language)} tokens`}>≈{formatNumber(detail.estimatedTokens, language)}<TokenUnit {language} /></span>{/if}
             </div>
           </div>
           <div class="chat-conversation-actions">
@@ -248,7 +249,7 @@
                   <div><dt>{t('provider')}</dt><dd>{#each detail.providers ?? [detail.provider] as providerId}<ProviderIdentity provider={providerId} label={providerLabel(providerId)} />{/each}</dd></div>
                   <div><dt>{t('executionMode')}</dt><dd>{detail.executionMode === 'browser' ? t('browserMode') : detail.executionMode === 'direct' ? t('directMode') : '—'}</dd></div>
                   <div><dt>{t('status')}</dt><dd><span class={`job-state ${detail.status}`}></span>{stateLabel(language, detail.status)}</dd></div>
-                  <div><dt>{t('estimatedTokens')}</dt><dd>{typeof detail.estimatedTokens === 'number' ? `≈${formatNumber(detail.estimatedTokens, language)}` : '—'}</dd></div>
+                  <div><dt>{t('estimatedTokens')}</dt><dd>{#if typeof detail.estimatedTokens === 'number'}<span class="token-quantity">≈{formatNumber(detail.estimatedTokens, language)}<TokenUnit {language} /></span>{:else}—{/if}</dd></div>
                   <div><dt>{t('created')}</dt><dd>{formatTime(detail.createdAt, language)}</dd></div>
                   <div><dt>{t('updated')}</dt><dd>{formatTime(detail.updatedAt, language)}</dd></div>
                   <div><dt>{t('jobId')}</dt><dd class="mono-label">{detail.jobId}</dd></div>

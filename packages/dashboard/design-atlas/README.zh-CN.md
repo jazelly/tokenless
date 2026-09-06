@@ -23,7 +23,9 @@ npm run design:build
 | 导航、顶栏组合、加载与离线及致命错误布局 | `src/Dashboard.svelte` |
 | 页面布局和交互 | `src/views/*.svelte` |
 | 配置档选择器、指标卡等共用组件 | `src/components/*.svelte` |
-| 颜色、字体、间距和响应式规则 | `src/styles.css` 与组件内样式 |
+| 色板与颜色的语义角色 | `src/palette.css` → Foundations / Color & units |
+| Token 单位图标与辅助说明 | `src/components/TokenIcon.svelte` 和 `TokenUnit.svelte` |
+| 字体、间距和响应式规则 | `src/styles.css` 与组件内样式 |
 | 产品文案 | `src/i18n/index.ts` |
 | 示例数据、初始状态和评审场景 | `design-atlas/preview-data.ts`、`preview-state.svelte.ts` 和 `*.stories.ts` |
 
@@ -42,3 +44,11 @@ npm run design:build
 ## 验证
 
 `npm run lint --workspace packages/dashboard` 一并检查产品、Atlas 和 Storybook 配置。可见修改应在 Storybook 和构建后的 Dashboard 中验证；本地示例数据不能证明后端行为。
+
+## 色板与单位规则
+
+- 界面以石墨色 `#171715` 和暖纸色 `#F6F5F2` 为基础；复用 `src/palette.css`，不要在图表里新增独立十六进制色值。Foundations / Color & units 展示实际共享色值。
+- 数量图表使用暖石墨色阶。热力图相对于当前最大值分为固定五档，并按对比度选择深色或浅色文字。类别采用固定映射，并保留文字图例。
+- 灰绿、赭色、陶土色分别限定为成功、警告、失败；使用配套背景与边框，并保留状态文字或图标。Provider 品牌图形保留自身识别色。
+- 带短横的圆框 T 是产品内的 **tokens** 单位图标，不是标准货币符号。数值旁使用 `src/components/TokenUnit.svelte`，已有说明的控件中使用 `TokenIcon.svelte`；辅助阅读标签和提示保留完整单位。
+- 能力需求使用**次数**，不使用 token 图标。每个已结束任务的每种不同能力计 1 次，包括失败和取消；同一任务在一个类别中可以计多次。0 表示已接入但无需求记录，横线表示无需求记录且未接入。

@@ -28,7 +28,7 @@ export function createPreviewSnapshot(language: Language): DashboardSnapshot {
     jobId: job.id, profileId: profile.slug, profileSlug: profile.slug,
     provider: profile.enabledProviders[0]!, providers: profile.enabledProviders.slice(0, 1),
     action: 'conversation', status: job.status, taskId: job.id, chatTitle: job.title, titlePrompt: job.title,
-    executionMode: 'browser', conversationUrl: null, estimatedTokens: null,
+    executionMode: 'browser', conversationUrl: null, estimatedTokens: job.status === 'succeeded' ? 620 : null,
     capabilityRoute: null, blocker: null, outputSavings: { estimatedOutputTokens: 460, visibleCharacters: 1840, responseCount: 1 },
     createdAt: date, updatedAt: date, result: null, error: null, outputSavingsEvents: [],
     transcript: [
