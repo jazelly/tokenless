@@ -1,44 +1,26 @@
 <p align="center">
-  <img src="assets/tokenless-wordmark.png" alt="Tokenless" width="560">
+  <img src="assets/tokenless-wordmark.png" alt="Tokenless" width="360">
+</p>
+
+<h1 align="center">Web Harness</h1>
+
+<p align="center"><strong>Put your existing AI web accounts to work for your agents.</strong></p>
+
+<p align="center">
+  <a href="#start-in-three-commands">Quick start</a> · <a href="#what-is-a-web-harness">What is Web Harness?</a> · <a href="docs/capability-matrix.md">Capabilities</a> · <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a>
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/tokenless"><img src="https://img.shields.io/npm/v/tokenless?logo=npm&amp;label=version" alt="npm version"></a>
-  <a href="https://www.npmjs.com/package/tokenless"><img src="https://img.shields.io/npm/dm/tokenless?logo=npm&amp;label=downloads" alt="npm monthly downloads"></a>
+  <img src="assets/dashboard-web-harness.png" alt="Tokenless API Dashboard showing usage trends, job outcomes, and capability demand by provider" width="1600">
 </p>
 
-<p align="center">
-  <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a>
-</p>
+<p align="center"><sub>Local Dashboard captured on 2026-09-06. Values are local job records and output-token estimates, not benchmarks or billing savings.</sub></p>
 
-<p align="center">
-  <strong>Use the AI providers you already have—through the browser, without separate provider API keys.</strong><br>
-  Tokenless gives agents one local interface for visible AI workflows while reducing agent-side token use.
-</p>
+## From task to result
 
-<p align="center">
-  <a href="#start-in-three-commands">Quick start</a> · <a href="COMMANDS.md">CLI</a> · <a href="docs/capability-matrix.md">Capabilities</a> · <a href="PRIVACY.md">Privacy</a>
-</p>
+![Bring a task → Tokenless Web Harness runs the web workflow → results return to your agent or app; follow activity in Dashboard](assets/web-harness-workflow.png)
 
-<p align="center">
-  <img src="assets/deepseek-browser-workflow.png" alt="Tokenless workflow from an agent request through the DeepSeek browser and back" width="1600">
-</p>
-
-<p align="center"><sub>Real DeepSeek headful browser UI from a local run; the workflow card is an illustration, not a benchmark.</sub></p>
-
-## Agent → browser → agent
-
-The local OpenAI-compatible `POST /v1/chat/completions` route can send `tokenless/deepseek` through the visible DeepSeek website. If the harness does not know how to declare a mode, set the persisted `apiProxy.executionMode` to `browser` in the selected Tokenless config:
-
-```json
-{
-  "apiProxy": {
-    "executionMode": "browser"
-  }
-}
-```
-
-The request can omit `tokenless.execution_mode`: `agent request → Tokenless daemon → headed DeepSeek page → response back to agent`. An explicit request mode still wins. [Watch the 7-second browser-mode demo](assets/tokenless-deepseek-browser-demo.mp4).
+<sub>AI-generated use-case illustration. Available capabilities depend on the selected provider’s verified support.</sub>
 
 ## 13 providers. One local interface.
 
@@ -70,7 +52,7 @@ See the [Capability Matrix](docs/capability-matrix.md) for the verified workflow
 
 ## Start in three commands
 
-Requires Node.js 22.13+. Apple Silicon macOS is the current target; Windows x64 is prerelease. For native mode, use a current Chrome or Brave, enable remote debugging at `chrome://inspect/#remote-debugging` or `brave://inspect/#remote-debugging`, and approve the browser prompt. Setup also offers an [Anti-Detect option](COMMANDS.md#tokenless-setup).
+Requires Node.js 22.13+. Apple Silicon macOS is the current target; Windows x64 is prerelease.
 
 ```bash
 npm install --global tokenless@latest
@@ -80,9 +62,40 @@ tokenless run --provider chatgpt --prompt "Review this proposal."
 
 Setup opens the local dashboard. Reopen it anytime with `tokenless dashboard`.
 
+<details>
+<summary>Browser preparation and updates</summary>
+
+For native mode, use a current Chrome or Brave, enable remote debugging at `chrome://inspect/#remote-debugging` or `brave://inspect/#remote-debugging`, and approve the browser prompt. Setup also offers an [Anti-Detect option](COMMANDS.md#tokenless-setup).
+
 Already installed? Run `tokenless upgrade --check`, then `tokenless upgrade`. See [Updates](docs/updates.md) for CLI and macOS app updates.
 
-## Optional local Spark X2.5-4B router engine
+</details>
+
+## What is a Web Harness?
+
+We call **the layer that turns AI websites into an agent’s working environment** a **Web Harness**. Tokenless lets agents submit tasks through your existing web accounts, use supported website capabilities, and bring results back into your workflow.
+
+| What you want to do | What Tokenless handles |
+| --- | --- |
+| Put web AI to work for your agent | Submit prompts, read responses, and continue supported conversations. |
+| Work with your own material | Use attachments, citations, and controls verified for the selected provider. |
+| Connect an app and follow progress | Run tasks through the CLI or local compatible APIs; view history and usage in Dashboard. |
+
+Web workflows need no separate provider API keys; sign-in stays in your selected browser. Tokenless API provides provider access; Tokenless Harness manages agent tasks and tool continuation.
+
+## Optional setup and integrations
+
+<details>
+<summary>Browser mode example: DeepSeek</summary>
+
+Send `tokenless/deepseek` through the visible DeepSeek website using the local OpenAI-compatible interface, then return the response to the caller.
+
+[Watch the 7-second demo](assets/tokenless-deepseek-browser-demo.mp4) · [Configure browser mode](docs/api-proxy-integration.md)
+
+</details>
+
+<details>
+<summary>Local Spark X2.5-4B router engine</summary>
 
 On Apple Silicon, the Dashboard can use the official Spark MLX server for the local Spark X2.5-4B model. Ollama is not required; the V1 integration uses the fixed OpenAI-compatible endpoint below.
 
@@ -96,17 +109,10 @@ python3 -m venv .venv
 
 In Dashboard → System → Semantic routing, select `Spark X2.5-4B · local MLX` and save. The health endpoint is `http://127.0.0.1:8080/health`; chat completions use `http://127.0.0.1:8080/v1/chat/completions`.
 
-## What agents get
+</details>
 
-- Send prompts and read visible responses through real provider websites.
-- Use the local OpenAI- and Anthropic-compatible API proxy, including Chat Completions and Responses routes.
-- Use uploads, citations, and provider controls where the selected provider supports them.
-- Stable provider tabs and continuity for supported tasks.
-- Provider sign-in stays in the selected browser profile; job history and token-savings estimates remain local.
-- An optional [local API proxy](docs/api-proxy-integration.md) for OpenAI- and Anthropic-shaped clients.
-- An experimental [Tokenless Harness Browser Extension](docs/harness-browser-extension.md) candidate for user-approved observation and text input on one selected Chrome tab.
-
-## Optional Codex integration
+<details>
+<summary>Codex integration</summary>
 
 Install the optional Codex integration:
 
@@ -115,6 +121,10 @@ tokenless setup --install-codex
 ```
 
 Restart Codex, open `/hooks`, and trust Tokenless.
+
+</details>
+
+The experimental [Tokenless Harness Browser Extension](docs/harness-browser-extension.md) supports user-approved observation and text input on one selected Chrome tab.
 
 ## Go deeper
 
@@ -126,3 +136,8 @@ Restart Codex, open `/hooks`, and trust Tokenless.
 - [Documentation index](docs/README.md)
 
 Tokenless is in early access: it reduces agent-side token use, but does not eliminate token use or bypass provider account requirements.
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/tokenless"><img src="https://img.shields.io/npm/v/tokenless?logo=npm&amp;label=version" alt="npm version"></a>
+  <a href="https://www.npmjs.com/package/tokenless"><img src="https://img.shields.io/npm/dm/tokenless?logo=npm&amp;label=downloads" alt="npm monthly downloads"></a>
+</p>

@@ -1,44 +1,26 @@
 <p align="center">
-  <img src="assets/tokenless-wordmark.png" alt="Tokenless" width="560">
+  <img src="assets/tokenless-wordmark.png" alt="Tokenless" width="360">
+</p>
+
+<h1 align="center">Web Harness</h1>
+
+<p align="center"><strong>让你已有的 AI 网页账号，为 Agent 完成任务。</strong></p>
+
+<p align="center">
+  <a href="#三条命令开始使用">快速开始</a> · <a href="#什么是-web-harness">什么是 Web Harness</a> · <a href="docs/capability-matrix.zh-CN.md">支持的能力</a> · <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a>
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/tokenless"><img src="https://img.shields.io/npm/v/tokenless?logo=npm&amp;label=version" alt="npm 版本"></a>
-  <a href="https://www.npmjs.com/package/tokenless"><img src="https://img.shields.io/npm/dm/tokenless?logo=npm&amp;label=downloads" alt="npm 月下载量"></a>
+  <img src="assets/dashboard-web-harness.png" alt="Tokenless API Dashboard：用量趋势、任务结果和各 provider 的能力使用情况" width="1600">
 </p>
 
-<p align="center">
-  <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a>
-</p>
+<p align="center"><sub>2026-09-06 本地 Dashboard 实拍。数值是本机任务记录与输出 token 估算，不是 benchmark 或账单节省。</sub></p>
 
-<p align="center">
-  <strong>通过浏览器使用你已有的 AI provider，无需单独购买 provider API Key。</strong><br>
-  Tokenless 为 Agent 提供统一的本地可见 AI 工作流接口，同时减少 Agent 侧 token 消耗。
-</p>
+## 从任务到结果
 
-<p align="center">
-  <a href="#三条命令开始使用">快速开始</a> · <a href="COMMANDS.zh-CN.md">CLI</a> · <a href="docs/capability-matrix.zh-CN.md">Capabilities</a> · <a href="PRIVACY.zh-CN.md">隐私</a>
-</p>
+![交给它任务 → Tokenless Web Harness 执行网页工作流 → 结果回到 Agent 或应用；在 Dashboard 查看任务与用量](assets/web-harness-workflow.png)
 
-<p align="center">
-  <img src="assets/deepseek-browser-workflow.png" alt="Tokenless 从 Agent 请求进入 DeepSeek 浏览器再返回的工作流" width="1600">
-</p>
-
-<p align="center"><sub>右侧是真实本地运行中的 DeepSeek headful 浏览器 UI；整张流程卡是说明图，不是 benchmark。</sub></p>
-
-## Agent → browser → agent
-
-本地 OpenAI 兼容的 `POST /v1/chat/completions` 路由可以把 `tokenless/deepseek` 请求送进可见的 DeepSeek 网站。如果 harness 不知道如何声明 mode，请在选定的 Tokenless 配置中把持久化的 `apiProxy.executionMode` 设置为 `browser`：
-
-```json
-{
-  "apiProxy": {
-    "executionMode": "browser"
-  }
-}
-```
-
-请求可以省略 `tokenless.execution_mode`：`Agent 请求 → Tokenless daemon → headful DeepSeek 页面 → response 返回 Agent`。显式请求 mode 仍然优先。[观看 7 秒 browser-mode demo](assets/tokenless-deepseek-browser-demo.mp4)。
+<sub>AI 生成的用途示意图；具体能力以所选 provider 的已验证支持为准。</sub>
 
 ## 13 家 provider，一个本地接口
 
@@ -70,7 +52,7 @@
 
 ## 三条命令开始使用
 
-需要 Node.js 22.13+。当前目标平台是 Apple Silicon macOS，Windows x64 仍处于 prerelease 阶段。Native mode 使用当前版本的 Chrome 或 Brave；请在 `chrome://inspect/#remote-debugging` 或 `brave://inspect/#remote-debugging` 启用 remote debugging，并确认浏览器提示。Setup 也提供 [Anti-Detect 选项](COMMANDS.zh-CN.md#tokenless-setup)。
+需要 Node.js 22.13+；当前目标平台为 Apple Silicon macOS，Windows x64 处于 prerelease 阶段。
 
 ```bash
 npm install --global tokenless@latest
@@ -80,9 +62,40 @@ tokenless run --provider chatgpt --prompt "Review this proposal."
 
 Setup 会自动打开本地 Dashboard，之后可随时用 `tokenless dashboard` 再次打开。
 
+<details>
+<summary>浏览器准备与更新</summary>
+
+Native mode 使用当前版本的 Chrome 或 Brave；在 `chrome://inspect/#remote-debugging` 或 `brave://inspect/#remote-debugging` 启用 remote debugging，并确认浏览器提示。Setup 也提供 [Anti-Detect 选项](COMMANDS.zh-CN.md#tokenless-setup)。
+
 已经安装？先运行 `tokenless upgrade --check`，再运行 `tokenless upgrade`。CLI 与 macOS App 更新说明见[更新指南](docs/updates.zh-CN.md)。
 
-## 可选的本地 Spark X2.5-4B Router Engine
+</details>
+
+## 什么是 Web Harness？
+
+我们把**将 AI 网站变成 Agent 工作环境的这一层**称为 **Web Harness**。Tokenless 让 Agent 通过你已有的网页账号提交任务、使用已支持的网页能力，并把结果带回当前工作流。
+
+| 你想做什么 | Tokenless 为你完成什么 |
+| --- | --- |
+| 让 Agent 使用网页 AI | 提交 prompt、读取回复，并延续受支持的对话。 |
+| 带着材料完成任务 | 使用所选 provider 已支持的附件、引用和控制选项。 |
+| 接入应用并查看进度 | 通过 CLI 或本地兼容 API 发起任务，在 Dashboard 查看记录与用量。 |
+
+网页工作流无需单独的 provider API Key；登录保留在所选浏览器中。Tokenless API 提供 provider 接入，Tokenless Harness 管理 Agent 任务与工具续轮。
+
+## 可选配置与集成
+
+<details>
+<summary>Browser mode 示例：DeepSeek</summary>
+
+通过本地 OpenAI 兼容接口，把 `tokenless/deepseek` 请求送进可见的 DeepSeek 网页，再将回复返回调用方。
+
+[观看 7 秒演示](assets/tokenless-deepseek-browser-demo.mp4) · [配置 browser mode](docs/api-proxy-integration.zh-CN.md)
+
+</details>
+
+<details>
+<summary>本地 Spark X2.5-4B Router Engine</summary>
 
 在 Apple Silicon 上，Dashboard 可以使用官方 Spark MLX server 运行本地 Spark X2.5-4B 模型；不需要 Ollama。V1 使用下面固定的 OpenAI 兼容 endpoint。
 
@@ -96,17 +109,10 @@ python3 -m venv .venv
 
 在 Dashboard → System → Semantic routing 中选择 `Spark X2.5-4B · 本地 MLX` 并保存。Health endpoint 是 `http://127.0.0.1:8080/health`；chat completion 使用 `http://127.0.0.1:8080/v1/chat/completions`。
 
-## Agent 可以获得什么
+</details>
 
-- 通过真实 provider 网站发送 prompt，并读取可见 response。
-- 使用本地 OpenAI 与 Anthropic 兼容 API proxy，包括 Chat Completions 与 Responses 路由。
-- 在所选 provider 支持时使用 upload、citation 和 provider control。
-- 保留稳定的 provider tab，并为受支持的任务维持连续性。
-- Provider 登录保留在所选 browser profile 中；job history 与 token 节省估算留在本机。
-- 为 OpenAI 与 Anthropic 形态的 client 提供可选的 [本地 API proxy](docs/api-proxy-integration.zh-CN.md)。
-- 提供 experimental [Tokenless Harness Browser Extension](docs/harness-browser-extension.zh-CN.md) candidate，在用户批准后观察并填写一个选定 Chrome tab 的文本字段。
-
-## 可选的 Codex 集成
+<details>
+<summary>Codex 集成</summary>
 
 安装可选的 Codex integration：
 
@@ -115,6 +121,10 @@ tokenless setup --install-codex
 ```
 
 重启 Codex，打开 `/hooks`，然后信任 Tokenless。
+
+</details>
+
+实验性 [Tokenless Harness Browser Extension](docs/harness-browser-extension.zh-CN.md) 支持在用户批准后观察一个选定的 Chrome tab，并填写文本字段。
 
 ## 深入了解
 
@@ -126,3 +136,8 @@ tokenless setup --install-codex
 - [文档索引](docs/README.zh-CN.md)
 
 Tokenless 仍处于内测阶段：它会减少 Agent 侧 token 消耗，但不会完全消除 token 消耗，也不会绕过 provider 的账号要求。
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/tokenless"><img src="https://img.shields.io/npm/v/tokenless?logo=npm&amp;label=version" alt="npm 版本"></a>
+  <a href="https://www.npmjs.com/package/tokenless"><img src="https://img.shields.io/npm/dm/tokenless?logo=npm&amp;label=downloads" alt="npm 月下载量"></a>
+</p>
