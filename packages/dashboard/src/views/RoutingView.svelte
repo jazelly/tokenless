@@ -520,7 +520,7 @@
   <section class="settings-section system-card router-manifest-card" data-testid="semantic-manifest-card">
     <div class="settings-section-title"><div><h2>{t('routerSemanticManifest')}</h2><p>{t('routerSemanticManifestHelp')}</p></div></div>
     <p class="form-note">{t('routerSemanticManifestTarget')}</p>
-    {#if manifestProgress > 0}<p class="form-note" data-testid="semantic-manifest-progress">{manifestProgress} / 89</p>{/if}
+    {#if manifestProgress > 0}<p class="form-note" data-testid="semantic-manifest-progress">{manifestProgress} / 66</p>{/if}
     {#if manifestError}<div class="inline-feedback error" role="alert" data-testid="semantic-manifest-error">{manifestError}</div>{/if}
     {#if manifestResult}<div class="inline-feedback success" role="status" data-testid="semantic-manifest-result">{t('routerSemanticManifestSaved')}: <code>{manifestResult.fileName}</code> · {manifestResult.manifestDigest}</div>{/if}
     {#if manifestBusy}<p class="form-note" role="status">{t('routerSemanticManifestRunning')}</p>{/if}

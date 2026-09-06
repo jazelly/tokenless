@@ -12,11 +12,11 @@ import type {
 
 const SCHEMA = 'tokenless.terminalbench-semantic-manifest.v1' as const
 const TASKS_SCHEMA = 'tokenless.terminalbench-semantic-manifest-tasks.v1' as const
-const DATASET = 'terminal-bench/terminal-bench-2'
-const TASK_COUNT = 89
-const DATASET_REF = 'sha256:c6fc2e2382c1dbae99b2d5ecd2f4f4a60c3c01e0d84642d69b4afd92e99d078b'
-const INSTRUCTION_DIGEST = 'sha256:5b6a2e01c29b8f215daa2e430f75d2a12c3c4ffc627d8cf4ebc1b38cd0d353ea'
-const TASK_REF_DIGEST = 'sha256:82cddb9ea94d792455d3e32b3c8a60ed73003714ed01785ec3b1ec5c580bccba'
+const DATASET = 'terminal-bench/terminal-bench'
+const TASK_COUNT = 66
+const DATASET_REF = 'sha256:39d9f44b40420cde8fdcc087579c0d72a7e14fa3656d603c3f0d22fb35e27732'
+const INSTRUCTION_DIGEST = 'sha256:f21c077ed1a0250613280843bedbc33bfd8bcee2907a60cfa68456f7384908b1'
+const TASK_REF_DIGEST = 'sha256:5ed4031d63f2690291b91c613eb46f0879f0218a9a87a398bd3ae7164037d078'
 const TASK_TYPE_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/u
 const PROVIDER_PATTERN = /^[a-z][a-z0-9-]{0,63}$/u
 const COMPLEXITIES = new Set(['low', 'medium', 'high'])
@@ -146,9 +146,9 @@ export async function saveTerminalBenchSemanticManifest(
 
 async function readOfficialManifest() {
   const candidates = [
-    path.resolve(process.cwd(), 'benchmarks/terminalbench/terminal-bench-2-manifest.json'),
-    fileURLToPath(new URL('../../../../../../benchmarks/terminalbench/terminal-bench-2-manifest.json', import.meta.url)),
-    fileURLToPath(new URL('../../../../../benchmarks/terminalbench/terminal-bench-2-manifest.json', import.meta.url)),
+    path.resolve(process.cwd(), 'benchmarks/terminalbench/terminal-bench-4-manifest.json'),
+    fileURLToPath(new URL('../../../../../../benchmarks/terminalbench/terminal-bench-4-manifest.json', import.meta.url)),
+    fileURLToPath(new URL('../../../../../benchmarks/terminalbench/terminal-bench-4-manifest.json', import.meta.url)),
   ]
   let raw: string | undefined
   for (const candidate of candidates) {

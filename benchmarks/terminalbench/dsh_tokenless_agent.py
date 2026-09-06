@@ -1,4 +1,4 @@
-"""Harbor agent for the pinned DeepSeek Harness Terminal-Bench 2.0 lane."""
+"""Harbor agent for the pinned DeepSeek Harness Terminal-Bench 4.0 lane."""
 
 from __future__ import annotations
 
@@ -28,13 +28,13 @@ from harbor.models.agent.context import AgentContext
 
 
 DSH_REVISION = "47f943859bef60e4160492346772ded9b24f765a"
-DATASET = "terminal-bench/terminal-bench-2"
-DATASET_REF = "sha256:c6fc2e2382c1dbae99b2d5ecd2f4f4a60c3c01e0d84642d69b4afd92e99d078b"
-TASK_COUNT = 89
+DATASET = "terminal-bench/terminal-bench"
+DATASET_REF = "sha256:39d9f44b40420cde8fdcc087579c0d72a7e14fa3656d603c3f0d22fb35e27732"
+TASK_COUNT = 66
 TASK_MANIFEST_SCHEMA = "tokenless.terminalbench-task-manifest.v1"
 SEMANTIC_MANIFEST_SCHEMA = "tokenless.terminalbench-semantic-manifest.v1"
-INSTRUCTION_DIGEST = "sha256:ff25b9442ef81d016d49300aef76c33f1b289fcd544bb0308b25f85bf343fce9"
-TASK_REF_DIGEST = "sha256:82cddb9ea94d792455d3e32b3c8a60ed73003714ed01785ec3b1ec5c580bccba"
+INSTRUCTION_DIGEST = "sha256:f21c077ed1a0250613280843bedbc33bfd8bcee2907a60cfa68456f7384908b1"
+TASK_REF_DIGEST = "sha256:5ed4031d63f2690291b91c613eb46f0879f0218a9a87a398bd3ae7164037d078"
 CHANNEL_PROTOCOL = "tokenless.terminalbench-channel.v1"
 AUDIT_PROTOCOL = "tokenless.terminalbench-deep-audit.v4"
 PROXY_PORT = 18765
@@ -1673,7 +1673,7 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
     def _validate_instruction(self, instruction: str) -> dict[str, Any]:
         digest = "sha256:" + hashlib.sha256(instruction.encode("utf-8")).hexdigest()
         if digest not in self._manifest.values():
-            raise ValueError("The Harbor instruction is not one of the pinned Terminal-Bench 2.0 task instructions.")
+            raise ValueError("The Harbor instruction is not one of the pinned Terminal-Bench 4.0 task instructions.")
         semantic = self._semantic_manifest.get(digest)
         if semantic is None:
             raise ValueError("The Harbor instruction has no semantic preference in the pinned manifest.")
@@ -1747,7 +1747,7 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
         await self._upload_agent_owned_file(
             environment,
             self.task_manifest,
-            "/installed-agent/terminal-bench-2-manifest.json",
+            "/installed-agent/terminal-bench-4-manifest.json",
         )
         await self._upload_agent_owned_file(
             environment,

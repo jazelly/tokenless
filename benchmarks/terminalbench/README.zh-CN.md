@@ -1,18 +1,22 @@
-# Terminal-Bench 2.0
+# Terminal-Bench 4.0
 
 [English](README.md)
 
 这条 lane 评测 `DeepSeek Harness + Tokenless API + Tokenless Harness adapter` 集成。DeepSeek Harness 保留原生 Agent Loop、terminal tools、session 和 compaction；Tokenless API 通过 `tokenless/auto` 提供 model turns，原生 DSH `subagent` 调用可以把 child task 委派给 Tokenless Harness。
+
+当前数据集为 `terminal-bench/terminal-bench@4.0.0`，通过内容摘要固定。每次只运行一道题，结束后停下来汇报，再由用户决定下一题；不创建定时任务。
+
+首题为 `terminal-bench/session-window-debug`（2 CPU、4 GiB 内存、无需 GPU）。官方 agent 时限为 28,800 秒，verifier 在独立官方环境中执行。通过标准仍要求官方 reward `1` 和原有深度集成证据；基础设施失败或不完整调用链不算通过。
 
 ## 固定基线
 
 | 项目 | 固定值 |
 | --- | --- |
 | Harbor | `0.22.0` |
-| Dataset | `revision.json` 中 digest 固定的 `terminal-bench/terminal-bench-2` |
-| Tasks | 89 |
-| Phase gate | `sweep`：每题 `k=1`，共 89 trials，要求每题 verifier reward 为 1 |
-| 正式尝试次数 | `full`：每题 `k=5`，共 445 trials |
+| Dataset | `revision.json` 中 digest 固定的 `terminal-bench/terminal-bench` |
+| Tasks | 66 |
+| Phase gate | `sweep`：每题 `k=1`，共 66 trials，要求每题 verifier reward 为 1 |
+| 正式尝试次数 | `full`：每题 `k=5`，共 330 trials |
 | Harbor trial retries | 0 |
 
 runner 不修改官方 task instruction、timeout、resources、environment 或 verifier。task container 只获得一个随机、仅允许 OpenAI completions 与 private Harness provider turns 的 task-scoped bearer；host daemon admin bearer 和 provider browser session 始终留在 host。
@@ -33,19 +37,19 @@ npm run benchmark:terminalbench -- sweep \
   --home <tokenless-api-home> \
   --dsh-checkout <deepseek-harness-checkout> \
   --profile web-ai \
-  --semantic-manifest benchmarks/terminalbench/observations/semantic-manifest-20260826-auto-v2.json \
+  --semantic-manifest benchmarks/terminalbench/observations/semantic-manifest-4.0.0.json \
   --jobs-dir benchmarks/terminalbench/results
 npm run benchmark:terminalbench -- wiring \
   --home <tokenless-api-home> \
   --dsh-checkout <deepseek-harness-checkout> \
   --profile web-ai \
-  --semantic-manifest benchmarks/terminalbench/observations/semantic-manifest-20260826-auto-v2.json \
+  --semantic-manifest benchmarks/terminalbench/observations/semantic-manifest-4.0.0.json \
   --jobs-dir benchmarks/terminalbench/results
 npm run benchmark:terminalbench -- full \
   --home <tokenless-api-home> \
   --dsh-checkout <deepseek-harness-checkout> \
   --profile web-ai \
-  --semantic-manifest benchmarks/terminalbench/observations/semantic-manifest-20260826-auto-v2.json \
+  --semantic-manifest benchmarks/terminalbench/observations/semantic-manifest-4.0.0.json \
   --jobs-dir benchmarks/terminalbench/results
 ```
 
@@ -57,7 +61,7 @@ npm run benchmark:terminalbench -- full \
 
 Observation 会把 official verifier outcome 与 routing outcome 分开。它记录实际 profile 与由 run 固定的 execution mode、Harbor run/trial/stage timing、每个有序 provider interaction 与 fallback reason、submission/failure rate、可见 limit evidence、估算 token usage、response 字符数与 hash，以及源 result/audit 文件的 SHA-256 对应关系。新的 DeepSeek Harness run 会把 `executionMode` 固定到 `tokenless-run.json`；旧 report 如果没有该字段，就会记录为 `unavailable`，而不会把今天的 configuration 错误归因给过去的 run。采集完全由代码完成且只保存 metadata：v4 不能证明逐 provider latency，token 数值只是估算而不是 provider billing usage，并且绝不保存 prompt 或 response body。
 
-`wiring` 以 `k=1` 运行一道未改写的官方 task。`sweep` 会对全部 89 个未改写官方 task 各运行一次（`k=1`、单并发、零 Harbor retry），并作为 phase gate：只有 89 个 trial 全部 settle、没有 infrastructure error/cancellation/retry、每条 deep chain 完整且 verifier reward 全部为 `1` 时才算成功。`full` 固定运行全部 89 tasks、`k=5`、单并发、零 Harbor retry。仓库提交的 task manifest 会把每个官方 task name 同时绑定到 Harbor task ref 和完整 instruction digest。DeepSeek Harness 命令要求使用上面本地 `observations/` 路径中的 semantic manifest（或另一个显式选择的 manifest），且必须有 89 个按顺序排列、与这些 instruction digest 完全匹配的 entry；每个 entry 只能包含完整 instruction digest、`preferredProvider`、有界 `taskType`、`complexity`（`low`/`medium`/`high`）和 `truncated`，并带确定性的 whole-manifest digest。默认 DSH adapter configuration 中，parent 和 child 的每次 model turn 都请求 `tokenless/auto`；manifest preference 只是 advisory，只能在 operation router 当前最高 eligibility tier 内重排 provider。benchmark profile 禁用 DSH model-request retry，并让 Tokenless API deadline 先完成终态处理，因此 submitted turn 的 exact local job 仍在运行时绝不会被 replay。每个 job 都写入不含 secret 的 `tokenless-run.json` 并记录 semantic manifest digest；正式报告把各 provider routing counts 与 official verifier rewards 分开，公开 `deepIntegration.trialsWithCompleteChain`，并在 `preRoutingExceptions` 中列出经确认发生在 provider routing 之前的异常。DSH command failure 属于 agent outcome，会进入 official verifier，而不会被误归类为 infrastructure exception；sweep 失败时保留 job evidence 且命令返回 nonzero。
+`wiring` 以 `k=1` 运行一道未改写的官方 task。`sweep` 会对全部 66 个未改写官方 task 各运行一次（`k=1`、单并发、零 Harbor retry），并作为 phase gate：只有 66 个 trial 全部 settle、没有 infrastructure error/cancellation/retry、每条 deep chain 完整且 verifier reward 全部为 `1` 时才算成功。`full` 固定运行全部 66 tasks、`k=5`、单并发、零 Harbor retry。仓库提交的 task manifest 会把每个官方 task name 同时绑定到 Harbor task ref 和完整 instruction digest。DeepSeek Harness 命令要求使用上面本地 `observations/` 路径中的 semantic manifest（或另一个显式选择的 manifest），且必须有 66 个按顺序排列、与这些 instruction digest 完全匹配的 entry；每个 entry 只能包含完整 instruction digest、`preferredProvider`、有界 `taskType`、`complexity`（`low`/`medium`/`high`）和 `truncated`，并带确定性的 whole-manifest digest。默认 DSH adapter configuration 中，parent 和 child 的每次 model turn 都请求 `tokenless/auto`；manifest preference 只是 advisory，只能在 operation router 当前最高 eligibility tier 内重排 provider。benchmark profile 禁用 DSH model-request retry，并让 Tokenless API deadline 先完成终态处理，因此 submitted turn 的 exact local job 仍在运行时绝不会被 replay。每个 job 都写入不含 secret 的 `tokenless-run.json` 并记录 semantic manifest digest；正式报告把各 provider routing counts 与 official verifier rewards 分开，公开 `deepIntegration.trialsWithCompleteChain`，并在 `preRoutingExceptions` 中列出经确认发生在 provider routing 之前的异常。DSH command failure 属于 agent outcome，会进入 official verifier，而不会被误归类为 infrastructure exception；sweep 失败时保留 job evidence 且命令返回 nonzero。
 
 明确要求单 provider 测评时，可以在直接运行 Harbor 的 config 中把 `agents[0].model_name` 设为 `tokenless/<provider>`（例如 `tokenless/chatgpt`）。Adapter 会将 parent 和 child 都绑定到该 provider，并记录 `routingMode: fixed`；semantic preference 只用于 auto run。运行前须在选定的持久化 profile 中选择并验证网页模型、thinking effort 和 Chat/Work 入口。这类直接运行保留原始 Harbor results 与 adapter audits；canonical `wiring`/`sweep`/`full` reports 仍用于 auto-route 测评。
 

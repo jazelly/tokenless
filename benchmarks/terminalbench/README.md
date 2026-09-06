@@ -1,18 +1,22 @@
-# Terminal-Bench 2.0
+# Terminal-Bench 4.0
 
 [简体中文](README.zh-CN.md)
 
 This lane measures the `DeepSeek Harness + Tokenless API + Tokenless Harness adapter` integration. DeepSeek Harness keeps its native agent loop, terminal tools, session, and compaction; Tokenless API supplies `tokenless/auto` model turns, and a native DSH `subagent` call may delegate a child task to Tokenless Harness.
+
+The active dataset is `terminal-bench/terminal-bench@4.0.0`, pinned by content digest. Run one task at a time and stop to report its result before starting another. No scheduled automation is part of this workflow.
+
+The initial task is `terminal-bench/session-window-debug` (2 CPUs, 4 GiB memory, no GPU). Its official agent limit is 28,800 seconds; its verifier runs in a separate official environment. A passing task requires official reward `1` and the existing deep integration evidence; an infrastructure failure or incomplete chain is not a pass.
 
 ## Fixed baseline
 
 | Item | Value |
 | --- | --- |
 | Harbor | `0.22.0` |
-| Dataset | `terminal-bench/terminal-bench-2` at the digest in `revision.json` |
-| Tasks | 89 |
-| Phase gate | `sweep`: `k=1` per task, 89 trials, verifier reward 1 required |
-| Formal attempts | `full`: `k=5` per task, 445 trials |
+| Dataset | `terminal-bench/terminal-bench` at the digest in `revision.json` |
+| Tasks | 66 |
+| Phase gate | `sweep`: `k=1` per task, 66 trials, verifier reward 1 required |
+| Formal attempts | `full`: `k=5` per task, 330 trials |
 | Harbor trial retries | 0 |
 
 The runner does not change official task instructions, timeouts, resources, environments, or verifiers. A task container receives only a random task-scoped bearer for OpenAI completions and private Harness provider turns; the host daemon admin bearer and provider browser session remain on the host.
@@ -33,19 +37,19 @@ npm run benchmark:terminalbench -- sweep \
   --home <tokenless-api-home> \
   --dsh-checkout <deepseek-harness-checkout> \
   --profile web-ai \
-  --semantic-manifest benchmarks/terminalbench/observations/semantic-manifest-20260826-auto-v2.json \
+  --semantic-manifest benchmarks/terminalbench/observations/semantic-manifest-4.0.0.json \
   --jobs-dir benchmarks/terminalbench/results
 npm run benchmark:terminalbench -- wiring \
   --home <tokenless-api-home> \
   --dsh-checkout <deepseek-harness-checkout> \
   --profile web-ai \
-  --semantic-manifest benchmarks/terminalbench/observations/semantic-manifest-20260826-auto-v2.json \
+  --semantic-manifest benchmarks/terminalbench/observations/semantic-manifest-4.0.0.json \
   --jobs-dir benchmarks/terminalbench/results
 npm run benchmark:terminalbench -- full \
   --home <tokenless-api-home> \
   --dsh-checkout <deepseek-harness-checkout> \
   --profile web-ai \
-  --semantic-manifest benchmarks/terminalbench/observations/semantic-manifest-20260826-auto-v2.json \
+  --semantic-manifest benchmarks/terminalbench/observations/semantic-manifest-4.0.0.json \
   --jobs-dir benchmarks/terminalbench/results
 ```
 
@@ -57,7 +61,7 @@ Every settled run that produces `tokenless-run.json` also produces `observations
 
 The observation separates official verifier outcomes from routing outcomes. It records the selected profile and run-pinned execution mode, Harbor run/trial/stage timing, every ordered provider interaction and fallback reason, submission and failure rates, visible limit evidence, estimated token usage, response character counts and hashes, and SHA-256 correspondence to the source result/audit files. New DeepSeek Harness runs pin `executionMode` in `tokenless-run.json`; an older report without that field records it as `unavailable` instead of attributing today's configuration to a past run. Collection is code-driven and metadata-only: v4 does not prove per-provider latency, token values are estimates rather than provider billing usage, and prompt or response bodies are never stored.
 
-`wiring` runs one unchanged official task with `k=1`. `sweep` runs all 89 unchanged official tasks once (`k=1`, one concurrent trial, zero Harbor retries) and is a phase gate: it is successful only when all 89 trials settle without infrastructure errors/cancellations/retries, have complete deep chains, and receive verifier reward `1`. `full` always runs all 89 tasks with `k=5`, one concurrent trial, and no Harbor retry. The committed task manifest pins every official task name to both its Harbor task ref and full instruction digest. The DeepSeek Harness commands require the semantic manifest at the local `observations/` path shown above (or another explicitly selected manifest) whose 89 sorted entries match those instruction digests; entries contain only the full instruction digest, `preferredProvider`, bounded `taskType`, `complexity` (`low`/`medium`/`high`), and `truncated`, plus a deterministic whole-manifest digest. The default DSH adapter configuration requests `tokenless/auto` for every parent and child model turn; the manifest preference is advisory and can reorder providers only within the operation router's highest current eligibility tier. The benchmark profile disables DSH model-request retries and lets the Tokenless API deadline settle first, so a submitted turn is never replayed while its exact local job is still active. Each job writes a non-secret `tokenless-run.json` with the semantic manifest digest; the report keeps per-provider routing counts separate from official verifier rewards, discloses `deepIntegration.trialsWithCompleteChain`, and lists proven exceptions that occurred before provider routing under `preRoutingExceptions`. A DSH command failure is an agent outcome and proceeds to the official verifier instead of becoming an infrastructure exception; failed sweep evidence remains in its job directory and the command exits nonzero.
+`wiring` runs one unchanged official task with `k=1`. `sweep` runs all 66 unchanged official tasks once (`k=1`, one concurrent trial, zero Harbor retries) and is a phase gate: it is successful only when all 66 trials settle without infrastructure errors/cancellations/retries, have complete deep chains, and receive verifier reward `1`. `full` always runs all 66 tasks with `k=5`, one concurrent trial, and no Harbor retry. The committed task manifest pins every official task name to both its Harbor task ref and full instruction digest. The DeepSeek Harness commands require the semantic manifest at the local `observations/` path shown above (or another explicitly selected manifest) whose 66 sorted entries match those instruction digests; entries contain only the full instruction digest, `preferredProvider`, bounded `taskType`, `complexity` (`low`/`medium`/`high`), and `truncated`, plus a deterministic whole-manifest digest. The default DSH adapter configuration requests `tokenless/auto` for every parent and child model turn; the manifest preference is advisory and can reorder providers only within the operation router's highest current eligibility tier. The benchmark profile disables DSH model-request retries and lets the Tokenless API deadline settle first, so a submitted turn is never replayed while its exact local job is still active. Each job writes a non-secret `tokenless-run.json` with the semantic manifest digest; the report keeps per-provider routing counts separate from official verifier rewards, discloses `deepIntegration.trialsWithCompleteChain`, and lists proven exceptions that occurred before provider routing under `preRoutingExceptions`. A DSH command failure is an agent outcome and proceeds to the official verifier instead of becoming an infrastructure exception; failed sweep evidence remains in its job directory and the command exits nonzero.
 
 For an explicitly requested single-provider evaluation, a direct Harbor run may set `agents[0].model_name` to `tokenless/<provider>` (for example, `tokenless/chatgpt`) in its config. The adapter binds both parent and child to that provider and records `routingMode: fixed`; semantic preferences apply only to auto runs. Select and verify the website model, thinking effort, and Chat/Work surface in the chosen persistent profile before running. These direct runs retain raw Harbor results and adapter audits; the canonical `wiring`/`sweep`/`full` reports remain auto-route evaluations.
 
