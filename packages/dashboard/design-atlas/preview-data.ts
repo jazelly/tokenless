@@ -103,7 +103,7 @@ export function previewAnalytics(snapshot: DashboardSnapshot, profileId: string,
     providers: providers.map(provider => ({ provider, succeededJobs: count / providers.length, failedJobs: 0, canceledJobs: 0, finishedJobs: count / providers.length, share: 1 / providers.length, successRate: 1, estimatedOutputTokens: tokens / providers.length, measuredResponses: count / providers.length, capabilitiesUsed: 1, browserJobs: count / providers.length, directJobs: 0, unknownModeJobs: 0, lastUsedDay: '2026-09-04' })),
     capabilities: [{ capabilityId: 'conversation', family: 'conversation', succeededJobs: count, failedJobs: 0, canceledJobs: 0, finishedJobs: count, successRate: 1, providersUsed: providers.length }],
     capabilityFamilies: [{ family: 'conversation', succeededJobs: count, failedJobs: 0, canceledJobs: 0, finishedJobs: count }],
-    capabilityMatrix: providers.map(provider => ({ provider, family: 'conversation', succeededJobs: count / providers.length, failedJobs: 0, canceledJobs: 0, finishedJobs: count / providers.length })),
+    capabilityMatrix: providers.map(provider => ({ provider, capabilityId: 'conversation', family: 'conversation', succeededJobs: count / providers.length, failedJobs: 0, canceledJobs: 0, finishedJobs: count / providers.length })),
     executionModes: [{ mode: 'browser', finishedJobs: count, share: 1 }],
     measurementCoverage: { firstMeasuredAt: daily[0]!.day + 'T00:00:00.000Z', lastMeasuredAt: date },
   }

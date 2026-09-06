@@ -44,9 +44,11 @@
   let analytics = $state<DashboardAnalytics | null>(null)
   let loading = $state(true)
   let loadError = $state('')
-  let matrixDetail = $state<{ provider: string; family: string; x: number; y: number } | null>(null)
+  let matrixDetail = $state<{ provider: string; capabilityId: string; x: number; y: number } | null>(null)
   let requestSequence = 0
   let activityKey = $derived(`${snapshot.jobs[0]?.updatedAt ?? ''}:${snapshot.outputSavings.summary.lastMeasuredAt ?? ''}`)
+  let matrixCapabilities = $derived([...snapshot.capabilities].sort((left, right) => families.indexOf(left.family) - families.indexOf(right.family)))
+  let matrixRangeTitle = $derived(t(`capabilityUsage_${analytics?.range.id ?? range}` as MessageKey))
   let topProvider = $derived(analytics?.providers[0] ?? null)
   let matrixMaximum = $derived(Math.max(1, ...(analytics?.capabilityMatrix.map((entry) => entry.finishedJobs) ?? [0])))
   let outcomeMaximum = $derived(Math.max(1, ...(analytics?.daily.map((entry) => entry.finishedJobs) ?? [0])))
@@ -117,35 +119,32 @@
     return `${linePath()} L ${lineX(analytics.daily.length - 1).toFixed(1)} ${lineChart.bottom} L ${lineX(0).toFixed(1)} ${lineChart.bottom} Z`
   }
 
-  function matrixCell(provider: string, family: string): DashboardAnalyticsCapabilityMatrixCell | undefined {
-    return analytics?.capabilityMatrix.find((entry) => entry.provider === provider && entry.family === family)
+  function matrixCell(provider: string, capabilityId: string): DashboardAnalyticsCapabilityMatrixCell | undefined {
+    return analytics?.capabilityMatrix.find((entry) => entry.provider === provider && entry.capabilityId === capabilityId)
   }
 
-  function supportsFamily(provider: string, family: string) {
-    return snapshot.capabilities.some((capability) => capability.family === family && capability.providers.some((route) => route.provider === provider))
+  function supportsCapability(provider: string, capabilityId: string) {
+    return snapshot.capabilities.find((capability) => capability.id === capabilityId)?.providers.some((route) => route.provider === provider) ?? false
   }
 
-  function capabilityTitle(provider: string, family: string) {
-    const cell = matrixCell(provider, family)
-    if (cell?.finishedJobs) return `${providerName(provider)} · ${capabilityFamilyLabel(language, family)} · ${formatNumber(cell.finishedJobs, language)} ${t('routedRequirements')}. ${t('matrixCellOutcomes', { succeeded: cell.succeededJobs, failed: cell.failedJobs, canceled: cell.canceledJobs })}`
-    return `${providerName(provider)} · ${capabilityFamilyLabel(language, family)} · ${t(supportsFamily(provider, family) ? 'supportedUnused' : 'unsupportedCapability')}`
+  function capabilityTitle(provider: string, capabilityId: string) {
+    const cell = matrixCell(provider, capabilityId)
+    const label = `${providerName(provider)} · ${capabilityName(capabilityId)}`
+    if (cell?.finishedJobs) return `${label} · ${formatNumber(cell.finishedJobs, language)} ${t('routedRequirements')}. ${t('matrixCellOutcomes', { succeeded: cell.succeededJobs, failed: cell.failedJobs, canceled: cell.canceledJobs })}`
+    return `${label} · ${t(supportsCapability(provider, capabilityId) ? 'supportedUnused' : 'unsupportedCapability')}`
   }
 
-  async function showMatrixDetail(event: Event, provider: string, family: string) {
-    const button = event.currentTarget as HTMLButtonElement
-    const body = button.closest('.capability-heatmap-body')!.getBoundingClientRect()
-    const cell = button.getBoundingClientRect()
+  async function showMatrixDetail(event: Event, provider: string, capabilityId: string) {
+    const cell = (event.currentTarget as HTMLButtonElement).getBoundingClientRect()
     matrixDetail = {
-      provider, family,
-      x: Math.max(0, Math.min(cell.left - body.left + cell.width / 2 - 140, body.width - 280)),
-      y: cell.bottom - body.top + 8,
+      provider, capabilityId,
+      x: Math.max(12, Math.min(cell.left + cell.width / 2 - 140, window.innerWidth - 292)),
+      y: cell.bottom + 8,
     }
     await tick()
-    if (matrixDetail?.provider !== provider || matrixDetail?.family !== family) return
+    if (matrixDetail?.provider !== provider || matrixDetail?.capabilityId !== capabilityId) return
     const tooltip = document.getElementById('capability-demand-tooltip')!.getBoundingClientRect()
-    if (tooltip.bottom > window.innerHeight - 12) {
-      matrixDetail.y = Math.max(12 - body.top, cell.top - body.top - tooltip.height - 8)
-    }
+    if (tooltip.bottom > window.innerHeight - 12) matrixDetail.y = Math.max(12, cell.top - tooltip.height - 8)
   }
 
   function hideMatrixDetail(event: PointerEvent) {
@@ -160,6 +159,8 @@
     return `family-${Math.max(0, families.indexOf(family))}`
   }
 </script>
+
+<svelte:window onscroll={() => matrixDetail = null} />
 
 {#snippet chartTitle(title: string, help: string)}
   <div class="analytics-chart-title">
@@ -230,33 +231,33 @@
     </div>
 
     <section class="analytics-panel capability-matrix-panel" data-testid="capability-usage-matrix">
-      <header class="analytics-panel-header">{@render chartTitle(t('capabilityUsageMatrix'), t('capabilityUsageMatrixHelp'))}</header>
-      <p class="analytics-unit-note">{t('matrixReadingHint')}</p>
+      <header class="analytics-panel-header">{@render chartTitle(matrixRangeTitle, t('capabilityUsageMatrixHelp'))}</header>
       <div class="capability-heatmap-body">
-        <div class="capability-matrix" style={`--family-count:${families.length}`}>
-          <div class="capability-matrix-corner">{t('provider')}</div>
-          {#each families as family}<div class="capability-matrix-family">{t(`matrixFamily_${family}` as MessageKey)}</div>{/each}
-          {#each analytics.providers as provider}
-            <div class="capability-matrix-provider">{providerName(provider.provider)}</div>
-            {#each families as family}
-              {@const cell = matrixCell(provider.provider, family)}
-              {@const supported = supportsFamily(provider.provider, family)}
-              {@const active = matrixDetail?.provider === provider.provider && matrixDetail?.family === family}
-              <button type="button" class:used={Boolean(cell?.finishedJobs)} class:absent={!cell?.finishedJobs && !supported} class:inspected={active} class="capability-matrix-cell" style={`--cell-fill:var(--demand-${heatLevel(cell?.finishedJobs ?? 0)})`} aria-label={capabilityTitle(provider.provider, family)} aria-describedby={active ? 'capability-demand-tooltip' : undefined}
-                onpointerenter={(event) => showMatrixDetail(event, provider.provider, family)} onpointerleave={hideMatrixDetail}
-                onfocus={(event) => showMatrixDetail(event, provider.provider, family)} onblur={() => matrixDetail = null}
-                onclick={(event) => showMatrixDetail(event, provider.provider, family)} onkeydown={(event) => { if (event.key === 'Escape') matrixDetail = null }}></button>
+        <div class="capability-matrix-scroll" onscroll={() => matrixDetail = null}>
+          <div class="capability-matrix" style={`--capability-count:${matrixCapabilities.length}`}>
+            <div class="capability-matrix-corner">{t('provider')}</div>
+            {#each matrixCapabilities as capability}<div class="capability-matrix-heading" class:chinese={language === 'zh-CN'}><span>{capabilityName(capability.id)}</span></div>{/each}
+            {#each snapshot.providers as provider}
+              <div class="capability-matrix-provider">{provider.label}</div>
+              {#each matrixCapabilities as capability}
+                {@const cell = matrixCell(provider.id, capability.id)}
+                {@const supported = supportsCapability(provider.id, capability.id)}
+                {@const active = matrixDetail?.provider === provider.id && matrixDetail?.capabilityId === capability.id}
+                <button type="button" class:used={Boolean(cell?.finishedJobs)} class:absent={!cell?.finishedJobs && !supported} class:inspected={active} class="capability-matrix-cell" style={`--cell-fill:var(--demand-${heatLevel(cell?.finishedJobs ?? 0)})`} aria-label={capabilityTitle(provider.id, capability.id)} aria-describedby={active ? 'capability-demand-tooltip' : undefined}
+                  onpointerenter={(event) => showMatrixDetail(event, provider.id, capability.id)} onpointerleave={hideMatrixDetail}
+                  onfocus={(event) => showMatrixDetail(event, provider.id, capability.id)} onblur={() => matrixDetail = null}
+                  onclick={(event) => showMatrixDetail(event, provider.id, capability.id)} onkeydown={(event) => { if (event.key === 'Escape') matrixDetail = null }}></button>
+              {/each}
             {/each}
-          {:else}<div class="analytics-empty capability-matrix-empty">{t('noCapabilityUsage')}</div>{/each}
+          </div>
         </div>
         {#if matrixDetail}
-          {@const cell = matrixCell(matrixDetail.provider, matrixDetail.family)}
+          {@const cell = matrixCell(matrixDetail.provider, matrixDetail.capabilityId)}
           <div class="capability-demand-tooltip" id="capability-demand-tooltip" role="tooltip" style={`left:${matrixDetail.x}px;top:${matrixDetail.y}px`}>
-            <strong>{providerName(matrixDetail.provider)} · {capabilityFamilyLabel(language, matrixDetail.family)}</strong>
+            <strong>{providerName(matrixDetail.provider)} · {capabilityName(matrixDetail.capabilityId)}</strong>
             <span class="demand-tooltip-count">{formatNumber(cell?.finishedJobs ?? 0, language)} <span>{t('routedRequirements')}</span></span>
             {#if cell?.finishedJobs}<span>{t('matrixCellOutcomes', { succeeded: cell.succeededJobs, failed: cell.failedJobs, canceled: cell.canceledJobs })}</span>
-            {:else}<span>{t(supportsFamily(matrixDetail.provider, matrixDetail.family) ? 'supportedUnused' : 'unsupportedCapability')}</span>{/if}
-            <span class="demand-tooltip-definition">{t('matrixTooltipMeaning')}</span>
+            {:else}<span>{t(supportsCapability(matrixDetail.provider, matrixDetail.capabilityId) ? 'supportedUnused' : 'unsupportedCapability')}</span>{/if}
           </div>
         {/if}
       </div>
@@ -265,13 +266,11 @@
         <span><i class="matrix-key empty" aria-hidden="true"></i>{t('matrixZeroLegend')}</span>
         <span><i class="matrix-key absent" aria-hidden="true"></i>{t('matrixAbsentLegend')}</span>
       </div>
-      <p class="matrix-count-note">{t('matrixCountMeaning')}</p>
     </section>
 
     <div class="analytics-two-column analytics-bottom-grid">
       <figure class="analytics-panel chart-panel" data-testid="capability-mix-chart">
         <header class="analytics-panel-header">{@render chartTitle(t('capabilityMix'), t('capabilityMixHelp'))}</header>
-        <p class="analytics-unit-note">{t('capabilityCountUnit')}</p>
         {#if analytics.capabilityFamilies.length}
           <div class="stacked-day-chart capability-day-chart" style={`grid-template-columns:repeat(${analytics.daily.length}, minmax(2px, 1fr))`}>
             {#each analytics.daily as point}
@@ -289,7 +288,7 @@
           <header>{@render chartTitle(t('topCapabilities'), t('topCapabilitiesHelp'))}</header>
           <div class="top-capability-list">
             {#each analytics.capabilities.slice(0, 6) as capability}
-              <div><span><strong>{capabilityName(capability.capabilityId)}</strong><small>{capabilityFamilyLabel(language, capability.family)}</small></span><span class="top-capability-bar"><i style={`width:${analytics.capabilities[0]?.finishedJobs ? capability.finishedJobs / analytics.capabilities[0].finishedJobs * 100 : 0}%`}></i></span><strong>{formatNumber(capability.finishedJobs, language)}</strong></div>
+              <div><span><strong>{capabilityName(capability.capabilityId)}</strong></span><span class="top-capability-bar"><i style={`width:${analytics.capabilities[0]?.finishedJobs ? capability.finishedJobs / analytics.capabilities[0].finishedJobs * 100 : 0}%`}></i></span><strong>{formatNumber(capability.finishedJobs, language)}</strong></div>
             {:else}<div class="analytics-empty">{t('noCapabilityUsage')}</div>{/each}
           </div>
         </section>

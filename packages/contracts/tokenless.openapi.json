@@ -8715,13 +8715,14 @@
         "type": "object",
         "properties": {
           "provider": { "type": "string", "minLength": 1 },
+          "capabilityId": { "type": "string", "minLength": 1 },
           "family": { "type": "string", "minLength": 1 },
           "succeededJobs": { "type": "integer", "minimum": 0 },
           "failedJobs": { "type": "integer", "minimum": 0 },
           "canceledJobs": { "type": "integer", "minimum": 0 },
           "finishedJobs": { "type": "integer", "minimum": 0 }
         },
-        "required": ["provider", "family", "succeededJobs", "failedJobs", "canceledJobs", "finishedJobs"],
+        "required": ["capabilityId", "provider", "family", "succeededJobs", "failedJobs", "canceledJobs", "finishedJobs"],
         "additionalProperties": false
       },
       "DashboardAnalyticsExecutionMode": {

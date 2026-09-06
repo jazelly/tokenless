@@ -51,6 +51,6 @@ npm run design:build
 - 类别图表按原始顺序使用 Tableau 10 的前七色：蓝 `#4E79A7`、橙 `#F28E2C`、红 `#E15759`、青绿 `#76B7B2`、绿 `#59A14F`、黄 `#EDC949`、紫 `#AF7AA1`。保持固定的能力类别映射；主要数据系列使用 Tableau 蓝，需求强度使用 ColorBrewer Greens[5]。需求图使用不常驻数字的紧凑方格，悬停、键盘聚焦或点按显示次数和统计口径。
 - 状态色板中的灰绿、赭色、陶土色分别表示成功、警告、失败，这些状态变量与类别色分开；使用配套背景与边框，并保留状态文字或图标。Provider 品牌图形保留自身识别色。
 - 带短横的圆框 T 是产品内的 **tokens** 单位图标，不是标准货币符号。数值旁使用 `src/components/TokenUnit.svelte`，已有说明的控件中使用 `TokenIcon.svelte`；辅助阅读标签和提示保留完整单位。
-- 能力需求使用**次数**，不使用 token 图标。每个已结束任务的每种不同能力计 1 次，包括失败和取消；同一任务在一个类别中可以计多次。中性空格表示已接入但无需求记录，虚线方格表示无需求记录且未接入。绿色深浅不表示成功率，方格代表 Provider 与能力类别的组合，不是日期。
+- 能力需求使用**次数**，不使用 token 图标。每个已结束任务的每种不同能力计 1 次，包括失败和取消；同一任务在一个类别中可以计多次。中性空格表示已接入但无需求记录，虚线方格表示无需求记录且未接入。绿色深浅不表示成功率，方格代表 Provider 与具体能力的组合，不是日期。显示目录中的全部 Provider 和能力，包括未使用项；滚动时保持行列标题可见。标题跟随所选时间范围，统计口径放在帮助提示中。
 
 数据用色参考 [Carbon 对类别色、连续色阶和状态色的区分](https://carbondesignsystem.com/data-visualization/color-palettes/)；类别色值来自 [D3 schemeTableau10](https://d3js.org/d3-scale-chromatic/categorical)，数量色值来自 [D3 schemeGreens[5] / ColorBrewer](https://d3js.org/d3-scale-chromatic/sequential)。

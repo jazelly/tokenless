@@ -455,6 +455,7 @@ export type DashboardAnalyticsCapabilityFamily = {
 }
 
 export type DashboardAnalyticsCapabilityMatrixCell = DashboardAnalyticsCapabilityFamily & {
+  capabilityId: string
   provider: string
 }
 

@@ -143,30 +143,26 @@ main#main:focus { outline: none; }
 .chart-legend i, .capability-family-legend i, .execution-mode-legend i { width: 7px; height: 7px; border-radius: 2px; }
 .analytics-empty { display: grid; min-height: 74px; place-items: center; padding: 18px; color: var(--muted); font-size: 12px; text-align: center; }
 .chart-empty { flex: 1; min-height: 240px; }
-.capability-heatmap-body { position: relative; width: fit-content; max-width: calc(100% - 36px); margin: 18px; }
-.capability-matrix { display: grid; grid-template-columns: 154px repeat(var(--family-count), 48px); gap: 8px; align-items: center; }
-.capability-matrix-corner, .capability-matrix-family, .capability-matrix-provider { font-size: 11px; line-height: 1.4; }
-.capability-matrix-corner { color: var(--muted); }
-.capability-matrix-family { align-self: end; padding-bottom: 4px; color: var(--muted); text-align: center; overflow-wrap: anywhere; }
-.capability-matrix-provider { padding-right: 10px; font-weight: 600; }
-.capability-matrix-cell { width: 36px; height: 36px; justify-self: center; padding: 0; border: 1px solid var(--line-soft); border-radius: 5px; background: var(--demand-empty); cursor: pointer; }
+.capability-heatmap-body { margin: 18px; }
+.capability-matrix-scroll { max-height: 540px; overflow: auto; padding-bottom: 6px; }
+.capability-matrix { display: grid; width: max-content; grid-template-columns: 144px repeat(var(--capability-count), 24px); gap: 4px 2px; align-items: center; padding: 0 4px 4px 0; }
+.capability-matrix-corner, .capability-matrix-heading, .capability-matrix-provider { font-size: 11px; line-height: 1.4; background: var(--surface); }
+.capability-matrix-corner { position: sticky; top: 0; left: 0; z-index: 3; align-self: stretch; display: flex; align-items: end; padding-bottom: 10px; color: var(--muted); }
+.capability-matrix-heading { position: sticky; top: 0; z-index: 2; height: 154px; display: flex; justify-content: center; align-items: end; padding-bottom: 10px; color: var(--muted); }
+.capability-matrix-heading > span { writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; }
+.capability-matrix-heading.chinese > span { transform: none; }
+.capability-matrix-provider { position: sticky; left: 0; z-index: 1; align-self: stretch; display: flex; align-items: center; padding-right: 8px; font-weight: 500; }
+.capability-matrix-cell { width: 20px; height: 20px; justify-self: center; padding: 0; border: 1px solid var(--line-soft); border-radius: 3px; background: var(--demand-empty); cursor: pointer; }
 .capability-matrix-cell.used { background: var(--cell-fill); border-color: color-mix(in srgb, var(--cell-fill) 80%, var(--ink)); }
 .capability-matrix-cell.absent { border-style: dashed; border-color: var(--stone-300); background: transparent; }
-.capability-matrix-cell:hover, .capability-matrix-cell.inspected { outline: 2px solid var(--muted); outline-offset: 2px; }
-.capability-matrix-cell:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
-.capability-matrix-empty { grid-column: 1 / -1; }
-.capability-demand-tooltip { position: absolute; z-index: 60; display: flex; flex-direction: column; gap: 8px; width: 280px; max-width: 100%; padding: 14px; border-radius: 8px; background: var(--ink); color: var(--surface); box-shadow: var(--shadow); pointer-events: none; font-size: 12px; line-height: 1.5; }
+.capability-matrix-cell:hover, .capability-matrix-cell.inspected { outline: 2px solid var(--muted); outline-offset: 1px; }
+.capability-matrix-cell:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.capability-demand-tooltip { position: fixed; z-index: 60; display: flex; flex-direction: column; gap: 8px; width: 280px; max-width: calc(100vw - 24px); padding: 14px; border-radius: 8px; background: var(--ink); color: var(--surface); box-shadow: var(--shadow); pointer-events: none; font-size: 12px; line-height: 1.5; }
 .demand-tooltip-count { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
 .demand-tooltip-count > span { font-size: 12px; font-weight: 400; }
-.demand-tooltip-definition { border-top: 1px solid var(--stone-600); padding-top: 8px; }
-.matrix-count-note { padding: 0 18px 18px; max-width: 700px; color: var(--muted); font-size: 11px; line-height: 1.6; }
 @media (max-width: 760px) {
-  .capability-heatmap-body { max-width: calc(100% - 24px); margin: 16px 12px; }
-  .capability-matrix { grid-template-columns: repeat(var(--family-count), minmax(0, 1fr)); gap: 8px 4px; }
-  .capability-matrix-corner { display: none; }
-  .capability-matrix-provider { grid-column: 1 / -1; padding: 8px 0 0; }
-  .capability-matrix-cell { width: 30px; height: 30px; }
-  .capability-matrix-family { font-size: 10px; }
+  .capability-heatmap-body { margin: 16px 12px; }
+  .capability-matrix { grid-template-columns: 120px repeat(var(--capability-count), 24px); }
 }
 
 .capability-day-chart { height: 200px; }

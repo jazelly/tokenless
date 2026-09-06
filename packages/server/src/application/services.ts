@@ -1304,7 +1304,7 @@ function publicDashboardAnalytics(options: {
   }>()
   const capabilityCounters = new Map<string, AnalyticsCounter & { family: string; providers: Set<string> }>()
   const familyCounters = new Map<string, AnalyticsCounter>()
-  const matrixCounters = new Map<string, AnalyticsCounter & { provider: string; family: string }>()
+  const matrixCounters = new Map<string, AnalyticsCounter & { provider: string; family: string; capabilityId: string }>()
   const modeCounters = new Map<'browser' | 'direct' | 'unknown', number>([
     ['browser', 0],
     ['direct', 0],
@@ -1371,11 +1371,12 @@ function publicDashboardAnalytics(options: {
       addAnalyticsCounter(family, row)
       capabilityFamilies[definition.family] = (capabilityFamilies[definition.family] ?? 0) + finishedJobs(row)
 
-      const matrixKey = `${row.provider}\u0000${definition.family}`
+      const matrixKey = `${row.provider}\u0000${row.capability_id}`
       const matrix = matrixCounters.get(matrixKey) ?? setMapValue(matrixCounters, matrixKey, {
         ...emptyAnalyticsCounter(),
         provider: row.provider,
         family: definition.family,
+        capabilityId: row.capability_id,
       })
       addAnalyticsCounter(matrix, row)
       const provider = providerCounters.get(row.provider) ?? setMapValue(providerCounters, row.provider, {
@@ -1459,11 +1460,12 @@ function publicDashboardAnalytics(options: {
     capabilityMatrix: [...matrixCounters.values()].map((counter) => ({
       provider: counter.provider,
       family: counter.family,
+      capabilityId: counter.capabilityId,
       succeededJobs: counter.succeededJobs,
       failedJobs: counter.failedJobs,
       canceledJobs: counter.canceledJobs,
       finishedJobs: finishedJobs(counter),
-    })).sort((left, right) => left.provider.localeCompare(right.provider) || left.family.localeCompare(right.family)),
+    })).sort((left, right) => left.provider.localeCompare(right.provider) || left.capabilityId.localeCompare(right.capabilityId)),
     executionModes: [...modeCounters.entries()].map(([mode, count]) => ({
       mode,
       finishedJobs: count,
