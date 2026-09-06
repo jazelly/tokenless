@@ -12,8 +12,8 @@
     { id: 'warning', en: 'Warning', zh: '警告', useEn: 'Attention or user action needed', useZh: '需要注意或用户操作' },
     { id: 'danger', en: 'Failure', zh: '失败', useEn: 'Failed outcome or destructive action', useZh: '失败结果或破坏性操作' },
   ]
-  const hues = ['teal', 'blue', 'violet', 'rose', 'ochre', 'olive', 'slate']
-  const hueNames = [['Sea teal', '海青'], ['Cornflower', '矢车菊蓝'], ['Iris', '鸢尾紫'], ['Rose', '玫瑰'], ['Ochre', '赭金'], ['Olive', '橄榄'], ['Slate blue', '灰蓝']]
+  const hues = ['blue', 'orange', 'red', 'teal', 'green', 'yellow', 'purple']
+  const hueNames = [['Blue', '蓝'], ['Orange', '橙'], ['Red', '红'], ['Teal', '青绿'], ['Green', '绿'], ['Yellow', '黄'], ['Purple', '紫']]
   const categories = [
     ['Conversation', '对话'], ['Input', '输入'], ['Search & reasoning', '检索与推理'],
     ['Media creation', '媒体生成'], ['Documents & websites', '文档与网页'],
@@ -31,24 +31,26 @@
   <header>
     <p class="eyebrow">Tokenless API · Design Atlas</p>
     <h1>{text('Color & units', '色板与单位')}</h1>
-    <p>{text('Warm paper, graphite text, and a coordinated spectrum for data.', '暖纸背景、石墨文字与协调的彩色数据图表。')}</p>
+    <p>{text('Warm paper, graphite text, and established palettes for data.', '暖纸背景、石墨文字与成熟的数据图表色板。')}</p>
   </header>
 
   <section class="foundation-panel brand-intro">
-    <div class="brand-sample"><TokenIcon size={64} /><span>DATA / SEA TEAL</span><strong>{values['data-teal']}</strong></div>
-    <div><p class="eyebrow">{text('Interface + data', '界面基底 + 数据强调色')}</p><h2>{text('A warm frame. Colorful data.', '暖色基底，彩色数据。')}</h2><p>{text('Graphite #171715 and warm paper #F6F5F2 anchor the interface. Sea teal carries the main data series; seven coordinated hues distinguish capability categories. A fixed palette includes color, with each color given a purpose.', '石墨色 #171715 与暖纸色 #F6F5F2 构成界面基底。海青色承担主要数据系列，七种协调色区分能力类别。固定色板包含彩色，每种颜色都有明确用途。')}</p><div class="palette-ribbon" aria-hidden="true">{#each hues as hue}<i style={`background:var(--data-${hue})`}></i>{/each}</div><a class="preview-link" href={`/?path=/story/overview-usage-analytics--${language === 'zh-CN' ? 'chinese' : 'default'}`} target="_top">{text('View the Dashboard with this palette →', '查看这套色板在 Dashboard 中的效果 →')}</a></div>
+    <div class="brand-sample"><TokenIcon size={64} /><span>DATA / TABLEAU BLUE</span><strong>{values['data-blue']}</strong></div>
+    <div><p class="eyebrow">{text('Interface + data', '界面基底 + 数据强调色')}</p><h2>{text('A warm frame. Colorful data.', '暖色基底，彩色数据。')}</h2><p>{text('Graphite #171715 and warm paper #F6F5F2 anchor the interface. Tableau blue carries the main data series. The first seven Tableau 10 colors identify capability categories in their published order; ColorBrewer Blues provides the quantity scale.', '石墨色 #171715 与暖纸色 #F6F5F2 构成界面基底。Tableau 蓝用于主要数据系列。Tableau 10 的前七色按原始顺序区分能力类别，ColorBrewer Blues 用于数量色阶。')}</p><div class="palette-ribbon" aria-hidden="true">{#each hues as hue}<i style={`background:var(--data-${hue})`}></i>{/each}</div><a class="preview-link" href={`/?path=/story/overview-usage-analytics--${language === 'zh-CN' ? 'chinese' : 'default'}`} target="_top">{text('View the Dashboard with this palette →', '查看这套色板在 Dashboard 中的效果 →')}</a></div>
   </section>
 
   <section class="foundation-panel" data-testid="categorical-palette">
-    <div class="section-heading"><span>01</span><h2>{text('Data palette · seven fixed hues', '数据色板 · 七种固定色相')}</h2></div>
+    <div class="section-heading"><span>01</span><h2>{text('Categories · Tableau 10', '类别 · Tableau 10')}</h2></div>
     <p>{text('Different capabilities are different categories, not a light-to-dark ranking. Always use the mapping below in charts and legends. These colors identify categories; they do not indicate success or failure.', '不同能力是不同类别，不是由浅到深的排名。图表与图例始终使用以下固定映射。这些颜色用于识别类别，不表示成功或失败。')}</p>
+    <p class="source-links">{text('Source:', '来源：')} <a href="https://www.tableau.com/blog/colors-upgrade-tableau-10-56782" target="_blank" rel="noreferrer">Tableau</a> · <a href="https://d3js.org/d3-scale-chromatic/categorical" target="_blank" rel="noreferrer">D3 schemeTableau10</a></p>
     <div class="data-swatches">{#each hues as hue, i}<div class="swatch"><div class="swatch-color" style={`background:var(--data-${hue})`}></div><strong>{text(hueNames[i]![0]!, hueNames[i]![1]!)}</strong><code>{values[`data-${hue}`]}</code><small>{text(categories[i]![0]!, categories[i]![1]!)}</small></div>{/each}</div>
   </section>
 
   <section class="foundation-panel">
-    <div class="section-heading"><span>02</span><h2>{text('Quantity · sea-teal scale', '数量 · 海青色阶')}</h2></div>
+    <div class="section-heading"><span>02</span><h2>{text('Quantity · ColorBrewer Blues', '数量 · ColorBrewer Blues')}</h2></div>
     <p>{text('Heatmaps use five fixed steps from light to dark, relative to the largest visible count. Darker means more demand, not better results. Use this sequential scale for the demand matrix. Category charts use the seven distinct hues above; keep their labels and segment separators visible.', '热力图相对于当前最大计数，使用固定的五档色阶。越深表示需求越多，不表示结果越好。需求矩阵使用这套连续色阶。类别图表使用上方七种不同色相，并保留文字图例和分段边界。')}</p>
-    <div class="heat-scale">{#each [4, 16, 31, 56, 76] as count, i}<div><strong style={`background:var(--heat-${i + 1});color:var(--stone-${i >= 3 ? 0 : 950})`}>{count}</strong><code>{values[`heat-${i + 1}`]}</code></div>{/each}</div>
+    <p class="source-links">{text('Source:', '来源：')} <a href="https://d3js.org/d3-scale-chromatic/sequential" target="_blank" rel="noreferrer">D3 schemeBlues[5] / ColorBrewer</a></p>
+    <div class="heat-scale">{#each [4, 16, 31, 56, 76] as count, i}<div><strong style={`background:var(--heat-${i + 1});color:var(--heat-ink-${i + 1})`}>{count}</strong><code>{values[`heat-${i + 1}`]}</code></div>{/each}</div>
     <small>{text('Illustrative requirement counts; not live usage. All five text/fill pairs meet 4.5:1 contrast.', '示例能力需求次数，不是实际用量。五档数字与底色的对比度均达到 4.5:1。')}</small>
   </section>
 
@@ -60,7 +62,7 @@
 
   <section class="foundation-panel">
     <div class="section-heading"><span>04</span><h2>{text('Semantic colors', '状态色')}</h2></div>
-    <p>{text('Reserved for status, never assigned to a provider or capability category. Successful job bars use sage, failures use clay; trend lines use sea teal. Keep a status label or icon alongside the color.', '只用于状态，不分配给 Provider 或能力类别。成功任务柱使用灰绿，失败使用陶土色；趋势曲线使用海青。状态颜色始终配合文字或图标。')}</p>
+    <p>{text('Reserved for status, never assigned to a provider or capability category. Successful job bars use sage, failures use clay; trend lines use Tableau blue. Keep a status label or icon alongside the color.', '只用于状态，不分配给 Provider 或能力类别。成功任务柱使用灰绿，失败使用陶土色；趋势曲线使用 Tableau 蓝。状态颜色始终配合文字或图标。')}</p>
     <div class="status-grid">{#each statuses as status}<div style={`--status:var(--status-${status.id});--status-surface:var(--status-${status.id}-surface);--status-line:var(--status-${status.id}-line)`}><strong><i></i>{text(status.en, status.zh)}</strong><code>{values[`status-${status.id}`]}</code><p>{text(status.useEn, status.useZh)}</p></div>{/each}</div>
   </section>
 
@@ -93,6 +95,7 @@
   .data-swatches small { display: block; margin-top: 10px; font-size: 11px; line-height: 1.45; }
   .palette-ribbon { display: flex; gap: 6px; margin-top: 20px; }
   .palette-ribbon i { width: 30px; height: 8px; border-radius: 2px; }
+  .source-links a { color: var(--chart-primary); text-underline-offset: 3px; }
   .preview-link { display: inline-block; margin-top: 18px; color: var(--chart-primary); font-size: 12px; text-underline-offset: 3px; }
   .heat-scale { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin: 24px 0 16px; }
   .heat-scale strong { display: grid; height: 64px; place-items: center; border-radius: 5px; font-size: 18px; }

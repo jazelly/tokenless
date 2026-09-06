@@ -217,7 +217,7 @@
             {@const cell = matrixCell(provider.provider, family)}
             {@const supported = supportsFamily(provider.provider, family)}
             {@const level = heatLevel(cell?.finishedJobs ?? 0)}
-            <div class:used={Boolean(cell?.finishedJobs)} class:supported class:absent={!cell?.finishedJobs && !supported} class="capability-matrix-cell" style={`--cell-fill:var(--heat-${level});--cell-ink:var(--stone-${level >= 4 ? 0 : 950})`} title={capabilityTitle(provider.provider, family)} role="img" aria-label={capabilityTitle(provider.provider, family)}><span class="capability-matrix-value">{cell?.finishedJobs ? formatNumber(cell.finishedJobs, language) : supported ? '0' : '—'}</span></div>
+            <div class:used={Boolean(cell?.finishedJobs)} class:supported class:absent={!cell?.finishedJobs && !supported} class="capability-matrix-cell" style={`--cell-fill:var(--heat-${level});--cell-ink:var(--heat-ink-${level})`} title={capabilityTitle(provider.provider, family)} role="img" aria-label={capabilityTitle(provider.provider, family)}><span class="capability-matrix-value">{cell?.finishedJobs ? formatNumber(cell.finishedJobs, language) : supported ? '0' : '—'}</span></div>
           {/each}
         {:else}<div class="analytics-empty capability-matrix-empty">{t('noCapabilityUsage')}</div>{/each}
       </div></div>

@@ -38,27 +38,37 @@
   --amber: var(--status-warning);
   --red: var(--status-danger);
 
-  /* Data colors complement the warm neutral interface; each family has a fixed hue. */
-  --data-teal: #287d83;
-  --data-blue: #587bc1;
-  --data-violet: #8665ad;
-  --data-rose: #b56d8b;
-  --data-ochre: #b08a3e;
-  --data-olive: #7f8b4b;
-  --data-slate: #6d90a5;
-  --chart-primary: var(--data-teal);
-  --chart-secondary: var(--data-violet);
+  /* Tableau 10: the first seven colors keep the published categorical order.
+     https://d3js.org/d3-scale-chromatic/categorical */
+  --data-blue: #4e79a7;
+  --data-orange: #f28e2c;
+  --data-red: #e15759;
+  --data-teal: #76b7b2;
+  --data-green: #59a14f;
+  --data-yellow: #edc949;
+  --data-purple: #af7aa1;
+  --chart-primary: var(--data-blue);
+  --chart-secondary: var(--data-orange);
   --chart-unknown: var(--stone-300);
-  --chart-family-0: var(--data-teal);
-  --chart-family-1: var(--data-blue);
-  --chart-family-2: var(--data-violet);
-  --chart-family-3: var(--data-rose);
-  --chart-family-4: var(--data-ochre);
-  --chart-family-5: var(--data-olive);
-  --chart-family-6: var(--data-slate);
-  --heat-1: #e7f3f1;
-  --heat-2: #c7e3df;
-  --heat-3: #91c4be;
-  --heat-4: #337673;
-  --heat-5: #1d5757;
+  --chart-family-0: var(--data-blue);
+  --chart-family-1: var(--data-orange);
+  --chart-family-2: var(--data-red);
+  --chart-family-3: var(--data-teal);
+  --chart-family-4: var(--data-green);
+  --chart-family-5: var(--data-yellow);
+  --chart-family-6: var(--data-purple);
+
+  /* ColorBrewer Blues[5], distributed by D3; quantity increases with darkness.
+     https://d3js.org/d3-scale-chromatic/sequential */
+  --heat-1: #eff3ff;
+  --heat-2: #bdd7e7;
+  --heat-3: #6baed6;
+  --heat-4: #3182bd;
+  --heat-5: #08519c;
+  --heat-ink-1: var(--ink);
+  --heat-ink-2: var(--ink);
+  --heat-ink-3: var(--ink);
+  /* Pure black is required here to reach 4.5:1 on the published fourth blue. */
+  --heat-ink-4: #000000;
+  --heat-ink-5: var(--stone-0);
 }
