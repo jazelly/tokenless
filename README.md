@@ -16,9 +16,35 @@
 
 <p align="center"><sub>Local Dashboard captured on 2026-09-06. Values are local job records and output-token estimates, not benchmarks or billing savings.</sub></p>
 
-## From task to result
+## Three ways to use Tokenless
 
-![Bring a task → Tokenless Web Harness runs the web workflow → results return to your agent or app; follow activity in Dashboard](assets/web-harness-workflow.png)
+### 1. Tokenless Harness + API · Main workflow
+
+Give Tokenless Harness a task; it manages execution through Tokenless API and returns the result.
+
+![Bring a task → Tokenless Web Harness runs the web workflow → results return to your agent or app; follow activity in Dashboard](assets/web-harness-workflow-en.png)
+
+<details>
+<summary>2. Your own Harness + Tokenless API</summary>
+
+Keep your Harness’s agent loop, tools, and sessions; connect its model interface to Tokenless API.
+
+![Choose your own Harness → connect Tokenless API to your AI web accounts → replies return to your Harness](assets/bring-your-harness-en.png)
+
+[API setup and compatibility limits](docs/api-proxy-integration.md) · [Harness integration](docs/harness-integrations.md)
+
+</details>
+
+<details>
+<summary>3. Your own Harness + Tokenless skill</summary>
+
+Add the Tokenless skill to your Harness; invoke it for selected tasks and bring the results back into your usual workflow.
+
+![Keep your workflow → call the Tokenless skill on demand for a selected task → continue in your own Harness](assets/tokenless-skill-workflow-en.png)
+
+`tokenless setup` installs the skill into supported local agent skill directories. [Setup](COMMANDS.md#tokenless-setup) · [Skill instructions](skills/tokenless/SKILL.md)
+
+</details>
 
 <sub>AI-generated use-case illustration. Available capabilities depend on the selected provider’s verified support.</sub>
 
@@ -59,6 +85,8 @@ npm install --global tokenless@latest
 tokenless setup
 tokenless run --provider chatgpt --prompt "Review this proposal."
 ```
+
+Setup requires `uv` for the G4F runtime and synchronizes matching skills; upgrades sync them too. Use `tokenless skills sync --json` to refresh skills alone. The macOS menu app is a separate optional install and is not installed on Windows.
 
 Setup opens the local dashboard. Reopen it anytime with `tokenless dashboard`.
 

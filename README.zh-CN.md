@@ -16,9 +16,35 @@
 
 <p align="center"><sub>2026-09-06 本地 Dashboard 实拍。数值是本机任务记录与输出 token 估算，不是 benchmark 或账单节省。</sub></p>
 
-## 从任务到结果
+## 三种使用方式
 
-![交给它任务 → Tokenless Web Harness 执行网页工作流 → 结果回到 Agent 或应用；在 Dashboard 查看任务与用量](assets/web-harness-workflow.png)
+### 1. Tokenless Harness + API · 主流用法
+
+把任务交给 Tokenless Harness；它通过 Tokenless API 执行任务，并返回结果。
+
+![交给它任务 → Tokenless Web Harness 执行网页工作流 → 结果回到智能体或应用；在仪表盘查看任务与用量](assets/web-harness-workflow-zh-CN.png)
+
+<details>
+<summary>2. 自选 Harness + Tokenless API</summary>
+
+保留自己的 Harness、工具和会话，把模型接口接到 Tokenless API；任务流程仍由你的 Harness 管理。
+
+![自选智能体框架 → 通过 Tokenless API 接入智能助手网页账号 → 回复回到自己的框架](assets/bring-your-harness-zh-CN.png)
+
+[API 接入与兼容范围](docs/api-proxy-integration.zh-CN.md) · [Harness 集成](docs/harness-integrations.zh-CN.md)
+
+</details>
+
+<details>
+<summary>3. 自选 Harness + Tokenless Skill</summary>
+
+把 Tokenless Skill 装入自己的 Harness，只在需要时调用，交出选定任务，再带回结果继续原有工作流。
+
+![沿用自己的工作流 → 按需调用 Tokenless 技能处理选定任务 → 在自己的框架中继续工作](assets/tokenless-skill-workflow-zh-CN.png)
+
+`tokenless setup` 会将 Skill 安装到受支持的本地 Agent 技能目录。[安装说明](COMMANDS.zh-CN.md#tokenless-setup) · [Skill 使用指引](skills/tokenless/SKILL.md)
+
+</details>
 
 <sub>AI 生成的用途示意图；具体能力以所选 provider 的已验证支持为准。</sub>
 
@@ -59,6 +85,8 @@ npm install --global tokenless@latest
 tokenless setup
 tokenless run --provider chatgpt --prompt "Review this proposal."
 ```
+
+Setup 需要 `uv` 来准备 G4F runtime，并会自动同步配套 skills；升级也会同步。仅刷新 skills 可运行 `tokenless skills sync --json`。Windows 不安装 macOS 菜单栏 App，macOS 的菜单栏 App 为独立可选安装。
 
 Setup 会自动打开本地 Dashboard，之后可随时用 `tokenless dashboard` 再次打开。
 
