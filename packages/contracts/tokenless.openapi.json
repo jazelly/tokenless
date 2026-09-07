@@ -3800,7 +3800,11 @@
                 "busyPages": {
                   "type": "integer",
                   "minimum": 0
-                }
+                },
+                "totalPages": { "type": ["integer", "null"], "minimum": 0 },
+                "untrackedPages": { "type": ["integer", "null"], "minimum": 0 },
+                "status": { "type": "string" },
+                "errorCode": { "type": ["string", "null"] }
               }
             }
           }

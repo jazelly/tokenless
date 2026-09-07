@@ -667,6 +667,14 @@ export class JobStore {
     return this.resolveProviderTaskConversation({ provider, profile_id: profileId, task_id: taskId }) as ProviderTaskConversationMapping
   }
 
+  findProviderTaskConversationByUrl(profileId: string, url: string) {
+    const row = this.get(
+      'SELECT provider, task_id FROM provider_task_conversations WHERE profile_id = ? AND canonical_url = ? ORDER BY task_id LIMIT 1',
+      profileId, url,
+    )
+    return row ? { provider: String(row.provider), pageRef: String(row.task_id) } : null
+  }
+
   resolveProviderTaskConversation(input: {
     provider: string
     profile_id: string

@@ -400,7 +400,7 @@
           {@const gc = snapshot.runtime.tabGc}
           <p class="form-note" data-testid="tab-gc-counters">{t('tabGcReused')}: {gc.idleReuses} · {t('tabGcExpired')}: {gc.expired} · {t('tabGcCapacity')}: {gc.capacity} · {t('tabGcReopened')}: {gc.reopenedSoon} · {t('tabGcRejected')}: {gc.capacityRejected} · {t('tabGcFailures')}: {gc.closeFailures}</p>
           {#each gc.profiles as profile (profile.profileId)}
-            <div class="settings-row"><span>{profile.profileId}</span><strong>{t('tabGcBusy')}: {profile.busyPages} · idle: {profile.idlePages} · {t('tabGcTotal')}: {profile.workPages}</strong></div>
+            <div class="settings-row"><span>{profile.profileId} · {profile.status ?? 'attached'}{profile.errorCode ? ` · ${profile.errorCode}` : ''}</span><strong>{t('tabGcObserved')}: {profile.totalPages ?? '—'} · {t('tabGcUntracked')}: {profile.untrackedPages ?? '—'} · {t('tabGcBusy')}: {profile.busyPages} · idle: {profile.idlePages} · {t('tabGcTotal')}: {profile.workPages}</strong></div>
           {/each}
         {/if}
       </section>

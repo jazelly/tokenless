@@ -1,3 +1,4 @@
+import { firstVisibleLocator } from './dom-locators.js'
 import { VISIBLE_ACTIONS } from './contracts.js'
 import { ProviderCapabilityFailure, ProviderCapabilitySet } from './capability-set.js'
 import { isVisibleAction } from './action-catalog.js'
@@ -85,6 +86,52 @@ export abstract class BaseProvider<TId extends ProviderId = ProviderId> {
 
   observeResponse(page: Page): Promise<ResponseCursorObservation> {
     return this.observeResponseCursor(page)
+  }
+
+  async observeTabActivity(page: Page) {
+    const composer = await firstVisibleLocator(page, this.definition.composerSelectors)
+    if (!composer) return null
+    const [response, blockers, composerState, activity] = await Promise.all([
+      this.observeResponse(page),
+      this.inspectBlockers(page),
+      composer.evaluate((element) => ({
+        draft: Boolean((element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement
+          ? element.value : element.textContent)?.trim()),
+        disabled: element.getAttribute('aria-disabled') === 'true' || element.hasAttribute('disabled'),
+      })),
+      page.evaluate((providerId) => {
+        const host = window as unknown as { __tokenlessGcActivity?: number }
+        if (host.__tokenlessGcActivity === undefined) {
+          host.__tokenlessGcActivity = 0
+          for (const event of ['pointerdown', 'keydown', 'input', 'wheel']) {
+            document.addEventListener(event, (event) => {
+              if (event.isTrusted) host.__tokenlessGcActivity = (host.__tokenlessGcActivity ?? 0) + 1
+            }, { capture: true, passive: true })
+          }
+        }
+        const visible = (element: Element) => {
+          const rect = element.getBoundingClientRect()
+          const style = getComputedStyle(element)
+          return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none'
+        }
+        return {
+          count: host.__tokenlessGcActivity,
+          documentEpoch: performance.timeOrigin,
+          pending: document.readyState !== 'complete' ||
+            Array.from(document.querySelectorAll('[role="dialog"], [aria-busy="true"], [role="progressbar"], button[aria-label="Remove file"], button[data-testid="remove-uploaded-file"], [data-testid="file-thumbnail"]')).some((element) => {
+              if (!visible(element)) return false
+              const isConversationRateNotice = providerId === 'chatgpt' && element.getAttribute('role') === 'dialog' &&
+                element.textContent?.includes('Too many requests') &&
+                element.textContent?.includes('temporarily limited access to your conversations')
+              return !isConversationRateNotice
+            }) ||
+            Array.from(document.querySelectorAll('input[type="file"]')).some((element) => visible(element) && (element as HTMLInputElement).files?.length),
+        }
+      }, this.id),
+    ])
+    if (response.busy || response.answerCount === 0 || !response.latestAnswerFingerprint ||
+      blockers.blocked || composerState.draft || composerState.disabled || activity.pending) return null
+    return JSON.stringify([page.url(), response.answerCount, response.latestAnswerFingerprint, activity.documentEpoch, activity.count])
   }
 
   async inspectCapabilities(page: Page) {

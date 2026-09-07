@@ -231,11 +231,11 @@ Tokenless profiles organize provider tabs and configuration; they do not create 
 
 Tokenless API reclaims owned work tabs after **120 seconds continuously idle**, checked every **15 seconds**. Each profile allows **8 work tabs**: at capacity, the oldest idle tab is reclaimed early; if every tab is busy or retained, a new tab is rejected.
 
-- Uploading, generating, reading, unfinished, failed, canceled, and user-handoff work stays protected. Existing user tabs and explicitly opened provider tabs are excluded.
+- Active jobs, generation, unsent drafts, uploads, and uncertain page states stay protected. Previously retained work is checked again and can become idle when it is visibly finished. Explicitly opened user tabs remain excluded.
 - Reusing an idle tab resets its timer. After collection, a normal continuation with the same task ID (or Page Ref when no task ID is supplied) reopens its saved provider conversation URL.
 - Configure `browserTabGc` in **System** or the persisted `config.json`: `idleTimeoutSeconds`, `sweepIntervalSeconds`, and `maxTabsPerProfile`. System shows current busy/idle counts and collection counters; counters reset with the daemon.
 
-The collector runs inside the daemon and applies to headed and headless managed contexts. It closes tabs, preserves the resident browser, and does not delete conversation history. Tabs without a saved conversation URL and untracked tabs left by an earlier daemon are preserved.
+The collector runs inside the daemon and applies to headed and headless managed contexts. It closes tabs, preserves the resident browser, and does not delete conversation history. Every running registered profile is attached without launching or relaunching a browser. A local target-ID ownership file restores work tabs after daemon restart; older tabs are recovered only when their exact URL matches a persisted task conversation. Page observations restart the idle timer when the answer or user activity changes. System reports actual browser pages, untracked/user pages, and profile connection failures. Unknown pages remain visible in the counts and are preserved.
 
 Native mode is headed-only because it controls the Chrome or Brave instance the user already opened. Stopping or restarting the daemon disconnects Playwright without closing the browser.
 

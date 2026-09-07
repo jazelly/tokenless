@@ -206,11 +206,11 @@ Page Ref 是地址，不是执行锁：Tokenless API 允许并发使用同一 pr
 
 Tokenless API 每 **15 秒**检查一次，回收**连续空闲 120 秒**的自有工作标签页。每个 profile 最多 **8 个工作标签页**：达到上限时提前回收最早空闲的页面；全部忙碌或保留时拒绝新建页面。
 
-- 上传、生成、读取、未完成、失败、取消及交给用户处理的工作保持保护。用户原有页面和显式打开的 provider 页面不参与回收。
+- 活跃任务、生成、未发送草稿、上传及无法确认状态的页面保持保护。保留中的工作页会持续复查，确认完成后可重新进入 idle。显式打开的用户页面仍不参与回收。
 - 再次使用空闲页会重置计时。回收后，以相同 task ID（未提供时使用 Page Ref）正常续聊，会重新打开已保存的 provider 对话链接。
 - 在 **System** 或持久化 `config.json` 中设置 `browserTabGc`：`idleTimeoutSeconds`、`sweepIntervalSeconds`、`maxTabsPerProfile`。System 显示 busy/idle 数量和回收计数；计数随 daemon 重启清零。
 
-回收器运行在 daemon 内，适用于 headed 和 headless 托管 context。它关闭标签页、保留常驻浏览器，不删除对话历史。尚未保存对话链接的页面，以及早先 daemon 留下的未跟踪页面会保留。
+回收器运行在 daemon 内，适用于 headed 和 headless 托管 context。它关闭标签页、保留常驻浏览器，不删除对话历史。所有已运行的注册 profile 都会自动接管，无需启动或重启浏览器。本地 target ID 归属文件让工作页在 daemon 重启后恢复监管；旧页面只有在完整 URL 匹配持久化任务对话时才接回。回答或用户活动变化会重置 idle 计时。System 显示浏览器实际页面数、未接管 / 用户页面数及 profile 连接失败；无法确认的页面保留并计入清单。
 
 Native mode 只支持 headed，因为它控制用户已打开的 Chrome 或 Brave。停止或重启 daemon 只会断开 Playwright，不会关闭所选浏览器。
 

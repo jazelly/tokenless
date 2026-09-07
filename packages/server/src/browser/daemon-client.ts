@@ -42,6 +42,7 @@ export type ManagedDaemonClient = {
     canonicalUrl: string
     signal?: AbortSignal | undefined
   }): Promise<unknown>
+  findProviderTaskConversationByUrl(profileId: string, url: string): Promise<{ provider: string; pageRef: string } | null>
   resolveProviderTaskConversation(options: {
     provider: string
     profileId: string

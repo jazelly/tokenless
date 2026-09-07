@@ -193,6 +193,16 @@ export class ManagedPlaywrightRunnerService {
     }
     this.daemonClient = options.daemonClient
     this.contextManager = options.contextManager ?? new PersistentContextManager({
+      supervision: {
+        profiles: () => this.profileRegistry.listProfiles(),
+        recoverPage: (profile, page) => this.daemonClient.findProviderTaskConversationByUrl(profile.slug, page.url()),
+        observePage: async (providerId, page) => {
+          const provider = getProviderInstanceById(providerId)
+          if (!provider || provider.navigation.classify(page.url()).kind !== 'approved' ||
+            provider.navigation.canonicalTarget(page.url())?.href === provider.navigation.homeTarget().href) return null
+          return await provider.observeTabActivity(page)
+        },
+      },
       ...(options.tabGc ? { tabGc: options.tabGc } : {}),
       ...(options.browser ? { browser: options.browser } : {}),
       ...(options.browserResolver ? { browserResolver: options.browserResolver } : {}),

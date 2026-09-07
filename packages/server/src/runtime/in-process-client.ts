@@ -70,6 +70,7 @@ export function createInProcessDaemonClient(store: JobStore): ManagedDaemonClien
       name: options.name,
       canonical_url: options.canonicalUrl,
     })),
+    findProviderTaskConversationByUrl: async (profileId, url) => store.findProviderTaskConversationByUrl(profileId, url),
     resolveProviderTaskConversation: (options) => inProcessDaemonRequest(options.signal, () => store.resolveProviderTaskConversation({
       provider: options.provider, profile_id: options.profileId, task_id: options.taskId,
     })),
