@@ -1,5 +1,60 @@
 # tokenless
 
+## 0.7.0
+
+### Minor Changes
+
+- df65420: Replace the Dashboard overview with persisted provider, capability, outcome, execution-mode, and output-savings analytics.
+- a2dbf2f: Ship the initial SQLite schema migration with Tokenless API and Tokenless Harness. Upgrade the current unversioned database without replacing existing tables or data, record schema versions, and fail atomically on unsupported schemas.
+
+  随 Tokenless API 和 Tokenless Harness 发布初始 SQLite schema migration。在不替换已有表或数据的情况下接管当前无版本数据库，记录 schema 版本，并在遇到不支持的结构时原子失败。
+
+- 707a2e2: Add the local Spark MLX Front Door and semantic router engine.
+- 8b215fd: Move conversation ordering to Tokenless Harness, remove Tokenless API chat/profile exclusion and automatic submitted-timeout replay, and retire unused CLI configuration and compatibility surfaces. Conflicting browser configuration and headless blockers now fail without automatically restarting the resident browser.
+
+  将 conversation 顺序控制交给 Tokenless Harness，移除 Tokenless API 的 chat/profile 独占和提交后超时自动重发，并删除无效的 CLI 配置及兼容入口。浏览器配置冲突与 headless blocker 现在会明确失败，不再自动重启 resident browser。
+
+- e014747: Unify Tokenless API updates across the CLI and macOS menu. Check the matching installation channel, preserve user configuration, and verify the newly installed daemon and database migration. Require confirmation for updates and support explicitly selected local release packages.
+
+  统一 Tokenless API CLI 与 macOS 菜单的更新入口。检查对应安装渠道，保留用户配置，并验证新安装的 daemon 和数据库 migration。更新需确认，并支持显式选择本地发布安装包。
+
+### Patch Changes
+
+- ca97a53: Bundle matching Tokenless API skills with npm and macOS releases, synchronize complete skill directories during install/setup/upgrade, and add a skill-only sync command with full doctor verification. Update the installation skill and shell installer to the current setup workflow.
+
+  随 npm 与 macOS 发布包分发配套 Tokenless API skills，在 install/setup/upgrade 中同步完整目录，并增加独立同步命令与 doctor 完整性检查。更新安装 skill 和 Shell 安装器以使用当前 setup 流程。
+
+- bae4d71: Select ChatGPT Latest and thinking effort through the current composer menu, and prevent prompt submission in Work conversations.
+- 3b4ea36: Dismiss ChatGPT's conversation-history access warning without treating it as a model generation limit, allowing new Chat prompts and responses to complete.
+- d3d7321: Show every provider and individual capability in the Dashboard usage matrix, with compact cells, date-aware titles, and simpler English and Chinese help.
+- 8e43fc4: Show the main Dashboard charts first, remove Provider Panorama and text insights, and move chart explanations into accessible help tooltips.
+- 5f8e099: Align Dashboard header controls in one row, unify icons and values, and show token and status explanations in accessible tooltips.
+- 6b33f7b: Fix reused Gemini conversations so each response read returns the current turn instead of a previous reply.
+
+  修复复用 Gemini conversation 时的 response 读取，确保每次返回当前 turn，而不是之前的回复。
+
+- af2665c: Repair Windows source-linked Tokenless API setup by invoking npm without a command shim, resolving pyenv-win's real uv executable, hiding persistent background process windows, draining CLI failures cleanly, and diagnosing native profiles through their configured browser.
+
+  修复 Windows 源码链接安装：不再通过命令 shim 调用 npm，解析 pyenv-win 的真实 uv 可执行文件，隐藏持久后台 daemon 和 service 子进程窗口，让 CLI 失败路径正常排空句柄，并通过已配置的浏览器诊断 native profile。
+
+- 1b5664e: Expose GitHub Copilot Ask/Agent modes, repository selection as native Projects, live model access requirements, and message token/account AI credit usage through the CLI and API.
+
+  通过 CLI 和 API 提供 GitHub Copilot Ask/Agent 模式、映射为原生 Project 的 repository 选择、实时模型权限、回复 token 及账户 AI credits 用量。
+
+- 5a75264: Add an experimental GitHub Copilot browser adapter with model selection, file uploads, conversation continuation, verified Harness Markdown tool round-trips, and draft attachment cleanup.
+
+  新增实验性 GitHub Copilot 网页适配器，支持模型选择、文件上传、连续对话、已验证的 Harness Markdown 工具往返和附件草稿清理。
+
+  Clarify that inline prompt files and files uploaded through the chat composer are separate inputs.
+
+  明确区分提示词中的文件内容与通过聊天输入框上传的附件。
+
+- 001fce5: Reduce Dashboard rate-limit history reads so large conversation records do not repeatedly block the local API.
+- c1c7600: Share the Dashboard page components, styles, and profile picker with Design Atlas so Storybook previews use the same UI as the shipped application.
+- Clarify source checkout refresh commands, development-link verification, optional macOS app updates, and preservation of existing configuration and data in the bundled installation skill.
+
+  在内置安装 skill 中明确源码刷新命令、开发链接验证、可选 macOS app 更新，以及现有配置与数据的保留要求。
+
 ## 0.6.0
 
 ### Minor Changes
