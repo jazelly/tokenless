@@ -1014,8 +1014,13 @@ function npmPack(directory, destination) {
 
 function npmExecFileSync(args, options = {}) {
   const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-npm-cache-'))
+  const npmCliPath = process.env.npm_execpath || (
+    process.platform === 'win32'
+      ? path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')
+      : null
+  )
   try {
-    return execFileSync('npm', args, {
+    return execFileSync(npmCliPath ? process.execPath : 'npm', npmCliPath ? [npmCliPath, ...args] : args, {
       encoding: 'utf8',
       ...options,
       env: {

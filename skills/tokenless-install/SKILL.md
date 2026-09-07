@@ -88,6 +88,16 @@ For npm results, inspect `ok`, `status`, and the returned `phases`; an update in
 
 When an update fails, report the first failed phase or returned error code. Earlier phases may have taken effect; do not claim rollback, automatically retry, or downgrade against a migrated database. An explicitly supplied local package uses `--package <absolute-path>` with `--yes --json`: `.tgz` for npm, matching release ZIP for the embedded macOS app.
 
+## Source checkout refresh
+
+For an explicitly selected source checkout, preserve the development link and use the repository's instructions and scripts. Inspect its worktree and remotes, fetch, and compare the selected branch with its upstream before claiming it is synchronized. Preserve uncommitted work; fast-forward only when the checkout is clean and the histories permit it.
+
+Read the repository's Node.js requirement, then run `npm ci` and `npm run build` in that checkout. The current build creates the development launcher and links the CLI globally. Run `npm run sync:skill` when refreshing the bundled skills. Do not replace a source-linked CLI with a published npm package.
+
+On Apple Silicon macOS, run `npm run install:macos-menu` only when refreshing the menu app is also requested. Verify the linked CLI resolves to the selected checkout, its version is correct, and the worktree and upstream still agree. When runtime activation is requested, verify the daemon's executable belongs to that checkout; verify the installed menu app separately when it was refreshed.
+
+A source refresh preserves configuration, profiles, and provider choices. Run setup only for requested configuration changes. If the daemon rejects persisted state, report the exact failure and use the repository's supported migration path within an authorized repair; do not delete the home or database or manually rewrite its schema to make startup pass.
+
 ## Skill distribution and synchronization
 
 The npm package and macOS app bundle include `tokenless` and `tokenless-install` under the CLI's `dist/skills`. Install/setup and upgrade use the same local synchronizer; no global npm or separate skills CLI is needed to sync the embedded app's skills.

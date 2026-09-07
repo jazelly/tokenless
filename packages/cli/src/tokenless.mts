@@ -466,7 +466,7 @@ try {
   if (cliError.context) payload.error.context = cliError.context
   if (args.json) console.log(JSON.stringify(payload, null, 2))
   else console.error(formatCliError(payload, cliError.usage, args, cliError))
-  process.exit(cliError.exitCode ?? 1)
+  process.exitCode = cliError.exitCode ?? 1
 }
 
 async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
@@ -4572,15 +4572,18 @@ async function doctorCommand(args: CliArgs) {
       managedProfile = profileReport
     } else {
       const profile = profileReport.profile
+      const profileBrowserInspection = profile.runtimeBinding
+        ? await runtimeManager.inspect(profile, {
+            browserExecutablePath: profile.runtimeBinding.browserId === config.browser
+              ? config.browserExecutablePath
+              : null,
+          })
+        : configuredBrowserInspection
       managedProfile = {
         ok: true,
         slug: profile.slug,
-        browserMode: 'native',
-        runtime: await runtimeManager.inspect(profile, {
-          browserExecutablePath: profile.runtimeBinding?.browserId === config.browser
-            ? config.browserExecutablePath
-            : null,
-        }),
+        browserMode: profile.runtimeBinding && profile.runtimeBinding.family !== 'system' ? 'managed' : 'native',
+        runtime: profileBrowserInspection,
       }
       profileRuntime = managedProfile.runtime
       const providers = requiredProfileConfig(config, profile.slug).enabledProviders

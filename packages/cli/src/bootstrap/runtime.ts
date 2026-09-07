@@ -654,9 +654,10 @@ async function spawnDaemon({
     '--port',
     String(port),
   ], {
-    detached: process.platform !== 'win32',
+    detached: true,
     env: { ...process.env, TOKENLESS_HOME: homeDir },
     stdio: ['ignore', logFd, logFd],
+    windowsHide: true,
   })
   try {
     await new Promise<void>((resolve, reject) => {
