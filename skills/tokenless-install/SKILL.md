@@ -18,7 +18,9 @@ Identify the OS, architecture, and executable location before choosing commands.
 | Apple Silicon macOS 13+, standalone app | Bundled Node, CLI, and daemon; use the app's own update action or embedded CLI. Global npm does not update this app. |
 | Source-linked CLI | Refresh the selected checkout and preserve its development link; do not replace it with a published npm package. |
 
-The standalone app needs no global Node/npm, but excludes browsers and the G4F Python environment. For a requested app install, use the matching release ZIP and SHA-256 checksum; a requested source build uses `npm run install:macos-menu`. Verify the menu and daemon afterward. Do not infer support for other platforms from browser artifacts alone.
+The standalone app needs no global Node/npm, but excludes browsers and the G4F Python environment. For a requested app install, use the matching release ZIP and SHA-256 checksum.
+
+For a requested macOS app source build, use `npm run install:macos-menu`. Verify the menu and daemon afterward. Do not infer support for other platforms from browser artifacts alone.
 
 ## Choose the workflow
 
@@ -26,13 +28,13 @@ The standalone app needs no global Node/npm, but excludes browsers and the G4F P
 | --- | --- |
 | Fresh npm CLI | Check Node.js 22.13+ and npm, then `npm install --global tokenless@latest` and `tokenless --version`; continue to setup, or run skill sync for a software-only install. |
 | Interactive setup | `tokenless setup` |
-| Setup with known browser/profile choices | `tokenless setup --browser <chrome|brave|cloak> --profile <slug> --defaults --json` |
+| Setup with known browser/profile choices | `tokenless setup --browser <browser> --profile <slug> --defaults --json` |
 | Check for updates | `tokenless upgrade --check --json` |
 | Authorized upgrade | `tokenless upgrade --yes --json` through the selected installation channel. |
 | Sync skills only | `tokenless skills sync --json` |
 | Diagnose installation | `tokenless doctor --json` |
 
-Use the installed `tokenless` command, never `npx tokenless`. Install missing prerequisites within the authorized installation scope or report what is missing.
+Use the installed `tokenless` command, never `npx tokenless`. Carry the selected `--home` through runtime commands; skill sync is user-global and takes no `--home`. Install missing prerequisites within the authorized scope or report what is missing.
 
 ## Setup and browser handoff
 
@@ -42,27 +44,35 @@ Check `uv --version` before setup: setup enables G4F and prepares its pinned Pyt
 - CloakBrowser downloads only for selected Anti-Detect setup (`--browser cloak` or `--anti-detect`). Optional Codex hooks require `--install-codex`; `--codex-home <dir>` requires that flag. The user trusts hooks in Codex `/hooks`.
 - Reuse the selected logical profile. `--provider-whitelist <list>` controls enabled providers; `--no-open` suppresses the dashboard, not provider checks. The old `--fresh` and profile-import workflow no longer apply.
 
-For a selected provider's sign-in follow-up, run `tokenless profiles open --profile <slug> --provider <id>`. State what completed and the visible action needed; let the user handle sign-in, CAPTCHA, permission, and Keychain prompts. Afterward run `tokenless profiles status --profile <slug> --provider <id> --json` and doctor for the same selection. Keep session secrets in the browser and out of diagnostics or reports.
+For a selected provider's sign-in follow-up, run `tokenless profiles open --profile <slug> --provider <id>`. State what completed and the visible action needed; let the user handle sign-in, CAPTCHA, permission, and Keychain prompts.
+
+Afterward run `tokenless profiles status --profile <slug> --provider <id> --json` and doctor for the same selection. Keep session secrets in the browser and out of diagnostics or reports.
 
 ## Upgrade and source refresh
 
 An upgrade may restart the daemon and interrupt active tasks. `--yes` supplies non-interactive confirmation; `--json` alone does not. Do not ask again when the user already authorized the update.
 
-Upgrade preserves configuration, profiles, and provider choices, synchronizes matching skills, and verifies the activated runtime. It does not run setup or doctor. `up_to_date` still synchronizes skills but does not restart the daemon. For an explicitly supplied local package, add `--package <absolute-path>`: `.tgz` for npm, release ZIP for the embedded app.
+Upgrade preserves configuration, profiles, and provider choices, synchronizes matching skills, and verifies the activated runtime. It does not run setup or doctor.
 
-For source refresh, follow the checkout's instructions, preserve uncommitted work, and compare the selected branch with upstream before claiming it is current. Refresh dependencies when needed. Rebuild with `npm run build` when runtime code or bundled skills changed, then run `npm run sync:skill`; the sync script requires a built CLI. Verify the linked executable resolves to that checkout. Refresh the menu app or activate the daemon only when included in the request, and verify each separately.
+`up_to_date` still synchronizes skills but does not restart the daemon. For an explicitly supplied local package, add `--package <absolute-path>`: `.tgz` for npm, release ZIP for the embedded app.
+
+For source refresh, follow the checkout's instructions, preserve uncommitted work, and fetch and compare the selected upstream before claiming the checkout is current. Refresh dependencies when needed. Rebuild with `npm run build` when runtime code or bundled skills changed, then run `npm run sync:skill`; the sync script requires a built CLI.
+
+Verify the linked executable resolves to that checkout. Refresh the menu app or activate the daemon only when included in the request, and verify each separately.
 
 ## Skill synchronization
 
 Both skills (`tokenless` and `tokenless-install`) ship with the npm package and macOS app. Install/setup/upgrade use one local synchronizer to replace their complete directories under `~/.agents/skills` and existing supported agent roots, respecting configured roots. Other skills and agent instructions remain intact.
 
-Skill-only sync restores the installed package's version without network access, setup, or daemon startup. Source sync uses the checkout's `skills/`; pulling Git alone does not refresh global copies. Reload agent sessions that already loaded old instructions. Other package users receive changes through release automation, not local sync.
+Skill-only sync restores the installed package's version without network access, setup, or daemon startup. Source sync uses the checkout's `skills/`; pulling Git alone does not refresh global copies.
+
+Reload agent sessions that already loaded old instructions. Other package users receive changes through release automation, not local sync.
 
 ## Verify and repair
 
 Run doctor after installation/setup and when health verification is requested. Doctor checks complete skill contents against the package; it is read-only and does not refresh provider observations.
 
-- Require `ok: true` and inspect the returned status/proof before reporting success. Report software installation separately from onboarding: `action_required` or pending sign-in means onboarding is incomplete. A healthy stopped daemon is not running, and cached provider observations do not prove current usability.
+- For JSON results, inspect both `ok` and status/proof. Report software installation, setup completion, and the requested provider's usability separately: `action_required` needs follow-up; setup `reported` does not prove sign-in. A healthy stopped daemon is not running, and cached provider observations do not prove current usability.
 - For failures, report the failed check or phase and its error code, then repair that boundary. Use skill sync for stale skills, the configured executable path for a missing browser, and setup for missing profiles or requested choice changes.
 - For a runtime provisioning repair, `tokenless install --browser <selected-browser> --json` saves runtime preferences, enables/prepares G4F, syncs skills, and reconciles the daemon; it does not update the CLI or sign in. Use it only when those effects are needed.
 - Preserve user state. Do not reset profiles, delete databases, or rewrite schemas to pass a health check. A failed upgrade may have partially applied; do not claim rollback or downgrade against a migrated database. Resolve the reported failure before retrying.
