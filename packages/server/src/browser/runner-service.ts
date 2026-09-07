@@ -27,7 +27,7 @@ import {
 } from './provider-failure-classification.js'
 import { VISIBLE_ACTIONS, VISIBLE_ACTION_SCHEMA_ID } from './actions.js'
 import { ManagedProfileRegistry } from './profiles/registry.js'
-import { readTokenlessConfig } from '../persistence/config.js'
+import { type BrowserTabGcConfig, readTokenlessConfig } from '../persistence/config.js'
 import { PROVIDER_CAPABILITIES, TASK_CAPABILITIES, getProviderInstanceById } from '../providers/registry.js'
 import { readChatGptBrowserSession, sendDirectChatGptMessage } from '../providers/direct/chatgpt.js'
 import { sendDirectPerplexityMessage } from '../providers/direct/perplexity.js'
@@ -74,6 +74,7 @@ export type ManagedPlaywrightRunnerServiceOptions = {
   g4fClient?: G4fServiceClient | undefined
 }
 
+  tabGc?: BrowserTabGcConfig
 export type ManagedProfileSource = {
   listProfiles(): Promise<ManagedBrowserProfile[]>
 }
@@ -101,6 +102,7 @@ export type ManagedProfileOpenResult = {
 
 export type ManagedProviderTabsOpenResult = ManagedProfileOpenResult & {
   tabs: readonly {
+  conversationSaved?: boolean
     provider: string
     url: string
     reused: boolean
@@ -191,6 +193,7 @@ export class ManagedPlaywrightRunnerService {
     const defaultAttachmentHomeDir = options.homeDir
     this.attachmentRootForJob = options.attachmentRootForJob ?? (
       defaultAttachmentHomeDir ? (job) => defaultAttachmentRootForJob(defaultAttachmentHomeDir, job) : undefined
+      ...(options.tabGc ? { tabGc: options.tabGc } : {}),
     )
     this.cleanupAttachmentRoot = options.cleanupAttachmentRoot ?? true
     this.now = options.now ?? (() => new Date())
@@ -216,6 +219,14 @@ export class ManagedPlaywrightRunnerService {
       throw tokenlessError('profile_not_found', 'Managed profile is not registered or is not ready.')
     }
     const managedContext = await this.contextManager.ensureContext(profile, browserVisibility)
+  configureTabGc(config: BrowserTabGcConfig) {
+    this.contextManager.configureTabGc(config)
+  }
+
+  tabGcStatus() {
+    return this.contextManager.tabGcStatus()
+  }
+
     let pages = managedContext.browserContext.pages()
     if (pages.length === 0) {
       await managedContext.acquirePage({ key: `tokenless:profile-open:${profile.slug}` })
@@ -277,6 +288,7 @@ export class ManagedPlaywrightRunnerService {
         tabs.push({
           provider: provider.id,
           url: provider.descriptor.navigation.entryUrl,
+          purpose: 'user',
           reused: providerPage.reused || alreadyOnProvider,
         })
       } catch (error) {
@@ -385,6 +397,8 @@ export class ManagedPlaywrightRunnerService {
       }).catch(() => undefined)
     }, this.cancelPollMs)
 
+    let idle = false
+    const pageUses: ManagedProviderPage[] = []
     try {
       const request = this.validateJob(profile, job)
       if (
@@ -442,6 +456,7 @@ export class ManagedPlaywrightRunnerService {
       })
       return { taken: true, jobId: job.job_id, status: 'succeeded' }
     } catch (error) {
+        pageUses,
       if (error instanceof ProviderFallbackSignal) {
         attachmentRoot = undefined
         const fallbackJob = await this.daemonClient.getJob({ jobId: job.job_id, signal })
@@ -451,6 +466,10 @@ export class ManagedPlaywrightRunnerService {
         return { taken: true, jobId: job.job_id, status: 'canceled' }
       }
       if (signal.aborted) {
+      const finalWork = request.actions.map((action) => getVisibleActionLifecycle(action.action))
+        .filter((lifecycle) => lifecycle.mutating || lifecycle.completion === 'reads_response').at(-1)
+      idle = !request.userHandoff && finalWork?.completion === 'reads_response' &&
+        (request.executionMode === 'direct' || execution.conversationSaved === true)
         return { taken: true, jobId: job.job_id, status: 'canceled' }
       }
       await this.daemonClient.completeJob({
@@ -470,6 +489,7 @@ export class ManagedPlaywrightRunnerService {
   private async measureOutputSavings(
     result: ManagedPlaywrightJobResult,
     signal: AbortSignal,
+      for (const page of pageUses) page.release(idle)
   ): Promise<ManagedPlaywrightJobResult> {
     const manager = this.outputSavingsRuntimeManager
     if (!manager || !this.homeDir) return result
@@ -556,11 +576,12 @@ export class ManagedPlaywrightRunnerService {
       )
       if (backend === 'g4f') {
         if (request.context.requirements.includes('image.generation')) {
-          return await this.executeG4fDirectImageActions(profile, job, request, signal, isCanceled)
+          return await this.executeG4fDirectImageActions(profile, job, request, signal, isCanceled, pageUses)
+    pageUses: ManagedProviderPage[],
         }
-        return await this.executeG4fDirectChatActions(profile, job, request, signal, isCanceled)
+        return await this.executeG4fDirectChatActions(profile, job, request, signal, isCanceled, pageUses)
       }
-      return await this.executeDirectChatActions(profile, job, request, signal, isCanceled)
+      return await this.executeDirectChatActions(profile, job, request, signal, isCanceled, pageUses)
     }
     const requestedBrowserVisibility = request.browserVisibility
     const automaticAuthObservation = isAutomaticAuthObservation(request, requestedBrowserVisibility)
@@ -575,6 +596,7 @@ export class ManagedPlaywrightRunnerService {
             provider: provider.id,
             pageRef,
             policy: request.pagePolicy,
+    let conversationSaved = false
             matchesExistingPage: (candidate) => providerOwnsPage(provider, candidate),
             isAvailablePage: (candidate) => providerPageAvailable(provider, candidate),
           })
@@ -590,6 +612,7 @@ export class ManagedPlaywrightRunnerService {
         await this.daemonClient.recordProviderSubmission({
           jobId: job.job_id,
           signal,
+      if (providerPage) pageUses.push(providerPage)
         })
       }
       const failOrFallback = async (failure: ClassifiedProviderFailure): Promise<never> => {
@@ -612,7 +635,10 @@ export class ManagedPlaywrightRunnerService {
         })
         throw new ProviderFallbackSignal()
       }
-      const startUrl = state.submitted?.providerUrl ?? request.target.url
+      const savedConversation = request.pagePolicy !== 'replace' && !request.userHandoff && provider.navigation.canonicalTarget(request.target.url)?.href === provider.navigation.homeTarget().href
+        ? await this.daemonClient.resolveProviderTaskConversation({ provider: request.provider, profileId: profile.slug, taskId: request.taskId ?? pageRef, signal })
+        : null
+      const startUrl = state.submitted?.providerUrl ?? savedConversation?.canonical_url ?? request.target.url
       try {
         await navigateToTarget(
           page,
@@ -784,19 +810,19 @@ export class ManagedPlaywrightRunnerService {
         }
         const isGrokImagineResult = request.provider === 'grok' &&
           request.context.requirements.includes('image.generation')
-        if (lifecycle.completion === 'reads_response' && request.taskId && !isGrokImagineResult) {
+        if (lifecycle.completion === 'reads_response' && !isGrokImagineResult) {
           const workspace = latestNativeWorkspaceResult(state.responses)
           const conversationUrl = validatedConversationUrl(
             page.url(),
             provider,
-            workspace?.resource.canonicalUrl ?? request.target.url,
+            workspace?.resource.canonicalUrl ?? provider.navigation.homeTarget().href,
           )
           if (conversationUrl) {
             await this.daemonClient.upsertProviderTaskConversation({
               provider: request.provider,
               profileId: profile.slug,
               ...(workspace ? { projectResourceId: workspace.resource.id } : {}),
-              taskId: request.taskId,
+              taskId: request.taskId ?? pageRef,
               canonicalUrl: conversationUrl,
               signal,
             })
@@ -836,6 +862,7 @@ export class ManagedPlaywrightRunnerService {
     if (!provider || (provider.id !== 'chatgpt' && provider.id !== 'perplexity')) {
       throw tokenlessError('direct_provider_unsupported', 'Direct execution currently supports only the ChatGPT and Perplexity providers.')
     }
+            conversationSaved = true
 
     const responses = await this.contextManager.runWithProfile(profile, requestedBrowserVisibility, async (managedContext) => {
       const providerPage = await managedContext.acquireProviderPage({
@@ -846,6 +873,7 @@ export class ManagedPlaywrightRunnerService {
         isAvailablePage: (candidate) => providerPageAvailable(provider, candidate),
       })
       const page = providerPage.page
+      conversationSaved,
       let directResult: Awaited<ReturnType<typeof sendDirectChatGptMessage>> | null = null
       await navigateToTarget(page, provider, request.target.url, signal, false)
       for (let actionIndex = state.actionCursor; actionIndex < request.actions.length; actionIndex += 1) {
@@ -860,6 +888,7 @@ export class ManagedPlaywrightRunnerService {
             inputProof: 'direct-protocol-prompt-cached-in-memory',
           })
         } else if (action.action === VISIBLE_ACTIONS.PROMPT_SUBMIT) {
+    pageUses: ManagedProviderPage[],
           const preparation = await provider.prepareAction(page, action)
           if (!preparation) {
             throw tokenlessError('direct_response_preparation_failed', 'Direct response preparation is unavailable.')
@@ -881,6 +910,7 @@ export class ManagedPlaywrightRunnerService {
           })
           state.submitted = {
             actionIndex,
+      pageUses.push(providerPage)
             requestId: action.requestId,
             providerUrl: validatedCurrentProviderUrl(page, provider, request.target.url),
             preparation,
@@ -946,7 +976,7 @@ export class ManagedPlaywrightRunnerService {
     let authContextId = request.authContextId ?? undefined
     try {
       if (!authContextId && !isG4fDirectOnlyProvider(request.provider)) {
-        authContextId = await this.createG4fBrowserAuthContext(profile, job, request, signal)
+        authContextId = await this.createG4fBrowserAuthContext(profile, job, request, signal, pageUses)
         ephemeralContextId = authContextId
       }
       const completion = await this.protocolRouter.completeG4f({
@@ -965,6 +995,7 @@ export class ManagedPlaywrightRunnerService {
           visible: true,
           inputProof: 'g4f-direct-protocol-prompt-cached-in-memory',
         }),
+    pageUses: ManagedProviderPage[],
         directActionSuccess(submitAction, {
           visible: true,
           submissionProof: 'g4f-private-service-request-completed',
@@ -1022,7 +1053,7 @@ export class ManagedPlaywrightRunnerService {
     let authContextId = request.authContextId ?? undefined
     try {
       if (!authContextId && !isG4fDirectOnlyProvider(request.provider)) {
-        authContextId = await this.createG4fBrowserAuthContext(profile, job, request, signal)
+        authContextId = await this.createG4fBrowserAuthContext(profile, job, request, signal, pageUses)
         ephemeralContextId = authContextId
       }
       let images: Awaited<ReturnType<ProviderProtocolRouter['generateImageG4f']>>
@@ -1038,6 +1069,7 @@ export class ManagedPlaywrightRunnerService {
         if (signal.aborted) throw signal.reason
         throw tokenlessError('direct_image_generation_failed', 'Direct image generation failed.', {
           retryable: true,
+    pageUses: ManagedProviderPage[],
           cause: error,
           details: { diagnostic: directImageFailureDiagnostic(error) },
         })
@@ -1131,6 +1163,7 @@ export class ManagedPlaywrightRunnerService {
           },
         }
         let apiKey: string | undefined
+    pageUses: ManagedProviderPage[],
         if (provider.id === 'chatgpt') {
           const session = await readChatGptBrowserSession(providerPage.page, managedContext.browserContext)
           apiKey = session.accessToken
@@ -1145,6 +1178,7 @@ export class ManagedPlaywrightRunnerService {
         }, signal)
         return contextId
       } catch (error) {
+      pageUses.push(providerPage)
         if (creationAttempted) await this.deleteG4fAuthContext(contextId, error)
         throw error
       }

@@ -26,3 +26,20 @@ The live capability suite reuses the configured profile, browser process, contex
 One explicit test daemon owns the full suite, so separate CLI processes preserve the runtime's Page Ref binding. The Tokenless Harness remains responsible for sequencing turns that share one conversation, while runtime detach leaves resident provider tabs available for a later binding.
 
 Actions and turns inside one case keep the same Page Ref and target. This preserves conversation and native Project continuity without leaking composer, attachment, model, or effort state into the next case.
+
+## Idle Tab Collection
+
+After building the CLI, run the focused acceptance through ego-browser with the configured persistent profile. The lifecycle check uses production page allocation and collection; the conversation check sends three real ChatGPT turns and verifies the original conversation survives tab closure. It does not change the selected test home's configuration.
+
+```bash
+ego-browser nodejs <<'EOF'
+const repo = '/absolute/path/to/tokenless'
+const nodeExecutable = '/absolute/path/to/node'
+const packageRoot = repo + '/packages/cli'
+const { verifyTabGcLifecycle, verifyTabGcConversation } = await import(repo + '/test/live-browser-tab-gc.e2e.mjs')
+await verifyTabGcLifecycle({ packageRoot, log: cliLog })
+await verifyTabGcConversation({ packageRoot, nodeExecutable, log: cliLog })
+EOF
+```
+
+Replace the two absolute paths above with the checkout and system Node executable. Keep the same packaged daemon running throughout the conversation check. With default settings, allow about eight minutes for both checks; observations use the configured retention and sweep intervals without shortening them.

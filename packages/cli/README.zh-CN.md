@@ -200,9 +200,17 @@ Tokenless profile 只组织 provider tab 与配置，不创建独立 browser ide
 
 Managed runtime 会把不同 provider 和稳定的 task identity 保持在独立 tab 中。重新进入相同 project 或 conversation task 会返回原来的 tab；替换它需要通过 local job API 显式设置 `pagePolicy: replace`。
 
-Page Ref 是地址，不是执行锁：Tokenless API 允许并发使用同一 profile 和 Page Ref，conversation 顺序由 Tokenless Harness 控制。操作结束后 provider tab 保持打开，不按空闲时间自动过期。
+Page Ref 是地址，不是执行锁：Tokenless API 允许并发使用同一 profile 和 Page Ref，conversation 顺序由 Tokenless Harness 控制。完整读取回答后，自有工作标签页可进入空闲回收，具体限制见下文。
 
 ## Browser 与本地 Runtime
+
+Tokenless API 每 **15 秒**检查一次，回收**连续空闲 120 秒**的自有工作标签页。每个 profile 最多 **8 个工作标签页**：达到上限时提前回收最早空闲的页面；全部忙碌或保留时拒绝新建页面。
+
+- 上传、生成、读取、未完成、失败、取消及交给用户处理的工作保持保护。用户原有页面和显式打开的 provider 页面不参与回收。
+- 再次使用空闲页会重置计时。回收后，以相同 task ID（未提供时使用 Page Ref）正常续聊，会重新打开已保存的 provider 对话链接。
+- 在 **System** 或持久化 `config.json` 中设置 `browserTabGc`：`idleTimeoutSeconds`、`sweepIntervalSeconds`、`maxTabsPerProfile`。System 显示 busy/idle 数量和回收计数；计数随 daemon 重启清零。
+
+回收器运行在 daemon 内，适用于 headed 和 headless 托管 context。它关闭标签页、保留常驻浏览器，不删除对话历史。尚未保存对话链接的页面，以及早先 daemon 留下的未跟踪页面会保留。
 
 Native mode 只支持 headed，因为它控制用户已打开的 Chrome 或 Brave。停止或重启 daemon 只会断开 Playwright，不会关闭所选浏览器。
 

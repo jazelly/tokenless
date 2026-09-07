@@ -130,6 +130,7 @@ test('CDP provider Page Refs allow concurrent callers without sharing independen
     assert.equal(independentContinued.page, independent.page)
     assert.equal(independentContinued.reused, true)
 
+    for (const use of [first, ...sameRef, continued]) use.release(true)
     const replaced = await context.acquireProviderPage({
       provider: 'chatgpt',
       pageRef: pageRefA,
@@ -207,6 +208,7 @@ test('CDP detach preserves provider tabs while runtime bindings are rebuilt', as
     const rebound = await reconnected.acquireProviderPage({
       provider: 'chatgpt',
       pageRef,
+      purpose: 'user',
       matchesExistingPage: (page) => page.url() === 'about:blank',
       isAvailablePage: async (page) => (await page.title().catch(() => '')) === marker,
     })

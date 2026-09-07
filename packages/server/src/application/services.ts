@@ -621,6 +621,7 @@ export class TokenlessApplicationServices {
       'browserVisibility',
       'daemonUrl',
       'language',
+      'browserTabGc',
       'outputSavings',
       'apiProxy',
       'g4f',
@@ -679,12 +680,14 @@ export class TokenlessApplicationServices {
       browserVisibility: 'headed',
       daemonUrl: input.daemonUrl,
       language,
+      browserTabGc: input.browserTabGc,
       outputSavings: input.outputSavings,
       apiProxy: input.apiProxy,
       g4f: input.g4f,
       directProvider: input.directProvider,
       router: input.router,
     })
+    this.runtimeController?.configureTabGc(saved.browserTabGc)
     return publicConfig(saved)
   }
 
@@ -1122,6 +1125,7 @@ function publicConfig(config: TokenlessConfig) {
     browserVisibility: config.browserVisibility,
     daemonUrl: config.daemonUrl,
     language: config.language,
+    browserTabGc: config.browserTabGc,
     outputSavings: config.outputSavings,
     g4f: config.g4f,
     directProvider: config.directProvider,

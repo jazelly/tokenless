@@ -3711,6 +3711,101 @@
       }
     },
     "schemas": {
+      "BrowserTabGcConfig": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "idleTimeoutSeconds",
+          "sweepIntervalSeconds",
+          "maxTabsPerProfile"
+        ],
+        "properties": {
+          "idleTimeoutSeconds": {
+            "type": "integer",
+            "minimum": 1,
+            "default": 120
+          },
+          "sweepIntervalSeconds": {
+            "type": "integer",
+            "minimum": 1,
+            "default": 15
+          },
+          "maxTabsPerProfile": {
+            "type": "integer",
+            "minimum": 1,
+            "default": 8
+          }
+        }
+      },
+      "BrowserTabGcStatus": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "idleReuses",
+          "expired",
+          "capacity",
+          "capacityRejected",
+          "closeFailures",
+          "reopenedSoon",
+          "profiles"
+        ],
+        "properties": {
+          "idleReuses": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "expired": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "capacity": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "capacityRejected": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "closeFailures": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "reopenedSoon": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "profiles": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "profileId",
+                "workPages",
+                "idlePages",
+                "busyPages"
+              ],
+              "properties": {
+                "profileId": {
+                  "type": "string"
+                },
+                "workPages": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "idlePages": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "busyPages": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          }
+        }
+      },
       "ApiProxyAnthropicError": {
         "type": "object",
         "description": "Anthropic-shaped error envelope carrying the same status semantics as the OpenAI dialect.",
@@ -5135,6 +5230,9 @@
           "pid": {
             "type": "integer",
             "minimum": 1
+          },
+          "tabGc": {
+            "$ref": "#/components/schemas/BrowserTabGcStatus"
           }
         }
       },
@@ -5214,6 +5312,7 @@
       "ConfigUpdate": {
         "type": "object",
         "properties": {
+          "browserTabGc": { "$ref": "#/components/schemas/BrowserTabGcConfig" },
           "browser": {
             "type": "string"
           },
@@ -8307,6 +8406,9 @@
           "pid": {
             "type": "integer",
             "minimum": 1
+          },
+          "tabGc": {
+            "$ref": "#/components/schemas/BrowserTabGcStatus"
           }
         },
         "required": [
@@ -8505,6 +8607,9 @@
           },
           "router": {
             "$ref": "#/components/schemas/RouterConfig"
+          },
+          "browserTabGc": {
+            "$ref": "#/components/schemas/BrowserTabGcConfig"
           }
         },
         "required": [

@@ -914,6 +914,28 @@ test('dashboard sessions are invalidated when the real daemon restarts', async (
   }
 })
 
+test('tab GC settings persist through the local control API and reject invalid intervals', async () => {
+  await withDaemon(async ({ daemon, homeDir }) => {
+    const session = await fetch(`${daemon.origin}/dashboard-api/v1/session`)
+    const cookie = session.headers.get('set-cookie').split(';')[0]
+    const { csrf } = await session.json()
+    const browserTabGc = { idleTimeoutSeconds: 180, sweepIntervalSeconds: 20, maxTabsPerProfile: 10 }
+    const patch = (value) => fetch(`${daemon.origin}/dashboard-api/v1/config`, {
+      method: 'PATCH',
+      headers: { cookie, origin: daemon.origin, 'x-tokenless-csrf': csrf, 'content-type': 'application/json' },
+      body: JSON.stringify({ browserTabGc: value }),
+    })
+    const saved = await patch(browserTabGc)
+    assert.equal(saved.status, 200)
+    assert.deepEqual((await saved.json()).browserTabGc, browserTabGc)
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8')).browserTabGc, browserTabGc)
+    const invalid = await patch({ ...browserTabGc, sweepIntervalSeconds: 0 })
+    assert.equal(invalid.status, 400)
+    const document = await fetch(`${daemon.origin}/dashboard-api/v1/config-document`, { headers: { cookie } })
+    assert.deepEqual((await document.json()).browserTabGc, browserTabGc)
+  })
+})
+
 async function withDaemon(operation) {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-local-ui-')))
   const daemon = await startDaemon({ homeDir, host: '127.0.0.1', port: 0 })

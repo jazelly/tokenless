@@ -216,7 +216,7 @@ One managed profile can hold sessions for all enabled providers. Use separate pr
 
 The managed runtime keeps different providers and stable task identities in separate tabs. Re-entering the same project or conversation task returns to its tab; replacing it requires explicit `pagePolicy: replace` through the local job API.
 
-Page Ref is an address, not an execution lock: Tokenless API permits concurrent use of the same profile and Page Ref, while Tokenless Harness owns conversation ordering. Completed operations leave provider tabs open without idle expiry.
+Page Ref is an address, not an execution lock: Tokenless API permits concurrent use of the same profile and Page Ref, while Tokenless Harness owns conversation ordering. Completed response reads make owned work tabs eligible for idle collection; see the limits below.
 
 ```bash
 tokenless profiles list --json
@@ -228,6 +228,14 @@ tokenless profiles status --profile work --provider claude --json
 Tokenless profiles organize provider tabs and configuration; they do not create separate browser identities. The currently shipped visible-browser mode does not inspect individual cookies, tokens, browser storage, Keychain data, or authentication values, and no mode exposes those values to agents.
 
 ## Browser and Local Runtime
+
+Tokenless API reclaims owned work tabs after **120 seconds continuously idle**, checked every **15 seconds**. Each profile allows **8 work tabs**: at capacity, the oldest idle tab is reclaimed early; if every tab is busy or retained, a new tab is rejected.
+
+- Uploading, generating, reading, unfinished, failed, canceled, and user-handoff work stays protected. Existing user tabs and explicitly opened provider tabs are excluded.
+- Reusing an idle tab resets its timer. After collection, a normal continuation with the same task ID (or Page Ref when no task ID is supplied) reopens its saved provider conversation URL.
+- Configure `browserTabGc` in **System** or the persisted `config.json`: `idleTimeoutSeconds`, `sweepIntervalSeconds`, and `maxTabsPerProfile`. System shows current busy/idle counts and collection counters; counters reset with the daemon.
+
+The collector runs inside the daemon and applies to headed and headless managed contexts. It closes tabs, preserves the resident browser, and does not delete conversation history. Tabs without a saved conversation URL and untracked tabs left by an earlier daemon are preserved.
 
 Native mode is headed-only because it controls the Chrome or Brave instance the user already opened. Stopping or restarting the daemon disconnects Playwright without closing the browser.
 

@@ -43,6 +43,7 @@
     browserExecutablePath: string
     daemonUrl: string
     defaultProfile: string
+    browserTabGc: DashboardConfigDocument['browserTabGc']
     apiProxy: DashboardConfigDocument['apiProxy']
     g4f: DashboardConfigDocument['g4f']
     directProvider: DashboardConfigDocument['directProvider']
@@ -72,6 +73,7 @@
     browserExecutablePath: '',
     daemonUrl: untrack(() => snapshot.config.daemonUrl ?? ''),
     defaultProfile: initialDefaultProfile,
+    browserTabGc: untrack(() => ({ ...snapshot.config.browserTabGc })),
     apiProxy: { enabled: false, executionMode: 'direct' },
     g4f: untrack(() => ({ ...snapshot.config.g4f })),
     directProvider: untrack(() => ({
@@ -118,6 +120,7 @@
     global.browserExecutablePath = document.browserExecutablePath ?? ''
     global.daemonUrl = document.daemonUrl ?? ''
     global.defaultProfile = document.defaultProfile ?? ''
+    global.browserTabGc = { ...document.browserTabGc }
     global.apiProxy = { ...document.apiProxy }
     global.g4f = { ...document.g4f }
     global.directProvider = {
@@ -166,6 +169,7 @@
         defaultBackend: global.directProvider.defaultBackend,
         providerBackends: { ...global.directProvider.providerBackends },
       },
+      browserTabGc: { ...global.browserTabGc },
       router: cloneRouter(global.router),
     }
     try {
@@ -385,6 +389,21 @@
       </div>
       <div class="field config-default-profile"><div class="field-label-row"><label for="config-default-profile-control">{t('defaultProfile')}</label></div><select id="config-default-profile-control" bind:value={global.defaultProfile} data-testid="config-default-profile-control"><option value="">{t('none')}</option>{#each snapshot.profiles as profile (profile.slug)}<option value={profile.slug}>{profile.slug}</option>{/each}</select></div>
     </section>
+      <section class="settings-section system-card" data-testid="browser-tab-gc">
+        <div class="settings-section-title"><div><h2>{t('tabGc')}</h2></div>{@render helpTooltip(t('tabGcHelp'))}</div>
+        <div class="form-stack">
+        <div class="field"><label for="gc-idle">{t('tabGcIdle')}</label><input id="gc-idle" type="number" min="1" step="1" bind:value={global.browserTabGc.idleTimeoutSeconds} /></div>
+        <div class="field"><label for="gc-sweep">{t('tabGcSweep')}</label><input id="gc-sweep" type="number" min="1" step="1" bind:value={global.browserTabGc.sweepIntervalSeconds} /></div>
+        <div class="field"><label for="gc-limit">{t('tabGcLimit')}</label><input id="gc-limit" type="number" min="1" step="1" bind:value={global.browserTabGc.maxTabsPerProfile} /></div>
+        </div>
+        {#if snapshot.runtime.tabGc}
+          {@const gc = snapshot.runtime.tabGc}
+          <p class="form-note" data-testid="tab-gc-counters">{t('tabGcReused')}: {gc.idleReuses} · {t('tabGcExpired')}: {gc.expired} · {t('tabGcCapacity')}: {gc.capacity} · {t('tabGcReopened')}: {gc.reopenedSoon} · {t('tabGcRejected')}: {gc.capacityRejected} · {t('tabGcFailures')}: {gc.closeFailures}</p>
+          {#each gc.profiles as profile (profile.profileId)}
+            <div class="settings-row"><span>{profile.profileId}</span><strong>{t('tabGcBusy')}: {profile.busyPages} · idle: {profile.idlePages} · {t('tabGcTotal')}: {profile.workPages}</strong></div>
+          {/each}
+        {/if}
+      </section>
 
     <section class="settings-section system-card">
       <div class="settings-section-title"><div><h2>{t('connection')}</h2></div>{@render helpTooltip(t('connectionHelp'))}</div>

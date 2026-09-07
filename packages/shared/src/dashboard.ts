@@ -123,6 +123,22 @@ export type DashboardTerminalBenchSemanticManifestResult = {
   taskCount: number
 }
 
+export type DashboardBrowserTabGc = {
+  idleTimeoutSeconds: number
+  sweepIntervalSeconds: number
+  maxTabsPerProfile: number
+}
+
+export type DashboardTabGcStatus = {
+  idleReuses: number
+  expired: number
+  capacity: number
+  capacityRejected: number
+  closeFailures: number
+  reopenedSoon: number
+  profiles: Array<{ profileId: string; workPages: number; idlePages: number; busyPages: number }>
+}
+
 export type DashboardConfig = {
   updatedAt: string | null
   profiles: { [slug: string]: DashboardProfileConfig }
@@ -131,6 +147,7 @@ export type DashboardConfig = {
   browserVisibility: DashboardBrowserVisibility
   daemonUrl: string | null
   language: DashboardLanguage
+  browserTabGc: DashboardBrowserTabGc
   outputSavings: { enabled: boolean }
   g4f: { enabled: boolean }
   directProvider: {
@@ -151,6 +168,7 @@ export type DashboardConfigDocument = {
   browserVisibility: DashboardBrowserVisibility
   daemonUrl: string | null
   language: DashboardLanguage
+  browserTabGc: DashboardBrowserTabGc
   outputSavings: { enabled: boolean }
   apiProxy: DashboardApiProxyConfig
   g4f: { enabled: boolean }
@@ -166,6 +184,7 @@ export type DashboardConfigUpdate = {
   browserVisibility?: DashboardBrowserVisibility
   daemonUrl?: string | null
   language?: DashboardLanguage
+  browserTabGc?: DashboardBrowserTabGc
   outputSavings?: { enabled: boolean }
   apiProxy?: DashboardApiProxyConfig
   g4f?: { enabled: boolean }
@@ -493,6 +512,7 @@ export type DashboardRuntimeStatus = {
   activeProfileCount: number
   activeJobCount: number
   pid: number
+  tabGc?: DashboardTabGcStatus
 }
 
 export type DashboardRuntimeOpenResult = {

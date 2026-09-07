@@ -42,6 +42,12 @@ export type ManagedDaemonClient = {
     canonicalUrl: string
     signal?: AbortSignal | undefined
   }): Promise<unknown>
+  resolveProviderTaskConversation(options: {
+    provider: string
+    profileId: string
+    taskId: string
+    signal?: AbortSignal | undefined
+  }): Promise<{ canonical_url: string } | null>
   upsertProviderTaskConversation(options: {
     provider: string
     profileId: string

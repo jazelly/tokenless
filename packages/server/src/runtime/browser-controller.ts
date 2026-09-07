@@ -8,7 +8,7 @@ import {
 } from '../browser/runner-service.js'
 import { tokenlessError } from '../browser/errors.js'
 import { BrowserRuntimeManager } from '../browser/runtime/manager.js'
-import { readTokenlessConfig } from '../persistence/config.js'
+import { type BrowserTabGcConfig, readTokenlessConfig } from '../persistence/config.js'
 import type { JobStore } from '../jobs/store.js'
 import type { BrowserVisibility } from '../browser-visibility.js'
 import type { G4fServiceClient } from '../providers/direct/g4f/client.js'
@@ -20,6 +20,7 @@ export type BrowserRuntimeStatus = {
   activeProfileCount: number
   activeJobCount: number
   pid: number
+  tabGc?: ReturnType<ManagedPlaywrightRunnerService['tabGcStatus']>
 }
 
 type BrowserRuntimeControllerOptions = {
@@ -60,8 +61,11 @@ export class BrowserRuntimeController {
       activeProfileCount: runner?.service.activeProfileCount() ?? 0,
       activeJobCount: runner?.service.activeJobCount() ?? 0,
       pid: process.pid,
+      ...(runner ? { tabGc: runner.service.tabGcStatus() } : {}),
     }
   }
+
+  configureTabGc(config: BrowserTabGcConfig) { this.runner?.service.configureTabGc(config) }
 
   async start(): Promise<BrowserRuntimeStatus> {
     return await this.wake()
@@ -154,6 +158,7 @@ export class BrowserRuntimeController {
     const nativeBrowser = config.browser === 'brave' ? 'brave' : 'chrome'
     const service = new ManagedPlaywrightRunnerService({
       homeDir: this.store.homeDir,
+      tabGc: config.browserTabGc,
       daemonClient: createInProcessDaemonClient(this.store),
       g4fClient: this.g4fClient,
       browserResolver: async (profile) => {

@@ -33,6 +33,7 @@ export type TokenlessConfig = {
   browserVisibility: BrowserVisibility
   daemonUrl: string | null
   language: TokenlessLanguage
+  browserTabGc: BrowserTabGcConfig
   outputSavings: OutputSavingsConfig
   apiProxy: ApiProxyConfig
   g4f: G4fConfig
@@ -41,6 +42,30 @@ export type TokenlessConfig = {
 }
 
 export type ConfigBrowser = 'chrome' | 'brave'
+
+export type BrowserTabGcConfig = {
+  idleTimeoutSeconds: number
+  sweepIntervalSeconds: number
+  maxTabsPerProfile: number
+}
+
+export const DEFAULT_BROWSER_TAB_GC: Readonly<BrowserTabGcConfig> = Object.freeze({
+  idleTimeoutSeconds: 120,
+  sweepIntervalSeconds: 15,
+  maxTabsPerProfile: 8,
+})
+
+export function validateBrowserTabGc(value: unknown): BrowserTabGcConfig {
+  if (!isJsonRecord(value) || Object.keys(value).some((key) => !Object.hasOwn(DEFAULT_BROWSER_TAB_GC, key))) {
+    throw configError('tokenless_config_invalid', 'Invalid browserTabGc configuration.')
+  }
+  for (const key of Object.keys(DEFAULT_BROWSER_TAB_GC)) {
+    if (!Number.isSafeInteger(value[key]) || Number(value[key]) < 1) {
+      throw configError('tokenless_config_invalid', `browserTabGc.${key} must be a positive integer.`)
+    }
+  }
+  return { idleTimeoutSeconds: Number(value.idleTimeoutSeconds), sweepIntervalSeconds: Number(value.sweepIntervalSeconds), maxTabsPerProfile: Number(value.maxTabsPerProfile) }
+}
 
 export type OutputSavingsConfig = {
   enabled: boolean
@@ -204,6 +229,7 @@ async function readTokenlessConfigUnlocked(homeDir: string) {
     browserVisibility: 'headed',
     daemonUrl: normalizeDaemonUrl(payload.daemonUrl),
     language: normalizeTokenlessLanguage(payload.language) ?? 'en',
+    browserTabGc: payload.browserTabGc === undefined ? { ...DEFAULT_BROWSER_TAB_GC } : validateBrowserTabGc(payload.browserTabGc),
     outputSavings: normalizeOutputSavingsConfig(payload.outputSavings),
     apiProxy: normalizeApiProxyConfig(payload.apiProxy),
     g4f: normalizeG4fConfig(payload.g4f),
@@ -222,6 +248,7 @@ export async function writeTokenlessConfig({
   browserVisibility,
   daemonUrl,
   language,
+  browserTabGc,
   outputSavings,
   apiProxy,
   g4f,
@@ -236,6 +263,7 @@ export async function writeTokenlessConfig({
   browserVisibility?: unknown
   daemonUrl?: unknown
   language?: unknown
+  browserTabGc?: unknown
   outputSavings?: unknown
   apiProxy?: unknown
   g4f?: unknown
@@ -270,6 +298,7 @@ export async function writeTokenlessConfig({
       browserVisibility: 'headed',
       daemonUrl: daemonUrl === undefined ? current.daemonUrl : normalizeDaemonUrl(daemonUrl),
       language: language === undefined ? current.language : validateConfigLanguage(language),
+      browserTabGc: browserTabGc === undefined ? current.browserTabGc : validateBrowserTabGc(browserTabGc),
       outputSavings: outputSavings === undefined
         ? current.outputSavings
         : validateOutputSavingsConfig(outputSavings),
@@ -401,6 +430,7 @@ function emptyTokenlessConfig(): TokenlessConfig {
     browserVisibility: 'headed',
     daemonUrl: null,
     language: 'en',
+    browserTabGc: { ...DEFAULT_BROWSER_TAB_GC },
     outputSavings: { enabled: true },
     apiProxy: defaultApiProxyConfig(),
     g4f: { enabled: false },
