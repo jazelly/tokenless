@@ -80,6 +80,8 @@ const MODEL_PREFIX = 'tokenless/'
 const MAX_MESSAGES = 256
 const MAX_PROMPT_BYTES = 1024 * 1024
 const JOB_POLL_INTERVAL_MS = 250
+const SAFE_JOB_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u
+const MAX_EVIDENCE_JOB_IDS = 2
 
 /** Visible provider work is browser-paced, so the ceiling is minutes rather than seconds. */
 const DEFAULT_JOB_TIMEOUT_MS = 10 * 60_000
@@ -111,6 +113,7 @@ export type ApiProxyRouting = {
   preferenceRequested: string | null
   preferenceHonored: boolean
   providerSubmitted: boolean
+  jobIds?: string[]
   visibleProof?: string
   limitWindow?: 'minute' | 'hour' | 'day' | 'week' | 'unknown'
   retryAfterSeconds?: number
@@ -128,6 +131,7 @@ type NormalizedRequest = {
   providerBackend: ProviderBackend | null
   authContextId: string | null
   semanticPreference: string | null
+  submissionEvidence: 'benchmark' | null
   toolProtocol: {
     nonce: string
     tools: OpenAiFunctionTool[]
@@ -142,6 +146,8 @@ export type ApiProxyCompletion = {
   text: string
   citations: { url: string; title?: string }[]
   jobId: string
+  /** Managed browser job ids that produced the completion, in execution order. */
+  jobIds: string[]
   conversationMode: ApiProxyConversationMode
   executionMode: 'browser' | 'direct'
   providerBackend: 'browser' | ProviderBackend
@@ -193,6 +199,10 @@ type ConversationPlan = {
 export type ApiProxyResponseResult = {
   body: Record<string, unknown>
   stream: boolean
+  jobId?: string
+  jobIds?: string[]
+  executionMode?: 'browser' | 'direct'
+  routing?: ApiProxyRouting
 }
 
 export class ApiProxyAdapter {
@@ -254,7 +264,14 @@ export class ApiProxyAdapter {
       execution_mode: completion.executionMode,
       transcript: [...prepared.transcript, ...(response.output as unknown[])],
     })
-    return { body: response, stream: prepared.request.stream }
+    return {
+      body: response,
+      stream: prepared.request.stream,
+      jobId: completion.jobId,
+      jobIds: completion.jobIds,
+      executionMode: completion.executionMode,
+      ...(completion.routing === undefined ? {} : { routing: completion.routing }),
+    }
   }
 
   async streamResponse(body: unknown, signal?: AbortSignal): Promise<Response | null> {
@@ -360,6 +377,7 @@ export class ApiProxyAdapter {
       ? responseConversationPlan(selectedRequest, responseContext, profile.slug, this.store, executionMode)
       : newConversationPlan(selectedRequest)
 
+    const attemptedJobIds: string[] = []
     try {
       const completion = await this.completeManagedPrompt({
         request: selectedRequest,
@@ -374,8 +392,10 @@ export class ApiProxyAdapter {
         fallbackRoutes: autoRoutes.slice(1),
         structuredControlStrategy: structuredControlStrategy(selectedRequest, selectedRoute),
         semanticPreference: request.semanticPreference,
+        submissionEvidence: request.submissionEvidence,
         signal,
       })
+      attemptedJobIds.push(...completion.base.jobIds)
       const validated = await validatedCompletion(selectedRequest, completion, async (prompt) => {
         const settledRoute = autoRoutes.find((route) => route.provider === completion.base.provider) ?? selectedRoute
         const correctionRequest = { ...selectedRequest, provider: completion.base.provider }
@@ -384,7 +404,7 @@ export class ApiProxyAdapter {
           profile_id: profile.slug,
           task_id: plan.taskId,
         })
-        return await this.completeManagedPrompt({
+        const corrected = await this.completeManagedPrompt({
           request: correctionRequest,
           profileId: profile.slug,
           taskId: plan.taskId,
@@ -397,19 +417,38 @@ export class ApiProxyAdapter {
           fallbackRoutes: [],
           structuredControlStrategy: structuredControlStrategy(correctionRequest, settledRoute),
           semanticPreference: correctionRequest.semanticPreference,
+          submissionEvidence: correctionRequest.submissionEvidence,
           signal,
         })
+        attemptedJobIds.push(...corrected.base.jobIds)
+        return corrected
       })
-      return withRouting(validated, request, selectedRequest, autoRoutes, autoExclusions)
+      return withRouting(
+        { ...validated, jobIds: uniqueJobIds(attemptedJobIds) },
+        request,
+        selectedRequest,
+        autoRoutes,
+        autoExclusions,
+      )
     } catch (error) {
-      if (request.auto && error instanceof ApiProxyError) {
-        throw new ApiProxyError(
-          error.status,
-          error.code,
-          error.message,
-          error.param,
-          autoRouting(request, autoRoutes, autoExclusions, error.routing),
-        )
+      if (error instanceof ApiProxyError) {
+        const routingWithEvidence = routingWithJobIds(error.routing, attemptedJobIds)
+        const routing = request.auto
+          ? autoRouting(request, autoRoutes, autoExclusions, routingWithEvidence)
+          : routingWithEvidence ?? (
+            attemptedJobIds.length > 0
+              ? autoRouting(request, autoRoutes, autoExclusions, null)
+              : null
+          )
+        if (request.auto || routing !== error.routing) {
+          throw new ApiProxyError(
+            error.status,
+            error.code,
+            error.message,
+            error.param,
+            routing,
+          )
+        }
       }
       throw error
     }
@@ -493,9 +532,10 @@ export class ApiProxyAdapter {
     providerBackend,
     capabilityRoute,
     fallbackRoutes,
-    structuredControlStrategy,
-    semanticPreference,
-    signal,
+      structuredControlStrategy,
+      semanticPreference,
+      submissionEvidence,
+      signal,
   }: {
     request: NormalizedRequest
     profileId: string
@@ -509,6 +549,7 @@ export class ApiProxyAdapter {
     fallbackRoutes: readonly ApiProxyRoute[]
     structuredControlStrategy: string | null
     semanticPreference: string | null
+    submissionEvidence: 'benchmark' | null
     signal: AbortSignal | undefined
   }): Promise<RawApiProxyCompletion> {
     const alternatives = fallbackRoutes.slice(0, 5)
@@ -518,6 +559,7 @@ export class ApiProxyAdapter {
       browserVisibility: 'auto',
       userHandoff: false,
       ...(semanticPreference === null ? {} : { semanticPreference }),
+      ...(submissionEvidence === null ? {} : { submissionEvidence }),
       executionMode,
       capabilityRoute,
       pagePolicy: conversationMode === 'new-conversation' ? 'replace' : 'preserve',
@@ -565,6 +607,7 @@ export class ApiProxyAdapter {
         provider: settled.provider,
         citations: result.citations,
         jobId: settled.job_id,
+        jobIds: [settled.job_id],
         conversationMode,
         executionMode,
         providerBackend,
@@ -657,10 +700,35 @@ function autoRouting(
       request.auto && request.semanticPreference !== null && routes[0]?.provider === request.semanticPreference
     ),
     providerSubmitted: overrides.providerSubmitted ?? existing?.providerSubmitted ?? false,
+    ...(existing?.jobIds === undefined ? {} : { jobIds: existing.jobIds }),
     ...(existing?.visibleProof === undefined ? {} : { visibleProof: existing.visibleProof }),
     ...(existing?.limitWindow === undefined ? {} : { limitWindow: existing.limitWindow }),
     ...(existing?.retryAfterSeconds === undefined ? {} : { retryAfterSeconds: existing.retryAfterSeconds }),
   }
+}
+
+function uniqueJobIds(...groups: readonly (readonly string[])[]) {
+  const seen = new Set<string>()
+  const jobIds: string[] = []
+  for (const group of groups) {
+    for (const jobId of group) {
+      if (!SAFE_JOB_ID_PATTERN.test(jobId) || seen.has(jobId)) continue
+      seen.add(jobId)
+      jobIds.push(jobId)
+      if (jobIds.length === MAX_EVIDENCE_JOB_IDS) return jobIds
+    }
+  }
+  return jobIds
+}
+
+function routingWithJobIds(
+  routing: ApiProxyRouting | null,
+  jobIds: readonly string[],
+) {
+  if (!routing) return null
+  const merged = uniqueJobIds(jobIds, routing.jobIds ?? [])
+  if (merged.length === 0) return routing
+  return { ...routing, jobIds: merged }
 }
 
 function assertProviderSupported(provider: string) {
@@ -1497,9 +1565,9 @@ function providerFromModel(value: unknown) {
 function normalizeTokenlessOptions(
   value: unknown,
   allowSemanticPreference = false,
-): Pick<NormalizedRequest, 'executionMode' | 'providerBackend' | 'authContextId' | 'semanticPreference'> {
+): Pick<NormalizedRequest, 'executionMode' | 'providerBackend' | 'authContextId' | 'semanticPreference' | 'submissionEvidence'> {
   if (value === undefined) {
-    return { executionMode: null, providerBackend: null, authContextId: null, semanticPreference: null }
+    return { executionMode: null, providerBackend: null, authContextId: null, semanticPreference: null, submissionEvidence: null }
   }
   const options = plainRecord(value)
   const executionMode = options.execution_mode
@@ -1526,11 +1594,19 @@ function normalizeTokenlessOptions(
   )) {
     throw badRequest('tokenless.semantic_preference must be a provider id.', 'tokenless.semantic_preference')
   }
+  const submissionEvidence = options.submission_evidence
+  if (submissionEvidence !== undefined && submissionEvidence !== null && submissionEvidence !== 'benchmark') {
+    throw badRequest('tokenless.submission_evidence must be benchmark.', 'tokenless.submission_evidence')
+  }
+  if (submissionEvidence === 'benchmark' && executionMode === 'direct') {
+    throw badRequest('tokenless.submission_evidence applies only to browser execution.', 'tokenless.submission_evidence')
+  }
   return {
     executionMode: executionMode ?? null,
     providerBackend: providerBackend ?? null,
     authContextId: authContextId ?? null,
     semanticPreference: typeof semanticPreference === 'string' ? semanticPreference : null,
+    submissionEvidence: submissionEvidence === 'benchmark' ? submissionEvidence : null,
   }
 }
 
@@ -1593,6 +1669,7 @@ export function routingFromJob(job: Job, modeOverride?: ApiProxyRouting['mode'])
       preferenceRequested: null,
       preferenceHonored: false,
       providerSubmitted: job.provider_submitted_at !== null,
+      jobIds: [job.job_id],
       ...limitEvidence,
     }
   }
@@ -1633,6 +1710,7 @@ export function routingFromJob(job: Job, modeOverride?: ApiProxyRouting['mode'])
       job.provider === preferenceRequested || attempts.some((attempt) => attempt.provider === preferenceRequested)
     ),
     providerSubmitted: job.provider_submitted_at !== null,
+    jobIds: [job.job_id],
     ...limitEvidence,
   }
 }
@@ -2150,6 +2228,7 @@ function directRawCompletion(
       provider: request.provider,
       citations: completion.citations,
       jobId: completion.requestId,
+      jobIds: [completion.requestId],
       conversationMode,
       executionMode: 'direct',
       providerBackend: 'g4f',

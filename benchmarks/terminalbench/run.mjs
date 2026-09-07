@@ -2,6 +2,7 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import Ajv from 'ajv'
@@ -15,9 +16,28 @@ const SEMANTIC_MANIFEST_SCHEMA = 'tokenless.terminalbench-semantic-manifest.v1'
 const SEMANTIC_TASK_TYPE_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/u
 const SEMANTIC_COMPLEXITIES = new Set(['low', 'medium', 'high'])
 const JOB_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u
-const OBSERVATION_SCHEMA = 'tokenless.terminalbench-observation.v1'
+const RUN_SCHEMA = 'tokenless.terminalbench-run.v2'
+const START_SNAPSHOT_SCHEMA = 'tokenless.terminalbench-start-snapshot.v1'
+const OBSERVATION_SCHEMA = 'tokenless.terminalbench-observation.v2'
 const OBSERVATION_EXECUTION_PATH = 'Harbor -> Docker DeepSeek Harness -> loopback HTTP -> Tokenless API -> tokenless/auto -> provider'
 const ORACLE_OBSERVATION_EXECUTION_PATH = 'Harbor -> Oracle agent'
+const START_SNAPSHOT_FILE = 'start-snapshot.json'
+const PRIVATE_EVIDENCE_PATTERN = /(?:^|\/)(?:\.env(?:\.|$)|.*(?:cookie|credential|secret|authorization|session-values|raw-provider).*|provider-turn(?:\/|$))/iu
+const SAFE_METADATA_VALUE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 ._:/+\-]{0,159}$/u
+const SOURCE_EVIDENCE_FILES = [
+  'benchmarks/terminalbench/run.mjs',
+  'benchmarks/terminalbench/observation.schema.json',
+  'benchmarks/terminalbench/dsh_tokenless_agent.py',
+  'benchmarks/terminalbench/channel_proxy.py',
+  'benchmarks/terminalbench/provider_response_metadata.mjs',
+  'packages/harness/src/http/bootstrap.ts',
+  'packages/harness/dist/src/http/bootstrap.js',
+  'benchmarks/terminalbench/revision.json',
+  'packages/cli/dist/server/src/browser/runner-service.js',
+  'packages/cli/dist/server/src/universal-api/api-proxy.js',
+  'packages/cli/dist/server/src/http/server.js',
+  'packages/cli/dist/src/tokenless.mjs',
+]
 const [command = 'help', ...argv] = process.argv.slice(2)
 
 try {
@@ -217,6 +237,18 @@ async function runOracle(args) {
   const jobDir = path.join(jobsDir, jobName)
   await refuseExisting(jobDir)
   await fs.mkdir(jobsDir, { recursive: true })
+  await fs.mkdir(jobDir, { recursive: true })
+  await captureRunStartSnapshot({
+    jobDir,
+    kind: 'oracle',
+    task,
+    taskManifest: path.resolve(root, revision.taskManifest),
+    semanticManifest: null,
+    runtimeArchive: null,
+    tokenlessHome: null,
+    profile: null,
+    daemonUrl: null,
+  })
   const result = await run(harborCommand(), [
     ...harborPrefix(),
     'run',
@@ -229,7 +261,7 @@ async function runOracle(args) {
     '--job-name', jobName,
     '--jobs-dir', jobsDir,
     '--yes',
-  ], { cwd: root, allowFailure: true })
+  ], { cwd: root, allowFailure: true, env: harborEnvironment() })
   const report = await writeRunReport({
     jobDir,
     kind: 'oracle',
@@ -268,9 +300,21 @@ async function runDeepSeekLane(kind, args) {
   const jobDir = path.join(jobsDir, jobName)
   await refuseExisting(jobDir)
   await fs.mkdir(jobsDir, { recursive: true })
+  await fs.mkdir(jobDir, { recursive: true })
   const attemptsPerTask = kind === 'full' ? revision.attemptsPerTask : 1
   const expectedTrials = kind === 'wiring' ? attemptsPerTask : revision.taskCount * attemptsPerTask
   const tokenEstimatorScript = path.join(benchmarkRoot, 'token_estimator.mjs')
+  await captureRunStartSnapshot({
+    jobDir,
+    kind,
+    task,
+    taskManifest: prepared.taskManifest,
+    semanticManifest: semanticManifest.path,
+    runtimeArchive: prepared.runtimeArchive,
+    tokenlessHome: homeDir,
+    profile,
+    daemonUrl: daemon.url,
+  })
 
   const harborArgs = [
     ...harborPrefix(),
@@ -384,17 +428,21 @@ async function writeRunReport({
   await refuseExisting(destination)
   const official = await readJson(path.join(jobDir, 'result.json'))
   const jobConfig = await readJson(path.join(jobDir, 'config.json'))
+  const startSnapshot = await readJson(path.join(jobDir, START_SNAPSHOT_FILE))
+  validateStartSnapshot(startSnapshot)
   const trialDirectories = (await fs.readdir(jobDir, { withFileTypes: true }))
     .filter((entry) => entry.isDirectory())
     .map((entry) => path.join(jobDir, entry.name))
     .filter(async (directory) => exists(path.join(directory, 'result.json')))
   const trialResults = []
+  const verifierTests = []
   const deepTrials = []
   const preRoutingExceptions = []
   for (const directory of trialDirectories) {
     if (!await exists(path.join(directory, 'result.json'))) continue
     const trialResult = await readJson(path.join(directory, 'result.json'))
     trialResults.push(trialResult)
+    verifierTests.push({ trial: trialResult.trial_name, ...await readVerifierTests(directory) })
     const auditPath = path.join(directory, 'agent', 'deep-integration.jsonl')
     if (!await exists(auditPath)) {
       if (kind !== 'oracle') {
@@ -409,7 +457,10 @@ async function writeRunReport({
       if (event.protocol !== revision.auditProtocol) throw new Error(`Unexpected deep-integration audit protocol in ${auditPath}.`)
       auditEvents.push(event)
     }
-    deepTrials.push(deepIntegrationStats(auditEvents, path.basename(directory)))
+    deepTrials.push({
+      ...deepIntegrationStats(auditEvents, path.basename(directory)),
+      events: auditEvents,
+    })
   }
   if (kind !== 'oracle' && deepTrials.length + preRoutingExceptions.length !== expectedTrials) {
     throw new Error(`Expected observer or pre-routing exception evidence for ${expectedTrials} non-oracle trials, found ${deepTrials.length + preRoutingExceptions.length}.`)
@@ -439,17 +490,13 @@ async function writeRunReport({
   const rewards = trialResults
     .map((trial) => trial?.verifier_result?.rewards?.reward)
     .filter((reward) => typeof reward === 'number' && Number.isFinite(reward))
-  const [tokenlessRevision, tokenlessDirty] = await Promise.all([
-    capture('git', ['rev-parse', 'HEAD'], { cwd: root }),
-    capture('git', ['status', '--porcelain'], { cwd: root }),
-  ])
   const providerRouting = aggregateProviderRouting(deepTrials)
   const routedProviders = new Set(Object.values(providerRouting.scopes)
     .flatMap((scope) => Object.entries(scope.providers))
     .filter(([, counts]) => counts.attempted > 0)
     .map(([provider]) => provider))
   const accountPlans = kind === 'oracle'
-    ? { providers: {} }
+    ? { availability: 'not_applicable', reason: 'oracle-run', capturedAt: null, providers: {} }
     : await benchmarkProviderPlanSnapshot({
         tokenlessHome,
         daemonUrl,
@@ -457,8 +504,33 @@ async function writeRunReport({
         routedProviders,
       })
   const stats = official.stats
+  const endRepository = await captureRepositorySnapshot()
+  const resolvedExecutionEvidence = buildResolvedExecutionEvidence({
+    jobConfig,
+    trialResults,
+    taskPackage: startSnapshot.pinned.taskPackage,
+    startSnapshot,
+  })
+  const executionEvidence = {
+    start: startSnapshot,
+    end: endRepository,
+    resolved: resolvedExecutionEvidence,
+  }
+  const trace = buildTraceEvidence(deepTrials)
+  const completeness = buildCompletenessEvidence({
+    kind,
+    deepTrials,
+    trialResults,
+    trace,
+    accountPlans,
+  })
+  const comparability = buildComparabilityEvidence({
+    kind,
+    deepTrials,
+    trace,
+  })
   const report = {
-    schema: 'tokenless.terminalbench-run.v1',
+    schema: RUN_SCHEMA,
     benchmark: revision.benchmark,
     harborVersion: revision.harborVersion,
     dataset: revision.dataset,
@@ -476,14 +548,22 @@ async function writeRunReport({
       mean: rewards.length === 0 ? null : rewards.reduce((sum, value) => sum + value, 0) / rewards.length,
       passed: rewards.filter((value) => value === 1).length,
     },
+    verifierTests,
     agent: kind === 'oracle' ? 'oracle' : 'deepseek-harness-tokenless-deep',
     model: kind === 'oracle' ? null : revision.model,
     routingMode: kind === 'oracle' ? null : 'auto',
     executionMode,
     profile,
     deepseekHarnessRevision: revision.deepseekHarnessRevision,
-    tokenlessRevision: tokenlessRevision.trim(),
-    tokenlessWorktreeDirty: tokenlessDirty.trim().length > 0,
+    tokenlessRevision: startSnapshot.source.repository.head,
+    tokenlessWorktreeDirty: startSnapshot.source.repository.dirty,
+    source: {
+      start: startSnapshot.source,
+      end: endRepository,
+    },
+    executionEvidence,
+    completeness,
+    comparability,
     deepIntegration: aggregateDeepIntegration(deepTrials),
     preRoutingExceptions: {
       count: preRoutingExceptions.length,
@@ -508,6 +588,668 @@ async function writeRunReport({
   }
   await fs.writeFile(destination, `${JSON.stringify(report, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
   return report
+}
+
+async function captureRunStartSnapshot({
+  jobDir,
+  kind,
+  task,
+  taskManifest,
+  semanticManifest,
+  runtimeArchive,
+  tokenlessHome,
+  profile,
+  daemonUrl,
+}) {
+  const source = await captureSourceSnapshot({ semanticManifest })
+  const config = await captureTokenlessConfigSnapshot(tokenlessHome, profile)
+  const taskManifestEvidence = await optionalFileEvidence(taskManifest, 'task manifest')
+  const semanticManifestEvidence = semanticManifest === null
+    ? null
+    : await optionalFileEvidence(semanticManifest, 'semantic manifest')
+  const runtime = runtimeArchive === null
+    ? { availability: 'not_applicable', path: null, sha256: null, bytes: null }
+    : await optionalFileEvidence(runtimeArchive, 'runtime archive')
+  const taskRef = task === null || task === undefined
+    ? null
+    : (await validateTaskManifest(taskManifest)).taskRefs[task.replace(/^terminal-bench\//u, '')] ?? null
+  const taskPackage = await findTaskPackageMetadata(task, taskRef)
+  const snapshot = {
+    schema: START_SNAPSHOT_SCHEMA,
+    capturedAt: new Date().toISOString(),
+    kind,
+    task: task ?? null,
+    profile: profile ?? null,
+    daemonOrigin: safeLoopbackOrigin(daemonUrl),
+    host: {
+      platform: process.platform,
+      architecture: process.arch,
+      nodeVersion: process.version,
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      utcOffsetMinutes: -new Date().getTimezoneOffset(),
+      harborTimeZone: 'UTC',
+    },
+    source,
+    pinned: {
+      benchmark: revision.benchmark,
+      dataset: revision.dataset,
+      datasetRef: revision.datasetRef,
+      datasetVersion: revision.datasetVersion,
+      instructionDigest: revision.instructionDigest,
+      taskRefDigest: revision.taskRefDigest,
+      harborVersion: revision.harborVersion,
+      deepseekHarnessRevision: revision.deepseekHarnessRevision,
+      runtimeImage: revision.runtimeImage,
+      runtimePlatform: revision.runtimePlatform,
+      taskRef,
+      taskPackage,
+    },
+    artifacts: {
+      runtimeArchive: runtime,
+      taskManifest: taskManifestEvidence,
+      semanticManifest: semanticManifestEvidence,
+    },
+    tokenless: config,
+  }
+  await fs.writeFile(
+    path.join(jobDir, START_SNAPSHOT_FILE),
+    `${JSON.stringify(snapshot, null, 2)}\n`,
+    { encoding: 'utf8', mode: 0o600 },
+  )
+  return snapshot
+}
+
+async function captureSourceSnapshot({ semanticManifest }) {
+  const files = []
+  for (const relative of SOURCE_EVIDENCE_FILES) {
+    files.push(await optionalFileEvidence(path.join(root, relative), `source file ${relative}`))
+  }
+  if (semanticManifest !== null) {
+    files.push(await optionalFileEvidence(semanticManifest, 'semantic manifest source'))
+  }
+  const repository = await captureRepositorySnapshot()
+  return {
+    capturedAt: new Date().toISOString(),
+    repository,
+    files,
+  }
+}
+
+async function captureRepositorySnapshot() {
+  const [head, status, unstagedDiff, stagedDiff, untracked] = await Promise.all([
+    capture('git', ['rev-parse', 'HEAD'], { cwd: root }),
+    capture('git', ['status', '--porcelain=v1', '-z'], { cwd: root }),
+    capture('git', ['diff', '--no-ext-diff', '--binary'], { cwd: root }),
+    capture('git', ['diff', '--cached', '--no-ext-diff', '--binary'], { cwd: root }),
+    capture('git', ['ls-files', '--others', '--exclude-standard', '-z'], { cwd: root }),
+  ])
+  const statusBytes = Buffer.byteLength(status)
+  return {
+    head: head.trim(),
+    dirty: statusBytes > 0,
+    statusEntries: splitNullEntries(status).length,
+    statusSha256: sha256Value(status),
+    statusBytes,
+    unstagedDiffSha256: sha256Value(unstagedDiff),
+    unstagedDiffBytes: Buffer.byteLength(unstagedDiff),
+    stagedDiffSha256: sha256Value(stagedDiff),
+    stagedDiffBytes: Buffer.byteLength(stagedDiff),
+    untrackedSha256: sha256Value(untracked),
+    untrackedBytes: Buffer.byteLength(untracked),
+  }
+}
+
+async function captureTokenlessConfigSnapshot(tokenlessHome, profile) {
+  if (tokenlessHome === null || tokenlessHome === undefined) {
+    return {
+      availability: 'not_applicable',
+      reason: 'oracle-run',
+      sanitizedSha256: null,
+      bytes: null,
+      redactedFields: 0,
+      router: null,
+      executionMode: null,
+    }
+  }
+  const configPath = path.join(tokenlessHome, 'config.json')
+  try {
+    const bytes = await fs.readFile(configPath)
+    const raw = JSON.parse(bytes.toString('utf8'))
+    const redaction = { count: 0 }
+    const sanitized = sanitizeConfigValue(raw, redaction)
+    const selectedProfile = profile !== null && profile !== undefined
+      ? raw?.profiles?.[profile]
+      : raw?.defaultProfile && raw?.profiles?.[raw.defaultProfile]
+    const selectedProfileName = profile ?? (typeof raw?.defaultProfile === 'string' ? raw.defaultProfile : null)
+    return {
+      availability: 'observed',
+      reason: null,
+      sanitizedSha256: sha256Value(canonicalJson(sanitized)),
+      bytes: bytes.byteLength,
+      redactedFields: redaction.count,
+      executionMode: typeof raw?.apiProxy?.executionMode === 'string' ? raw.apiProxy.executionMode : null,
+      router: safeRouterMetadata(raw?.router),
+      browser: typeof raw?.browser === 'string' ? raw.browser : null,
+      browserVisibility: typeof raw?.browserVisibility === 'string' ? raw.browserVisibility : null,
+      profileRegistry: { source: 'config.json.profiles', selected: selectedProfileName },
+      profileRuntime: safeProfileRuntime(selectedProfile?.runtimeBinding)
+        ? { availability: 'observed', ...safeProfileRuntime(selectedProfile.runtimeBinding) }
+        : { availability: 'unavailable', reason: selectedProfile ? 'profile_runtime_binding_missing' : 'selected_profile_not_found' },
+    }
+  } catch (error) {
+    return {
+      availability: 'unavailable',
+      reason: safeErrorCode(error, 'config_unavailable'),
+      sanitizedSha256: null,
+      bytes: null,
+      redactedFields: 0,
+      router: null,
+      executionMode: null,
+    }
+  }
+}
+
+function sanitizeConfigValue(value, redaction) {
+  if (Array.isArray(value)) return value.map((entry) => sanitizeConfigValue(entry, redaction))
+  if (!value || typeof value !== 'object') return value
+  const result = {}
+  for (const [key, entry] of Object.entries(value)) {
+    if (/(?:token|secret|password|cookie|credential|authorization|session|private[_-]?key)/iu.test(key)) {
+      result[key] = '[redacted]'
+      redaction.count += 1
+    } else {
+      result[key] = sanitizeConfigValue(entry, redaction)
+    }
+  }
+  return result
+}
+
+function safeRouterMetadata(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const providers = Array.isArray(value.providers)
+    ? value.providers
+      .filter((provider) => provider && typeof provider === 'object' && typeof provider.id === 'string')
+      .map((provider) => ({
+        id: provider.id,
+        suitableTasksSha256: typeof provider.suitableTasks === 'string' ? sha256Value(provider.suitableTasks) : null,
+        suitableTasksCharacters: typeof provider.suitableTasks === 'string' ? provider.suitableTasks.length : null,
+      }))
+      .sort((left, right) => left.id.localeCompare(right.id))
+    : []
+  return {
+    enabled: value.enabled === true,
+    engine: typeof value.engine === 'string' ? value.engine : null,
+    providers,
+  }
+}
+
+function safeProfileRuntime(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  return {
+    runtimeId: typeof value.runtimeId === 'string' ? value.runtimeId : null,
+    family: typeof value.family === 'string' ? value.family : null,
+    browserId: typeof value.browserId === 'string' ? value.browserId : null,
+    profileFormat: Number.isSafeInteger(value.profileFormat) ? value.profileFormat : null,
+  }
+}
+
+async function findTaskPackageMetadata(task, taskRef) {
+  if (typeof task !== 'string' || taskRef === null) {
+    return { availability: 'unavailable', reason: 'task_package_identity_unavailable', task: task ?? null, taskRef }
+  }
+  const taskName = task.replace(/^terminal-bench\//u, '')
+  const cacheRoot = process.env.HARBOR_CACHE_DIR ?? path.join(os.homedir(), '.cache', 'harbor')
+  const base = path.join(cacheRoot, 'tasks', 'packages', 'terminal-bench', taskName)
+  let entries
+  try {
+    entries = await fs.readdir(base, { withFileTypes: true })
+  } catch (error) {
+    return { availability: 'unavailable', reason: safeErrorCode(error, 'task_package_cache_unavailable'), task: taskName, taskRef }
+  }
+  const refHex = taskRef.replace(/^sha256:/u, '')
+  const candidate = entries
+    .filter((entry) => entry.isDirectory() && entry.name === refHex)
+    .map((entry) => path.join(base, entry.name, 'task.toml'))[0]
+  if (!candidate || !await exists(candidate)) {
+    return { availability: 'unavailable', reason: 'task_package_ref_not_cached', task: taskName, taskRef }
+  }
+  try {
+    const toml = await fs.readFile(candidate, 'utf8')
+    return {
+      availability: 'observed',
+      task: taskName,
+      taskRef,
+      taskTomlSha256: sha256Value(toml),
+      images: [...toml.matchAll(/docker_image\s*=\s*"([^"]+)"/gu)].map((match) => match[1]),
+      resources: [...toml.matchAll(/(?:cpus|memory_mb|storage_mb)\s*=\s*([^\s#]+)/gu)].map((match) => match[0]),
+      network: [...toml.matchAll(/extra_allowed_hosts\s*=\s*(\[[^\n]*\])/gu)].map((match) => match[1]),
+    }
+  } catch (error) {
+    return { availability: 'unavailable', reason: safeErrorCode(error, 'task_package_read_failed'), task: taskName, taskRef }
+  }
+}
+
+function validateStartSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)
+    || snapshot.schema !== START_SNAPSHOT_SCHEMA
+    || typeof snapshot.capturedAt !== 'string'
+    || !snapshot.source?.repository?.head
+    || !snapshot.pinned?.datasetRef
+    || !snapshot.artifacts?.runtimeArchive) {
+    throw new Error('The run start snapshot is missing required execution identity evidence.')
+  }
+}
+
+function buildResolvedExecutionEvidence({ jobConfig, trialResults, taskPackage, startSnapshot }) {
+  const agent = Array.isArray(jobConfig?.agents) ? jobConfig.agents[0] : null
+  const dataset = Array.isArray(jobConfig?.datasets) ? jobConfig.datasets[0] : null
+  const trials = trialResults.map((trial) => {
+    const environment = trial?.config?.environment ?? {}
+    const verifier = trial?.config?.verifier ?? {}
+    return {
+      trial: trial.trial_name,
+      task: trial.task_name,
+      taskRef: trial.task_id?.ref ?? null,
+      environment: {
+        type: environment.type ?? null,
+        extraAllowedHosts: sortedStrings(environment.extra_allowed_hosts),
+        resources: pickResourceLimits(environment),
+      },
+      verifier: {
+        environmentMode: trial.verifier_environment_mode ?? null,
+        resources: pickResourceLimits(verifier),
+      },
+    }
+  }).sort((left, right) => left.trial.localeCompare(right.trial))
+  return {
+    schema: 'tokenless.terminalbench-execution-evidence.v1',
+    capturedAt: new Date().toISOString(),
+    harbor: {
+      concurrency: Number.isSafeInteger(jobConfig?.n_concurrent_trials) ? jobConfig.n_concurrent_trials : null,
+      attempts: Number.isSafeInteger(jobConfig?.n_attempts) ? jobConfig.n_attempts : null,
+      maxRetries: Number.isSafeInteger(jobConfig?.retry?.max_retries) ? jobConfig.retry.max_retries : null,
+      dataset: dataset ? { name: dataset.name ?? null, ref: dataset.ref ?? null, taskCount: Array.isArray(dataset.task_names) ? dataset.task_names.length : null } : null,
+    },
+    agent: {
+      name: agent?.name ?? null,
+      requestedModel: agent?.model_name ?? null,
+      allowedHosts: sortedStrings(agent?.extra_allowed_hosts),
+      kwargsKeys: agent?.kwargs && typeof agent.kwargs === 'object' ? Object.keys(agent.kwargs).sort() : [],
+    },
+    taskPackage,
+    trials,
+    runtimeArchive: startSnapshot.artifacts.runtimeArchive,
+  }
+}
+
+function pickResourceLimits(value) {
+  return {
+    cpus: value?.cpus ?? value?.override_cpus ?? null,
+    memoryMb: value?.memory_mb ?? value?.override_memory_mb ?? null,
+    storageMb: value?.storage_mb ?? value?.override_storage_mb ?? null,
+    gpus: value?.gpus ?? value?.override_gpus ?? null,
+    tpu: value?.tpu ?? value?.override_tpu ?? null,
+  }
+}
+
+function buildTraceEvidence(deepTrials) {
+  const steps = []
+  for (const trial of deepTrials) {
+    for (const event of trial.events ?? []) {
+      steps.push(projectTraceStep(event, trial.trial))
+    }
+  }
+  steps.sort((left, right) => left.trial.localeCompare(right.trial) || left.sequence - right.sequence)
+  return {
+    protocol: revision.auditProtocol,
+    steps,
+    snapshot: {
+      availability: steps.length > 0 ? 'available' : 'unavailable',
+      reason: steps.length > 0 ? null : 'no-audit-events',
+    },
+  }
+}
+
+function projectTraceStep(event, trial) {
+  const type = typeof event?.type === 'string' ? event.type : 'unknown'
+  const scope = event?.scope === 'parent' || event?.scope === 'child' ? event.scope : null
+  const providerEvidence = type === 'provider.routing'
+    ? normalizeProviderEvidence(event.executionMetadata, event.provider)
+    : null
+  if (providerEvidence) providerEvidence.expectedSubmissions = (event.providerSubmitted ? 1 : 0)
+    + (event.attempts ?? []).filter((attempt) => attempt.providerSubmitted).length
+  const action = type === 'api.completion.request'
+    ? 'completion_request'
+    : type === 'child.turn.started'
+      ? 'child_turn_start'
+      : type === 'provider.routing'
+      ? 'provider_route'
+      : type === 'provider.attachment'
+          ? 'attachment_upload'
+          : type === 'dsh.parent.completed'
+          ? 'parent_completion'
+          : 'audit_event'
+  return {
+    trial,
+    sequence: Number.isSafeInteger(event?.sequence) ? event.sequence : 0,
+    type,
+    scope,
+    action,
+    tool: typeof event?.requestedTool === 'string' ? event.requestedTool : null,
+    tools: Array.isArray(event?.tools) ? projectTools(event.tools) : [],
+    toolResponseStatus: event.toolResponseStatus ?? null,
+    toolResponseNormalizationApplied: event.toolResponseNormalizationApplied ?? null,
+    attachments: type === 'provider.attachment'
+      ? [projectAttachment(event)]
+      : (event.attachments ?? []).map(projectAttachment),
+    provider: typeof event?.provider === 'string' ? event.provider : null,
+    outcome: typeof event?.outcome === 'string' ? event.outcome : null,
+    providerSubmitted: typeof event?.providerSubmitted === 'boolean' ? event.providerSubmitted : null,
+    timing: traceTiming(event),
+    providerEvidence,
+    links: traceLinks(event),
+  }
+}
+
+function projectTools(value) {
+  return value
+    .filter((tool) => tool && typeof tool === 'object' && !Array.isArray(tool))
+    .map((tool) => ({
+      callId: typeof tool.callId === 'string' ? tool.callId : null,
+      toolName: typeof tool.toolName === 'string' ? tool.toolName : null,
+      interactionId: typeof tool.interactionId === 'string' ? tool.interactionId : null,
+      requested: typeof tool.requested === 'boolean' ? tool.requested : null,
+      returned: typeof tool.returned === 'boolean' ? tool.returned : null,
+      executed: typeof tool.executed === 'boolean' ? tool.executed : null,
+      outcome: typeof tool.outcome === 'string' ? tool.outcome : 'unknown',
+      exitCode: Number.isSafeInteger(tool.exitCode) ? tool.exitCode : null,
+      arguments: digestObservation(tool.arguments),
+      result: digestObservation(tool.result),
+      returnedAt: tool.returnedAt ?? null,
+      resultObservedAt: tool.resultObservedAt ?? null,
+    }))
+}
+
+function projectAttachment(value) {
+  const keys = ['stage', 'stored', 'attachmentRef', 'name', 'mediaType', 'byteLength', 'sha256',
+    'declaredByteLength', 'declaredSha256', 'upload', 'providerUpload', 'outcome', 'unknownReason',
+    'startedAt', 'finishedAt', 'durationMs']
+  return {
+    ...Object.fromEntries(keys.map((key) => [key, value[key]])),
+    sha256: `sha256:${value.sha256}`,
+    declaredSha256: value.declaredSha256 === null ? null : `sha256:${value.declaredSha256}`,
+  }
+}
+
+function digestObservation(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { availability: 'unknown', sha256: null, bytes: null, characters: null, reason: 'not_observed' }
+  }
+  return {
+    availability: value.availability === 'observed' ? 'observed' : 'unknown',
+    sha256: typeof value.sha256 === 'string' && /^[a-f0-9]{64}$/u.test(value.sha256) ? `sha256:${value.sha256}` : null,
+    bytes: Number.isSafeInteger(value.bytes) ? value.bytes : null,
+    characters: Number.isSafeInteger(value.characters) ? value.characters : null,
+    reason: typeof value.reason === 'string' ? value.reason : null,
+  }
+}
+
+function traceTiming(event) {
+  if (typeof event?.startedAt !== 'string' || typeof event?.finishedAt !== 'string' || !Number.isSafeInteger(event?.durationMs) || event.durationMs < 0) return null
+  return {
+    startedAt: event.startedAt,
+    finishedAt: event.finishedAt,
+    durationMs: event.durationMs,
+    precision: 'interval',
+  }
+}
+
+function traceLinks(event) {
+  const links = []
+  for (const [type, value] of [
+    ['interaction', event?.interactionId],
+    ['request', event?.requestRef],
+    ['turn', event?.turnRef],
+    ['conversation', event?.conversationRef],
+  ]) {
+    if (typeof value === 'string') links.push({ type, ref: value })
+  }
+  if (Number.isSafeInteger(event?.requestSequence)) links.push({ type: 'request', sequence: event.requestSequence })
+  if (Number.isSafeInteger(event?.parentSequence)) links.push({ type: 'parent', sequence: event.parentSequence })
+  if (Number.isSafeInteger(event?.toolSequence)) links.push({ type: 'tool', sequence: event.toolSequence })
+  if (typeof event?.transportRef === 'string') links.push({ type: 'transport', ref: event.transportRef })
+  return links
+}
+
+function normalizeProviderEvidence(value, provider) {
+  const evidence = value && typeof value === 'object' && !Array.isArray(value) ? value : null
+  const modelValue = evidence?.model && typeof evidence.model === 'object' ? evidence.model : {}
+  const effortValue = evidence?.reasoningEffort && typeof evidence.reasoningEffort === 'object' ? evidence.reasoningEffort : {}
+  const surfaceValue = evidence?.surface && typeof evidence.surface === 'object' ? evidence.surface.observed ?? {} : {}
+  // Keep provider submission observation time separate from the route event's
+  // completion time. The adapter may provide the former; a missing value stays
+  // explicitly unavailable instead of being replaced with event.observedAt.
+  const observedTimestamp = typeof evidence?.observedAt === 'string' ? evidence.observedAt : null
+  const model = modelValue.observed?.availability === 'observed' && typeof modelValue.observed.value === 'string' ? modelValue.observed.value : null
+  const effort = effortValue.observed?.availability === 'observed' && typeof effortValue.observed.value === 'string' ? effortValue.observed.value : null
+  const requestedModel = modelValue.requested?.availability === 'observed' && typeof modelValue.requested.value === 'string' ? modelValue.requested.value : null
+  const requestedEffort = effortValue.requested?.availability === 'observed' && typeof effortValue.requested.value === 'string' ? effortValue.requested.value : null
+  const unknownReasons = [
+    ...(model === null ? [modelValue.observed?.reason ?? 'observed_model_unavailable'] : []),
+    ...(effort === null ? [effortValue.observed?.reason ?? 'observed_reasoning_effort_unavailable'] : []),
+    ...(surfaceValue.value === undefined ? [surfaceValue.reason ?? 'observed_surface_unavailable'] : []),
+    ...(observedTimestamp === null ? ['provider_submission_observed_at_unavailable'] : []),
+  ].filter((reason) => typeof reason === 'string').slice(0, 16)
+  return {
+    availability: evidence === null ? 'unavailable' : 'observed',
+    provider: provider ?? null,
+    requested: {
+      model: requestedModel,
+      effort: requestedEffort,
+    },
+    observed: { model, effort },
+    surface: surfaceValue.value === 'chat' || surfaceValue.value === 'work' || surfaceValue.value === 'unknown' ? surfaceValue.value : null,
+    observedAt: observedTimestamp,
+    jobIds: Array.isArray(evidence?.jobIds) ? [...evidence.jobIds] : [],
+    jobs: Array.isArray(evidence?.jobs) ? evidence.jobs.map((job) => ({ ...job })) : [],
+    submissions: Array.isArray(evidence?.submissions)
+      ? evidence.submissions.map(projectProviderSubmission)
+      : [],
+    unknownReasons: [...new Set(unknownReasons.length > 0 ? unknownReasons : (evidence === null ? ['provider_execution_metadata_missing'] : []))],
+  }
+}
+
+function projectProviderSubmission(value) {
+  return {
+    jobId: value.jobId,
+    provider: value.provider ?? null,
+    action: value.action,
+    metadata: { ...value.metadata },
+    submissionObservation: {
+      protocol: value.submissionObservation.protocol ?? null,
+      observedAt: value.submissionObservation.observedAt ?? null,
+      source: value.submissionObservation.source ?? null,
+      page: {
+        surface: value.submissionObservation.page.surface,
+        origin: value.submissionObservation.page.origin ?? null,
+      },
+      model: { ...value.submissionObservation.model },
+      effort: { ...value.submissionObservation.effort },
+    },
+  }
+}
+
+function buildComparabilityEvidence({ kind, deepTrials, trace }) {
+  if (kind === 'oracle') {
+    return {
+      status: 'not_comparable',
+      officialRewardIndependent: true,
+      model: { status: 'not_applicable', observed: null, unknownReasons: ['oracle-run'] },
+      effort: { status: 'not_applicable', observed: null, unknownReasons: ['oracle-run'] },
+      reasons: ['oracle-run'],
+    }
+  }
+  const submittedSteps = trace.steps.filter((step) => step.type === 'provider.routing' && (
+    step.providerSubmitted === true
+    || (step.providerEvidence?.expectedSubmissions ?? 0) > 0
+    || (step.providerEvidence?.submissions.length ?? 0) > 0
+    || step.tools.some((tool) => tool.requested === true)
+  ))
+  const records = submittedSteps.flatMap(providerSubmissionRecords)
+  const models = records.map((record) => providerSubmissionLabel(record, 'model')).filter((value) => typeof value === 'string')
+  const efforts = records.map((record) => providerSubmissionLabel(record, 'effort')).filter((value) => typeof value === 'string')
+  const modelReasons = [...new Set(records.flatMap((record) => providerSubmissionReasons(record, 'model')))]
+  const effortReasons = [...new Set(records.flatMap((record) => providerSubmissionReasons(record, 'effort')))]
+  const exactModels = models.filter(isExactProviderLabel)
+  const exactEfforts = efforts.filter(isExactProviderLabel)
+  const completeCoverage = submittedSteps.length > 0 && submittedSteps.every(submissionCoverageComplete)
+  const everyModelObserved = completeCoverage && records.length > 0 && records.every((record) => isExactProviderLabel(providerSubmissionLabel(record, 'model')))
+  const everyEffortObserved = completeCoverage && records.length > 0 && records.every((record) => isExactProviderLabel(providerSubmissionLabel(record, 'effort')))
+  const modelStatus = everyModelObserved && new Set(exactModels).size === 1 ? 'known' : 'unknown'
+  const effortStatus = everyEffortObserved && new Set(exactEfforts).size === 1 ? 'known' : 'unknown'
+  if (submittedSteps.length === 0) {
+    modelReasons.push('no_submitted_provider_interactions')
+    effortReasons.push('no_submitted_provider_interactions')
+  }
+  if (models.some((value) => !isExactProviderLabel(value))) modelReasons.push('model_alias_unresolved')
+  if (efforts.some((value) => !isExactProviderLabel(value))) effortReasons.push('reasoning_effort_alias_unresolved')
+  const reasons = [...new Set([...modelReasons, ...effortReasons])]
+  if (!completeCoverage) reasons.push('provider_submission_coverage_incomplete')
+  return {
+    status: modelStatus === 'known' && effortStatus === 'known' ? 'comparable' : 'not_comparable',
+    officialRewardIndependent: true,
+    model: { status: modelStatus, observed: new Set(exactModels).size === 1 ? [...new Set(exactModels)][0] : null, unknownReasons: modelStatus === 'known' ? [] : (modelReasons.length > 0 ? [...new Set(modelReasons)] : ['model_not_observed']) },
+    effort: { status: effortStatus, observed: new Set(exactEfforts).size === 1 ? [...new Set(exactEfforts)][0] : null, unknownReasons: effortStatus === 'known' ? [] : (effortReasons.length > 0 ? [...new Set(effortReasons)] : ['effort_not_observed']) },
+    reasons,
+  }
+}
+
+function isExactProviderLabel(value) {
+  return typeof value === 'string'
+    && value.length > 0
+    && !/^(?:latest|auto|default|unknown|tokenless\/auto)$/iu.test(value)
+}
+
+function providerSubmissionRecords(step) {
+  return step.providerEvidence?.submissions ?? []
+}
+
+function submissionCoverageComplete(step) {
+  const evidence = step.providerEvidence
+  if (!evidence || evidence.jobIds.length === 0 || evidence.jobs.length !== evidence.jobIds.length) return false
+  if (evidence.submissions.length < evidence.expectedSubmissions) return false
+  return evidence.jobIds.every((jobId) => {
+    const job = evidence.jobs.find((entry) => entry.jobId === jobId)
+    const submissions = evidence.submissions.filter((entry) => entry.jobId === jobId)
+    return job?.availability === 'observed'
+      && typeof job.providerSubmitted === 'boolean'
+      && job.submissionCount === submissions.length
+      && (!job.providerSubmitted || submissions.length > 0)
+      && submissions.every((entry) => entry.submissionObservation.observedAt !== null
+        && entry.submissionObservation.source !== null
+        && Number.isSafeInteger(entry.metadata.actionIndex))
+  }) && evidence.submissions.every((entry) => evidence.jobIds.includes(entry.jobId))
+}
+
+function providerSubmissionLabel(record, field) {
+  const choice = record?.submissionObservation?.[field === 'effort' ? 'effort' : 'model']
+  return typeof choice?.observedLabel === 'string' ? choice.observedLabel : null
+}
+
+function providerSubmissionReasons(record, field) {
+  const choice = record?.submissionObservation?.[field === 'effort' ? 'effort' : 'model']
+  if (typeof choice?.observedLabel === 'string') {
+    return isExactProviderLabel(choice.observedLabel)
+      ? []
+      : [field === 'model' ? 'model_alias_unresolved' : 'reasoning_effort_alias_unresolved']
+  }
+  const rawReason = typeof choice?.reason === 'string' ? choice.reason : null
+  if (rawReason !== null) return [rawReason]
+  return [field === 'model' ? 'model_not_observed' : 'effort_not_observed']
+}
+
+function metadataFieldCoverage(routeSteps, field) {
+  if (routeSteps.length === 0) {
+    return { status: 'unrecorded', observedLabels: [], unknownReasons: ['no_submitted_provider_interactions'] }
+  }
+  const states = routeSteps.flatMap(providerSubmissionRecords).map((record) => {
+    const observed = providerSubmissionLabel(record, field)
+    const reasons = providerSubmissionReasons(record, field)
+    if (typeof observed === 'string') return { state: 'observed', observed, reasons }
+    const choice = record.submissionObservation[field]
+    if (choice?.status === 'unknown' && typeof choice.reason === 'string') return { state: 'recorded_unavailable', observed: null, reasons }
+    return { state: 'unrecorded', observed: null, reasons: reasons.length > 0 ? reasons : ['provider_execution_metadata_missing'] }
+  })
+  if (routeSteps.some((step) => !submissionCoverageComplete(step))) {
+    states.push({ state: 'unrecorded', observed: null, reasons: ['provider_submission_coverage_incomplete'] })
+  }
+  if (states.length === 0) states.push({ state: 'unrecorded', observed: null, reasons: ['no_submission_observations'] })
+  const statesSet = new Set(states.map(({ state }) => state))
+  const status = statesSet.size === 1
+    ? [...statesSet][0]
+    : statesSet.has('unrecorded')
+      ? (statesSet.size === 1 ? 'unrecorded' : 'partial')
+      : 'recorded_unavailable'
+  return {
+    status,
+    observedLabels: [...new Set(states.map(({ observed }) => observed).filter((value) => typeof value === 'string'))].sort(),
+    unknownReasons: [...new Set(states.flatMap(({ reasons }) => reasons).filter((reason) => typeof reason === 'string'))],
+  }
+}
+
+function buildCompletenessEvidence({ kind, deepTrials, trialResults, trace, accountPlans }) {
+  const routeSteps = trace.steps.filter((step) => step.type === 'provider.routing' && (
+    step.providerSubmitted === true
+    || (step.providerEvidence?.expectedSubmissions ?? 0) > 0
+    || (step.providerEvidence?.submissions.length ?? 0) > 0
+    || step.tools.some((tool) => tool.requested === true)
+  ))
+  const modelCoverage = metadataFieldCoverage(routeSteps, 'model')
+  const effortCoverage = metadataFieldCoverage(routeSteps, 'effort')
+  const actionLinked = trace.steps.length > 0
+    && trace.steps.every((step) => step.action !== 'audit_event')
+    && trace.steps.filter((step) => step.type !== 'provider.attachment' && step.type !== 'dsh.parent.completed').every((step) => step.links.length > 0)
+    && trace.steps.filter((step) => step.type === 'provider.routing' && step.scope === 'child').every((step) => ['action_batch', 'final'].includes(step.toolResponseStatus))
+    && trace.steps.flatMap((step) => step.tools).every((tool) => tool.callId !== null && tool.interactionId !== null)
+  const timedSteps = trace.steps.filter((step) => step.type !== 'dsh.parent.completed')
+  const timingAvailable = timedSteps.length > 0 && timedSteps.every((step) => step.timing !== null)
+  const missing = []
+  if (['unrecorded', 'partial'].includes(modelCoverage.status) && kind !== 'oracle') missing.push('actual_model')
+  if (['unrecorded', 'partial'].includes(effortCoverage.status) && kind !== 'oracle') missing.push('actual_effort')
+  if (!actionLinked && kind !== 'oracle') missing.push('action_tool_linkage')
+  if (!timingAvailable && kind !== 'oracle') missing.push('step_timing')
+  if (trace.snapshot.availability !== 'available' && kind !== 'oracle') missing.push('trace_snapshot')
+  return {
+    status: missing.length === 0 ? 'complete' : 'partial',
+    missing,
+    model: {
+      status: kind === 'oracle' ? 'not_applicable' : modelCoverage.status,
+      observedLabels: kind === 'oracle' ? [] : modelCoverage.observedLabels,
+      unknownReasons: kind === 'oracle' ? [] : modelCoverage.unknownReasons,
+    },
+    effort: {
+      status: kind === 'oracle' ? 'not_applicable' : effortCoverage.status,
+      observedLabels: kind === 'oracle' ? [] : effortCoverage.observedLabels,
+      unknownReasons: kind === 'oracle' ? [] : effortCoverage.unknownReasons,
+    },
+    actionToolLinkage: { status: kind === 'oracle' ? 'not_applicable' : (actionLinked ? 'observed' : 'partial'), reason: actionLinked ? null : 'adapter_audit_does_not_link_every_step_to_a_tool' },
+    timing: { status: kind === 'oracle' ? 'not_applicable' : (timingAvailable ? 'observed' : 'partial'), reason: timingAvailable ? null : 'audit_events_have_no_interval_timestamps' },
+    nativeUsage: {
+      status: kind === 'oracle' ? 'not_applicable' : 'unavailable',
+      reason: kind === 'oracle' ? null : 'provider_native_tokens_and_cost_not_exposed',
+      inputTokens: null, outputTokens: null, reasoningTokens: null,
+      cacheReadTokens: null, cacheWriteTokens: null, cost: null, currency: null,
+    },
+    traceSnapshot: trace.snapshot,
+    accountObservation: {
+      status: accountPlans?.availability ?? 'unavailable',
+      capturedAt: accountPlans?.capturedAt ?? null,
+      providerCount: Object.keys(accountPlans?.providers ?? {}).length,
+    },
+    officialRewardIndependent: true,
+    trialCount: trialResults.length,
+    auditTrialCount: deepTrials.length,
+  }
 }
 
 async function observeExistingJob(args) {
@@ -536,7 +1278,7 @@ async function writeRunObservation({ jobDir, report }) {
 }
 
 async function buildRunObservation({ jobDir, report }) {
-  if (report?.schema !== 'tokenless.terminalbench-run.v1') {
+  if (report?.schema !== RUN_SCHEMA) {
     throw new Error('The job tokenless-run.json does not use the pinned Terminal-Bench run schema.')
   }
   const official = await readJson(path.join(jobDir, 'result.json'))
@@ -590,6 +1332,16 @@ async function buildRunObservation({ jobDir, report }) {
     trials: trialRecords.map(observationTrial),
     routing,
     evidence: await observationEvidence(jobDir, trialRecords),
+    executionEvidence: report.executionEvidence,
+    completeness: report.completeness,
+    comparability: report.comparability,
+    trace: projectObservationTrace(trialRecords),
+    accountObservation: report.providerRouting?.accountPlans ?? {
+      availability: 'unavailable',
+      reason: 'report_missing_account_observation',
+      capturedAt: null,
+      providers: {},
+    },
   }
   return observation
 }
@@ -616,7 +1368,7 @@ async function readObservationTrials(jobDir) {
         throw new Error(`Invalid deep-integration evidence for ${result.trial_name}: ${error instanceof Error ? error.message : String(error)}`)
       }
     }
-    records.push({ directory, result, events, auditPath: events.length > 0 ? auditPath : null })
+    records.push({ directory, result, events, verifierTests: await readVerifierTests(directory), auditPath: events.length > 0 ? auditPath : null })
   }
   records.sort((left, right) => left.result.trial_name.localeCompare(right.result.trial_name))
   return records
@@ -707,7 +1459,29 @@ function observationTrial(record) {
     },
     reward: reward ?? null,
     exceptionType: exceptionType ?? null,
+    verifierTests: record.verifierTests,
   }
+}
+
+async function readVerifierTests(directory) {
+  const file = path.join(directory, 'verifier', 'ctrf.json')
+  if (!await exists(file)) return { availability: 'unavailable', reason: 'official_ctrf_not_produced', tests: [] }
+  const report = await readJson(file)
+  if (!Array.isArray(report.results?.tests)) throw new Error('Official CTRF report has no tests array.')
+  const tests = report.results.tests.map((test) => {
+    if (typeof test.name !== 'string' || test.name.length > 512
+      || !['passed', 'failed', 'skipped', 'pending', 'other'].includes(test.status)) {
+      throw new Error('Official CTRF test identity or status is invalid.')
+    }
+    const diagnostic = typeof test.trace === 'string' ? test.trace : ''
+    return {
+      name: test.name,
+      status: test.status,
+      reportedDurationMs: Number.isFinite(test.duration) && test.duration >= 0 ? test.duration : null,
+      diagnostic: diagnostic ? { sha256: sha256Value(diagnostic), characters: diagnostic.length } : null,
+    }
+  })
+  return { availability: 'observed', reason: null, tests }
 }
 
 function observationStage(stage, label) {
@@ -861,6 +1635,19 @@ function observationLimitEvents(event) {
   return limits
 }
 
+function projectObservationTrace(records) {
+  const steps = records.flatMap((record) => record.events.map((event) => projectTraceStep(event, record.result.trial_name)))
+    .sort((left, right) => left.trial.localeCompare(right.trial) || left.sequence - right.sequence)
+  return {
+    protocol: revision.auditProtocol,
+    steps,
+    snapshot: {
+      availability: steps.length > 0 ? 'available' : 'unavailable',
+      reason: steps.length > 0 ? null : 'no-audit-events',
+    },
+  }
+}
+
 function observationRoutingAggregates(events, interactions) {
   const submitted = interactions.filter((interaction) => interaction.providerSubmitted).length
   const completed = interactions.filter((interaction) => interaction.outcome === 'completed').length
@@ -964,7 +1751,32 @@ async function observationEvidence(jobDir, records) {
     if (record.auditPath !== null) files.push(await observationFileEvidence(jobDir, record.auditPath))
     trials.push({ trial: record.result.trial_name, task: record.result.task_name, files })
   }
-  return { root: rootFiles, trials }
+  return {
+    root: rootFiles,
+    trials,
+    artifacts: await observationArtifactIndex(jobDir),
+  }
+}
+
+async function observationArtifactIndex(jobDir) {
+  const files = []
+  await walkEvidenceFiles(jobDir, jobDir, files)
+  files.sort((left, right) => left.path.localeCompare(right.path))
+  return files
+}
+
+async function walkEvidenceFiles(jobDir, current, output) {
+  const entries = await fs.readdir(current, { withFileTypes: true })
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    const filePath = path.join(current, entry.name)
+    const relative = observationRelativePath(jobDir, filePath)
+    if (PRIVATE_EVIDENCE_PATTERN.test(relative)) continue
+    if (entry.isDirectory()) {
+      await walkEvidenceFiles(jobDir, filePath, output)
+    } else if (entry.isFile()) {
+      output.push(await observationFileEvidence(jobDir, filePath))
+    }
+  }
 }
 
 async function observationFileEvidence(jobDir, filePath) {
@@ -1045,61 +1857,78 @@ function preRoutingException(trial, directory) {
 }
 
 async function benchmarkProviderPlanSnapshot({ tokenlessHome, daemonUrl, profile, routedProviders }) {
+  const capturedAt = new Date().toISOString()
   const runtimeEntry = path.join(root, 'packages', 'cli', 'dist', 'src', 'index.js')
   const policyEntry = path.join(root, 'packages', 'server', 'dist', 'src', 'providers', 'rate-limit-policy.js')
-  const [runtime, policy] = await Promise.all([
-    import(pathToFileURL(runtimeEntry).href),
-    import(pathToFileURL(policyEntry).href),
-  ])
-  const state = await runtime.getControlState({ homeDir: tokenlessHome, daemonUrl })
-  const selected = Array.isArray(state?.profiles)
-    ? state.profiles.find((candidate) => candidate?.slug === profile)
-    : null
-  if (!selected || !selected.lastObservedAuth || typeof selected.lastObservedAuth !== 'object') {
-    throw new Error(`The benchmark profile ${profile} has no provider plan observation state.`)
-  }
-  const providers = {}
-  for (const provider of [...routedProviders].sort()) {
-    const observation = selected.lastObservedAuth[provider]
-    const account = observation?.account
-    const tier = account?.tier
-    const checkedAt = typeof observation?.checkedAt === 'string'
-      && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u.test(observation.checkedAt)
-      ? observation.checkedAt
+  try {
+    const [runtime, policy] = await Promise.all([
+      import(pathToFileURL(runtimeEntry).href),
+      import(pathToFileURL(policyEntry).href),
+    ])
+    const state = await runtime.getControlState({ homeDir: tokenlessHome, daemonUrl })
+    const selected = Array.isArray(state?.profiles)
+      ? state.profiles.find((candidate) => candidate?.slug === profile)
       : null
-    const accessClass = typeof observation?.access === 'string' && /^[a-z_]{1,64}$/u.test(observation.access)
-      ? observation.access
-      : 'unknown'
-    const tierClass = ['signed_in_free', 'signed_in_paid', 'signed_in_unknown'].includes(tier?.class)
-      ? tier.class
-      : null
-    const projection = policy.providerCapacityPolicy.project({
-      provider,
-      profileId: profile,
-      accessClass,
-      tierLabel: safePlanLabel(tier?.label),
-      subscriptionLabel: safePlanLabel(account?.subscription),
-      requestJson: {},
-      history: [],
-      now: checkedAt ?? new Date().toISOString(),
-    })
-    const planId = typeof projection.subscription.planId === 'string'
-      && /^[a-z0-9][a-z0-9._-]{0,63}$/u.test(projection.subscription.planId)
-      ? projection.subscription.planId
-      : 'unknown'
-    const planMatch = ['label', 'access_class', 'unknown'].includes(projection.subscription.match)
-      ? projection.subscription.match
-      : 'unknown'
-    const observedLabel = planMatch === 'label'
-      ? safePlanLabel(projection.subscription.observedLabel)
-      : null
-    providers[provider] = {
-      checkedAt,
-      plan: { id: planId, match: planMatch, observedLabel },
-      tierClass,
+    if (!selected || !selected.lastObservedAuth || typeof selected.lastObservedAuth !== 'object') {
+      return {
+        availability: 'unavailable',
+        reason: 'profile_plan_observation_missing',
+        capturedAt,
+        providers: {},
+      }
+    }
+    const providers = {}
+    for (const provider of [...routedProviders].sort()) {
+      const observation = selected.lastObservedAuth[provider]
+      const account = observation?.account
+      const tier = account?.tier
+      const checkedAt = typeof observation?.checkedAt === 'string'
+        && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u.test(observation.checkedAt)
+        ? observation.checkedAt
+        : null
+      const accessClass = typeof observation?.access === 'string' && /^[a-z_]{1,64}$/u.test(observation.access)
+        ? observation.access
+        : 'unknown'
+      const tierClass = ['signed_in_free', 'signed_in_paid', 'signed_in_unknown'].includes(tier?.class)
+        ? tier.class
+        : null
+      const projection = policy.providerCapacityPolicy.project({
+        provider,
+        profileId: profile,
+        accessClass,
+        tierLabel: safePlanLabel(tier?.label),
+        subscriptionLabel: safePlanLabel(account?.subscription),
+        requestJson: {},
+        history: [],
+        now: checkedAt ?? capturedAt,
+      })
+      const planId = typeof projection.subscription.planId === 'string'
+        && /^[a-z0-9][a-z0-9._-]{0,63}$/u.test(projection.subscription.planId)
+        ? projection.subscription.planId
+        : 'unknown'
+      const planMatch = ['label', 'access_class', 'unknown'].includes(projection.subscription.match)
+        ? projection.subscription.match
+        : 'unknown'
+      const observedLabel = planMatch === 'label'
+        ? safePlanLabel(projection.subscription.observedLabel)
+        : null
+      const ageSeconds = checkedAt === null ? null : Math.max(0, Math.floor((Date.parse(capturedAt) - Date.parse(checkedAt)) / 1000))
+      providers[provider] = {
+        checkedAt,
+        ageSeconds: Number.isSafeInteger(ageSeconds) ? ageSeconds : null,
+        plan: { id: planId, match: planMatch, observedLabel },
+        tierClass,
+      }
+    }
+    return { availability: 'observed', capturedAt, providers }
+  } catch (error) {
+    return {
+      availability: 'unavailable',
+      reason: safeErrorCode(error, 'profile_plan_observation_failed'),
+      capturedAt,
+      providers: {},
     }
   }
-  return { providers }
 }
 
 function safePlanLabel(value) {
@@ -1440,6 +2269,8 @@ function deepIntegrationStats(events, trial) {
     'api.completion.request',
     'child.turn.started',
     'provider.routing',
+    'provider.routing.invalid',
+    'provider.attachment',
     'dsh.parent.completed',
   ])
   if (events.length === 0) {
@@ -1451,26 +2282,16 @@ function deepIntegrationStats(events, trial) {
       throw new Error('Deep integration audit events are invalid or out of sequence.')
     }
     if (event.type === 'api.completion.request') {
-      if (
-        Object.keys(event).some((key) => !['protocol', 'sequence', 'type', 'ordinal', 'forcedSubagent', 'finalOnly'].includes(key))
-        || event.ordinal !== nextParentOrdinal
-        || !Number.isSafeInteger(event.ordinal)
-        || event.ordinal < 1
-        || event.forcedSubagent !== true && event.forcedSubagent !== false
-        || event.finalOnly !== undefined && event.finalOnly !== true && event.finalOnly !== false
-      ) {
-        throw new Error('Host parent completion evidence is invalid.')
-      }
+      validateApiCompletionEvent(event, nextParentOrdinal)
       nextParentOrdinal += 1
     } else if (event.type === 'child.turn.started') {
-      if (
-        Object.keys(event).some((key) => !['protocol', 'sequence', 'type', 'mode'].includes(key))
-        || (event.mode !== 'bootstrap' && event.mode !== 'continuation')
-      ) {
-        throw new Error('Host child turn evidence is invalid.')
-      }
+      validateChildTurnEvent(event)
     } else if (event.type === 'provider.routing') {
       validateProviderRoutingEvent(event)
+    } else if (event.type === 'provider.routing.invalid') {
+      validateInvalidRoutingEvent(event)
+    } else if (event.type === 'provider.attachment') {
+      validateAttachmentEvent(event)
     } else if (event.type === 'dsh.parent.completed') {
       if (
         Object.keys(event).some((key) => !['protocol', 'sequence', 'type', 'outcome'].includes(key))
@@ -1620,6 +2441,126 @@ function aggregateDeepIntegration(trials) {
   }
 }
 
+function validateApiCompletionEvent(event, expectedOrdinal) {
+  if (Object.keys(event).some((key) => ![
+    'protocol', 'sequence', 'type', 'ordinal', 'forcedSubagent', 'finalOnly', 'transportRef',
+    'interactionId', 'startedAt', 'finishedAt', 'durationMs', 'outcome', 'failureReason',
+    'requestedModel', 'requestedReasoningEffort', 'requestedTool', 'requestedToolStatus', 'tools',
+  ].includes(key))
+    || event.ordinal !== expectedOrdinal
+    || !Number.isSafeInteger(event.ordinal)
+    || event.ordinal < 1
+    || typeof event.forcedSubagent !== 'boolean'
+    || event.finalOnly !== undefined && typeof event.finalOnly !== 'boolean'
+    || typeof event.interactionId !== 'string'
+    || !/^parent:[a-f0-9]{32}$/u.test(event.interactionId)
+    || !isAuditTimestamp(event.startedAt)
+    || event.finishedAt !== undefined && !isAuditTimestamp(event.finishedAt)
+    || event.durationMs !== undefined && (!Number.isSafeInteger(event.durationMs) || event.durationMs < 0)
+    || event.outcome !== undefined && !['succeeded', 'failed'].includes(event.outcome)
+    || event.failureReason !== undefined && (typeof event.failureReason !== 'string' || !/^[a-z][a-z0-9_-]{0,95}$/u.test(event.failureReason))
+    || event.transportRef !== undefined && (typeof event.transportRef !== 'string' || !/^proxy:[a-f0-9]{32}$/u.test(event.transportRef))
+    || !validateSafeMetadataNullable(event.requestedModel)
+    || !validateSafeMetadataNullable(event.requestedReasoningEffort)
+    || !validateSafeMetadataNullable(event.requestedTool)
+    || event.requestedToolStatus !== null && event.requestedToolStatus !== undefined && typeof event.requestedToolStatus !== 'boolean'
+    || !validateTraceTools(event.tools)
+  ) {
+    throw new Error('Host parent completion evidence is invalid.')
+  }
+}
+
+function validateChildTurnEvent(event) {
+  if (Object.keys(event).some((key) => ![
+    'protocol', 'sequence', 'type', 'interactionId', 'requestRef', 'turnRef', 'conversationRef',
+    'mode', 'startedAt', 'finishedAt', 'durationMs', 'outcome', 'httpStatus', 'attachments',
+  ].includes(key))
+    || typeof event.interactionId !== 'string'
+    || !/^child:[a-f0-9]{32}$/u.test(event.interactionId)
+    || typeof event.requestRef !== 'string'
+    || !/^request:[a-f0-9]{32}$/u.test(event.requestRef)
+    || event.turnRef !== null && (typeof event.turnRef !== 'string' || !/^turn:[a-f0-9]{32}$/u.test(event.turnRef))
+    || event.conversationRef !== null && (typeof event.conversationRef !== 'string' || !/^conversation:[a-f0-9]{32}$/u.test(event.conversationRef))
+    || !['bootstrap', 'continuation'].includes(event.mode)
+    || !isAuditTimestamp(event.startedAt)
+    || !isAuditTimestamp(event.finishedAt)
+    || !Number.isSafeInteger(event.durationMs)
+    || event.durationMs < 0
+    || !['succeeded', 'failed'].includes(event.outcome)
+    || event.httpStatus !== undefined && (!Number.isSafeInteger(event.httpStatus) || event.httpStatus < 100 || event.httpStatus > 599)
+    || !validateAttachmentList(event.attachments)
+  ) {
+    throw new Error('Host child turn evidence is invalid.')
+  }
+}
+
+function validateAttachmentList(value) {
+  return Array.isArray(value) && value.length <= 32 && value.every((entry) => validateAttachmentRecord(entry))
+}
+
+function validateAttachmentEvent(event) {
+  if (Object.keys(event).some((key) => ![
+    'protocol', 'sequence', 'type', 'attachmentRef', 'name', 'mediaType', 'byteLength', 'sha256',
+    'declaredByteLength', 'declaredSha256', 'upload', 'outcome', 'unknownReason', 'startedAt',
+    'finishedAt', 'durationMs', 'stage', 'stored', 'providerUpload',
+  ].includes(key)) || !validateAttachmentRecord(event)) {
+    throw new Error('Provider attachment evidence is invalid.')
+  }
+}
+
+function validateAttachmentRecord(value) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+    && value.stage === 'host_attachment_store'
+    && typeof value.stored === 'boolean'
+    && value.providerUpload && typeof value.providerUpload.observed === 'boolean'
+    && (value.providerUpload.accepted === null || typeof value.providerUpload.accepted === 'boolean')
+    && (value.attachmentRef === null || typeof value.attachmentRef === 'string' && /^attachment:[a-f0-9]{32}$/u.test(value.attachmentRef))
+    && (value.name === null || typeof value.name === 'string' && value.name.length <= 256)
+    && (value.mediaType === null || typeof value.mediaType === 'string' && value.mediaType.length <= 256)
+    && Number.isSafeInteger(value.byteLength) && value.byteLength >= 0
+    && typeof value.sha256 === 'string' && /^[a-f0-9]{64}$/u.test(value.sha256)
+    && (value.declaredByteLength === null || Number.isSafeInteger(value.declaredByteLength) && value.declaredByteLength >= 0)
+    && (value.declaredSha256 === null || typeof value.declaredSha256 === 'string' && /^[a-f0-9]{64}$/u.test(value.declaredSha256))
+    && value.upload && typeof value.upload === 'object' && !Array.isArray(value.upload)
+    && sameStringSet(Object.keys(value.upload), ['requested', 'returned', 'retained'])
+    && typeof value.upload.requested === 'boolean'
+    && typeof value.upload.returned === 'boolean'
+    && typeof value.upload.retained === 'boolean'
+    && ['succeeded', 'failed', 'unknown'].includes(value.outcome)
+    && (value.unknownReason === null || typeof value.unknownReason === 'string' && /^[a-z][a-z0-9_-]{0,95}$/u.test(value.unknownReason))
+    && isAuditTimestamp(value.startedAt)
+    && isAuditTimestamp(value.finishedAt)
+    && (value.durationMs === null || Number.isSafeInteger(value.durationMs) && value.durationMs >= 0)
+}
+
+function validateInvalidRoutingEvent(event) {
+  if (Object.keys(event).some((key) => ![
+    'protocol', 'sequence', 'type', 'reason', 'interactionId', 'scope', 'requestRef', 'turnRef',
+    'startedAt', 'finishedAt', 'durationMs', 'outcome', 'executionMetadata',
+  ].includes(key))
+    || typeof event.reason !== 'string'
+    || !/^[a-z][a-z0-9_-]{0,95}$/u.test(event.reason)
+    || event.interactionId !== undefined && event.interactionId !== null
+      && (typeof event.interactionId !== 'string' || !/^(?:parent|child):[a-f0-9]{32}$/u.test(event.interactionId))
+    || event.scope !== undefined && !['parent', 'child'].includes(event.scope)
+    || event.requestRef !== undefined && event.requestRef !== null
+      && (typeof event.requestRef !== 'string' || !/^request:[a-f0-9]{32}$/u.test(event.requestRef))
+    || event.turnRef !== undefined && event.turnRef !== null
+      && (typeof event.turnRef !== 'string' || !/^turn:[a-f0-9]{32}$/u.test(event.turnRef))
+    || event.startedAt !== undefined && !isAuditTimestamp(event.startedAt)
+    || event.finishedAt !== undefined && !isAuditTimestamp(event.finishedAt)
+    || event.durationMs !== undefined && (!Number.isSafeInteger(event.durationMs) || event.durationMs < 0)
+    || event.outcome !== undefined && !['completed', 'failed'].includes(event.outcome)
+  ) {
+    throw new Error('Invalid provider routing evidence is malformed.')
+  }
+  if (event.executionMetadata !== undefined) validateProviderExecutionMetadata(event.executionMetadata, 'unknown')
+}
+
+function validateSafeMetadataNullable(value) {
+  return value === null || value === undefined || typeof value === 'string' && value.length <= 160 && SAFE_METADATA_VALUE_PATTERN.test(value)
+}
+
 function validateProviderRoutingEvent(event) {
   if (
     Object.keys(event).some((key) => ![
@@ -1627,12 +2568,28 @@ function validateProviderRoutingEvent(event) {
       'fallbackProviders', 'fallbackUsed', 'rateLimited', 'preferenceRequested',
       'preferenceHonored', 'providerSubmitted', 'visibleProof', 'limitWindow',
       'retryAfterSeconds', 'exclusions', 'attempts', 'outcome', 'observedAt', 'tokenEstimate',
+      'interactionId', 'requestRef', 'turnRef', 'startedAt', 'finishedAt', 'durationMs',
+      'executionMetadata', 'tools', 'toolResponseStatus', 'toolResponseNormalizationApplied',
     ].includes(key))
     ||
-    event.protocol !== revision.auditProtocol
+    event.scope === 'child' && !['action_batch', 'final', 'invalid_framing', 'invalid_json', 'invalid_response', 'unavailable'].includes(event.toolResponseStatus)
+    || event.toolResponseNormalizationApplied !== undefined && event.toolResponseNormalizationApplied !== null && typeof event.toolResponseNormalizationApplied !== 'boolean'
+    || event.protocol !== revision.auditProtocol
     || typeof event.observedAt !== 'string'
     || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(event.observedAt)
     || (event.scope !== 'parent' && event.scope !== 'child')
+    || typeof event.interactionId !== 'string'
+    || !/^(?:parent|child):[a-f0-9]{32}$/u.test(event.interactionId)
+    || event.requestRef !== undefined && event.requestRef !== null
+      && (typeof event.requestRef !== 'string' || !/^request:[a-f0-9]{32}$/u.test(event.requestRef))
+    || event.turnRef !== undefined && event.turnRef !== null
+      && (typeof event.turnRef !== 'string' || !/^turn:[a-f0-9]{32}$/u.test(event.turnRef))
+    || typeof event.startedAt !== 'string'
+    || !isAuditTimestamp(event.startedAt)
+    || typeof event.finishedAt !== 'string'
+    || !isAuditTimestamp(event.finishedAt)
+    || !Number.isSafeInteger(event.durationMs)
+    || event.durationMs < 0
     || (event.mode !== 'auto' && event.mode !== 'explicit')
     || typeof event.provider !== 'string'
     || !/^[a-z][a-z0-9-]{0,63}$/u.test(event.provider)
@@ -1718,10 +2675,172 @@ function validateProviderRoutingEvent(event) {
     || event.outcome === 'completed' && event.rateLimited
     || event.outcome === 'completed' && event.visibleProof !== null
     || event.rateLimited && (event.visibleProof === null || event.limitWindow === null)
+    || !validateTraceTools(event.tools)
   ) {
     throw new Error(`Provider routing audit event is invalid at sequence ${String(event.sequence)}.`)
   }
+  if (event.executionMetadata !== undefined) validateProviderExecutionMetadata(event.executionMetadata, event.provider)
   validateTokenEstimate(event)
+}
+
+function validateProviderExecutionMetadata(value, provider) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || Object.keys(value).some((key) => !['model', 'reasoningEffort', 'surface', 'observedAt', 'jobIds', 'jobs', 'submissions'].includes(key))
+    || !['model', 'reasoningEffort', 'surface'].every((key) => Object.hasOwn(value, key))
+    || value.observedAt !== undefined && !isAuditTimestamp(value.observedAt)
+    || !validateProviderMetadataChoice(value.model)
+    || !validateProviderMetadataChoice(value.reasoningEffort)
+    || !validateProviderMetadataChoice(value.surface, true)
+    || value.jobIds !== undefined && !validateProviderJobIds(value.jobIds)
+    || value.jobs !== undefined && !validateProviderJobs(value.jobs)
+    || value.submissions !== undefined && !validateProviderSubmissionObservations(value.submissions)
+  ) {
+    throw new Error(`Provider execution metadata is invalid for ${String(provider)}.`)
+  }
+}
+
+function validateProviderMetadataChoice(value, surface = false) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+    && sameStringSet(Object.keys(value), ['requested', 'observed'])
+    && validateProviderMetadataValue(value.requested, surface)
+    && validateProviderMetadataValue(value.observed, surface)
+}
+
+function validateProviderMetadataValue(value, surface) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  if (Object.keys(value).some((key) => !['availability', 'value', 'reason'].includes(key))) return false
+  if (!['observed', 'unknown'].includes(value.availability)) return false
+  if (value.value !== undefined && value.value !== null
+    && (typeof value.value !== 'string' || value.value.length < 1 || value.value.length > 160 || !SAFE_METADATA_VALUE_PATTERN.test(value.value))) return false
+  if (value.reason !== undefined && value.reason !== null
+    && (typeof value.reason !== 'string' || !/^[a-z][a-z0-9_-]{0,95}$/u.test(value.reason))) return false
+  if (value.availability === 'observed'
+    && (typeof value.value !== 'string' || surface && !['chat', 'work', 'unknown'].includes(value.value))) return false
+  if (value.availability === 'unknown' && value.value !== undefined && value.value !== null) return false
+  return true
+}
+
+function validateProviderSubmissionObservation(value) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+    && sameStringSet(Object.keys(value), ['protocol', 'observedAt', 'source', 'page', 'model', 'effort'])
+    && (value.protocol === null || value.protocol === 'tokenless.provider-submission-observation.v1')
+    && (value.observedAt === null || isAuditTimestamp(value.observedAt))
+    && (value.source === null || ['visible-provider-controls-before-submit', 'direct-protocol-no-visible-controls'].includes(value.source))
+    && value.page && typeof value.page === 'object' && !Array.isArray(value.page)
+    && sameStringSet(Object.keys(value.page), ['surface', 'origin'])
+    && ['chat', 'work', 'unknown'].includes(value.page.surface)
+    && (value.page.origin === null || typeof value.page.origin === 'string' && value.page.origin.length <= 256)
+    && validateRawProviderChoice(value.model, true)
+    && validateRawProviderChoice(value.effort, false)
+}
+
+function validateProviderJobIds(value) {
+  return Array.isArray(value)
+    && value.length >= 1
+    && value.length <= 2
+    && new Set(value).size === value.length
+    && value.every((jobId) => typeof jobId === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(jobId))
+}
+
+function validateProviderJobs(value) {
+  return Array.isArray(value)
+    && value.length <= 2
+    && value.every((job) => (
+      job && typeof job === 'object' && !Array.isArray(job)
+      && sameStringSet(Object.keys(job), ['jobId', 'availability', 'status', 'provider', 'providerSubmitted', 'submissionCount', 'reason', 'errorCode', 'errorClassification'])
+      && typeof job.jobId === 'string'
+      && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(job.jobId)
+      && ['observed', 'unknown'].includes(job.availability)
+      && (job.status === null || ['queued', 'running', 'waiting_for_user', 'succeeded', 'failed', 'canceled', 'cancelled'].includes(job.status))
+      && (job.provider === null || validateSafeMetadataNullable(job.provider))
+      && (job.providerSubmitted === null || typeof job.providerSubmitted === 'boolean')
+      && Number.isSafeInteger(job.submissionCount)
+      && job.submissionCount >= 0
+      && (job.errorCode === null || typeof job.errorCode === 'string' && /^[a-z][a-z0-9_-]{0,95}$/u.test(job.errorCode))
+      && [null, 'safe_pre_submit_provider_failure', 'ambiguous_external_state', 'post_submission_failure', 'user_resolvable_local_failure'].includes(job.errorClassification)
+      && (job.reason === null || typeof job.reason === 'string' && /^[a-z][a-z0-9_-]{0,95}$/u.test(job.reason))
+    ))
+}
+
+function validateProviderSubmissionObservations(value) {
+  return Array.isArray(value)
+    && value.length <= 128
+    && value.every((submission) => (
+      submission && typeof submission === 'object' && !Array.isArray(submission)
+      && sameStringSet(Object.keys(submission), ['jobId', 'provider', 'action', 'metadata', 'submissionObservation'])
+      && typeof submission.jobId === 'string'
+      && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(submission.jobId)
+      && (submission.provider === null || validateSafeMetadataNullable(submission.provider))
+      && submission.action === 'prompt.submit'
+      && validateProviderActionMetadata(submission.metadata)
+      && validateProviderSubmissionObservation(submission.submissionObservation)
+    ))
+}
+
+function validateProviderActionMetadata(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  if (Object.keys(value).some((key) => !['provider', 'actionIndex', 'startedAt', 'completedAt', 'durationMs', 'executionMode'].includes(key))) return false
+  return (value.provider === undefined || validateSafeMetadataNullable(value.provider))
+    && (value.actionIndex === undefined || Number.isSafeInteger(value.actionIndex) && value.actionIndex >= 0 && value.actionIndex <= 256)
+    && (value.startedAt === undefined || isAuditTimestamp(value.startedAt))
+    && (value.completedAt === undefined || isAuditTimestamp(value.completedAt))
+    && (value.durationMs === undefined || Number.isSafeInteger(value.durationMs) && value.durationMs >= 0)
+    && (value.executionMode === undefined || ['browser', 'direct'].includes(value.executionMode))
+}
+
+function validateRawProviderChoice(value, model) {
+  const expectedKeys = model
+    ? ['requestedLabel', 'observedLabel', 'status', 'source', 'reason', 'providerModelId', 'identityStatus']
+    : ['requestedLabel', 'observedLabel', 'status', 'source', 'reason']
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+    && sameStringSet(Object.keys(value), expectedKeys)
+    && (value.requestedLabel === null || validateSafeMetadataNullable(value.requestedLabel))
+    && (value.observedLabel === null || validateSafeMetadataNullable(value.observedLabel))
+    && ['observed', 'unknown'].includes(value.status)
+    && ['visible-provider-choice-inspect', 'not-observed'].includes(value.source)
+    && (value.reason === null || typeof value.reason === 'string' && /^[a-z][a-z0-9_-]{0,95}$/u.test(value.reason))
+    && (value.status === 'observed' ? value.observedLabel !== null : value.observedLabel === null)
+    && (!model || (
+      (value.providerModelId === null || validateSafeMetadataNullable(value.providerModelId))
+      && ['not-exposed', 'unknown'].includes(value.identityStatus)
+    ))
+}
+
+function validateTraceTools(value) {
+  if (!Array.isArray(value) || value.length > 64) return false
+  return value.every((tool) => (
+    tool && typeof tool === 'object' && !Array.isArray(tool)
+    && Object.keys(tool).every((key) => ['callId', 'toolName', 'interactionId', 'requested', 'returned', 'executed', 'outcome', 'exitCode', 'arguments', 'result', 'returnedAt', 'resultObservedAt'].includes(key))
+    && typeof tool.callId === 'string'
+    && /^[A-Za-z0-9._:-]{1,256}$/u.test(tool.callId)
+    && (tool.toolName === null || typeof tool.toolName === 'string')
+    && (tool.interactionId === null || typeof tool.interactionId === 'string')
+    && (tool.requested === null || typeof tool.requested === 'boolean')
+    && typeof tool.returned === 'boolean'
+    && typeof tool.executed === 'boolean'
+    && typeof tool.outcome === 'string'
+    && ['unknown', 'succeeded', 'failed'].includes(tool.outcome)
+    && (tool.exitCode === null || Number.isSafeInteger(tool.exitCode))
+    && validateDigestSummary(tool.arguments)
+    && validateDigestSummary(tool.result)
+    && (tool.returnedAt === undefined || isAuditTimestamp(tool.returnedAt))
+    && (tool.resultObservedAt === undefined || isAuditTimestamp(tool.resultObservedAt))
+  ))
+}
+
+function validateDigestSummary(value) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+    && ['observed', 'unknown'].includes(value.availability)
+    && (value.sha256 === undefined || value.sha256 === null || /^[a-f0-9]{64}$/u.test(value.sha256))
+    && (value.bytes === undefined || value.bytes === null || Number.isSafeInteger(value.bytes) && value.bytes >= 0)
+    && (value.characters === undefined || value.characters === null || Number.isSafeInteger(value.characters) && value.characters >= 0)
+    && (value.reason === undefined || value.reason === null || typeof value.reason === 'string')
+}
+
+function isAuditTimestamp(value) {
+  return typeof value === 'string'
+    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/u.test(value)
+    && Number.isFinite(Date.parse(value))
 }
 
 function validateTokenEstimate(event) {
@@ -1978,6 +3097,7 @@ function harborPrefix() {
 function harborEnvironment() {
   return {
     ...process.env,
+    TZ: 'UTC',
     PYTHONPATH: [root, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
   }
 }
@@ -2059,6 +3179,69 @@ async function rejectSymlinkComponents(baseDirectory, targetDirectory, optionNam
 
 async function refuseExisting(target) {
   if (await exists(target)) throw new Error(`Refusing to overwrite existing benchmark evidence: ${target}`)
+}
+
+async function optionalFileEvidence(filePath, label) {
+  if (typeof filePath !== 'string' || filePath.length === 0) {
+    return { availability: 'unavailable', reason: `${label.replace(/\s+/gu, '_')}_missing`, path: null, sha256: null, bytes: null }
+  }
+  try {
+    const bytes = await fs.readFile(filePath)
+    return {
+      availability: 'observed',
+      path: path.relative(root, filePath).startsWith('..') ? path.basename(filePath) : path.relative(root, filePath).split(path.sep).join('/'),
+      sha256: sha256Value(bytes),
+      bytes: bytes.byteLength,
+    }
+  } catch (error) {
+    return {
+      availability: 'unavailable',
+      reason: safeErrorCode(error, `${label.replace(/\s+/gu, '_')}_unavailable`),
+      path: path.basename(filePath),
+      sha256: null,
+      bytes: null,
+    }
+  }
+}
+
+function sha256Value(value) {
+  return `sha256:${createHash('sha256').update(value).digest('hex')}`
+}
+
+function canonicalJson(value) {
+  return JSON.stringify(sortJsonValue(value))
+}
+
+function sortJsonValue(value) {
+  if (Array.isArray(value)) return value.map(sortJsonValue)
+  if (!value || typeof value !== 'object') return value
+  return Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, entry]) => [key, sortJsonValue(entry)]))
+}
+
+function splitNullEntries(value) {
+  return String(value).split('\0').filter((entry) => entry.length > 0)
+}
+
+function safeLoopbackOrigin(value) {
+  if (typeof value !== 'string') return null
+  try {
+    const parsed = new URL(value)
+    if (parsed.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname)) return null
+    return `${parsed.protocol}//${parsed.hostname}${parsed.port ? `:${parsed.port}` : ''}`
+  } catch {
+    return null
+  }
+}
+
+function safeErrorCode(error, fallback) {
+  const code = typeof error?.code === 'string' ? error.code.toLowerCase() : ''
+  return /^[a-z0-9_-]{1,64}$/u.test(code) ? code : fallback
+}
+
+function sortedStrings(value) {
+  return Array.isArray(value)
+    ? value.filter((entry) => typeof entry === 'string').sort()
+    : []
 }
 
 async function exists(target) {

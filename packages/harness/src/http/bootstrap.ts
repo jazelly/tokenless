@@ -316,7 +316,7 @@ function assertV0BootstrapText(value: string) {
   }
 }
 
-function normalizeProviderResponse(value: string) {
+export function normalizeProviderResponse(value: string) {
   if (Buffer.byteLength(value, 'utf8') > MAX_PROVIDER_RESPONSE_BYTES) {
     throw new HarnessSkillError('harness_response_too_large', `Harness response must be at most ${MAX_PROVIDER_RESPONSE_BYTES} bytes.`)
   }

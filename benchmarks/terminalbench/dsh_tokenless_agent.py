@@ -16,7 +16,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, override
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 from harbor.agents.installed.base import (
     BaseInstalledAgent,
@@ -51,6 +51,17 @@ PROVIDER_ATTACHMENT_REF_PATTERN = re.compile(r"^attachment:[a-f0-9]{32}$")
 PROVIDER_TURN_REF_PATTERN = re.compile(r"^turn:[a-f0-9]{32}$")
 PROVIDER_CONVERSATION_REF_PATTERN = re.compile(r"^conversation:[a-f0-9]{32}$")
 PROVIDER_REQUEST_REF_PATTERN = re.compile(r"^request:[a-f0-9]{32}$")
+TOOL_CALL_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,256}$")
+SAFE_METADATA_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._:/+\-]{0,159}$")
+SAFE_REASON_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,95}$")
+PROVIDER_JOB_IDS_HEADER = "X-Tokenless-Route-Job-Ids"
+PROVIDER_JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+AUDIT_TIMESTAMP_PATTERN = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$"
+)
+PROVIDER_SUBMISSION_OBSERVATION_PROTOCOL = (
+    "tokenless.provider-submission-observation.v1"
+)
 WEB_AI_INTERACTION_PROTOCOL = "tokenless.internal.web-ai-interaction-protocol/v0"
 REQUIRED_CAPABILITIES = ("conversation.chat", "file.upload", "document.input")
 TURN_LIFECYCLES = {
@@ -147,6 +158,13 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         self._provider_turn_request_refs: dict[str, str] = {}
         self._attachment_text: dict[str, str] = {}
         self._child_turn_input_text: dict[str, str] = {}
+        self._parent_interactions: dict[str, dict[str, Any]] = {}
+        self._parent_interaction_events: dict[str, int] = {}
+        self._child_interactions: dict[str, dict[str, Any]] = {}
+        self._tool_calls: dict[tuple[str, str | None, str], dict[str, Any]] = {}
+        self._child_result_interaction_id: str | None = None
+        self._attachment_evidence: dict[str, dict[str, Any]] = {}
+        self._provider_attachment_jobs: set[str] = set()
         self._subagent_dispatch_lock = threading.Lock()
         self._subagent_dispatch_state = "available"
         self._subagent_dispatch_completed_monotonic: float | None = None
@@ -176,34 +194,797 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
                 and time.monotonic() - completed_at >= FINAL_ONLY_AFTER_SECONDS
             )
 
-    def record_event(self, value: dict[str, Any]) -> None:
+    def record_event(self, value: dict[str, Any]) -> int:
         with self._audit_lock:
+            sequence = len(self._audit_events) + 1
             self._audit_events.append(
                 {
                     "protocol": AUDIT_PROTOCOL,
-                    "sequence": len(self._audit_events) + 1,
+                    "sequence": sequence,
                     **value,
                 }
             )
+            return sequence
 
     def audit_events(self) -> list[dict[str, Any]]:
         with self._audit_lock:
             return [dict(event) for event in self._audit_events]
 
-    def record_parent_completion_request(self) -> tuple[int, int]:
+    @staticmethod
+    def _observed_at() -> str:
+        return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace(
+            "+00:00", "Z"
+        )
+
+    @staticmethod
+    def _interaction_id(scope: str) -> str:
+        if scope not in {"parent", "child"}:
+            raise ValueError("interaction scope is invalid")
+        return f"{scope}:{secrets.token_hex(16)}"
+
+    @staticmethod
+    def _duration_ms(started_monotonic: float, finished_monotonic: float) -> int:
+        return max(0, round((finished_monotonic - started_monotonic) * 1000))
+
+    @staticmethod
+    def _digest_summary(value: Any) -> dict[str, Any]:
+        """Describe a value without retaining its prompt, arguments, or result text."""
+        if isinstance(value, bytes):
+            payload = value
+            characters = None
+        elif isinstance(value, str):
+            payload = value.encode("utf-8")
+            characters = len(value)
+        else:
+            payload = json.dumps(
+                value, separators=(",", ":"), ensure_ascii=False
+            ).encode("utf-8")
+            characters = None
+        result: dict[str, Any] = {
+            "availability": "observed",
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "bytes": len(payload),
+        }
+        if characters is not None:
+            result["characters"] = characters
+        return result
+
+    @staticmethod
+    def _unknown(reason: str) -> dict[str, Any]:
+        return {"availability": "unknown", "reason": reason}
+
+    @staticmethod
+    def _safe_metadata(value: Any) -> str | None:
+        return (
+            value.strip()
+            if isinstance(value, str)
+            and value.strip()
+            and SAFE_METADATA_PATTERN.fullmatch(value.strip())
+            else None
+        )
+
+    @staticmethod
+    def _safe_reason(value: Any) -> str | None:
+        return (
+            value.strip()
+            if isinstance(value, str)
+            and value.strip()
+            and SAFE_REASON_PATTERN.fullmatch(value.strip())
+            else None
+        )
+
+    @classmethod
+    def _safe_origin(cls, value: Any) -> str | None:
+        if not isinstance(value, str):
+            return None
+        parsed = urlsplit(value.strip())
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path not in {"", "/"}
+            or parsed.query
+            or parsed.fragment
+        ):
+            return None
+        return cls._safe_metadata(
+            f"{parsed.scheme}://{parsed.netloc}"
+        )
+
+    @classmethod
+    def _provider_metadata_choice(
+        cls,
+        value: Any,
+        *,
+        requested_key: str,
+        observed_key: str,
+        unknown_reason: str,
+    ) -> dict[str, Any]:
+        requested = cls._safe_metadata(value.get(requested_key)) if isinstance(value, dict) else None
+        observed = (
+            cls._safe_metadata(value.get(observed_key))
+            if isinstance(value, dict) and value.get("status") == "observed"
+            else None
+        )
+        reason = cls._safe_reason(value.get("reason")) if isinstance(value, dict) else None
+        return {
+            "requested": (
+                {"availability": "observed", "value": requested}
+                if requested is not None
+                else cls._unknown(f"{unknown_reason}_requested")
+            ),
+            "observed": (
+                {"availability": "observed", "value": observed}
+                if observed is not None
+                else cls._unknown(reason or f"{unknown_reason}_observed")
+            ),
+        }
+
+    @classmethod
+    def _provider_raw_choice_observation(
+        cls, value: Any, *, model: bool = False
+    ) -> dict[str, Any]:
+        value = value if isinstance(value, dict) else {}
+        status = value.get("status") if value.get("status") in {"observed", "unknown"} else "unknown"
+        source = value.get("source") if value.get("source") in {
+            "visible-provider-choice-inspect",
+            "not-observed",
+        } else "not-observed"
+        requested = cls._safe_metadata(value.get("requestedLabel"))
+        observed = cls._safe_metadata(value.get("observedLabel")) if status == "observed" else None
+        result: dict[str, Any] = {
+            "requestedLabel": requested,
+            "observedLabel": observed,
+            "status": status,
+            "source": source,
+            "reason": cls._safe_reason(value.get("reason")),
+        }
+        if model:
+            identity_status = (
+                value.get("identityStatus")
+                if value.get("identityStatus") in {"not-exposed", "unknown"}
+                else "unknown"
+            )
+            result["providerModelId"] = cls._safe_metadata(value.get("providerModelId"))
+            result["identityStatus"] = identity_status
+        return result
+
+    @classmethod
+    def _empty_provider_execution_metadata(cls, reason: str) -> dict[str, Any]:
+        return {
+            "model": {
+                "requested": cls._unknown(f"{reason}_model_requested"),
+                "observed": cls._unknown(f"{reason}_model_observed"),
+            },
+            "reasoningEffort": {
+                "requested": cls._unknown(f"{reason}_effort_requested"),
+                "observed": cls._unknown(f"{reason}_effort_observed"),
+            },
+            "surface": {
+                "requested": cls._unknown(f"{reason}_surface_requested"),
+                "observed": cls._unknown(f"{reason}_surface_observed"),
+            },
+            "jobs": [],
+            "submissions": [],
+        }
+
+    @classmethod
+    def _submission_observation_metadata(
+        cls, observation: Any
+    ) -> dict[str, Any] | None:
+        if not isinstance(observation, dict):
+            return None
+        model = observation.get("model")
+        effort = observation.get("effort")
+        page = observation.get("page")
+        metadata = {
+            "model": cls._provider_metadata_choice(
+                model,
+                requested_key="requestedLabel",
+                observed_key="observedLabel",
+                unknown_reason="provider_model_observation",
+            ),
+            "reasoningEffort": cls._provider_metadata_choice(
+                effort,
+                requested_key="requestedLabel",
+                observed_key="observedLabel",
+                unknown_reason="provider_effort_observation",
+            ),
+            "surface": {
+                "requested": cls._unknown("provider_surface_request_not_applicable"),
+                "observed": (
+                    {"availability": "observed", "value": page.get("surface")}
+                    if isinstance(page, dict)
+                    and page.get("surface") in {"chat", "work", "unknown"}
+                    else cls._unknown("provider_surface_observation")
+                ),
+            },
+        }
+        observed_at = observation.get("observedAt")
+        if isinstance(observed_at, str) and AUDIT_TIMESTAMP_PATTERN.fullmatch(observed_at):
+            metadata["observedAt"] = observed_at
+        metadata["submissionObservation"] = {
+            "protocol": (
+                PROVIDER_SUBMISSION_OBSERVATION_PROTOCOL
+                if observation.get("protocol") == PROVIDER_SUBMISSION_OBSERVATION_PROTOCOL
+                else None
+            ),
+            "observedAt": observed_at if isinstance(observed_at, str) and AUDIT_TIMESTAMP_PATTERN.fullmatch(observed_at) else None,
+            "source": (
+                observation.get("source")
+                if observation.get("source") in {
+                    "visible-provider-controls-before-submit",
+                    "direct-protocol-no-visible-controls",
+                }
+                else None
+            ),
+            "page": {
+                "surface": (
+                    page.get("surface")
+                    if isinstance(page, dict) and page.get("surface") in {"chat", "work", "unknown"}
+                    else "unknown"
+                ),
+                "origin": cls._safe_origin(page.get("origin") if isinstance(page, dict) else None),
+            },
+            "model": cls._provider_raw_choice_observation(model, model=True),
+            "effort": cls._provider_raw_choice_observation(effort),
+        }
+        return metadata
+
+    @classmethod
+    def _provider_action_metadata(cls, value: Any) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            return {}
+        metadata: dict[str, Any] = {}
+        provider = cls._safe_metadata(value.get("provider"))
+        if provider is not None:
+            metadata["provider"] = provider
+        action_index = value.get("actionIndex")
+        if isinstance(action_index, int) and not isinstance(action_index, bool) and 0 <= action_index <= 256:
+            metadata["actionIndex"] = action_index
+        for source_key, target_key in (
+            ("startedAt", "startedAt"),
+            ("completedAt", "completedAt"),
+        ):
+            timestamp = value.get(source_key)
+            if isinstance(timestamp, str) and AUDIT_TIMESTAMP_PATTERN.fullmatch(timestamp):
+                metadata[target_key] = timestamp
+        duration = value.get("durationMs")
+        if isinstance(duration, int) and not isinstance(duration, bool) and duration >= 0:
+            metadata["durationMs"] = duration
+        execution_mode = value.get("executionMode")
+        if execution_mode in {"browser", "direct"}:
+            metadata["executionMode"] = execution_mode
+        return metadata
+
+    @classmethod
+    def _submission_observations_from_job(
+        cls, job_id: str, job: Any
+    ) -> list[dict[str, Any]]:
+        if not isinstance(job, dict):
+            return []
+        result_json = job.get("result_json")
+        if not isinstance(result_json, dict):
+            return []
+        responses = result_json.get("responses")
+        if not isinstance(responses, list):
+            return []
+        job_provider = cls._safe_metadata(result_json.get("provider"))
+        observations: list[dict[str, Any]] = []
+        for response in responses[:64]:
+            if not isinstance(response, dict) or response.get("action") != "prompt.submit":
+                continue
+            result = response.get("result")
+            if not isinstance(result, dict):
+                continue
+            candidate = cls._submission_observation_metadata(result.get("submissionObservation"))
+            if candidate is None:
+                continue
+            action_metadata = cls._provider_action_metadata(response.get("metadata"))
+            provider = (
+                cls._safe_metadata(response.get("provider"))
+                or cls._safe_metadata(action_metadata.get("provider"))
+                or job_provider
+            )
+            observations.append(
+                {
+                    "jobId": job_id,
+                    "provider": provider,
+                    "action": "prompt.submit",
+                    "metadata": action_metadata,
+                    "submissionObservation": candidate["submissionObservation"],
+                }
+            )
+        return observations
+
+    def _read_provider_job(self, job_id: str) -> dict[str, Any] | None:
+        """Read the local terminal job while retaining only an in-memory JSON value."""
+        connection = http.client.HTTPConnection(
+            self.daemon_host,
+            self.daemon_port,
+            timeout=30,
+        )
+        try:
+            path = f"/v1/private/jobs/{quote(job_id, safe='')}"
+            connection.request(
+                "GET",
+                path,
+                headers={
+                    "Authorization": f"Bearer {self.control_token}",
+                    "Accept": "application/json",
+                },
+            )
+            response = connection.getresponse()
+            content_length = response.getheader("Content-Length")
+            if content_length is not None:
+                try:
+                    declared_length = int(content_length)
+                except ValueError:
+                    return None
+                if declared_length < 0 or declared_length > MAX_BRIDGE_BODY_BYTES:
+                    return None
+            body = response.read(MAX_BRIDGE_BODY_BYTES + 1)
+            if response.status != 200 or len(body) > MAX_BRIDGE_BODY_BYTES:
+                return None
+            value = json.loads(body)
+            return value if isinstance(value, dict) else None
+        except (OSError, http.client.HTTPException, UnicodeDecodeError, json.JSONDecodeError):
+            return None
+        finally:
+            connection.close()
+
+    @classmethod
+    def _provider_job_record(
+        cls,
+        job_id: str,
+        job: dict[str, Any] | None,
+        observations: list[dict[str, Any]],
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        if job is None:
+            return {
+                "jobId": job_id,
+                "availability": "unknown",
+                "status": None,
+                "provider": None,
+                "providerSubmitted": None,
+                "submissionCount": 0,
+                "reason": reason or "provider_job_metadata_unavailable",
+                "errorCode": None,
+                "errorClassification": None,
+            }
+        error = job.get("error_json")
+        error = error if isinstance(error, dict) else {}
+        details = error.get("details")
+        details = details if isinstance(details, dict) else {}
+        status = job.get("status")
+        if status not in {"queued", "running", "waiting_for_user", "succeeded", "failed", "canceled", "cancelled"}:
+            status = None
+        error_code = cls._safe_reason(error.get("code"))
+        classification = details.get("classification")
+        if classification not in {
+            "safe_pre_submit_provider_failure", "ambiguous_external_state",
+            "post_submission_failure", "user_resolvable_local_failure",
+        }:
+            classification = None
+        if status == "failed" and (error_code is None or classification is None):
+            reason = "provider_job_error_metadata_unavailable"
+        provider = cls._safe_metadata(job.get("provider"))
+        submitted_at = job.get("provider_submitted_at")
+        provider_submitted = (
+            bool(submitted_at)
+            if submitted_at is None or isinstance(submitted_at, str)
+            else None
+        )
+        if not observations and reason is None:
+            reason = (
+                "prompt_submit_observation_missing"
+                if provider_submitted is True
+                else "provider_submission_observation_unavailable"
+            )
+        return {
+            "jobId": job_id,
+            "availability": "observed",
+            "status": status,
+            "provider": provider,
+            "providerSubmitted": provider_submitted,
+            "submissionCount": len(observations),
+            "reason": reason,
+            "errorCode": error_code,
+            "errorClassification": classification,
+        }
+
+    def _provider_execution_metadata(
+        self, upstream: http.client.HTTPResponse
+    ) -> dict[str, Any]:
+        """Resolve provider-visible model/effort/surface from the exact job contract."""
+        header = upstream.getheader(PROVIDER_JOB_IDS_HEADER)
+        if not isinstance(header, str) or not header.strip():
+            return self._empty_provider_execution_metadata("provider_job_ids_unavailable")
+        job_ids = [value.strip() for value in header.split(",")]
+        if (
+            not 1 <= len(job_ids) <= 2
+            or any(PROVIDER_JOB_ID_PATTERN.fullmatch(value) is None for value in job_ids)
+            or len(set(job_ids)) != len(job_ids)
+        ):
+            return self._empty_provider_execution_metadata("provider_job_ids_invalid")
+        observations: list[dict[str, Any]] = []
+        jobs: list[dict[str, Any]] = []
+        for job_id in job_ids:
+            job = self._read_provider_job(job_id)
+            if job is None:
+                jobs.append(self._provider_job_record(job_id, None, []))
+                continue
+            self._record_provider_job_uploads(job_id, job)
+            job_observations = self._submission_observations_from_job(job_id, job)
+            observations.extend(job_observations)
+            jobs.append(self._provider_job_record(job_id, job, job_observations))
+        if not observations:
+            metadata = self._empty_provider_execution_metadata(
+                "provider_submission_observation_unavailable"
+            )
+        else:
+            selected = observations[-1]["submissionObservation"]
+            metadata = {
+                "model": self._provider_metadata_choice(
+                    selected.get("model"),
+                    requested_key="requestedLabel",
+                    observed_key="observedLabel",
+                    unknown_reason="provider_model_observation",
+                ),
+                "reasoningEffort": self._provider_metadata_choice(
+                    selected.get("effort"),
+                    requested_key="requestedLabel",
+                    observed_key="observedLabel",
+                    unknown_reason="provider_effort_observation",
+                ),
+                "surface": {
+                    "requested": self._unknown("provider_surface_request_not_applicable"),
+                    "observed": (
+                        {"availability": "observed", "value": selected["page"]["surface"]}
+                        if selected.get("page", {}).get("surface") in {"chat", "work", "unknown"}
+                        else self._unknown("provider_surface_observation")
+                    ),
+                },
+            }
+            observed_at = selected.get("observedAt")
+            if isinstance(observed_at, str) and AUDIT_TIMESTAMP_PATTERN.fullmatch(observed_at):
+                metadata["observedAt"] = observed_at
+        metadata["jobIds"] = job_ids
+        metadata["jobs"] = jobs
+        metadata["submissions"] = observations
+        return metadata
+
+    @staticmethod
+    def _tool_name(value: Any) -> str | None:
+        if not isinstance(value, str):
+            return None
+        value = value.strip()
+        return value if 1 <= len(value) <= 160 and SAFE_METADATA_PATTERN.fullmatch(value) else None
+
+    @staticmethod
+    def _tool_call_id(value: Any) -> str | None:
+        if not isinstance(value, str):
+            return None
+        return value if TOOL_CALL_ID_PATTERN.fullmatch(value) else None
+
+    @classmethod
+    def _explicit_tool_choice(cls, value: Any) -> tuple[str | None, bool | None]:
+        """Return (named tool, requested flag); null means the provider chose."""
+        if value == "none":
+            return None, False
+        if value == "auto" or value == "required" or value is None:
+            return None, None
+        if not isinstance(value, dict) or value.get("type") != "function":
+            return None, None
+        function = value.get("function")
+        name = cls._tool_name(function.get("name") if isinstance(function, dict) else None)
+        return name, name is not None
+
+    def _tool_record(
+        self,
+        scope: str,
+        call_id: str,
+        tool_name: str | None = None,
+        interaction_id: str | None = None,
+    ) -> dict[str, Any]:
+        if scope not in {"parent", "child"}:
+            raise ValueError("tool interaction scope is invalid")
+        # Child call IDs are unique within one action batch, not the whole run.
+        key = (scope, interaction_id if scope == "child" else None, call_id)
+        current = self._tool_calls.get(key)
+        if current is None:
+            current = {
+                "scope": scope,
+                "callId": call_id,
+                "toolName": tool_name,
+                "interactionId": interaction_id,
+                "requested": None,
+                "returned": False,
+                "executed": False,
+                "outcome": "unknown",
+                "exitCode": None,
+                "arguments": self._unknown("tool_arguments_not_observed"),
+                "result": self._unknown("tool_result_not_observed"),
+            }
+            self._tool_calls[key] = current
+        if tool_name is not None and current.get("toolName") is None:
+            current["toolName"] = tool_name
+        if interaction_id is not None and current.get("interactionId") is None:
+            current["interactionId"] = interaction_id
+        return current
+
+    @classmethod
+    def _tool_record_view(cls, record: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "callId": record["callId"],
+            "toolName": record.get("toolName"),
+            "interactionId": record.get("interactionId"),
+            "requested": record.get("requested"),
+            "returned": bool(record.get("returned")),
+            "executed": bool(record.get("executed")),
+            "outcome": record.get("outcome", "unknown"),
+            "exitCode": record.get("exitCode"),
+            "arguments": record.get("arguments", cls._unknown("tool_arguments_not_observed")),
+            "result": record.get("result", cls._unknown("tool_result_not_observed")),
+            **{
+                key: record[key]
+                for key in ("returnedAt", "resultObservedAt")
+                if key in record
+            },
+        }
+
+    def _observe_tool_result(
+        self,
+        scope: str,
+        call_id: str,
+        result: Any,
+        observed_at: str,
+        interaction_id: str | None = None,
+    ) -> None:
+        safe_call_id = self._tool_call_id(call_id)
+        if safe_call_id is None:
+            return
+        record = self._tool_record(scope, safe_call_id, interaction_id=interaction_id)
+        if not record["executed"]:
+            record["executed"] = True
+            # This timestamp is when the bridge observed the provider result;
+            # it is not a claim about the tool process's own execution time.
+            record["resultObservedAt"] = observed_at
+            record["result"] = self._digest_summary(result)
+        if isinstance(result, dict):
+            status = result.get("status")
+            if status in {"succeeded", "failed"}:
+                record["outcome"] = status
+            elif result.get("error") is not None or result.get("code") in {
+                "harness_tool_execution_failed",
+                "harness_tool_arguments_invalid",
+            }:
+                record["outcome"] = "failed"
+            content = result.get("content")
+            exit_source = content if isinstance(content, dict) else result
+            for key in ("exitCode", "exit_code"):
+                exit_code = exit_source.get(key)
+                if isinstance(exit_code, int) and not isinstance(exit_code, bool):
+                    record["exitCode"] = exit_code
+                    break
+        elif isinstance(result, str):
+            # Plain provider tool results do not expose a trustworthy process exit code.
+            record["outcome"] = "unknown"
+        self._refresh_tool_evidence_events(record)
+
+    def _refresh_tool_evidence_events(self, record: dict[str, Any]) -> None:
+        interaction_id = record.get("interactionId")
+        if not isinstance(interaction_id, str):
+            return
+        tools = [
+            self._tool_record_view(candidate)
+            for candidate in self._tool_calls.values()
+            if candidate.get("interactionId") == interaction_id
+        ]
+        with self._audit_lock:
+            for event in self._audit_events:
+                if event.get("interactionId") == interaction_id and "tools" in event:
+                    event["tools"] = tools
+
+    def _observe_parent_request_messages(
+        self,
+        value: dict[str, Any],
+        interaction_id: str,
+        observed_at: str,
+        requested_tool: str | None,
+        requested_flag: bool | None,
+    ) -> None:
+        messages = value.get("messages")
+        if not isinstance(messages, list):
+            return
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            role = message.get("role")
+            if role == "tool":
+                call_id = self._tool_call_id(message.get("tool_call_id"))
+                if call_id is None:
+                    continue
+                self._observe_tool_result(
+                    "parent",
+                    call_id,
+                    message.get("content"),
+                    observed_at,
+                    interaction_id=interaction_id,
+                )
+                continue
+            if role != "assistant" or not isinstance(message.get("tool_calls"), list):
+                continue
+            for call in message["tool_calls"]:
+                if not isinstance(call, dict):
+                    continue
+                call_id = self._tool_call_id(call.get("id"))
+                function = call.get("function")
+                if call_id is None or not isinstance(function, dict):
+                    continue
+                tool_name = self._tool_name(function.get("name"))
+                record = self._tool_record("parent", call_id, tool_name, interaction_id)
+                if not record["returned"]:
+                    record["returned"] = True
+                    record.setdefault("returnedAt", observed_at)
+                    record["requested"] = (
+                        requested_flag
+                        if requested_tool is None or tool_name == requested_tool
+                        else False
+                    )
+                    arguments = function.get("arguments")
+                    if isinstance(arguments, str):
+                        record["arguments"] = self._digest_summary(arguments)
+
+    def _record_parent_response_tools(
+        self,
+        interaction_id: str,
+        body: bytes,
+        requested_tool: str | None,
+        requested_flag: bool | None,
+        observed_at: str,
+    ) -> list[dict[str, Any]]:
+        calls = self._completion_tool_calls(body)
+        for call in calls:
+            record = self._tool_record(
+                "parent", call["callId"], call["toolName"], interaction_id
+            )
+            record["returned"] = True
+            record.setdefault("returnedAt", observed_at)
+            record["requested"] = (
+                requested_flag
+                if requested_tool is None or call["toolName"] == requested_tool
+                else False
+            )
+            record["arguments"] = call["arguments"]
+        return [
+            self._tool_record_view(record)
+            for record in self._tool_calls.values()
+            if record.get("interactionId") == interaction_id
+        ]
+
+    def _record_child_response_tools(
+        self, turn_ref: str, body: bytes, observed_at: str
+    ) -> list[dict[str, Any]]:
+        interaction_id = f"child:{turn_ref.removeprefix('turn:')}"
+        output_text = self._provider_turn_output_text(body)
+        value: dict[str, Any] = {"status": "unavailable", "normalizationApplied": None}
+        if output_text:
+            try:
+                completed = subprocess.run(
+                    [self.token_estimator_node, str(Path(self.token_estimator_script).with_name("provider_response_metadata.mjs"))],
+                    input=output_text, text=True, capture_output=True, timeout=20, check=False,
+                )
+                parsed = json.loads(completed.stdout) if completed.returncode == 0 else None
+                if isinstance(parsed, dict):
+                    value = parsed
+            except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+                pass
+        status = value.get("status", "unavailable")
+        interaction = self._child_interactions.get(turn_ref)
+        if interaction is not None:
+            interaction["toolResponseStatus"] = status
+            interaction["toolResponseNormalizationApplied"] = value.get("normalizationApplied")
+        if status != "action_batch":
+            return []
+        self._child_result_interaction_id = interaction_id
+        calls = value.get("calls")
+        if isinstance(calls, list):
+            for call in calls:
+                if not isinstance(call, dict):
+                    continue
+                call_id = self._tool_call_id(call.get("id"))
+                tool_name = self._tool_name(call.get("tool"))
+                if call_id is None:
+                    continue
+                record = self._tool_record("child", call_id, tool_name, interaction_id)
+                record["returned"] = True
+                record.setdefault("returnedAt", observed_at)
+                record["arguments"] = call["arguments"]
+                record["requested"] = None
+        return [
+            self._tool_record_view(record)
+            for record in self._tool_calls.values()
+            if record.get("interactionId") == interaction_id
+        ]
+
+    def _record_child_result_attachment(self, body: str, observed_at: str) -> None:
+        try:
+            value = json.loads(body)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return
+        if not isinstance(value, dict) or value.get("kind") != "action_batch_result":
+            return
+        results = value.get("callResults")
+        if not isinstance(results, list):
+            return
+        # The continuation carries results for the previous child action batch.
+        # This bridge permits one serial child chain; IDs belong to its preceding batch.
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+            call_id = self._tool_call_id(result.get("id"))
+            if call_id is None:
+                continue
+            self._observe_tool_result(
+                "child", call_id, result, observed_at,
+                interaction_id=self._child_result_interaction_id,
+            )
+
+    def record_parent_completion_request(self, body: bytes | None) -> tuple[int, int]:
+        interaction_id = self._interaction_id("parent")
+        started_at = self._observed_at()
+        started_monotonic = time.monotonic()
+        request_value: dict[str, Any] = {}
+        try:
+            parsed = self._json_object(body)
+            request_value = parsed
+        except ValueError:
+            # The normal request validator will report the malformed request. Keep
+            # the audit event metadata-only and explicit rather than retaining it.
+            request_value = {}
+        requested_tool, requested_flag = self._explicit_tool_choice(
+            request_value.get("tool_choice")
+        )
         with self._audit_lock:
             self._parent_completion_ordinal += 1
             ordinal = self._parent_completion_ordinal
-            self._audit_events.append(
-                {
+            event = {
                     "protocol": AUDIT_PROTOCOL,
                     "sequence": len(self._audit_events) + 1,
                     "type": "api.completion.request",
                     "ordinal": ordinal,
                     "forcedSubagent": False,
+                    "interactionId": interaction_id,
+                    "startedAt": started_at,
+                    "requestedModel": self._safe_metadata(request_value.get("model")),
+                    "requestedReasoningEffort": self._safe_metadata(request_value.get("reasoning_effort")),
+                    "requestedTool": requested_tool,
+                    "requestedToolStatus": requested_flag,
+                    "tools": [],
                 }
-            )
-            return len(self._audit_events), ordinal
+            self._audit_events.append(event)
+            sequence = len(self._audit_events)
+            self._parent_interactions[interaction_id] = {
+                "interactionId": interaction_id,
+                "ordinal": ordinal,
+                "startedAt": started_at,
+                "startedMonotonic": started_monotonic,
+                "requestedTool": requested_tool,
+                "requestedToolStatus": requested_flag,
+                "eventSequence": sequence,
+            }
+            self._parent_interaction_events[interaction_id] = sequence
+        self._observe_parent_request_messages(
+            request_value,
+            interaction_id,
+            started_at,
+            requested_tool,
+            requested_flag,
+        )
+        return sequence, ordinal
 
     def mark_parent_completion_forced(self, sequence: int) -> None:
         with self._audit_lock:
@@ -216,6 +997,80 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
                 raise RuntimeError("parent completion audit reference is invalid")
             event["forcedSubagent"] = True
 
+    def refresh_parent_completion_request(
+        self, sequence: int, body: bytes | None
+    ) -> None:
+        with self._audit_lock:
+            if sequence < 1 or sequence > len(self._audit_events):
+                raise ValueError("parent completion audit reference is invalid")
+            event = self._audit_events[sequence - 1]
+            interaction_id = event.get("interactionId")
+            if (
+                event.get("type") != "api.completion.request"
+                or not isinstance(interaction_id, str)
+            ):
+                raise ValueError("parent completion audit reference is invalid")
+        request_value = self._json_object(body)
+        requested_tool, requested_flag = self._explicit_tool_choice(
+            request_value.get("tool_choice")
+        )
+        with self._audit_lock:
+            event = self._audit_events[sequence - 1]
+            event["requestedModel"] = self._safe_metadata(request_value.get("model"))
+            event["requestedReasoningEffort"] = self._safe_metadata(
+                request_value.get("reasoning_effort")
+            )
+            event["requestedTool"] = requested_tool
+            event["requestedToolStatus"] = requested_flag
+            interaction = self._parent_interactions.get(interaction_id)
+            if interaction is not None:
+                interaction["requestedTool"] = requested_tool
+                interaction["requestedToolStatus"] = requested_flag
+        self._observe_parent_request_messages(
+            request_value,
+            interaction_id,
+            self._observed_at(),
+            requested_tool,
+            requested_flag,
+        )
+
+    def parent_interaction_id(self, sequence: int | None) -> str | None:
+        if sequence is None:
+            return None
+        with self._audit_lock:
+            if sequence < 1 or sequence > len(self._audit_events):
+                return None
+            value = self._audit_events[sequence - 1].get("interactionId")
+            return value if isinstance(value, str) else None
+
+    def record_parent_transport_failure(
+        self, sequence: int | None, reason: str
+    ) -> None:
+        if sequence is None:
+            return
+        interaction_id = self.parent_interaction_id(sequence)
+        if interaction_id is None:
+            return
+        finished_at = self._observed_at()
+        interaction = self._parent_interactions.get(interaction_id)
+        if interaction is None:
+            return
+        finished_monotonic = time.monotonic()
+        interaction["finishedAt"] = finished_at
+        interaction["durationMs"] = self._duration_ms(
+            interaction["startedMonotonic"], finished_monotonic
+        )
+        interaction["outcome"] = "failed"
+        interaction["failureReason"] = reason
+        with self._audit_lock:
+            event = self._audit_events[sequence - 1]
+            if event.get("interactionId") != interaction_id:
+                return
+            event["finishedAt"] = finished_at
+            event["durationMs"] = interaction["durationMs"]
+            event["outcome"] = "failed"
+            event["failureReason"] = reason
+
     def mark_parent_completion_final_only(self, sequence: int) -> None:
         with self._audit_lock:
             event = self._audit_events[sequence - 1]
@@ -226,15 +1081,274 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
                 raise RuntimeError("parent completion audit reference is invalid")
             event["finalOnly"] = True
 
-    def record_child_turn_started(self, mode: str) -> None:
-        self.record_event({"type": "child.turn.started", "mode": mode})
+    def _complete_parent_interaction(
+        self,
+        interaction_id: str | None,
+        body: bytes,
+        outcome: str,
+        finished_at: str,
+        finished_monotonic: float,
+    ) -> list[dict[str, Any]]:
+        outcome = "succeeded" if outcome == "completed" else "failed"
+        if interaction_id is None:
+            return []
+        interaction = self._parent_interactions.get(interaction_id)
+        if interaction is None:
+            return []
+        tools = self._record_parent_response_tools(
+            interaction_id,
+            body,
+            interaction.get("requestedTool"),
+            interaction.get("requestedToolStatus"),
+            finished_at,
+        )
+        interaction["finishedAt"] = finished_at
+        interaction["durationMs"] = self._duration_ms(
+            interaction["startedMonotonic"], finished_monotonic
+        )
+        interaction["outcome"] = outcome
+        sequence = self._parent_interaction_events.get(interaction_id)
+        if sequence is not None:
+            with self._audit_lock:
+                event = self._audit_events[sequence - 1]
+                if event.get("interactionId") == interaction_id:
+                    event["finishedAt"] = finished_at
+                    event["durationMs"] = interaction["durationMs"]
+                    event["outcome"] = outcome
+                    event["tools"] = tools
+        return tools
 
-    def record_attachment_text(self, attachment_ref: str, body: bytes) -> None:
+    def record_child_turn_started(
+        self, operation: dict[str, Any], turn: dict[str, str], body: bytes
+    ) -> None:
+        turn_ref = turn["turnRef"]
+        interaction_id = f"child:{turn_ref.removeprefix('turn:')}"
+        finished_at = self._observed_at()
+        finished_monotonic = time.monotonic()
+        started_at = operation.get("startedAt", finished_at)
+        started_monotonic = operation.get("startedMonotonic", finished_monotonic)
+        self._child_interactions[turn_ref] = {
+            "interactionId": interaction_id,
+            "turnRef": turn_ref,
+            "requestRef": operation["requestRef"],
+            "mode": operation["mode"],
+            "startedAt": started_at,
+            "startedMonotonic": started_monotonic,
+        }
+        self.record_event(
+            {
+                "type": "child.turn.started",
+                "interactionId": interaction_id,
+                "requestRef": operation["requestRef"],
+                "turnRef": turn_ref,
+                "conversationRef": turn["conversationRef"],
+                "mode": operation["mode"],
+                "startedAt": started_at,
+                "finishedAt": finished_at,
+                "durationMs": self._duration_ms(started_monotonic, finished_monotonic),
+                "outcome": "succeeded",
+                "attachments": [
+                    self._attachment_evidence[ref]
+                    for ref in operation.get("attachmentRefs", [])
+                    if ref in self._attachment_evidence
+                ],
+            }
+        )
+        # A provider turn may already return an action batch in its start response.
+        self._child_result_interaction_id = None
+        self._record_child_response_tools(turn_ref, body, finished_at)
+
+    def record_child_turn_failed(
+        self, operation: dict[str, Any], status: int
+    ) -> None:
+        finished_at = self._observed_at()
+        finished_monotonic = time.monotonic()
+        request_ref = operation.get("requestRef")
+        interaction_id = (
+            f"child:{request_ref.removeprefix('request:')}"
+            if isinstance(request_ref, str)
+            else self._interaction_id("child")
+        )
+        self.record_event(
+            {
+                "type": "child.turn.started",
+                "interactionId": interaction_id,
+                "requestRef": request_ref,
+                "turnRef": None,
+                "conversationRef": operation.get("conversationRef"),
+                "mode": operation.get("mode"),
+                "startedAt": operation.get("startedAt", finished_at),
+                "finishedAt": finished_at,
+                "durationMs": self._duration_ms(
+                    operation.get("startedMonotonic", finished_monotonic),
+                    finished_monotonic,
+                ),
+                "outcome": "failed",
+                "httpStatus": status,
+                "attachments": [
+                    self._attachment_evidence[ref]
+                    for ref in operation.get("attachmentRefs", [])
+                    if ref in self._attachment_evidence
+                ],
+            }
+        )
+
+    def record_attachment_text(
+        self,
+        attachment_ref: str,
+        body: bytes,
+        *,
+        name: str | None = None,
+        media_type: str | None = None,
+        returned: dict[str, Any] | None = None,
+        started_at: str | None = None,
+        started_monotonic: float | None = None,
+    ) -> None:
         try:
             text = body.decode("utf-8")
         except UnicodeDecodeError as error:
             raise ValueError("provider text attachment is not UTF-8") from error
         self._attachment_text[attachment_ref] = text
+        finished_at = self._observed_at()
+        finished_monotonic = time.monotonic()
+        returned = returned or {}
+        returned_length = returned.get("byteLength")
+        returned_sha256 = returned.get("sha256")
+        body_sha256 = hashlib.sha256(body).hexdigest()
+        self._attachment_evidence[attachment_ref] = {
+            "stage": "host_attachment_store",
+            "stored": bool(returned),
+            "attachmentRef": attachment_ref,
+            "name": name,
+            "mediaType": media_type,
+            "byteLength": len(body),
+            "sha256": body_sha256,
+            "declaredByteLength": returned_length,
+            "declaredSha256": returned_sha256,
+            "upload": {
+                "requested": True,
+                "returned": bool(returned),
+                "retained": False,
+            },
+            "providerUpload": {
+                "observed": False,
+                "accepted": None,
+                "jobId": None,
+                "provider": None,
+                "actionIndex": None,
+                "visibleProof": None,
+            },
+            "outcome": "unknown",
+            "unknownReason": "provider_upload_observation_unavailable",
+            "startedAt": started_at or finished_at,
+            "finishedAt": finished_at,
+            "durationMs": (
+                self._duration_ms(started_monotonic, finished_monotonic)
+                if started_monotonic is not None
+                else None
+            ),
+        }
+        self.record_event({"type": "provider.attachment", **self._attachment_evidence[attachment_ref]})
+        self._record_child_result_attachment(text, finished_at)
+
+    def _refresh_attachment_event(self, attachment_ref: str) -> None:
+        evidence = self._attachment_evidence.get(attachment_ref)
+        if evidence is None:
+            return
+        with self._audit_lock:
+            for event in self._audit_events:
+                if event.get("type") == "provider.attachment" and event.get("attachmentRef") == attachment_ref:
+                    event.update(evidence)
+
+    def _record_provider_job_uploads(self, job_id: str, job: dict[str, Any]) -> None:
+        if job_id in self._provider_attachment_jobs:
+            return
+        self._provider_attachment_jobs.add(job_id)
+        result_json = job.get("result_json")
+        if not isinstance(result_json, dict) or not isinstance(result_json.get("responses"), list):
+            return
+        job_provider = self._safe_metadata(job.get("provider")) or self._safe_metadata(result_json.get("provider"))
+        for response in result_json["responses"][:64]:
+            if not isinstance(response, dict) or response.get("action") != "file.upload":
+                continue
+            result = response.get("result")
+            if not isinstance(result, dict) or not isinstance(result.get("attachments"), list):
+                continue
+            action_metadata = self._provider_action_metadata(response.get("metadata"))
+            provider = self._safe_metadata(response.get("provider")) or self._safe_metadata(action_metadata.get("provider")) or job_provider
+            acceptance = result.get("acceptance") == "accepted"
+            visible_proof = self._safe_metadata(result.get("visibleProof"))
+            for uploaded in result["attachments"][:100]:
+                if not isinstance(uploaded, dict) or uploaded.get("visible") is not True:
+                    continue
+                digest = uploaded.get("sha256")
+                if isinstance(digest, str) and digest.startswith("sha256:"):
+                    digest = digest.removeprefix("sha256:")
+                if not isinstance(digest, str) or re.fullmatch(r"[a-f0-9]{64}", digest) is None:
+                    continue
+                size = uploaded.get("size")
+                for attachment_ref, evidence in self._attachment_evidence.items():
+                    if evidence.get("sha256") != digest or evidence.get("byteLength") != size:
+                        continue
+                    upload = evidence.get("providerUpload")
+                    if not isinstance(upload, dict) or upload.get("observed") is True:
+                        continue
+                    accepted = acceptance and visible_proof is not None
+                    evidence["providerUpload"] = {
+                        "observed": True,
+                        "accepted": accepted,
+                        "jobId": job_id,
+                        "provider": provider,
+                        "actionIndex": action_metadata.get("actionIndex"),
+                        "visibleProof": visible_proof,
+                    }
+                    evidence["upload"]["retained"] = accepted
+                    evidence["outcome"] = "succeeded" if accepted else "unknown"
+                    evidence["unknownReason"] = None if accepted else "provider_upload_acceptance_not_observed"
+                    self._refresh_attachment_event(attachment_ref)
+                    break
+
+    def record_attachment_failure(
+        self,
+        body: bytes | None,
+        *,
+        name: str | None,
+        media_type: str | None,
+        operation: dict[str, Any],
+        reason: str,
+    ) -> None:
+        finished_at = self._observed_at()
+        finished_monotonic = time.monotonic()
+        payload = body or b""
+        evidence = {
+            "stage": "host_attachment_store",
+            "stored": False,
+            "attachmentRef": None,
+            "name": name,
+            "mediaType": media_type,
+            "byteLength": len(payload),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "declaredByteLength": None,
+            "declaredSha256": None,
+            "upload": {"requested": True, "returned": False, "retained": False},
+            "providerUpload": {
+                "observed": False,
+                "accepted": None,
+                "jobId": None,
+                "provider": None,
+                "actionIndex": None,
+                "visibleProof": None,
+            },
+            "outcome": "failed",
+            "unknownReason": reason,
+            "startedAt": operation.get("startedAt", finished_at),
+            "finishedAt": finished_at,
+            "durationMs": self._duration_ms(
+                operation.get("startedMonotonic", finished_monotonic),
+                finished_monotonic,
+            ),
+        }
+        self.record_event({"type": "provider.attachment", **evidence})
 
     def record_child_turn_input(
         self,
@@ -502,7 +1616,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             self._parse_binding_response(body, expected_binding_ref=operation["bindingRef"], expected_provider_ref=self._provider_ref)
             return
         if kind == "attachment":
-            return {"attachmentRef": self._parse_attachment_response(body)}
+            return self._parse_attachment_response(body)
         if kind == "start":
             turn = self._parse_turn_response(
                 body,
@@ -540,7 +1654,12 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             self._provider_turn_refs[turn_ref] = mode
             self._provider_turn_request_refs[turn_ref] = operation["requestRef"]
             self._apply_turn_lifecycle(mode, turn["lifecycle"])
-            return {"turnRef": turn["turnRef"]}
+            return {
+                "turnRef": turn["turnRef"],
+                "requestRef": turn["requestRef"],
+                "conversationRef": turn["conversationRef"],
+                "lifecycle": turn["lifecycle"],
+            }
         if kind in {"turn_read", "turn_cancel"}:
             stage = operation["stage"]
             expected_conversation_ref = self._conversation_ref_for_stage(stage)
@@ -617,6 +1736,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         tokenless = dict(tokenless)
         if self.expected_provider == "auto":
             tokenless["semantic_preference"] = self.semantic_preference
+        tokenless["submission_evidence"] = "benchmark"
         value["tokenless"] = tokenless
         if self.final_only_parent_completion_due():
             value["tool_choice"] = "none"
@@ -628,6 +1748,12 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         value = self._json_object(body)
         if self.expected_provider == "auto":
             value["semanticPreference"] = self.semantic_preference
+        value["submissionEvidence"] = "benchmark"
+        return json.dumps(value, separators=(",", ":")).encode("utf-8")
+
+    def decorate_provider_turn_body(self, body: bytes | None) -> bytes:
+        value = self._json_object(body)
+        value["submissionEvidence"] = "benchmark"
         return json.dumps(value, separators=(",", ":")).encode("utf-8")
 
     @staticmethod
@@ -645,11 +1771,16 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             "conversation",
             "bootstrap" if mode == "new" else "continuation",
         }
+        optional_keys = {"submissionEvidence"}
         if mode == "new":
-            if set(value) != expected_keys and set(value) != (expected_keys | {"semanticPreference"}):
-                raise ValueError("provider turn start shape is invalid")
-        elif set(value) != expected_keys:
+            optional_keys.add("semanticPreference")
+        if (
+            not expected_keys.issubset(value)
+            or not set(value).issubset(expected_keys | optional_keys)
+        ):
             raise ValueError("provider turn start shape is invalid")
+        if "submissionEvidence" in value and value["submissionEvidence"] != "benchmark":
+            raise ValueError("provider turn submission evidence is invalid")
         if (
             value.get("protocol") != WEB_AI_INTERACTION_PROTOCOL
             or not isinstance(value.get("requestRef"), str)
@@ -729,7 +1860,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         return binding_ref, provider_ref
 
     @classmethod
-    def _parse_attachment_response(cls, body: bytes) -> str:
+    def _parse_attachment_response(cls, body: bytes) -> dict[str, Any]:
         value = cls._json_object(body)
         attachment = value.get("attachment")
         if set(value) != {"attachment"} or not isinstance(attachment, dict) or set(attachment) != {"attachmentRef", "mediaType", "byteLength", "sha256"}:
@@ -745,7 +1876,12 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             or re.fullmatch(r"[a-f0-9]{64}", attachment["sha256"]) is None
         ):
             raise ValueError("provider attachment response identity is invalid")
-        return attachment["attachmentRef"]
+        return {
+            "attachmentRef": attachment["attachmentRef"],
+            "mediaType": attachment["mediaType"],
+            "byteLength": attachment["byteLength"],
+            "sha256": attachment["sha256"],
+        }
 
     @classmethod
     def _parse_turn_response(
@@ -1052,29 +2188,112 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         scope: str,
         input_text: str,
         output_text: str | None,
+        *,
+        interaction_id: str | None = None,
+        started_at: str | None = None,
+        started_monotonic: float | None = None,
+        response_body: bytes | None = None,
     ) -> None:
         route = self._parse_route_headers(upstream)
         if route is None:
+            observed_at = self._observed_at()
+            finished_monotonic = time.monotonic()
+            interaction = (
+                self._parent_interactions.get(interaction_id)
+                if interaction_id is not None and scope == "parent"
+                else None
+            )
+            resolved_started_at = started_at or (
+                interaction.get("startedAt") if interaction else observed_at
+            )
+            resolved_started_monotonic = started_monotonic or (
+                interaction.get("startedMonotonic")
+                if interaction
+                else finished_monotonic
+            )
+            if scope == "parent" and interaction_id is not None:
+                self._complete_parent_interaction(
+                    interaction_id,
+                    response_body or b"",
+                    "failed",
+                    observed_at,
+                    finished_monotonic,
+                )
             self.record_event(
-                {"type": "provider.routing.invalid", "reason": f"{scope}_route_metadata"}
+                {
+                    "type": "provider.routing.invalid",
+                    "reason": f"{scope}_route_metadata",
+                    "interactionId": interaction_id,
+                    "scope": scope,
+                    "startedAt": resolved_started_at,
+                    "finishedAt": observed_at,
+                    "durationMs": self._duration_ms(
+                        resolved_started_monotonic, finished_monotonic
+                    ),
+                    "outcome": "failed",
+                    "executionMetadata": self._provider_execution_metadata(upstream),
+                }
             )
             return
         outcome = "completed" if upstream.status < 400 else "failed"
         if outcome == "completed" and route["rateLimited"]:
+            if scope == "parent" and interaction_id is not None:
+                self._complete_parent_interaction(
+                    interaction_id,
+                    response_body or b"",
+                    "failed",
+                    self._observed_at(),
+                    time.monotonic(),
+                )
             self.record_event(
-                {"type": "provider.routing.invalid", "reason": "rate_limit_attribution"}
+                {
+                    "type": "provider.routing.invalid",
+                    "reason": "rate_limit_attribution",
+                    "interactionId": interaction_id,
+                    "scope": scope,
+                    "outcome": "failed",
+                }
             )
             return
-        observed_at = datetime.now(timezone.utc).isoformat(
-            timespec="milliseconds"
-        ).replace("+00:00", "Z")
+        observed_at = self._observed_at()
+        finished_monotonic = time.monotonic()
+        interaction = (
+            self._parent_interactions.get(interaction_id)
+            if interaction_id is not None and scope == "parent"
+            else None
+        )
+        resolved_started_at = started_at or (
+            interaction.get("startedAt") if interaction else observed_at
+        )
+        resolved_started_monotonic = started_monotonic or (
+            interaction.get("startedMonotonic")
+            if interaction
+            else finished_monotonic
+        )
+        tools = []
+        if scope == "parent" and interaction_id is not None and response_body is not None:
+            tools = self._complete_parent_interaction(
+                interaction_id,
+                response_body,
+                outcome,
+                observed_at,
+                finished_monotonic,
+            )
         self.record_event(
             {
                 "type": "provider.routing",
                 "observedAt": observed_at,
                 "scope": scope,
+                "interactionId": interaction_id,
+                "startedAt": resolved_started_at,
+                "finishedAt": observed_at,
+                "durationMs": self._duration_ms(
+                    resolved_started_monotonic, finished_monotonic
+                ),
                 **route,
                 "outcome": outcome,
+                "executionMetadata": self._provider_execution_metadata(upstream),
+                "tools": tools,
                 "tokenEstimate": self._token_estimate(
                     input_text,
                     output_text if outcome == "completed" else "",
@@ -1087,10 +2306,22 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         )
 
     def record_provider_turn_read(
-        self, path: str, upstream: http.client.HTTPResponse, body: bytes
+        self,
+        path: str,
+        upstream: http.client.HTTPResponse,
+        body: bytes,
+        *,
+        operation: dict[str, Any],
     ) -> None:
         outcome = upstream.getheader("X-Tokenless-Route-Outcome")
         route = self._parse_route_headers(upstream)
+        turn_ref = unquote(path.rsplit("/", 1)[-1])
+        interaction = self._child_interactions.get(turn_ref)
+        interaction_id = (
+            interaction.get("interactionId")
+            if interaction is not None
+            else f"child:{turn_ref.removeprefix('turn:')}"
+        )
         if outcome not in {"pending", "completed", "failed"} or route is None:
             with self._audit_lock:
                 if path in self._provider_turn_route_refs:
@@ -1100,6 +2331,11 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
                 {
                     "type": "provider.routing.invalid",
                     "reason": "route_outcome" if outcome not in {"pending", "completed", "failed"} else "route_metadata",
+                    "interactionId": interaction_id,
+                    "scope": "child",
+                    "turnRef": turn_ref,
+                    "requestRef": self._provider_turn_request_refs.get(turn_ref),
+                    "outcome": "failed",
                 }
             )
             return
@@ -1114,7 +2350,6 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
                 {"type": "provider.routing.invalid", "reason": "rate_limit_attribution"}
             )
             return
-        turn_ref = unquote(path.rsplit("/", 1)[-1])
         input_text = self._child_turn_input_text.pop(turn_ref, None)
         if input_text is None:
             self.record_event(
@@ -1122,16 +2357,34 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             )
             return
         output_text = self._provider_turn_output_text(body) if outcome == "completed" else ""
-        observed_at = datetime.now(timezone.utc).isoformat(
-            timespec="milliseconds"
-        ).replace("+00:00", "Z")
+        observed_at = self._observed_at()
+        finished_monotonic = time.monotonic()
+        interaction = self._child_interactions.get(turn_ref)
+        started_at = interaction.get("startedAt") if interaction else operation.get("startedAt", observed_at)
+        started_monotonic = interaction.get("startedMonotonic") if interaction else operation.get("startedMonotonic", finished_monotonic)
+        interaction_id = interaction.get("interactionId") if interaction else f"child:{turn_ref.removeprefix('turn:')}"
+        tools = self._record_child_response_tools(turn_ref, body, observed_at)
+        if interaction is not None:
+            interaction["finishedAt"] = observed_at
+            interaction["durationMs"] = self._duration_ms(started_monotonic, finished_monotonic)
+            interaction["outcome"] = outcome
         self.record_event(
             {
                 "type": "provider.routing",
                 "observedAt": observed_at,
                 "scope": "child",
+                "interactionId": interaction_id,
+                "requestRef": self._provider_turn_request_refs.get(turn_ref),
+                "turnRef": turn_ref,
+                "startedAt": started_at,
+                "finishedAt": observed_at,
+                "durationMs": self._duration_ms(started_monotonic, finished_monotonic),
                 **route,
                 "outcome": outcome,
+                "executionMetadata": self._provider_execution_metadata(upstream),
+                "tools": tools,
+                "toolResponseStatus": interaction.get("toolResponseStatus", "unavailable") if interaction else "unavailable",
+                "toolResponseNormalizationApplied": interaction.get("toolResponseNormalizationApplied") if interaction else None,
                 "tokenEstimate": self._token_estimate(
                     input_text,
                     output_text,
@@ -1209,6 +2462,92 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
                             parts.append(value)
         return "".join(parts)
 
+    @classmethod
+    def _completion_tool_calls(cls, body: bytes) -> list[dict[str, Any]]:
+        """Extract only metadata for tool calls from an OpenAI response."""
+        try:
+            text = body.decode("utf-8")
+        except UnicodeDecodeError:
+            return []
+        payloads: list[dict[str, Any]] = []
+        if "data:" in text:
+            for line in text.splitlines():
+                if not line.startswith("data:"):
+                    continue
+                data = line.removeprefix("data:").strip()
+                if not data or data == "[DONE]":
+                    continue
+                try:
+                    value = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(value, dict):
+                    payloads.append(value)
+        else:
+            try:
+                value = json.loads(text)
+            except json.JSONDecodeError:
+                return []
+            if isinstance(value, dict):
+                payloads.append(value)
+        calls: dict[str, dict[str, Any]] = {}
+        stream_ids: dict[int, str] = {}
+        for payload in payloads:
+            choices = payload.get("choices")
+            if not isinstance(choices, list):
+                continue
+            for choice in choices:
+                if not isinstance(choice, dict):
+                    continue
+                message = choice.get("delta", choice.get("message"))
+                if not isinstance(message, dict):
+                    continue
+                tool_calls = message.get("tool_calls")
+                if not isinstance(tool_calls, list):
+                    continue
+                for index, tool_call in enumerate(tool_calls):
+                    if not isinstance(tool_call, dict):
+                        continue
+                    call_id = cls._tool_call_id(tool_call.get("id"))
+                    if call_id is None:
+                        raw_index = tool_call.get("index", index)
+                        if not isinstance(raw_index, int) or isinstance(raw_index, bool):
+                            continue
+                        call_id = stream_ids.get(raw_index)
+                        if call_id is None:
+                            continue
+                    else:
+                        raw_index = tool_call.get("index", index)
+                        if isinstance(raw_index, int) and not isinstance(raw_index, bool):
+                            stream_ids[raw_index] = call_id
+                    function = tool_call.get("function")
+                    if not isinstance(function, dict):
+                        continue
+                    record = calls.setdefault(
+                        call_id,
+                        {
+                            "callId": call_id,
+                            "toolName": None,
+                            "argumentsText": "",
+                        },
+                    )
+                    name = cls._tool_name(function.get("name"))
+                    if name is not None:
+                        record["toolName"] = name
+                    arguments = function.get("arguments")
+                    if isinstance(arguments, str):
+                        record["argumentsText"] += arguments
+        result = []
+        for call_id, record in calls.items():
+            result.append(
+                {
+                    "callId": call_id,
+                    "toolName": record["toolName"],
+                    "arguments": cls._digest_summary(record["argumentsText"]),
+                }
+            )
+        return result
+
 
 class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
@@ -1252,6 +2591,8 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
                 provider_operation = self.server.validate_provider_turn_request(  # type: ignore[attr-defined]
                     self.command, path, body
                 )
+                provider_operation["startedAt"] = self.server._observed_at()  # type: ignore[attr-defined]
+                provider_operation["startedMonotonic"] = time.monotonic()
             except ValueError:
                 provider_control_lock.release()
                 self.send_error(400)
@@ -1263,12 +2604,19 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
                     provider_control_lock.release()
                     self.send_error(400)
                     return
+            elif provider_operation["kind"] == "start":
+                try:
+                    body = self.server.decorate_provider_turn_body(body)  # type: ignore[attr-defined]
+                except ValueError:
+                    provider_control_lock.release()
+                    self.send_error(400)
+                    return
         subagent_claimed = False
         subagent_claim_settled = False
         parent_event_sequence = None
         parent_ordinal = None
         if path in ALLOWED_COMPLETION_PATHS and self.command == "POST":
-            parent_event_sequence, parent_ordinal = self.server.record_parent_completion_request()  # type: ignore[attr-defined]
+            parent_event_sequence, parent_ordinal = self.server.record_parent_completion_request(body)  # type: ignore[attr-defined]
             try:
                 body = self.server.decorate_parent_completion_body(  # type: ignore[attr-defined]
                     body, parent_event_sequence
@@ -1315,7 +2663,13 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
                     body = json.dumps(
                         request_value, separators=(",", ":")
                     ).encode("utf-8")
+                self.server.refresh_parent_completion_request(  # type: ignore[attr-defined]
+                    parent_event_sequence, body
+                )
             except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+                self.server.record_parent_transport_failure(  # type: ignore[attr-defined]
+                    parent_event_sequence, "request_decoration_validation"
+                )
                 self.send_error(400)
                 if provider_control_lock is not None:
                     provider_control_lock.release()
@@ -1338,6 +2692,7 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
             self.server.daemon_port,  # type: ignore[attr-defined]
             timeout=1_900,
         )
+        provider_operation_failure_recorded = False
         try:
             connection.request(self.command, self.path, body=body, headers=headers)
             upstream = connection.getresponse()
@@ -1352,11 +2707,29 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
                 )
                 if (
                     provider_operation["kind"] == "attachment"
+                    and upstream.status >= 400
+                ):
+                    self.server.record_attachment_failure(  # type: ignore[attr-defined]
+                        body,
+                        name=self.headers.get("X-Tokenless-Attachment-Name"),
+                        media_type=self.headers.get("Content-Type"),
+                        operation=provider_operation,
+                        reason=f"provider_http_{upstream.status}",
+                    )
+                    provider_operation_failure_recorded = True
+                if (
+                    provider_operation["kind"] == "attachment"
                     and committed_provider_turn is not None
                     and body is not None
                 ):
                     self.server.record_attachment_text(  # type: ignore[attr-defined]
-                        committed_provider_turn["attachmentRef"], body
+                        committed_provider_turn["attachmentRef"],
+                        body,
+                        name=self.headers.get("X-Tokenless-Attachment-Name"),
+                        media_type=self.headers.get("Content-Type"),
+                        returned=committed_provider_turn,
+                        started_at=provider_operation.get("startedAt"),
+                        started_monotonic=provider_operation.get("startedMonotonic"),
                     )
                 if (
                     provider_operation["kind"] == "start"
@@ -1367,6 +2740,11 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
                         provider_operation["inputText"],
                         provider_operation["attachmentRefs"],
                     )
+                if provider_operation["kind"] == "start" and upstream.status >= 400:
+                    self.server.record_child_turn_failed(  # type: ignore[attr-defined]
+                        provider_operation, upstream.status
+                    )
+                    provider_operation_failure_recorded = True
             elif (
                 path in ALLOWED_COMPLETION_PATHS
                 and self.command == "POST"
@@ -1378,6 +2756,8 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
                     "parent",
                     (body or b"").decode("utf-8"),
                     "",
+                    interaction_id=self.server.parent_interaction_id(parent_event_sequence),  # type: ignore[attr-defined]
+                    response_body=parent_error_body,
                 )
                 parent_route_recorded = True
             self.send_response(upstream.status)
@@ -1406,11 +2786,16 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
                 self.wfile.flush()
                 if provider_operation["kind"] == "turn_read":
                     self.server.record_provider_turn_read(  # type: ignore[attr-defined]
-                        path, upstream, control_body or b""
+                        path,
+                        upstream,
+                        control_body or b"",
+                        operation=provider_operation,
                     )
                 if provider_operation["kind"] == "start" and upstream.status < 400:
                     self.server.record_child_turn_started(  # type: ignore[attr-defined]
-                        provider_operation["mode"]
+                        provider_operation,
+                        committed_provider_turn,
+                        control_body or b"",
                     )
             elif parent_error_body is not None:
                 self.wfile.write(parent_error_body)
@@ -1449,11 +2834,49 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
                             if relayed_body_complete
                             else None
                         ),
+                        interaction_id=self.server.parent_interaction_id(parent_event_sequence),  # type: ignore[attr-defined]
+                        response_body=(
+                            bytes(relayed_body) if relayed_body_complete else None
+                        ),
                     )
         except ValueError:
+            if provider_operation is not None and not provider_operation_failure_recorded:
+                if provider_operation["kind"] == "attachment":
+                    self.server.record_attachment_failure(  # type: ignore[attr-defined]
+                        body,
+                        name=self.headers.get("X-Tokenless-Attachment-Name"),
+                        media_type=self.headers.get("Content-Type"),
+                        operation=provider_operation,
+                        reason="bridge_response_validation",
+                    )
+                elif provider_operation["kind"] == "start":
+                    self.server.record_child_turn_failed(  # type: ignore[attr-defined]
+                        provider_operation, 502
+                    )
+            if path in ALLOWED_COMPLETION_PATHS and self.command == "POST":
+                self.server.record_parent_transport_failure(  # type: ignore[attr-defined]
+                    parent_event_sequence, "bridge_response_validation"
+                )
             self.close_connection = True
             self.send_error(502)
         except (OSError, http.client.HTTPException):
+            if provider_operation is not None and not provider_operation_failure_recorded:
+                if provider_operation["kind"] == "attachment":
+                    self.server.record_attachment_failure(  # type: ignore[attr-defined]
+                        body,
+                        name=self.headers.get("X-Tokenless-Attachment-Name"),
+                        media_type=self.headers.get("Content-Type"),
+                        operation=provider_operation,
+                        reason="upstream_transport_error",
+                    )
+                elif provider_operation["kind"] == "start":
+                    self.server.record_child_turn_failed(  # type: ignore[attr-defined]
+                        provider_operation, 502
+                    )
+            if path in ALLOWED_COMPLETION_PATHS and self.command == "POST":
+                self.server.record_parent_transport_failure(  # type: ignore[attr-defined]
+                    parent_event_sequence, "upstream_transport_error"
+                )
             self.close_connection = True
         finally:
             if subagent_claimed and not subagent_claim_settled:

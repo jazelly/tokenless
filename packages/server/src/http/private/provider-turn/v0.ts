@@ -53,6 +53,7 @@ type StartTurnRequest = {
   providerBindingRef: string
   requiredCapabilities: readonly ['conversation.chat', 'file.upload', 'document.input']
   semanticPreference?: string
+  submissionEvidence?: 'benchmark'
   conversation: { mode: 'new' } | { mode: 'continue'; conversationRef: string }
   bootstrap?: { text: string; attachments: readonly [{ kind: 'system_prompt'; name: string; attachmentRef: string; mediaType: 'text/markdown'; byteLength: number; sha256: string }, ...Array<{ kind: 'skill'; name: string; attachmentRef: string; mediaType: 'text/markdown'; byteLength: number; sha256: string }>] }
   continuation?: { text: string; attachments: readonly [{ kind: 'tool_result'; name: string; attachmentRef: string; mediaType: 'text/markdown'; byteLength: number; sha256: string }, ...Array<{ kind: 'skill'; name: string; attachmentRef: string; mediaType: 'text/markdown'; byteLength: number; sha256: string }>] }
@@ -233,6 +234,7 @@ export class PrivateProviderTurnV0Adapter {
       browserVisibility: 'auto',
       userHandoff: false,
       ...(request.semanticPreference === undefined ? {} : { semanticPreference: request.semanticPreference }),
+      ...(request.submissionEvidence === undefined ? {} : { submissionEvidence: request.submissionEvidence }),
       ...(autoResolution === null ? {} : {
         routingObservation: {
           protocol: 'tokenless.provider-routing-observation.v1',
@@ -329,6 +331,7 @@ export class PrivateProviderTurnV0Adapter {
       }),
       browserVisibility: 'auto',
       userHandoff: false,
+      ...(request.submissionEvidence === undefined ? {} : { submissionEvidence: request.submissionEvidence }),
       actions: [
         createVisibleActionRequest({ provider, action: VISIBLE_ACTIONS.FILE_UPLOAD, payload: { attachments: attachments.map((attachment, index) => ({ protocol: descriptorProtocol(), bundleId: attachment!.bundle_id, attachmentId: attachment!.attachment_id, name: requested[index]!.name, type: attachment!.media_type, size: attachment!.byte_length, sha256: attachment!.sha256 })) } }),
         createVisibleActionRequest({ provider, action: VISIBLE_ACTIONS.PROMPT_INPUT, payload: { text: request.continuation.text } }),
@@ -354,7 +357,7 @@ export class PrivateProviderTurnV0Adapter {
     return (await this.readWithRouting(turnRef)).turn
   }
 
-  async readWithRouting(turnRef: string): Promise<{ turn: TurnState; outcome: 'pending' | 'completed' | 'failed'; routing: ApiProxyRouting | null }> {
+  async readWithRouting(turnRef: string): Promise<{ turn: TurnState; outcome: 'pending' | 'completed' | 'failed'; routing: ApiProxyRouting | null; jobId: string }> {
     const turn = this.store.getWebAiTurn(turnRef)
     if (!turn) throw invalidInput('web ai turn was not found')
     const job = hydrateEphemeralProviderJob(this.store.getJob(turn.job_id))
@@ -367,7 +370,7 @@ export class PrivateProviderTurnV0Adapter {
     const routing = binding
       ? routingFromJob(job, binding.provider === AUTO_PROVIDER ? 'auto' : 'explicit')
       : null
-    return { turn: this.project(turn, job), outcome, routing }
+    return { turn: this.project(turn, job), outcome, routing, jobId: job.job_id }
   }
 
   async cancel(turnRef: string) {
@@ -574,7 +577,7 @@ function parseStartTurnRequest(value: unknown): StartTurnRequest {
     conversation?.mode === 'continue'
       ? ['protocol', 'requestRef', 'providerRef', 'providerBindingRef', 'requiredCapabilities', 'conversation', 'continuation']
       : ['protocol', 'requestRef', 'providerRef', 'providerBindingRef', 'requiredCapabilities', 'conversation', 'bootstrap'],
-    conversation?.mode === 'continue' ? [] : ['semanticPreference'],
+      conversation?.mode === 'continue' ? ['submissionEvidence'] : ['semanticPreference', 'submissionEvidence'],
   )
   if (request.protocol !== WEB_AI_INTERACTION_PROTOCOL_V0 || !/^request:[a-f0-9]{32}$/.test(String(request.requestRef)) ||
     !/^provider:[a-f0-9]{32}$/.test(String(request.providerRef)) || !/^binding:[a-f0-9]{32}$/.test(String(request.providerBindingRef)) ||
@@ -584,6 +587,9 @@ function parseStartTurnRequest(value: unknown): StartTurnRequest {
   }
   if (request.semanticPreference !== undefined && !isSemanticPreference(request.semanticPreference)) {
     throw new Error('start_turn_request semanticPreference is invalid')
+  }
+  if (request.submissionEvidence !== undefined && request.submissionEvidence !== 'benchmark') {
+    throw new Error('start_turn_request submissionEvidence is invalid')
   }
   if (request.conversation.mode === 'continue') return parseContinueTurnRequest(request)
   if (Object.keys(request.conversation).length !== 1 ||
