@@ -1,0 +1,68 @@
+/* Shared by the production Dashboard and Design Atlas. */
+:root {
+  --stone-0: #ffffff;
+  --stone-50: #f6f5f2;
+  --stone-100: #f1f0ed;
+  --stone-150: #ebeae6;
+  --stone-200: #deddd8;
+  --stone-300: #c5c3bb;
+  --stone-400: #a6a399;
+  --stone-500: #858177;
+  --stone-600: #69665e;
+  --stone-700: #504e47;
+  --stone-800: #393832;
+  --stone-900: #282823;
+  --stone-950: #171715;
+
+  /* Status colors are reserved for outcomes and actionable states. */
+  --status-success: #48634f;
+  --status-success-surface: #edf2ed;
+  --status-success-line: #c8d5c9;
+  --status-warning: #846329;
+  --status-warning-surface: #f7f1e5;
+  --status-warning-line: #dfd0af;
+  --status-danger: #9a5149;
+  --status-danger-surface: #f7edeb;
+  --status-danger-line: #e1c7c2;
+
+  --canvas: var(--stone-50);
+  --surface: var(--stone-0);
+  --surface-muted: var(--stone-100);
+  --surface-strong: var(--stone-150);
+  --ink: var(--stone-950);
+  --muted: var(--stone-600);
+  --subtle: var(--stone-500);
+  --line: var(--stone-200);
+  --line-soft: var(--stone-150);
+  --green: var(--status-success);
+  --amber: var(--status-warning);
+  --red: var(--status-danger);
+
+  /* Tableau 10: the first seven colors keep the published categorical order.
+     https://d3js.org/d3-scale-chromatic/categorical */
+  --data-blue: #4e79a7;
+  --data-orange: #f28e2c;
+  --data-red: #e15759;
+  --data-teal: #76b7b2;
+  --data-green: #59a14f;
+  --data-yellow: #edc949;
+  --data-purple: #af7aa1;
+  --chart-primary: var(--data-blue);
+  --chart-secondary: var(--data-orange);
+  --chart-unknown: var(--stone-300);
+  --chart-family-0: var(--data-blue);
+  --chart-family-1: var(--data-orange);
+  --chart-family-2: var(--data-red);
+  --chart-family-3: var(--data-teal);
+  --chart-family-4: var(--data-green);
+  --chart-family-5: var(--data-yellow);
+  --chart-family-6: var(--data-purple);
+
+  /* ColorBrewer Greens[5]: demand intensity, independent of outcome status. */
+  --demand-empty: var(--stone-100);
+  --demand-1: #edf8e9;
+  --demand-2: #bae4b3;
+  --demand-3: #74c476;
+  --demand-4: #31a354;
+  --demand-5: #006d2c;
+}

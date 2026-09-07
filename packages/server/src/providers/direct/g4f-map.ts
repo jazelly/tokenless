@@ -192,6 +192,8 @@ export const G4F_BROWSER_PROVIDER_IDS = Object.freeze([
   'zai',
   'arena',
   'meta',
+  'microsoft-copilot',
+  'github-copilot',
 ] as const)
 
 export type G4fBrowserProviderId = typeof G4F_BROWSER_PROVIDER_IDS[number]

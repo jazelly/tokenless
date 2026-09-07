@@ -14,6 +14,7 @@ import {
   providerRateLimitCatalog,
   type ProviderCapacityProjection,
 } from '../providers/rate-limit-policy.js'
+import { taskCapabilityDefinition } from '../providers/task-capabilities.js'
 import {
   controlAuthRejected,
   invalidInput,
@@ -27,6 +28,7 @@ import {
   toDaemonError,
   type JobStatus,
 } from '../errors.js'
+import { migrateDatabase } from '#tokenless-shared/database/migrate.js'
 
 export type { JobStatus } from '../errors.js'
 
@@ -111,6 +113,39 @@ export type OutputSavingsSummary = {
   job_count: number
   first_measured_at: string | null
   last_measured_at: string | null
+}
+
+export type DashboardMetricsQuery = {
+  profile_id?: string | undefined
+  from_day: string
+  to_day: string
+}
+
+export type DashboardDailyMetric = {
+  day: string
+  profile_id: string
+  provider: string
+  execution_mode: 'browser' | 'direct' | 'unknown'
+  succeeded_jobs: number
+  failed_jobs: number
+  canceled_jobs: number
+  estimated_output_tokens: number
+  visible_characters: number
+  measured_responses: number
+  measured_jobs: number
+  first_measured_at: string | null
+  last_measured_at: string | null
+}
+
+export type DashboardDailyCapabilityMetric = {
+  day: string
+  profile_id: string
+  provider: string
+  execution_mode: 'browser' | 'direct' | 'unknown'
+  capability_id: string
+  succeeded_jobs: number
+  failed_jobs: number
+  canceled_jobs: number
 }
 
 export type ListJobsInput = {
@@ -247,9 +282,14 @@ export class JobStore {
     await ensureTokenlessHome(homeDir)
     const canonicalHome = await fs.realpath(homeDir)
     const store = new JobStore(canonicalHome)
-    await ensureControlToken(store.controlTokenPath)
-    store.initialize()
-    return store
+    try {
+      await ensureControlToken(store.controlTokenPath)
+      store.initialize()
+      return store
+    } catch (error) {
+      store.close()
+      throw error
+    }
   }
 
   private constructor(homeDir: string) {
@@ -289,7 +329,7 @@ export class JobStore {
   }
 
   createJob(input: CreateJobInput) {
-    return this.transaction(() => this.insertJob(input))
+    return this.insertJob(input)
   }
 
   putApiResponse(input: ApiResponseLedgerEntry) {
@@ -436,30 +476,28 @@ export class JobStore {
       throw invalidInput('web ai staged attachment was not found')
     }
     if (this.#webAiTurns.has(turnRef)) throw invalidInput('web ai turn reference is already in use')
-    return this.transaction(() => {
-      const existing = this.getWebAiTurnByRequestRef(requestRef)
-      if (existing) throw new WebAiRequestRefConflictError()
-      for (const candidate of attachments) {
-        const record = this.#webAiStagedAttachments.get(candidate!.attachment_ref)
-        if (!record || record.consumed_turn_ref !== null) throw invalidInput('web ai staged attachment has already been consumed')
-      }
-      const job = this.insertJob(input.job)
-      for (const candidate of attachments) {
-        this.#webAiStagedAttachments.get(candidate!.attachment_ref)!.consumed_turn_ref = turnRef
-      }
-      const turn: WebAiTurnRecord = {
-        turn_ref: turnRef,
-        binding_ref: binding.binding_ref,
-        provider_ref: binding.provider_ref,
-        conversation_ref: conversationRef,
-        attachment_ref: attachment.attachment_ref,
-        request_ref: requestRef,
-        job_id: job.job_id,
-        cancelled: false,
-      }
-      this.#webAiTurns.set(turnRef, turn)
-      return { ...turn }
-    })
+    const existing = this.getWebAiTurnByRequestRef(requestRef)
+    if (existing) throw new WebAiRequestRefConflictError()
+    for (const candidate of attachments) {
+      const record = this.#webAiStagedAttachments.get(candidate!.attachment_ref)
+      if (!record || record.consumed_turn_ref !== null) throw invalidInput('web ai staged attachment has already been consumed')
+    }
+    const job = this.insertJob(input.job)
+    for (const candidate of attachments) {
+      this.#webAiStagedAttachments.get(candidate!.attachment_ref)!.consumed_turn_ref = turnRef
+    }
+    const turn: WebAiTurnRecord = {
+      turn_ref: turnRef,
+      binding_ref: binding.binding_ref,
+      provider_ref: binding.provider_ref,
+      conversation_ref: conversationRef,
+      attachment_ref: attachment.attachment_ref,
+      request_ref: requestRef,
+      job_id: job.job_id,
+      cancelled: false,
+    }
+    this.#webAiTurns.set(turnRef, turn)
+    return { ...turn }
   }
 
   getWebAiTurn(turnRef: string) {
@@ -483,23 +521,18 @@ export class JobStore {
   }
 
   cancelWebAiTurn(turnRef: string) {
-    return this.transaction(() => {
-      const turn = this.getWebAiTurn(turnRef)
-      return turn ? this.cancelWebAiTurnInTransaction(turn) : null
-    })
+    const turn = this.getWebAiTurn(turnRef)
+    return turn ? this.cancelStoredWebAiTurn(turn) : null
   }
 
   /** Cancels an existing turn for this requestRef. */
   cancelWebAiRequest(requestRef: string): WebAiRequestCancellation | null {
     const canonicalRequestRef = webAiRequestRef(requestRef)
-    return this.transaction(() => {
-      const turn = this.getWebAiTurnByRequestRef(canonicalRequestRef)
-      if (turn) return { kind: 'turn', turn: this.cancelWebAiTurnInTransaction(turn) }
-      return null
-    })
+    const turn = this.getWebAiTurnByRequestRef(canonicalRequestRef)
+    return turn ? { kind: 'turn', turn: this.cancelStoredWebAiTurn(turn) } : null
   }
 
-  private cancelWebAiTurnInTransaction(turn: WebAiTurn) {
+  private cancelStoredWebAiTurn(turn: WebAiTurn) {
     const job = this.getJobRecord(turn.job_id)
     if (turn.cancelled || job.status === 'canceled') return turn
     if (!['queued', 'running', 'waiting_for_user'].includes(job.status)) throw invalidInput('web ai turn cannot be cancelled in its current state')
@@ -822,7 +855,7 @@ export class JobStore {
       throw invalidJobState(job.job_id, 'running or waiting_for_user', job.status)
     }
     if (job.provider_submitted_at !== null) return job
-    const result = this.run(
+    this.run(
       `UPDATE jobs
        SET provider_submitted_at = ?, updated_at = ?
        WHERE job_id = ?
@@ -832,7 +865,6 @@ export class JobStore {
       now,
       jobId,
     )
-    if (result.changes === 1) return this.getJobRecord(jobId)
     return this.getJobRecord(jobId)
   }
 
@@ -935,7 +967,9 @@ export class JobStore {
         jobId,
       )
       if (result.changes !== 1) return null
-      return this.getJobRecord(jobId)
+      const completedJob = this.getJobRecord(jobId)
+      this.recordTerminalDashboardMetrics(completedJob)
+      return completedJob
     })
     if (completed) {
       if ('result_json' in completion) {
@@ -955,11 +989,11 @@ export class JobStore {
       `SELECT
          COALESCE(SUM(estimated_output_tokens), 0) AS estimated_output_tokens,
          COALESCE(SUM(visible_characters), 0) AS visible_characters,
-         COUNT(*) AS response_count,
-         COUNT(DISTINCT job_id) AS job_count,
-         MIN(measured_at) AS first_measured_at,
-         MAX(measured_at) AS last_measured_at
-       FROM output_savings_events`,
+         COALESCE(SUM(measured_responses), 0) AS response_count,
+         COALESCE(SUM(measured_jobs), 0) AS job_count,
+         MIN(first_measured_at) AS first_measured_at,
+         MAX(last_measured_at) AS last_measured_at
+       FROM dashboard_daily_metrics`,
     )
     return {
       estimated_output_tokens: Number(row?.estimated_output_tokens ?? 0),
@@ -983,36 +1017,106 @@ export class JobStore {
   }
 
   clearOutputSavings() {
-    const result = this.run('DELETE FROM output_savings_events')
-    return { cleared: Number(result.changes) }
+    return this.transaction(() => {
+      const result = this.run('DELETE FROM output_savings_events')
+      this.run(
+        `UPDATE dashboard_daily_metrics
+         SET estimated_output_tokens = 0,
+             visible_characters = 0,
+             measured_responses = 0,
+             measured_jobs = 0,
+             first_measured_at = NULL,
+             last_measured_at = NULL,
+             updated_at = ?
+         WHERE estimated_output_tokens <> 0
+            OR visible_characters <> 0
+            OR measured_responses <> 0
+            OR measured_jobs <> 0`,
+        nowRfc3339(),
+      )
+      this.run(
+        `DELETE FROM dashboard_daily_metrics
+         WHERE succeeded_jobs = 0 AND failed_jobs = 0 AND canceled_jobs = 0
+           AND estimated_output_tokens = 0 AND visible_characters = 0
+           AND measured_responses = 0 AND measured_jobs = 0`,
+      )
+      return { cleared: Number(result.changes) }
+    })
   }
 
   private recordOutputSavingsForJob(jobId: string, resultJson: unknown) {
     const events = outputSavingsEventsFromResult(jobId, resultJson)
+      .sort((left, right) => left.measured_at.localeCompare(right.measured_at))
     if (events.length === 0) return
-    for (const event of events) {
-      this.run(
-        `INSERT INTO output_savings_events (
-          job_id, response_request_id, estimated_output_tokens, visible_characters,
-          estimator, estimator_revision, basis, source_text_sha256, measured_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(job_id, response_request_id, estimator_revision) DO UPDATE SET
-          estimated_output_tokens = excluded.estimated_output_tokens,
-          visible_characters = excluded.visible_characters,
-          estimator = excluded.estimator,
-          basis = excluded.basis,
-          source_text_sha256 = excluded.source_text_sha256,
-          measured_at = excluded.measured_at`,
-        event.job_id,
-        event.response_request_id,
-        event.estimated_output_tokens,
-        event.visible_characters,
-        event.estimator,
-        event.estimator_revision,
-        event.basis,
-        event.source_text_sha256,
-        event.measured_at,
-      )
+    const job = this.getJobRecord(jobId)
+    this.transaction(() => {
+      let measuredJobRecorded = Boolean(this.get(
+        'SELECT 1 AS present FROM output_savings_events WHERE job_id = ? LIMIT 1',
+        jobId,
+      ))
+      for (const event of events) {
+        const inserted = this.run(
+          `INSERT OR IGNORE INTO output_savings_events (
+            job_id, response_request_id, estimated_output_tokens, visible_characters,
+            estimator, estimator_revision, basis, source_text_sha256, measured_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          event.job_id,
+          event.response_request_id,
+          event.estimated_output_tokens,
+          event.visible_characters,
+          event.estimator,
+          event.estimator_revision,
+          event.basis,
+          event.source_text_sha256,
+          event.measured_at,
+        )
+        if (inserted.changes !== 1) continue
+        this.recordDashboardSavings(job, event, measuredJobRecorded ? 0 : 1)
+        measuredJobRecorded = true
+      }
+    })
+  }
+
+  dashboardMetrics(query: DashboardMetricsQuery) {
+    const fromDay = dashboardDayInput(query.from_day, 'from_day')
+    const toDay = dashboardDayInput(query.to_day, 'to_day')
+    if (fromDay > toDay) throw invalidInput('from_day must be on or before to_day')
+    const profileId = query.profile_id === undefined
+      ? undefined
+      : normalizeProfileId(query.profile_id, 'profile_id')
+    const profileFilter = profileId === undefined ? '' : ' AND profile_id = ?'
+    const rangeParams: SQLInputValue[] = profileId === undefined
+      ? [fromDay, toDay]
+      : [fromDay, toDay, profileId]
+    const openingParams: SQLInputValue[] = profileId === undefined
+      ? [fromDay]
+      : [fromDay, profileId]
+    return {
+      opening_estimated_output_tokens: Number(this.get(
+        `SELECT COALESCE(SUM(estimated_output_tokens), 0) AS value
+         FROM dashboard_daily_metrics
+         WHERE day < ?${profileFilter}`,
+        ...openingParams,
+      )?.value ?? 0),
+      daily: this.all(
+        `SELECT day, profile_id, provider, execution_mode,
+                succeeded_jobs, failed_jobs, canceled_jobs,
+                estimated_output_tokens, visible_characters,
+                measured_responses, measured_jobs,
+                first_measured_at, last_measured_at
+         FROM dashboard_daily_metrics
+         WHERE day >= ? AND day <= ?${profileFilter}
+         ORDER BY day ASC, provider ASC, execution_mode ASC`,
+        ...rangeParams,
+      ).map(rowToDashboardDailyMetric),
+      capabilities: this.all(
+        `SELECT day, profile_id, provider, execution_mode, capability_id,
+                succeeded_jobs, failed_jobs, canceled_jobs
+         FROM dashboard_daily_capability_metrics
+         WHERE day >= ? AND day <= ?${profileFilter}
+         ORDER BY day ASC, provider ASC, capability_id ASC, execution_mode ASC`,
+        ...rangeParams,
+      ).map(rowToDashboardDailyCapabilityMetric),
     }
   }
 
@@ -1021,21 +1125,27 @@ export class JobStore {
     const errorJson = stringifyJson(reason === undefined || reason === null
       ? { code: 'job_canceled' }
       : { code: 'job_canceled', reason })
-    const result = this.run(
-      `UPDATE jobs
-       SET status = ?, result_json = NULL, error_json = ?, blocker_json = NULL, updated_at = ?
-       WHERE job_id = ? AND status IN ('queued', 'running', 'waiting_for_user')`,
-      'canceled',
-      errorJson,
-      now,
-      jobId
-    )
-    const job = this.getJobRecord(jobId)
-    if (result.changes === 1) {
+    const previous = this.getJobRecord(jobId)
+    const job = this.transaction(() => {
+      const result = this.run(
+        `UPDATE jobs
+         SET status = ?, result_json = NULL, error_json = ?, blocker_json = NULL, updated_at = ?
+         WHERE job_id = ? AND status IN ('queued', 'running', 'waiting_for_user')`,
+        'canceled',
+        errorJson,
+        now,
+        jobId,
+      )
+      if (result.changes !== 1) return null
+      const canceled = this.getJobRecord(jobId)
+      this.recordTerminalDashboardMetrics(canceled)
+      return canceled
+    })
+    if (job) {
       await cleanupVisibleAttachmentBundlesForRequest(this.homeDir, job.request_json).catch(() => undefined)
       return job
     }
-    throw invalidJobState(jobId, 'queued, running, or waiting_for_user', job.status)
+    throw invalidJobState(jobId, 'queued, running, or waiting_for_user', previous.status)
   }
 
   private providerSubmissionHistory(providerId: string, profileId: string, now: string) {
@@ -1068,7 +1178,9 @@ export class JobStore {
     const since = new Date(nowMs - OBSERVED_RATE_LIMIT_WINDOW_SECONDS.week * 1000).toISOString()
     let latest: ObservedRateLimit | null = null
     for (const row of this.all(
-      `SELECT provider, status, request_json, error_json, blocker_json, provider_submitted_at, updated_at
+      `SELECT provider, status,
+         request_json -> '$.routingObservation' AS routing_observation_json,
+         error_json, blocker_json, provider_submitted_at, updated_at
        FROM jobs
        WHERE profile_id = ? AND updated_at > ? AND updated_at <= ?
        ORDER BY updated_at ASC, job_id ASC`,
@@ -1076,8 +1188,7 @@ export class JobStore {
       since,
       now,
     )) {
-      const request = jsonRecord(parseJson(row.request_json))
-      const routingObservation = jsonRecord(request?.routingObservation)
+      const routingObservation = jsonRecord(parseOptionalJson(row.routing_observation_json))
       if (routingObservation?.protocol === 'tokenless.provider-routing-observation.v1' && Array.isArray(routingObservation.attempts)) {
         for (const attempt of routingObservation.attempts) {
           const candidate = observedRateLimitFromRoutingAttempt(attempt, providerId)
@@ -1107,7 +1218,15 @@ export class JobStore {
   }
 
   private initialize() {
-    this.createBaseTables()
+    const analyticsTablesExist = Boolean(this.get(
+      `SELECT 1 AS present FROM sqlite_schema
+       WHERE type = 'table' AND name = 'dashboard_daily_metrics'`,
+    )) && Boolean(this.get(
+      `SELECT 1 AS present FROM sqlite_schema
+       WHERE type = 'table' AND name = 'dashboard_daily_capability_metrics'`,
+    ))
+    migrateDatabase(this.#db)
+    if (!analyticsTablesExist) this.rebuildDashboardMetrics()
     this.failInterruptedJobs()
     restrictFilePermissionsSync(this.databasePath)
   }
@@ -1138,76 +1257,109 @@ export class JobStore {
           now,
           job.job_id,
         )
+        this.recordTerminalDashboardMetrics(this.getJobRecord(job.job_id))
       }
     })
   }
 
-  private createBaseTables() {
-    this.exec(`
-      CREATE TABLE IF NOT EXISTS jobs (
-        job_id TEXT PRIMARY KEY NOT NULL,
-        profile_id TEXT NOT NULL CHECK (length(profile_id) BETWEEN 1 AND 128),
-        provider TEXT NOT NULL,
-        status TEXT NOT NULL CHECK (
-          status IN (
-            'queued',
-            'running',
-            'waiting_for_user',
-            'succeeded',
-            'failed',
-            'canceled'
-          )
-        ),
-        request_json TEXT NOT NULL,
-        result_json TEXT,
-        error_json TEXT,
-        blocker_json TEXT,
-        provider_submitted_at TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS provider_projects (
-        provider TEXT NOT NULL,
-        profile_id TEXT NOT NULL,
-        resource_id TEXT NOT NULL,
-        name TEXT NOT NULL,
-        canonical_url TEXT NOT NULL,
-        PRIMARY KEY (provider, profile_id, resource_id)
-      );
-      CREATE TABLE IF NOT EXISTS provider_task_conversations (
-        provider TEXT NOT NULL,
-        profile_id TEXT NOT NULL,
-        task_id TEXT NOT NULL,
-        project_resource_id TEXT,
-        canonical_url TEXT NOT NULL,
-        PRIMARY KEY (provider, profile_id, task_id)
-      );
-      CREATE TABLE IF NOT EXISTS api_response_ledger (
-        response_id TEXT PRIMARY KEY NOT NULL,
-        provider TEXT NOT NULL,
-        model TEXT NOT NULL,
-        execution_mode TEXT NOT NULL,
-        transcript_json TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS output_savings_events (
-        job_id TEXT NOT NULL,
-        response_request_id TEXT NOT NULL,
-        estimated_output_tokens INTEGER NOT NULL,
-        visible_characters INTEGER NOT NULL,
-        estimator TEXT NOT NULL,
-        estimator_revision TEXT NOT NULL,
-        basis TEXT NOT NULL,
-        source_text_sha256 TEXT NOT NULL,
-        measured_at TEXT NOT NULL,
-        PRIMARY KEY (job_id, response_request_id, estimator_revision)
-      );
-      CREATE TABLE IF NOT EXISTS provider_statuses (
-        profile_id TEXT NOT NULL,
-        provider TEXT NOT NULL,
-        status_json TEXT NOT NULL,
-        PRIMARY KEY (profile_id, provider)
-      );
-    `)
+  private rebuildDashboardMetrics() {
+    this.transaction(() => {
+      this.run('DELETE FROM dashboard_daily_metrics')
+      this.run('DELETE FROM dashboard_daily_capability_metrics')
+      for (const row of this.all(
+        `SELECT job_id, profile_id, provider, status, request_json, result_json,
+                error_json, blocker_json, provider_submitted_at, created_at, updated_at
+         FROM jobs
+         WHERE status IN ('succeeded', 'failed', 'canceled')
+         ORDER BY updated_at ASC, job_id ASC`,
+      )) this.recordTerminalDashboardMetrics(rowToJob(row))
+
+      const measuredJobs = new Set<string>()
+      for (const row of this.all(
+        `SELECT job_id, response_request_id, estimated_output_tokens, visible_characters,
+                estimator, estimator_revision, basis, source_text_sha256, measured_at
+         FROM output_savings_events
+         ORDER BY job_id ASC, measured_at ASC, response_request_id ASC`,
+      )) {
+        const event = rowToOutputSavingsEvent(row)
+        const firstForJob = !measuredJobs.has(event.job_id)
+        this.recordDashboardSavings(this.getJobRecord(event.job_id), event, firstForJob ? 1 : 0)
+        measuredJobs.add(event.job_id)
+      }
+    })
+  }
+
+  private recordTerminalDashboardMetrics(job: Job) {
+    if (!['succeeded', 'failed', 'canceled'].includes(job.status)) return
+    const day = dashboardDay(job.updated_at)
+    const executionMode = dashboardExecutionMode(job.request_json)
+    const succeeded = job.status === 'succeeded' ? 1 : 0
+    const failed = job.status === 'failed' ? 1 : 0
+    const canceled = job.status === 'canceled' ? 1 : 0
+    const updatedAt = nowRfc3339()
+    this.run(
+      `INSERT INTO dashboard_daily_metrics (
+        day, profile_id, provider, execution_mode,
+        succeeded_jobs, failed_jobs, canceled_jobs,
+        estimated_output_tokens, visible_characters,
+        measured_responses, measured_jobs,
+        first_measured_at, last_measured_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, NULL, NULL, ?)
+      ON CONFLICT(day, profile_id, provider, execution_mode) DO UPDATE SET
+        succeeded_jobs = dashboard_daily_metrics.succeeded_jobs + excluded.succeeded_jobs,
+        failed_jobs = dashboard_daily_metrics.failed_jobs + excluded.failed_jobs,
+        canceled_jobs = dashboard_daily_metrics.canceled_jobs + excluded.canceled_jobs,
+        updated_at = excluded.updated_at`,
+      day, job.profile_id, job.provider, executionMode,
+      succeeded, failed, canceled, updatedAt,
+    )
+    for (const capability of dashboardJobCapabilities(job.request_json)) {
+      this.run(
+        `INSERT INTO dashboard_daily_capability_metrics (
+          day, profile_id, provider, execution_mode, capability_id,
+          succeeded_jobs, failed_jobs, canceled_jobs, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(day, profile_id, provider, execution_mode, capability_id) DO UPDATE SET
+          succeeded_jobs = dashboard_daily_capability_metrics.succeeded_jobs + excluded.succeeded_jobs,
+          failed_jobs = dashboard_daily_capability_metrics.failed_jobs + excluded.failed_jobs,
+          canceled_jobs = dashboard_daily_capability_metrics.canceled_jobs + excluded.canceled_jobs,
+          updated_at = excluded.updated_at`,
+        day, job.profile_id, job.provider, executionMode, capability,
+        succeeded, failed, canceled, updatedAt,
+      )
+    }
+  }
+
+  private recordDashboardSavings(job: Job, event: OutputSavingsEvent, measuredJobs: number) {
+    const day = dashboardDay(event.measured_at)
+    const executionMode = dashboardExecutionMode(job.request_json)
+    const updatedAt = nowRfc3339()
+    this.run(
+      `INSERT INTO dashboard_daily_metrics (
+        day, profile_id, provider, execution_mode,
+        succeeded_jobs, failed_jobs, canceled_jobs,
+        estimated_output_tokens, visible_characters,
+        measured_responses, measured_jobs,
+        first_measured_at, last_measured_at, updated_at
+      ) VALUES (?, ?, ?, ?, 0, 0, 0, ?, ?, 1, ?, ?, ?, ?)
+      ON CONFLICT(day, profile_id, provider, execution_mode) DO UPDATE SET
+        estimated_output_tokens = dashboard_daily_metrics.estimated_output_tokens + excluded.estimated_output_tokens,
+        visible_characters = dashboard_daily_metrics.visible_characters + excluded.visible_characters,
+        measured_responses = dashboard_daily_metrics.measured_responses + 1,
+        measured_jobs = dashboard_daily_metrics.measured_jobs + excluded.measured_jobs,
+        first_measured_at = CASE
+          WHEN dashboard_daily_metrics.first_measured_at IS NULL
+            OR excluded.first_measured_at < dashboard_daily_metrics.first_measured_at
+          THEN excluded.first_measured_at ELSE dashboard_daily_metrics.first_measured_at END,
+        last_measured_at = CASE
+          WHEN dashboard_daily_metrics.last_measured_at IS NULL
+            OR excluded.last_measured_at > dashboard_daily_metrics.last_measured_at
+          THEN excluded.last_measured_at ELSE dashboard_daily_metrics.last_measured_at END,
+        updated_at = excluded.updated_at`,
+      day, job.profile_id, job.provider, executionMode,
+      event.estimated_output_tokens, event.visible_characters, measuredJobs,
+      event.measured_at, event.measured_at, updatedAt,
+    )
   }
 
   private getJobRecord(jobId: string) {
@@ -1411,6 +1563,72 @@ function rowToOutputSavingsEvent(row: Record<string, unknown>): OutputSavingsEve
     source_text_sha256: String(row.source_text_sha256),
     measured_at: String(row.measured_at),
   }
+}
+
+function rowToDashboardDailyMetric(row: Record<string, unknown>): DashboardDailyMetric {
+  return {
+    day: String(row.day),
+    profile_id: String(row.profile_id),
+    provider: String(row.provider),
+    execution_mode: dashboardStoredExecutionMode(row.execution_mode),
+    succeeded_jobs: Number(row.succeeded_jobs),
+    failed_jobs: Number(row.failed_jobs),
+    canceled_jobs: Number(row.canceled_jobs),
+    estimated_output_tokens: Number(row.estimated_output_tokens),
+    visible_characters: Number(row.visible_characters),
+    measured_responses: Number(row.measured_responses),
+    measured_jobs: Number(row.measured_jobs),
+    first_measured_at: nullableString(row.first_measured_at),
+    last_measured_at: nullableString(row.last_measured_at),
+  }
+}
+
+function rowToDashboardDailyCapabilityMetric(row: Record<string, unknown>): DashboardDailyCapabilityMetric {
+  return {
+    day: String(row.day),
+    profile_id: String(row.profile_id),
+    provider: String(row.provider),
+    execution_mode: dashboardStoredExecutionMode(row.execution_mode),
+    capability_id: String(row.capability_id),
+    succeeded_jobs: Number(row.succeeded_jobs),
+    failed_jobs: Number(row.failed_jobs),
+    canceled_jobs: Number(row.canceled_jobs),
+  }
+}
+
+function dashboardStoredExecutionMode(value: unknown): DashboardDailyMetric['execution_mode'] {
+  return value === 'browser' || value === 'direct' ? value : 'unknown'
+}
+
+function dashboardExecutionMode(requestJson: unknown): DashboardDailyMetric['execution_mode'] {
+  return dashboardStoredExecutionMode(jsonRecord(requestJson)?.executionMode)
+}
+
+function dashboardJobCapabilities(requestJson: unknown) {
+  const request = jsonRecord(requestJson)
+  const context = jsonRecord(request?.context)
+  const route = jsonRecord(request?.capabilityRoute)
+  const values = Array.isArray(context?.requirements)
+    ? context.requirements
+    : Array.isArray(route?.requirements) ? route.requirements : []
+  return [...new Set(values.filter((value): value is string => (
+    typeof value === 'string' && taskCapabilityDefinition(value) !== null
+  )))]
+}
+
+function dashboardDay(value: string) {
+  return new Date(value).toISOString().slice(0, 10)
+}
+
+function dashboardDayInput(value: unknown, field: string) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw invalidInput(`${field} must use YYYY-MM-DD`)
+  }
+  const parsed = new Date(`${value}T00:00:00.000Z`)
+  if (!Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
+    throw invalidInput(`${field} must be a valid UTC day`)
+  }
+  return value
 }
 
 function webAiRef(value: unknown, field: string) {
@@ -1736,7 +1954,8 @@ function isPostSubmissionFallback(input: {
       (candidate.visibleProof !== undefined && (typeof candidate.visibleProof !== 'string' || !/^[a-z0-9:_-]{1,160}$/u.test(candidate.visibleProof))) ||
       (candidate.limitWindow !== undefined && !['minute', 'hour', 'day', 'week', 'unknown'].includes(String(candidate.limitWindow))) ||
       (candidate.retryAfterSeconds !== undefined && (typeof candidate.retryAfterSeconds !== 'number' || !Number.isSafeInteger(candidate.retryAfterSeconds) || candidate.retryAfterSeconds < 1 || candidate.retryAfterSeconds > 604_800)) ||
-      ((candidate.visibleProof !== undefined || candidate.limitWindow !== undefined || candidate.retryAfterSeconds !== undefined) && !['rate_limit', 'capacity', 'captcha', 'unreachable'].includes(String(candidate.reason))) ||
+      (candidate.visibleProof !== undefined && !['rate_limit', 'capacity', 'auth', 'captcha', 'unreachable'].includes(String(candidate.reason))) ||
+      ((candidate.limitWindow !== undefined || candidate.retryAfterSeconds !== undefined) && !['rate_limit', 'capacity', 'captcha', 'unreachable'].includes(String(candidate.reason))) ||
       (candidate.reason === 'captcha' && candidate.visibleProof === undefined)
     ) return false
   }

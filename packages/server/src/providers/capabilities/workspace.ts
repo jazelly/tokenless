@@ -51,7 +51,7 @@ export class ConversationWorkspaceCapability implements ProviderActionCapability
       native: {
         ...strategy.native,
         identity: {
-          provider: this.provider.id,
+          provider: this.provider.descriptor.id,
           canonicalUrl: this.provider.navigationPolicy.canonicalTarget(this.provider.homeUrl)?.href ?? null,
         },
         updateInstructions: {
@@ -111,11 +111,11 @@ async function ensureWorkspace(
     resolvedMode: 'conversation' as const,
     name,
     scope: {
-      provider: provider.id,
+      provider: provider.descriptor.id,
       profileId,
     },
     identity: {
-      provider: provider.id,
+      provider: provider.descriptor.id,
       name,
       resourceId: null,
       canonicalUrl,

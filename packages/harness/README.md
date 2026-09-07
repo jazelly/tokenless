@@ -1,4 +1,6 @@
-# Tokenless Web Agent Harness
+# Tokenless Harness
+
+The Web Harness runtime for Tokenless: it runs agent tasks, manages tool continuation, and accesses web LLMs through Tokenless API. This is the main runtime workflow; callers with their own Harness can instead connect to the API or invoke the skill on demand. [Compare the three workflows](../../README.md#three-ways-to-use-tokenless).
 
 This private workspace package owns Tokenless agent adapters, Harness context persistence, and the V1 Skill preparation slice. It remains independent of provider DOM, Playwright, profiles, and provider database internals.
 
@@ -35,24 +37,20 @@ Provider transport stays outside this package: Harness Markdown and other non-me
 
 ### AI sidecars
 
-Front Door and Exit Door are sidecars around the Harness loop. They do not add phases to provider execution: Front Door prepares metadata and a concrete provider route before `WebAgentHarness.start`, while Exit Door reviews the terminal result after the Harness run completes.
+Front Door is a sidecar around the Harness loop. It does not add a phase to provider execution: it prepares metadata and a concrete provider route before `WebAgentHarness.start`.
 
-The sidecars depend on the small `HarnessAiEngine` contract. The first adapter is the browser-side Chrome Prompt API implementation backed by Gemini Nano; local and remote engines can implement the same contract later without changing Front Door or Exit Door.
+The sidecar depends on the small `HarnessAiEngine` contract. The first adapter is the browser-side Chrome Prompt API implementation backed by Gemini Nano; local and remote engines can implement the same contract later without changing Front Door.
 
 ```ts
 import {
-  createHarnessExitDoorSidecar,
   createHarnessFrontDoorSidecar,
 } from 'tokenless-web-agent-harness'
 
 const frontDoor = createHarnessFrontDoorSidecar(geminiNanoEngine)
-const exitDoor = createHarnessExitDoorSidecar(geminiNanoEngine)
 const prepared = await frontDoor.prepare({ taskPrompt, providers, browserBinding })
 const run = await harness.start({ ...spec, provider: prepared.route.providerId })
 // Read the run through the normal Harness interface while the daemon remains alive.
-const postprocessed = run.final
-  ? await exitDoor.finalize({ taskPrompt, output: run.final.output, artifacts: run.final.artifacts, browserBinding })
-  : undefined
+const result = run.final
 ```
 
 The normal CLI reaches this same module through authenticated daemon HTTP:

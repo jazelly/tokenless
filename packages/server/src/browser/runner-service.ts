@@ -34,7 +34,7 @@ import { sendDirectPerplexityMessage } from '../providers/direct/perplexity.js'
 import type {
   ManagedBrowserContext,
   ManagedBrowserProfile,
-  ManagedProviderPageLease,
+  ManagedProviderPage,
   PersistentContextManager as PersistentContextManagerType,
 } from './browser/context-manager.js'
 import type { DaemonJob, ManagedDaemonClient, PostSubmissionFallbackProof } from './daemon-client.js'
@@ -126,13 +126,6 @@ type RunnerExecutionState = {
   submitted: RunnerSubmittedAction | null
 }
 
-type ClearBlockerResult = {
-  managedContext: ManagedBrowserContext
-  page: Page
-  providerPageLease: ManagedProviderPageLease | null
-  waitedMs: number
-}
-
 type RunnerProvider = NonNullable<ReturnType<typeof getProviderInstanceById>>
 
 const DEFAULT_CANCEL_POLL_MS = 500
@@ -158,7 +151,6 @@ export class ManagedPlaywrightRunnerService {
   private readonly protocolRouter: ProviderProtocolRouter
   private readonly g4fClient: G4fServiceClient | undefined
   private readonly outputSavingsRuntimeManager: OutputSavingsRuntimeManager | undefined
-  private readonly inFlightJobsByProfile = new Map<string, number>()
   private readonly inFlightJobs = new Set<Promise<void>>()
   private stopped = false
 
@@ -269,28 +261,26 @@ export class ManagedPlaywrightRunnerService {
         })
         continue
       }
-      let lease: ManagedProviderPageLease | null = null
+      let providerPage: ManagedProviderPage | null = null
       try {
-        lease = await managedContext.acquireProviderPage({
+        providerPage = await managedContext.acquireProviderPage({
           provider: provider.id,
           pageRef: providerHomePageRef(provider.id),
           policy: 'preserve',
           matchesExistingPage: (page) => providerOwnsPage(provider, page),
           isAvailablePage: (page) => providerPageAvailable(provider, page),
         })
-        const alreadyOnProvider = providerOwnsPage(provider, lease.page)
+        const alreadyOnProvider = providerOwnsPage(provider, providerPage.page)
         if (!alreadyOnProvider) {
-          await lease.page.goto(provider.descriptor.navigation.entryUrl, { waitUntil: 'commit' })
+          await providerPage.page.goto(provider.descriptor.navigation.entryUrl, { waitUntil: 'commit' })
         }
         tabs.push({
           provider: provider.id,
           url: provider.descriptor.navigation.entryUrl,
-          reused: lease.reused || alreadyOnProvider,
+          reused: providerPage.reused || alreadyOnProvider,
         })
       } catch (error) {
         failures.push(providerTabOpenFailure(provider.id, error))
-      } finally {
-        await lease?.release()
       }
     }
     const providerOrder = new Map(providerIds.map((provider, index) => [provider, index]))
@@ -331,7 +321,7 @@ export class ManagedPlaywrightRunnerService {
 
   async runOnce(signal?: AbortSignal | undefined): Promise<ManagedPlaywrightRunnerIteration> {
     if (this.stopped || signal?.aborted) return { taken: false }
-    const profiles = await this.availableProfiles(new Set())
+    const profiles = await this.availableProfiles()
     for (const profile of profiles) {
       const selected = await this.daemonClient.takeNextJob({
         profileId: profile.slug,
@@ -345,7 +335,7 @@ export class ManagedPlaywrightRunnerService {
 
   private async startAvailableJobs(signal?: AbortSignal | undefined) {
     let started = 0
-    const profiles = await this.availableProfiles(new Set(this.inFlightJobsByProfile.keys()))
+    const profiles = await this.availableProfiles()
     for (const profile of profiles) {
       if (this.stopped || signal?.aborted) break
       const selected = await this.daemonClient.takeNextJob({
@@ -354,13 +344,9 @@ export class ManagedPlaywrightRunnerService {
         signal,
       })
       if (!selected.job) continue
-      this.inFlightJobsByProfile.set(profile.slug, (this.inFlightJobsByProfile.get(profile.slug) ?? 0) + 1)
       const jobPromise = this.executeJob(profile, selected.job, signal)
         .then(() => undefined)
         .finally(() => {
-          const remaining = (this.inFlightJobsByProfile.get(profile.slug) ?? 1) - 1
-          if (remaining === 0) this.inFlightJobsByProfile.delete(profile.slug)
-          else this.inFlightJobsByProfile.set(profile.slug, remaining)
           this.inFlightJobs.delete(jobPromise)
         })
       this.inFlightJobs.add(jobPromise)
@@ -525,14 +511,12 @@ export class ManagedPlaywrightRunnerService {
     return changed ? { ...result, responses } : result
   }
 
-  private async availableProfiles(inFlightProfileIds: ReadonlySet<string>): Promise<ManagedBrowserProfile[]> {
+  private async availableProfiles(): Promise<ManagedBrowserProfile[]> {
     const profiles = await this.profileRegistry.listProfiles()
     const activeProfileIds = new Set(this.contextManager.activeProfileIds())
-    const occupiedProfileIds = new Set([...activeProfileIds, ...inFlightProfileIds])
-    let remainingNewProfileSlots = MAX_ACTIVE_BROWSER_PROFILES - occupiedProfileIds.size
+    let remainingNewProfileSlots = MAX_ACTIVE_BROWSER_PROFILES - activeProfileIds.size
     const available: ManagedBrowserProfile[] = []
     for (const profile of profiles) {
-      if (inFlightProfileIds.has(profile.slug)) continue
       if (activeProfileIds.has(profile.slug)) {
         available.push(profile)
         continue
@@ -581,12 +565,12 @@ export class ManagedPlaywrightRunnerService {
     const requestedBrowserVisibility = request.browserVisibility
     const automaticAuthObservation = isAutomaticAuthObservation(request, requestedBrowserVisibility)
     const operation = async (initialManagedContext: ManagedBrowserContext) => {
-      let managedContext = initialManagedContext
+      const managedContext = initialManagedContext
       const pageRef = managedPageRef(job, request)
       const provider = getProviderInstanceById(request.provider)
       if (!provider) throw tokenlessError('unknown_playwright_job_provider', 'Managed Playwright job provider is not supported.')
       const temporaryPage = automaticAuthObservation ? await managedContext.acquireTemporaryPage() : null
-      let providerPageLease = temporaryPage === null
+      const providerPage = temporaryPage === null
         ? await managedContext.acquireProviderPage({
             provider: provider.id,
             pageRef,
@@ -595,11 +579,11 @@ export class ManagedPlaywrightRunnerService {
             isAvailablePage: (candidate) => providerPageAvailable(provider, candidate),
           })
         : null
-      const acquiredPage = temporaryPage?.page ?? providerPageLease?.page
+      const acquiredPage = temporaryPage?.page ?? providerPage?.page
       if (!acquiredPage) {
         throw tokenlessError('playwright_provider_page_unavailable', 'Managed provider page is unavailable.', { retryable: true })
       }
-      let page: Page = acquiredPage
+      const page: Page = acquiredPage
       try {
         const state = initialExecutionState()
       if (state.submitted !== null && job.provider_submitted_at === null) {
@@ -646,7 +630,7 @@ export class ManagedPlaywrightRunnerService {
           config: this.e2eInspection,
           jobId: job.job_id,
           pageRefHash: createHash('sha256').update(JSON.stringify([request.provider, pageRef])).digest('base64url').slice(0, 20),
-          reusedPageBinding: providerPageLease?.reused ?? false,
+          reusedPageBinding: providerPage?.reused ?? false,
           profileId: profile.slug,
           profileDirectory: profile.directory,
           provider: request.provider,
@@ -656,26 +640,18 @@ export class ManagedPlaywrightRunnerService {
         })
       }
       const clearBlocker = async (waitForGuestSurface = false): Promise<number> => {
-        const cleared = await this.clearUserResolvableBlocker({
+        return await this.clearUserResolvableBlocker({
           managedContext,
           page,
-          profile,
           job,
           request,
-          pageRef,
-          providerPageLease,
           requestedBrowserVisibility,
           provider,
           state,
-          attachmentRoot,
           signal,
           isCanceled,
           waitForGuestSurface,
         })
-        managedContext = cleared.managedContext
-        page = cleared.page
-        providerPageLease = cleared.providerPageLease
-        return cleared.waitedMs
       }
       if (request.capabilityRoute && state.actionCursor === 0 && state.submitted === null) {
         let failure: ClassifiedProviderFailure | null
@@ -830,7 +806,6 @@ export class ManagedPlaywrightRunnerService {
         return state.responses
       } finally {
         await temporaryPage?.close()
-        await providerPageLease?.release()
       }
     }
     const responses = await this.contextManager.runWithProfile(profile, requestedBrowserVisibility, operation)
@@ -863,85 +838,81 @@ export class ManagedPlaywrightRunnerService {
     }
 
     const responses = await this.contextManager.runWithProfile(profile, requestedBrowserVisibility, async (managedContext) => {
-      const providerPageLease = await managedContext.acquireProviderPage({
+      const providerPage = await managedContext.acquireProviderPage({
         provider: provider.id,
         pageRef: managedPageRef(job, request),
         policy: request.pagePolicy,
         matchesExistingPage: (candidate) => providerOwnsPage(provider, candidate),
         isAvailablePage: (candidate) => providerPageAvailable(provider, candidate),
       })
-      const page = providerPageLease.page
+      const page = providerPage.page
       let directResult: Awaited<ReturnType<typeof sendDirectChatGptMessage>> | null = null
-      try {
-        await navigateToTarget(page, provider, request.target.url, signal, false)
-        for (let actionIndex = state.actionCursor; actionIndex < request.actions.length; actionIndex += 1) {
-          const action = request.actions[actionIndex]
-          if (!action) throw tokenlessError('invalid_playwright_runner_state', 'Managed Playwright runner action cursor is invalid.')
-          throwIfStopped(signal, isCanceled)
+      await navigateToTarget(page, provider, request.target.url, signal, false)
+      for (let actionIndex = state.actionCursor; actionIndex < request.actions.length; actionIndex += 1) {
+        const action = request.actions[actionIndex]
+        if (!action) throw tokenlessError('invalid_playwright_runner_state', 'Managed Playwright runner action cursor is invalid.')
+        throwIfStopped(signal, isCanceled)
 
-          let response: VisibleActionResponse
-          if (action.action === VISIBLE_ACTIONS.PROMPT_INPUT) {
-            response = directActionSuccess(action, {
-              visible: true,
-              inputProof: 'direct-protocol-prompt-cached-in-memory',
-            })
-          } else if (action.action === VISIBLE_ACTIONS.PROMPT_SUBMIT) {
-            const preparation = await provider.prepareAction(page, action)
-            if (!preparation) {
-              throw tokenlessError('direct_response_preparation_failed', 'Direct response preparation is unavailable.')
-            }
-            state.preparation = preparation
-            const sendDirectMessage = provider.id === 'chatgpt'
-              ? sendDirectChatGptMessage
-              : sendDirectPerplexityMessage
-            directResult = await sendDirectMessage({
-              page,
-              browserContext: managedContext.browserContext,
-              prompt,
-              ...(profile.proxy?.server ? { proxy: profile.proxy.server } : {}),
-              signal,
-            })
-            response = directActionSuccess(action, {
-              visible: true,
-              submissionProof: 'direct-protocol-conversation-request-completed',
-            })
-            state.submitted = {
-              actionIndex,
-              requestId: action.requestId,
-              providerUrl: validatedCurrentProviderUrl(page, provider, request.target.url),
-              preparation,
-            }
-            await this.daemonClient.recordProviderSubmission({
-              jobId: job.job_id,
-              signal,
-            })
-          } else if (action.action === VISIBLE_ACTIONS.RESPONSE_READ) {
-            if (!directResult) {
-              throw tokenlessError('direct_response_unavailable', 'Direct response is unavailable in the current runner process.')
-            }
-            response = directActionSuccess(action, {
-              text: directResult.text,
-              citations: directResult.citations,
-              visibleProof: 'direct-protocol-sse-response',
-              decisionDiagnostics: {
-                selected: null,
-                visibleAnswerCount: 0,
-                visibleBusyCount: 0,
-                generationStopVisible: false,
-              },
-            })
-            state.preparation = null
-          } else {
-            throw tokenlessError('direct_action_unsupported', `Direct execution does not support action '${action.action}'.`)
+        let response: VisibleActionResponse
+        if (action.action === VISIBLE_ACTIONS.PROMPT_INPUT) {
+          response = directActionSuccess(action, {
+            visible: true,
+            inputProof: 'direct-protocol-prompt-cached-in-memory',
+          })
+        } else if (action.action === VISIBLE_ACTIONS.PROMPT_SUBMIT) {
+          const preparation = await provider.prepareAction(page, action)
+          if (!preparation) {
+            throw tokenlessError('direct_response_preparation_failed', 'Direct response preparation is unavailable.')
           }
-
-          state.responses.push(response)
-          state.actionCursor = actionIndex + 1
+          state.preparation = preparation
+          const sendDirectMessage = provider.id === 'chatgpt'
+            ? sendDirectChatGptMessage
+            : sendDirectPerplexityMessage
+          directResult = await sendDirectMessage({
+            page,
+            browserContext: managedContext.browserContext,
+            prompt,
+            ...(profile.proxy?.server ? { proxy: profile.proxy.server } : {}),
+            signal,
+          })
+          response = directActionSuccess(action, {
+            visible: true,
+            submissionProof: 'direct-protocol-conversation-request-completed',
+          })
+          state.submitted = {
+            actionIndex,
+            requestId: action.requestId,
+            providerUrl: validatedCurrentProviderUrl(page, provider, request.target.url),
+            preparation,
+          }
+          await this.daemonClient.recordProviderSubmission({
+            jobId: job.job_id,
+            signal,
+          })
+        } else if (action.action === VISIBLE_ACTIONS.RESPONSE_READ) {
+          if (!directResult) {
+            throw tokenlessError('direct_response_unavailable', 'Direct response is unavailable in the current runner process.')
+          }
+          response = directActionSuccess(action, {
+            text: directResult.text,
+            citations: directResult.citations,
+            visibleProof: 'direct-protocol-sse-response',
+            decisionDiagnostics: {
+              selected: null,
+              visibleAnswerCount: 0,
+              visibleBusyCount: 0,
+              generationStopVisible: false,
+            },
+          })
+          state.preparation = null
+        } else {
+          throw tokenlessError('direct_action_unsupported', `Direct execution does not support action '${action.action}'.`)
         }
-        return state.responses
-      } finally {
-        await providerPageLease.release()
+
+        state.responses.push(response)
+        state.actionCursor = actionIndex + 1
       }
+      return state.responses
     })
     return {
       result: {
@@ -1131,7 +1102,7 @@ export class ManagedPlaywrightRunnerService {
     if (!client || !provider || !upstreamProvider) return undefined
     const requestedBrowserVisibility = request.browserVisibility
     return await this.contextManager.runWithProfile(profile, requestedBrowserVisibility, async (managedContext) => {
-      const lease = await managedContext.acquireProviderPage({
+      const providerPage = await managedContext.acquireProviderPage({
         provider: provider.id,
         pageRef: `${managedPageRef(job, request)}:g4f-auth`,
         policy: request.pagePolicy,
@@ -1141,41 +1112,37 @@ export class ManagedPlaywrightRunnerService {
       const contextId = `g4f-${job.job_id}-${randomUUID()}`
       let creationAttempted = false
       try {
-        try {
-          await navigateToTarget(lease.page, provider, request.target.url, signal, false)
-          const providerCookies = await managedContext.browserContext.cookies([request.target.url])
-          const cookies: Record<string, Record<string, string>> = {}
-          for (const cookie of providerCookies) {
-            const domain = cookie.domain.toLowerCase()
-            cookies[domain] ??= {}
-            cookies[domain]![cookie.name] = cookie.value
-          }
-          const browserValues = await lease.page.evaluate(() => ({
-            userAgent: navigator.userAgent,
-            language: navigator.language || 'en-US',
-          }))
-          const headers = {
-            [new URL(request.target.url).hostname]: {
-              'user-agent': browserValues.userAgent,
-              'accept-language': `${browserValues.language},en;q=0.8`,
-            },
-          }
-          let apiKey: string | undefined
-          if (provider.id === 'chatgpt') {
-            const session = await readChatGptBrowserSession(lease.page, managedContext.browserContext)
-            apiKey = session.accessToken
-          }
-          creationAttempted = true
-          await client.createAuthContext({
-            contextId,
-            provider: upstreamProvider,
-            profile: profile.slug,
-            lifetime: 'ephemeral',
-            source: { type: 'manual', cookies, headers, ...(apiKey ? { apiKey } : {}) },
-          }, signal)
-        } finally {
-          await lease.release()
+        await navigateToTarget(providerPage.page, provider, request.target.url, signal, false)
+        const providerCookies = await managedContext.browserContext.cookies([request.target.url])
+        const cookies: Record<string, Record<string, string>> = {}
+        for (const cookie of providerCookies) {
+          const domain = cookie.domain.toLowerCase()
+          cookies[domain] ??= {}
+          cookies[domain]![cookie.name] = cookie.value
         }
+        const browserValues = await providerPage.page.evaluate(() => ({
+          userAgent: navigator.userAgent,
+          language: navigator.language || 'en-US',
+        }))
+        const headers = {
+          [new URL(request.target.url).hostname]: {
+            'user-agent': browserValues.userAgent,
+            'accept-language': `${browserValues.language},en;q=0.8`,
+          },
+        }
+        let apiKey: string | undefined
+        if (provider.id === 'chatgpt') {
+          const session = await readChatGptBrowserSession(providerPage.page, managedContext.browserContext)
+          apiKey = session.accessToken
+        }
+        creationAttempted = true
+        await client.createAuthContext({
+          contextId,
+          provider: upstreamProvider,
+          profile: profile.slug,
+          lifetime: 'ephemeral',
+          source: { type: 'manual', cookies, headers, ...(apiKey ? { apiKey } : {}) },
+        }, signal)
         return contextId
       } catch (error) {
         if (creationAttempted) await this.deleteG4fAuthContext(contextId, error)
@@ -1204,19 +1171,15 @@ export class ManagedPlaywrightRunnerService {
   private async clearUserResolvableBlocker(options: {
     managedContext: ManagedBrowserContext
     page: Page
-    profile: ManagedBrowserProfile
     job: DaemonJob
     request: ManagedPlaywrightJobRequest
-    pageRef: string
-    providerPageLease: ManagedProviderPageLease | null
     requestedBrowserVisibility: BrowserVisibility
     provider: RunnerProvider
     state: RunnerExecutionState
-    attachmentRoot: string | undefined
     signal: AbortSignal
     isCanceled: () => boolean
     waitForGuestSurface: boolean
-  }): Promise<ClearBlockerResult> {
+  }): Promise<number> {
     throwIfStopped(options.signal, options.isCanceled)
     const initial = await visibleBlockerState(
       options.page,
@@ -1225,12 +1188,7 @@ export class ManagedPlaywrightRunnerService {
       options.state.submitted !== null,
     )
     if (!initial.blocked) {
-      return {
-        managedContext: options.managedContext,
-        page: options.page,
-        providerPageLease: options.providerPageLease,
-        waitedMs: 0,
-      }
+      return 0
     }
     const failure = classifyVisibleProviderBlocker(initial.primary)
     const fallbackRequest = safeFallbackRequest(options.request, options.state, failure)
@@ -1269,37 +1227,20 @@ export class ManagedPlaywrightRunnerService {
     }
     if (
       options.requestedBrowserVisibility === 'headless' ||
+      options.managedContext.effectiveBrowserVisibility === 'headless' ||
       this.e2eInspection ||
       isAutomaticAuthObservation(options.request, options.requestedBrowserVisibility)
     ) {
       throw classifiedFailureError(failure, providerFallbackStopReason(options.request, options.state, failure))
     }
-    let managedContext = options.managedContext
-    let page = options.page
-    let providerPageLease = options.providerPageLease
-    if (options.requestedBrowserVisibility === 'auto' && managedContext.effectiveBrowserVisibility === 'headless') {
-      const url = trustedSwitchUrl(page, options.provider, options.request.target.url)
-      await providerPageLease?.release()
-      managedContext = await managedContext.switchVisibility('headed')
-      providerPageLease = await managedContext.acquireProviderPage({
-        provider: options.provider.id,
-        pageRef: options.pageRef,
-        policy: options.request.pagePolicy,
-        matchesExistingPage: (candidate) => providerOwnsPage(options.provider, candidate),
-        isAvailablePage: (candidate) => providerPageAvailable(options.provider, candidate),
-      })
-      page = providerPageLease.page
-      await navigateToTarget(page, options.provider, url, options.signal, true)
-    } else {
-      await bringToFrontForUserHandoff(page)
-    }
+    await bringToFrontForUserHandoff(options.page)
     const startedAt = Date.now()
     await this.daemonClient.markJobWaitingForUser({
       jobId: options.job.job_id,
       blocker: {
         ...blockerPayload(options.job, initial.blockers, {
           requestedVisibility: options.requestedBrowserVisibility,
-          effectiveVisibility: managedContext.effectiveBrowserVisibility,
+          effectiveVisibility: options.managedContext.effectiveBrowserVisibility,
           windowOpen: true,
         }),
         failure,
@@ -1311,7 +1252,7 @@ export class ManagedPlaywrightRunnerService {
       throwIfStopped(options.signal, options.isCanceled)
       await delay(Math.min(this.userHandoverPollMs, Math.max(1, deadline - Date.now())), options.signal)
       const latest = await visibleBlockerState(
-        page,
+        options.page,
         options.provider,
         options.waitForGuestSurface,
         options.state.submitted !== null,
@@ -1333,7 +1274,7 @@ export class ManagedPlaywrightRunnerService {
         )
       }
       if (!latest.blocked && await hasStableComposer(
-        page,
+        options.page,
         options.provider,
         this.userHandoverPollMs,
         options.signal,
@@ -1343,7 +1284,7 @@ export class ManagedPlaywrightRunnerService {
           jobId: options.job.job_id,
           signal: options.signal,
         })
-        return { managedContext, page, providerPageLease, waitedMs: Date.now() - startedAt }
+        return Date.now() - startedAt
       }
     }
     throw tokenlessError(
@@ -1628,10 +1569,14 @@ function routingFailureEvidence(failure: ClassifiedProviderFailure) {
   const details = failure.details && typeof failure.details === 'object' && !Array.isArray(failure.details)
     ? failure.details as Record<string, unknown>
     : null
-  if (!['rate_limit', 'plan_limit', 'input_limit', 'recaptcha', 'cloudflare', 'hcaptcha', 'arkose', 'availability'].includes(String(details?.family))) return {}
+  const family = String(details?.family)
   const visibleProof = typeof details?.visibleProof === 'string' && /^[a-z0-9:_-]{1,160}$/u.test(details.visibleProof)
     ? details.visibleProof
     : undefined
+  if (routingFailureReason(failure) === 'auth') {
+    return family === 'provider_sign_in' && visibleProof !== undefined ? { visibleProof } : {}
+  }
+  if (!['rate_limit', 'plan_limit', 'input_limit', 'recaptcha', 'cloudflare', 'hcaptcha', 'arkose', 'availability'].includes(family)) return {}
   const limitWindow = typeof details?.limitWindow === 'string' && ['minute', 'hour', 'day', 'week', 'unknown'].includes(details.limitWindow)
     ? details.limitWindow as 'minute' | 'hour' | 'day' | 'week' | 'unknown'
     : undefined
@@ -1748,6 +1693,12 @@ function liveInspectionTarget(capability: TaskCapabilityId, provider: ProviderId
   providerCapability: ProviderCapabilityId
   scope: 'overall' | 'native'
 } | null {
+  if (provider === 'github-copilot' && (capability === TASK_CAPABILITIES.AGENT_EXECUTE || capability === TASK_CAPABILITIES.SEARCH_WEB)) {
+    return { providerCapability: PROVIDER_CAPABILITIES.GITHUB_COPILOT_MODE, scope: 'overall' }
+  }
+  if (provider === 'github-copilot' && capability === TASK_CAPABILITIES.IMAGE_INPUT) {
+    return { providerCapability: PROVIDER_CAPABILITIES.FILE_UPLOAD, scope: 'overall' }
+  }
   if (
     capability === TASK_CAPABILITIES.CONVERSATION_CHAT ||
     capability === TASK_CAPABILITIES.CONVERSATION_CONTINUE
@@ -1839,21 +1790,6 @@ function isAutomaticAuthObservation(
   return requestedBrowserVisibility === 'auto' && request.actions.every((action) => (
     action.action === VISIBLE_ACTIONS.AUTH_STATUS
   ))
-}
-
-function trustedSwitchUrl(
-  page: Page,
-  provider: RunnerProvider,
-  fallbackUrl: string
-) {
-  const pageUrl = currentPageUrl(page)
-  if (!pageUrl) return validateProviderUrl(fallbackUrl, provider)
-  const classification = provider.navigation.classify(pageUrl)
-  if (classification.kind === 'approved') return classification.target.href
-  if (classification.kind === 'trusted_sign_in') {
-    return validateProviderUrl(fallbackUrl, provider)
-  }
-  throw tokenlessError('unsupported_provider_navigation', 'Cannot continue the current managed Playwright action from an unsafe provider URL.', { retryable: false })
 }
 
 function validatedCurrentProviderUrl(

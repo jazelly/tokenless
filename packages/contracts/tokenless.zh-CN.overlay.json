@@ -6,6 +6,7 @@
   },
   "extends": "./tokenless.openapi.json",
   "actions": [
+    {"target": "$[\"components\"][\"schemas\"][\"VisibleActionRequest\"][\"description\"]", "update": "一个 provider 可见 action。GitHub Copilot 在 github-copilot namespace 下提供 mode.inspect/select、repository.inspect/select 和 usage.inspect。模型选项返回 enabled，以及锁定模型中观察到的 requiredPlan/description。用量返回账户 AI credits，以及可为 null 的 latestMessage inputTokens/outputTokens/creditsUsed；response.read 包含观察到的单条回复用量。结果与 repository / Project 映射见 docs/github-copilot.zh-CN.md。"},
     { "target": "$[\"info\"][\"title\"]", "update": "Tokenless HTTP API" },
     { "target": "$[\"info\"][\"description\"]", "update": "由一份 contract 生成的 OpenAI-compatible、Anthropic-compatible、Tokenless private machine、Dashboard 与 health HTTP interface 参考。Runtime validation 与 route implementation 位于各自负责的 server 和 caller module。" },
     { "target": "$[\"servers\"][0][\"description\"]", "update": "本地 Tokenless server" },
@@ -216,6 +217,7 @@
     { "target": "$[\"components\"][\"responses\"][\"GatewayTimeout\"][\"description\"]", "update": "Image generation 未在 deadline 前产生 terminal persisted artifact" },
     { "target": "$[\"components\"][\"responses\"][\"Session\"][\"description\"]", "update": "Active in-memory Dashboard session。" },
     { "target": "$[\"components\"][\"responses\"][\"Snapshot\"][\"description\"]", "update": "已脱敏的 aggregate Dashboard state。" },
+    { "target": "$[\"components\"][\"responses\"][\"Analytics\"][\"description\"]", "update": "已持久化的每日 Dashboard analytics。" },
     { "target": "$[\"components\"][\"responses\"][\"Config\"][\"description\"]", "update": "已持久化的 public configuration。" },
     { "target": "$[\"components\"][\"responses\"][\"OutputSavingsState\"][\"description\"]", "update": "可选的本地 output savings measurement state。" },
     { "target": "$[\"components\"][\"responses\"][\"BrowserRuntimeCatalog\"][\"description\"]", "update": "已发现且可安装的 browser runtime choice。" },

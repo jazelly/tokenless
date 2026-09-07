@@ -11,13 +11,14 @@
 | `tokenless help` | 显示内置命令摘要。 | 否 |
 | `tokenless --version` | 输出当前安装的 CLI 版本。 | 否 |
 | `tokenless install` | 底层本地 runtime provisioning；日常维护请使用 `tokenless upgrade`。 | 否 |
+| `tokenless skills sync` | 同步安装包内的两个 agent skills。 | 无 |
 | `tokenless setup` | 配置 skills、浏览器、profiles、daemon，并执行一次 provider 登录检查。 | 是 |
 | `tokenless agents <install\|status\|inspect\|uninstall> codex` | 管理可选的 Codex guidance、native hooks 和精确 Harness context binding。 | 否 |
 | `tokenless dashboard` | 打开本地 Web Dashboard，或输出可直接访问的 loopback URL。 | 否 |
 | `tokenless menubar status` | 为原生 macOS 菜单栏客户端输出同一 Tokenless home 的 menu bar snapshot。 | 否 |
 | `tokenless doctor` | 只读检查本地配置和 runtime 健康状态，不刷新 provider。 | 否 |
 | `tokenless config` | 读取或更新 Tokenless 持久化配置。 | 否 |
-| `tokenless upgrade` | 升级全局 CLI、skills、本地 runtime，并运行 doctor。 | 否 |
+| `tokenless upgrade` | 更新已安装 CLI 或 macOS App，并验证 daemon 与数据库。 | 否 |
 | `tokenless profiles add` | 创建用于 tab 与 provider configuration 的逻辑 Tokenless profile。 | 否 |
 | `tokenless profiles list` | 列出 profiles 及已持久化的 provider 检查结果。 | 否 |
 | `tokenless profiles status` | 实时检查一家 provider，并把结果持久化到共享 Tokenless 数据库。 | 是 |
@@ -28,7 +29,7 @@
 | `tokenless capabilities list` | 列出 canonical task capabilities 和已有证据闭环的 provider routes。 | 否 |
 | `tokenless limits inspect` | 根据 packaged catalog 和本地 job 历史查看下一次 prompt 的 provider/profile 容量估算。 | 否 |
 | `tokenless savings <status\|enable\|disable\|clear\|uninstall>` | 管理可选的本地输出节省计量及其在首次成功可见 response 时下载的 tokenizer。 | 否 |
-| `tokenless api-proxy <status\|enable\|disable>` | 管理 OpenAI/Anthropic 兼容的本地 API proxy 及其兼容性 conversation-mode 设置。 | 否 |
+| `tokenless api-proxy <status\|enable\|disable>` | 管理 OpenAI/Anthropic 兼容的本地 API proxy。 | 否 |
 | `tokenless run` | 通过可见 provider session 发送 prompt 和可选文件。 | 是 |
 | `tokenless state` | 查询当前 daemon job 状态。 | 否 |
 | `tokenless cancel` | 取消 daemon job，并确认其已进入 canceled 状态。 | 否 |
@@ -36,8 +37,6 @@
 | `tokenless provider-controls` | 检查可见的 model 和 effort 控件。 | 是 |
 | `tokenless provider-configure` | 选择精确的可见 model 或 effort label。 | 是 |
 | `tokenless provider-action` | 执行一个底层可见 provider action。 | 是 |
-| `tokenless chatgpt-controls` | 检查 ChatGPT 的 model 和 effort 控件。 | 是 |
-| `tokenless chatgpt-configure` | 配置 ChatGPT 专用的可见控件。 | 是 |
 | `tokenless snapshot-dom` | 捕获并保存经过清理的 provider DOM snapshot。 | 是 |
 | `tokenless daemon stop` | 优雅停止兼容的本地 daemon。 | 否 |
 | `tokenless prompt` | 构建 shareable Tokenless prompt，但不提交。 | 否 |
@@ -143,7 +142,19 @@ tokenless install --browsers chrome,edge --json
 
 该命令不会更新全局 npm CLI，不会配置 managed profile，也不会检查 provider 登录状态。直接使用本命令时，完成后仍需运行 `tokenless setup`。
 
+### `tokenless skills sync`
+
+将当前安装包内的 `tokenless` 与 `tokenless-install` 完整同步到 `~/.agents/skills` 和已有受支持 agent 目录。包含默认提示及资源；不下载远端 skill、不修改配置、不启动 daemon，也不访问 provider。
+
+```bash
+tokenless skills sync --json
+```
+
+Install、Setup 和 Upgrade 共用此同步逻辑，Upgrade 在软件已是当前版本时也同步。Doctor 与安装包逐文件核对；源码用户拉取并构建 CLI 后运行 `npm run sync:skill`，agent 已加载旧 skill 时需重新加载会话。
+
 ### `tokenless setup`
+
+需要 PATH 中有 `uv`，用于准备当前 setup 启用的 G4F Python runtime。
 
 执行完整 onboarding：先询问是否使用 Anti-Detect；native mode 选择用户自行提供的 Chrome 或 Brave，否则准备 CloakBrowser；然后创建或选择逻辑 Tokenless profile、保存配置、upsert 全局 Tokenless agent skills、将 daemon 对齐已安装 CLI 版本，并在 browser access 可用时检查 enabled providers。使用 `--install-codex` 时，setup 会在保存 preferences 之后、skill maintenance 之前显式安装 Tokenless guidance 与 hooks；不带该 flag 时不会安装，非交互运行也不会静默安装。Codex `/hooks` 中的手工信任仍然是必需步骤。Skill maintenance 以 `~/.agents/skills` 为 canonical，并刷新已经存在的常见 agent root（包括 `~/.codex/skills` 和 `~/.claude/skills`）中的 direct copy；同时修复 legacy 的 `~/.agent/skills`。npm postinstall、daemon startup 和普通 job execution 都不会下载 browser。如果尚未配置语言，setup 会检测系统 locale：中文 locale 选择 `zh-CN`，其他情况选择 `en`，并将结果写入 config。
 
@@ -247,7 +258,7 @@ tokenless dashboard --semantic-manifest-output /absolute/path/terminal-bench-sem
 
 Dashboard 包含 Overview、Profiles、Providers、Capabilities、Jobs 和 System/Diagnostics。Provider membership、visibility、role label，以及不带凭据的 HTTP/HTTPS/SOCKS5 proxy 都按 profile 配置。CLI 恢复入口仍然完整保留：
 
-Provider 就绪状态刷新会在每个 Profile 内串行运行。Profile 空闲时，Tokenless 会启动常驻 headless browser；如果同一 Profile 已有 headed browser，则复用该 runtime，不替换 browser、不关闭现有 tabs，也不把检查带到前台。每项检查只拥有一个临时后台 tab，并在完成、失败、遇到 blocker、超时或取消时关闭它；用户原有 tabs 不受影响。刷新遇到登录或验证时只记录所需操作；只有显式 Provider、browser 或 job 操作才会启动可见 browser interaction。
+Provider 就绪状态刷新使用独立后台 tab，不再持有 Profile 级执行锁。Profile 空闲时，Tokenless 会启动常驻 headless browser；如果同一 Profile 已有 headed browser，则复用该 runtime，不替换 browser、不关闭现有 tabs，也不把检查带到前台。每项检查只拥有一个临时后台 tab，并在完成、失败、遇到 blocker、超时或取消时关闭它；用户原有 tabs 不受影响。刷新遇到登录或验证时只记录所需操作；只有显式 Provider、browser 或 job 操作才会启动可见 browser interaction。
 
 ```bash
 tokenless config --profile work --provider-whitelist chatgpt,claude --browser-visibility headed --json
@@ -343,15 +354,15 @@ Tokenless 始终通过 CDP 控制 managed Chromium，内部仍使用 Playwright 
 
 ### `tokenless upgrade`
 
-执行面向普通用户的 canonical maintenance pipeline：更新全局 npm CLI、解析并验证已安装 CLI、调用新 CLI 的共享 maintenance 模块来跨 canonical 与已检测到的 direct agent root upsert 全局 agent skills 并协调匹配版本的 daemon，然后运行 doctor。日常安装维护和升级请使用它，不要直接使用 `tokenless install`。
+更新当前全局 npm 安装或整个 macOS App。新版 runtime 会迁移数据库并验证 daemon 及经过身份认证的 API，不重跑 Setup，也不改变用户配置。生命周期和发布要求见[更新指南](docs/updates.zh-CN.md)。
 
 ```bash
 tokenless upgrade
-tokenless upgrade --json
+tokenless upgrade --yes --json
 tokenless upgrade --check --json
 ```
 
-接受的选项为 `--check`、`--json`、`--home`、`--daemon-url`、`--browser`、`--browsers` 和 `--daemon-start-timeout-ms`。`--check` 只查询 npm 最新发布版本，不修改 CLI、runtime 或 daemon。
+接受的选项为 `--check`、`--yes`、`--package <local-archive>`、`--json`、`--home`、`--daemon-url` 和 `--daemon-start-timeout-ms`。`--check` 查询对应发布渠道，不改变本地状态。执行更新需要交互确认或 `--yes`，活跃任务可能中断。本地 `.tgz` 或 macOS `.zip` 可显式选择离线安装包。浏览器和 provider 选择属于 Setup/Config，不属于 Upgrade。
 
 ### `tokenless daemon stop`
 
@@ -490,8 +501,7 @@ tokenless savings uninstall --confirm-delete --json
 
 ```bash
 tokenless api-proxy status --json
-tokenless api-proxy enable --conversation-mode new-conversation --json
-tokenless api-proxy enable --conversation-mode continue-conversation --json
+tokenless api-proxy enable --json
 tokenless api-proxy disable --json
 ```
 
@@ -504,7 +514,7 @@ tokenless api-proxy disable --json
 
 `model` 必须以 `tokenless/<provider>` 显式指明 provider，例如 `tokenless/chatgpt`。无法映射的 model 会被拒绝，而不会被改写到调用方没有选择的 provider。`GET /v1/openai/models` 会列出全部可用名称。
 
-`--conversation-mode` 仍保留用于配置/status 兼容，但不会覆盖 API contract。Chat Completions 与 Anthropic 始终新建 provider conversation，并发送完整请求历史。Responses 省略 `previous_response_id` 时新建 chat；只有提供有效 `previous_response_id` 且存在 mapping 时才继续既有 provider conversation；mapping 缺失则以重建 transcript 新建 chat。精确 continuation 规则见 [API proxy 集成文档](docs/api-proxy-integration.zh-CN.md#conversation-状态)。
+持久化的 API proxy 配置只控制 proxy 是否启用以及 execution mode。Conversation 的选择由每个 API request 及其调用方负责；Responses continuation 必须显式提供 `previous_response_id`。精确 continuation 规则见 [API proxy 集成文档](docs/api-proxy-integration.zh-CN.md#conversation-状态)。
 
 `tools`、`tool_choice`、`functions`、`function_call` 和 `response_format` 会被拒绝，因为可见 provider 页面没有对应控件。`stream: true` 会返回该方言约定的事件序列，但作为一个终态 chunk 一次性下发，因为可见 response 只有渲染完成后才可读。返回的 `usage` 计数恒为 0：Tokenless 不计量 provider token，该 response 由你自己的网页版订阅承担。
 
@@ -641,29 +651,7 @@ tokenless provider-configure \
   --json
 ```
 
-至少需要提供一个 control。Label 必须与可见 UI label 精确匹配；managed visible jobs 不支持 model fallback list。
-
-### `tokenless chatgpt-controls`
-
-用于检查 model 与 effort controls 的 ChatGPT 专用命令。
-
-```bash
-tokenless chatgpt-controls -P default --json
-```
-
-### `tokenless chatgpt-configure`
-
-选择 ChatGPT 专用的 model 或 effort controls。也可以用 `--chat-surface chat` 显式约束使用 chat surface；其他 ChatGPT surfaces 会被拒绝。
-
-```bash
-tokenless chatgpt-configure \
-  -P default \
-  --model "GPT-5" \
-  --effort "High" \
-  --json
-```
-
-如果提供 `--provider`，其值必须是 `chatgpt`。
+至少需要提供一个 control。Label 必须与可见 UI label 精确匹配。
 
 ### `tokenless provider-action`
 
@@ -763,7 +751,6 @@ tokenless prompt \
 | `tokenless status` | `tokenless state` |
 | `tokenless provider-auth-status` | `tokenless provider-status` |
 | `tokenless inspect-provider-controls` | `tokenless provider-controls` |
-| `tokenless inspect-chatgpt-controls` | `tokenless chatgpt-controls` |
 | `--turn-context` | `--context` |
 | `--turn-context-file` | `--context-file` |
 

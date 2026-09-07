@@ -1,7 +1,7 @@
 {
   "schema": "tokenless.provider-rate-limit-catalog.v1",
   "catalogVersion": 1,
-  "revision": "2026-08-31",
+  "revision": "2026-09-05",
   "reviewedAt": "2026-08-31",
   "reviewAfter": "2026-09-30",
   "scope": {
@@ -201,6 +201,20 @@
     }
   },
   "sources": {
+    "github-copilot-usage-limits": {
+      "title": "GitHub Copilot usage limits",
+      "authority": "official",
+      "publisher": "GitHub",
+      "url": "https://docs.github.com/en/copilot/concepts/usage-limits",
+      "retrievedAt": "2026-09-05"
+    },
+    "microsoft-copilot-file-upload": {
+      "publisher": "Microsoft",
+      "title": "File upload in Microsoft Copilot",
+      "url": "https://support.microsoft.com/en-US/microsoft-copilot/file-upload-in-microsoft-copilot",
+      "authority": "official",
+      "retrievedAt": "2026-09-05"
+    },
     "arena-consumer-web": {
       "publisher": "Arena",
       "title": "Arena AI consumer web chat",
@@ -364,6 +378,99 @@
     }
   },
   "providers": {
+    "github-copilot": {
+      "label": "GitHub Copilot",
+      "plans": [
+        {
+          "id": "unknown",
+          "family": "unknown",
+          "labels": []
+        }
+      ],
+      "usageDrivers": [
+        "selected_model"
+      ],
+      "runtimeSignals": [],
+      "rules": [
+        {
+          "id": "github-copilot.web.numeric-limits-unknown",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": [
+              "unknown"
+            ],
+            "accessClasses": [
+              "signed_in_free",
+              "signed_in_paid",
+              "signed_in_unknown",
+              "unknown"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
+          },
+          "meter": {
+            "kind": "unknown",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "unknown"
+          },
+          "allowance": {
+            "kind": "unknown"
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "unknown",
+              "sourceIds": [
+                "github-copilot-usage-limits"
+              ]
+            }
+          ],
+          "notes": [
+            "GitHub documents rate limits and plan allowances, but the selected account has no observed numeric chat rate or reset window."
+          ]
+        }
+      ]
+    },
+    "microsoft-copilot": {
+      "label": "Microsoft Copilot",
+      "plans": [
+        { "id": "unknown", "family": "unknown", "labels": [] }
+      ],
+      "usageDrivers": ["selected_mode"],
+      "runtimeSignals": [],
+      "rules": [
+        {
+          "id": "microsoft-copilot.consumer-web.numeric-limits-unknown",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["unknown"],
+            "accessClasses": ["signed_in_unknown", "unknown"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": { "kind": "unknown", "unit": "usage" },
+          "window": { "kind": "unknown" },
+          "allowance": { "kind": "unknown" },
+          "limitBehavior": { "kind": "provider_managed" },
+          "evidence": [
+            { "kind": "unknown", "sourceIds": ["microsoft-copilot-file-upload"] }
+          ],
+          "notes": [
+            "The file-upload documentation gives per-file and per-conversation limits, not a time-based chat allowance or reset window."
+          ]
+        }
+      ]
+    },
     "chatgpt": {
       "label": "ChatGPT",
       "plans": [

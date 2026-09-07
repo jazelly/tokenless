@@ -168,6 +168,13 @@ export class TokenlessDashboardServer {
       ))
       return true
     }
+    if (method === 'GET' && url.pathname === '/dashboard-api/v1/analytics') {
+      this.writeJson(response, 200, await this.services.analytics({
+        profile: url.searchParams.get('profile') ?? undefined,
+        range: url.searchParams.get('range') ?? undefined,
+      }))
+      return true
+    }
     if (method === 'GET' && url.pathname === '/dashboard-api/v1/snapshot') {
       const snapshot = await this.services.snapshot()
       const etag = `"${snapshot.revision}"`

@@ -17,9 +17,6 @@ export class ClaudeProvider extends BaseProvider<'claude'> {
       stage: 'supported',
       setupOrder: 1,
       subscriptionSupport: 'supported',
-      protocolCompatibility: Object.freeze({
-        legacyRequests: true,
-      }),
       navigation: PROVIDER_NAVIGATION_CATALOG.claude,
       controls: Object.freeze({
         chatSurface: false,

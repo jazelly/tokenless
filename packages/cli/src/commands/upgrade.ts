@@ -1,132 +1,199 @@
 import { execFile } from 'node:child_process'
 import fs from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { tokenlessPackageVersion } from '#tokenless-server/platform-package.js'
+import { stopDaemon } from '../bootstrap/runtime.js'
+import { tokenlessHome } from '../bootstrap/home.js'
+import { installTokenlessSkills } from '../bootstrap/setup-workflow.js'
+import {
+  checkMacOSAppUpdate,
+  detectEmbeddedMacOSApp,
+  runMacOSAppUpdate,
+} from './macos-update.js'
+import {
+  fetchTokenlessLatestVersion,
+  TOKENLESS_PACKAGE_NAME,
+  type TokenlessLatestVersionResult,
+} from '../http/npm-registry.js'
+import { compareSemanticVersions, isSemanticVersion } from '../http/version-check.js'
 import { t } from '../localization.js'
 import type { CliMessageKey } from '../i18n/catalog.js'
 
-type UpgradeArgs = Record<string, any> & { files?: string[]; attachFiles?: string[] }
+export type UpgradeArgs = Record<string, any> & {
+  package?: string | undefined
+  files?: string[]
+  attachFiles?: string[]
+}
 
-export type UpgradeProcessResult = {
+export type UpgradeCheckResult = {
   ok: boolean
-  command: string
-  args: string[]
-  stdout: string
-  stderr: string
-  exitCode: number | null
-  signal: NodeJS.Signals | null
-  timedOut: boolean
-  outputTruncated: boolean
-  error?: {
-    code: string
-    message: string
-  }
+  packageName: 'tokenless'
+  channel: 'npm' | 'macos'
+  current: string
+  latest: string | null
+  status: 'up_to_date' | 'update_available' | 'check_unavailable'
+  updateAvailable: boolean | null
+  registryUrl?: string
+  artifact?: { path: string; version: string }
+  error?: { code: string; message: string; retryable: boolean }
 }
-
-type UpgradeDependencies = {
-  runProcess: (
-    command: string,
-    args: readonly string[],
-    options?: {
-      cwd?: string
-      env?: NodeJS.ProcessEnv
-      timeoutMs?: number
-      maxOutputBytes?: number
-    }
-  ) => Promise<UpgradeProcessResult>
-  onProgress?: (event: UpgradeProgressEvent) => void
-}
-
-type PhaseResult = Record<string, any> & {
-  ok: boolean
-  error?: {
-    code: string
-    message: string
-    retryable: boolean
-  }
-}
-
-export type UpgradePhaseName = 'npmInstall' | 'resolveGlobalCli' | 'skills' | 'runtimeInstall' | 'doctor'
 
 export type UpgradeProgressEvent = {
-  phase: UpgradePhaseName
+  phase: 'check' | 'acquire' | 'stopDaemon' | 'resolveGlobalCli' | 'npmInstall' | 'runtimeInstall' | 'skills'
   label: string
   status: 'started' | 'succeeded' | 'failed'
   errorCode?: string
 }
 
-const UPGRADE_PHASE_LABELS: Record<UpgradePhaseName, CliMessageKey> = Object.freeze({
-  npmInstall: 'upgradePhaseNpmInstall',
-  resolveGlobalCli: 'upgradePhaseResolveGlobalCli',
+type UpgradeDependencies = { onProgress?: (event: UpgradeProgressEvent) => void }
+type PackageManifest = { name: string; version: string; bin?: string | Record<string, string> }
+type PhaseResult = { ok: boolean; error?: { code: string; message: string; retryable: boolean }; [key: string]: unknown }
+
+const PHASE_LABELS: Record<UpgradeProgressEvent['phase'], CliMessageKey> = {
   skills: 'upgradePhaseSkills',
+  check: 'upgradePhaseCheck',
+  acquire: 'upgradePhaseAcquire',
+  stopDaemon: 'upgradePhaseStopDaemon',
+  resolveGlobalCli: 'upgradePhaseResolveGlobalCli',
+  npmInstall: 'upgradePhaseNpmInstall',
   runtimeInstall: 'upgradePhaseRuntimeInstall',
-  doctor: 'upgradePhaseDoctor',
-})
-
-const NPM_INSTALL_TIMEOUT_MS = 180_000
+}
+const NPM_TIMEOUT_MS = 180_000
 const NPM_ROOT_TIMEOUT_MS = 30_000
-const NEW_CLI_VERSION_TIMEOUT_MS = 30_000
-const NEW_CLI_INSTALL_TIMEOUT_MS = 180_000
-const NEW_CLI_DOCTOR_TIMEOUT_MS = 120_000
+const ACTIVATION_TIMEOUT_MS = 180_000
 const MAX_PROCESS_OUTPUT_BYTES = 1024 * 1024
-const MAX_JSON_OUTPUT_BYTES = 4 * 1024 * 1024
+const MAX_MANIFEST_BYTES = 64 * 1024
+const MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
 
-export async function runUpgradeCommand(args: UpgradeArgs, dependencies?: Partial<UpgradeDependencies>) {
-  assertUpgradeArguments(args)
-  const deps: UpgradeDependencies = {
-    runProcess: runBoundedProcess,
-    ...dependencies,
+/** Check npm or the embedded macOS release channel without mutating local state. */
+export async function checkUpgrade(args: UpgradeArgs = {}): Promise<UpgradeCheckResult> {
+  const current = tokenlessPackageVersion()
+  if (detectEmbeddedMacOSApp() !== null) {
+    const check = await checkMacOSAppUpdate({
+      currentVersion: current,
+      ...(args.package === undefined ? {} : { packagePath: args.package }),
+    })
+    return {
+      ok: check.ok,
+      packageName: TOKENLESS_PACKAGE_NAME,
+      channel: 'macos',
+      current: check.current,
+      latest: check.latest,
+      status: check.updateAvailable === true ? 'update_available' : check.ok ? 'up_to_date' : 'check_unavailable',
+      updateAvailable: check.updateAvailable,
+      ...(check.asset === undefined ? {} : { artifact: { path: check.asset.url, version: check.asset.version } }),
+      ...(check.releaseUrl === undefined ? {} : { registryUrl: check.releaseUrl }),
+      ...(check.error === undefined ? {} : { error: check.error }),
+    }
   }
+
+  if (!isSemanticVersion(current)) return unavailable('npm', current, 'tokenless_version_invalid', `Installed tokenless version is invalid: ${current}.`)
+  if (args.package !== undefined) {
+    const artifact = await readLocalPackageArchive(args.package)
+    if (!artifact.ok) return unavailable('npm', current, artifact.error.code, artifact.error.message)
+    return compareCheck(current, artifact.manifest.version, { artifact: { path: artifact.archivePath, version: artifact.manifest.version } })
+  }
+  return npmCheck(current, await fetchTokenlessLatestVersion())
+}
+
+/** Replace the verified global npm package, then activate the newly installed runtime. */
+export async function runUpgradeCommand(args: UpgradeArgs, dependencies: UpgradeDependencies = {}) {
+  if (detectEmbeddedMacOSApp() !== null) {
+    return await runMacOSAppUpdate({
+      currentVersion: tokenlessPackageVersion(),
+      ...(args.package === undefined ? {} : { packagePath: args.package }),
+      homeDir: tokenlessHome(args.home),
+      ...(args.daemonUrl === undefined ? {} : { daemonUrl: args.daemonUrl }),
+      timeoutMs: requestedTimeout(args.daemonStartTimeoutMs),
+    })
+  }
+
+  const beforeVersion = tokenlessPackageVersion()
   const result: Record<string, any> = {
     ok: false,
-    cli: {
-      beforeVersion: tokenlessPackageVersion(),
-      afterVersion: null,
-    },
+    channel: 'npm',
+    cli: { beforeVersion, targetVersion: null, afterVersion: null },
     phases: {},
   }
+  emit(dependencies, 'check', 'started')
+  const check = await checkUpgrade(args)
+  result.phases.check = check.ok ? check : phaseError(check.error?.code ?? 'upgrade_check_unavailable', check.error?.message ?? 'Could not determine an update target.', check.error?.retryable === true)
+  emit(dependencies, 'check', check.ok ? 'succeeded' : 'failed', result.phases.check)
+  if (!check.ok || check.latest === null) return finish(result)
+  result.cli.targetVersion = check.latest
 
-  emitUpgradeProgress(deps, 'npmInstall', 'started')
-  const npmInstall = await runNpmInstall(deps)
-  result.phases.npmInstall = npmInstall
-  emitUpgradeProgress(deps, 'npmInstall', npmInstall.ok ? 'succeeded' : 'failed', npmInstall)
-  if (!npmInstall.ok) return finishUpgradeResult(result)
+  const comparison = compareSemanticVersions(beforeVersion, check.latest)
+  if (comparison === null) {
+    result.phases.check = phaseError('tokenless_version_invalid', `Cannot compare installed version ${beforeVersion} with target ${check.latest}.`)
+    return finish(result)
+  }
+  if (comparison > 0) {
+    result.phases.check = phaseError('upgrade_target_older', `Refusing to downgrade tokenless from ${beforeVersion} to ${check.latest}.`)
+    return finish(result)
+  }
+  if (comparison === 0 && args.package === undefined) {
+    emit(dependencies, 'skills', 'started')
+    try {
+      result.phases.skills = (await installTokenlessSkills()).check
+    } catch (error) {
+      result.phases.skills = phaseError((error as { code?: string }).code ?? 'tokenless_skill_install_failed', formatError(error))
+    }
+    emit(dependencies, 'skills', result.phases.skills.ok ? 'succeeded' : 'failed', result.phases.skills)
+    result.cli.afterVersion = beforeVersion
+    if (result.phases.skills.ok) result.status = 'up_to_date'
+    return finish(result)
+  }
 
-  emitUpgradeProgress(deps, 'resolveGlobalCli', 'started')
-  const resolved = await resolveVerifiedGlobalTokenless(deps)
-  result.phases.resolveGlobalCli = resolved.phase
-  emitUpgradeProgress(deps, 'resolveGlobalCli', resolved.phase.ok ? 'succeeded' : 'failed', resolved.phase)
-  if (!resolved.phase.ok || !resolved.entrypoint || !resolved.version) return finishUpgradeResult(result)
-  result.cli.afterVersion = resolved.version
+  emit(dependencies, 'resolveGlobalCli', 'started')
+  const installed = await resolveVerifiedGlobalTokenless(beforeVersion)
+  result.phases.resolveGlobalCli = installed.phase
+  emit(dependencies, 'resolveGlobalCli', installed.phase.ok ? 'succeeded' : 'failed', installed.phase)
+  if (!installed.phase.ok || installed.packageDir === undefined) return finish(result)
 
-  emitUpgradeProgress(deps, 'skills', 'started')
-  emitUpgradeProgress(deps, 'runtimeInstall', 'started')
-  const runtimeInstall = await runNewCliJsonPhase({
-    deps,
-    entrypoint: resolved.entrypoint,
-    command: 'install',
-    args,
-    timeoutMs: NEW_CLI_INSTALL_TIMEOUT_MS,
-  })
-  const skills = skillPhaseFromMaintenance(runtimeInstall)
-  result.phases.skills = skills
-  result.phases.runtimeInstall = runtimeInstall
-  emitUpgradeProgress(deps, 'skills', skills.ok ? 'succeeded' : 'failed', skills)
-  emitUpgradeProgress(deps, 'runtimeInstall', runtimeInstall.ok ? 'succeeded' : 'failed', runtimeInstall)
+  emit(dependencies, 'acquire', 'started')
+  const acquired = check.artifact === undefined
+    ? await acquireRegistryArchive(check.latest)
+    : { ok: true as const, archivePath: check.artifact.path, cleanup: undefined }
+  result.phases.acquire = acquired.ok ? { ok: true, version: check.latest } : phaseError(acquired.error.code, acquired.error.message, true)
+  emit(dependencies, 'acquire', acquired.ok ? 'succeeded' : 'failed', result.phases.acquire)
+  if (!acquired.ok) return finish(result)
 
-  emitUpgradeProgress(deps, 'doctor', 'started')
-  const doctor = await runNewCliJsonPhase({
-    deps,
-    entrypoint: resolved.entrypoint,
-    command: 'doctor',
-    args,
-    timeoutMs: NEW_CLI_DOCTOR_TIMEOUT_MS,
-  })
-  result.phases.doctor = doctor
-  emitUpgradeProgress(deps, 'doctor', doctor.ok ? 'succeeded' : 'failed', doctor)
+  try {
+    // The archive has already been validated; only now stop the identity-verified daemon.
+    emit(dependencies, 'stopDaemon', 'started')
+    const stopped = await stopVerifiedDaemon(args)
+    result.phases.stopDaemon = stopped
+    emit(dependencies, 'stopDaemon', stopped.ok ? 'succeeded' : 'failed', stopped)
+    if (!stopped.ok) return finish(result)
 
-  return finishUpgradeResult(result)
+    emit(dependencies, 'npmInstall', 'started')
+    const installedResult = await installGlobalArchive(acquired.archivePath)
+    result.phases.npmInstall = installedResult
+    emit(dependencies, 'npmInstall', installedResult.ok ? 'succeeded' : 'failed', installedResult)
+    if (!installedResult.ok) return finish(result)
+
+    const updated = await resolveVerifiedGlobalTokenless(check.latest)
+    result.phases.resolveGlobalCli = updated.phase
+    if (!updated.phase.ok || updated.packageDir === undefined) return finish(result)
+    result.cli.afterVersion = updated.version
+
+    emit(dependencies, 'runtimeInstall', 'started')
+    const activation = await activateInstalledRuntime({
+      packageDir: updated.packageDir,
+      homeDir: tokenlessHome(args.home),
+      ...(typeof args.daemonUrl === 'string' && args.daemonUrl !== '' ? { daemonUrl: args.daemonUrl } : {}),
+      timeoutMs: requestedTimeout(args.daemonStartTimeoutMs),
+      expectedVersion: check.latest,
+    })
+    result.phases.runtimeInstall = activation
+    emit(dependencies, 'runtimeInstall', activation.ok ? 'succeeded' : 'failed', activation)
+    return finish(result)
+  } finally {
+    await acquired.cleanup?.()
+  }
 }
 
 export function formatUpgradeProgress(event: UpgradeProgressEvent) {
@@ -136,476 +203,262 @@ export function formatUpgradeProgress(event: UpgradeProgressEvent) {
 }
 
 export function formatUpgradeSummary(result: Record<string, any>) {
-  const beforeVersion = String(result.cli?.beforeVersion ?? 'unknown')
-  const afterVersion = String(result.cli?.afterVersion ?? 'unknown')
+  if (result.channel === 'macos') {
+    if (result.ok === true && result.status === 'up_to_date') return t('upgradeNoChange', { version: result.afterVersion, channel: 'macos' })
+    if (result.ok === true) return t('upgradeChanged', { before: result.beforeVersion, after: result.afterVersion })
+    return t('upgradeStopped', { label: t('upgradePhaseMacOS'), error: result.error?.code ? ` (${result.error.code})` : '' })
+  }
+  const before = String(result.cli?.beforeVersion ?? 'unknown')
+  const after = String(result.cli?.afterVersion ?? result.cli?.targetVersion ?? 'unknown')
   if (result.ok === true) {
-    return beforeVersion === afterVersion
-      ? t('upgradeCurrent', { version: afterVersion })
-      : t('upgradeChanged', { before: beforeVersion, after: afterVersion })
+    if (result.status === 'up_to_date') return t('upgradeNoChange', { version: after, channel: 'npm' })
+    if (before === after) return t('upgradeCurrent', { version: after })
+    return t('upgradeChanged', { before, after })
   }
-  const failed = Object.entries(result.phases ?? {})
-    .find(([, phase]) => (phase as PhaseResult)?.ok !== true) as [UpgradePhaseName, PhaseResult] | undefined
-  if (!failed) return t('upgradeIncomplete')
-  const [phase, detail] = failed
-  const code = detail.error?.code
-  return t('upgradeStopped', { label: t(UPGRADE_PHASE_LABELS[phase]), error: code ? ` (${code})` : '' })
+  const failed = Object.entries(result.phases ?? {}).find(([, phase]) => (phase as PhaseResult)?.ok !== true) as [string, PhaseResult] | undefined
+  const failedLabel: CliMessageKey | undefined = failed === undefined ? undefined : ({
+    skills: 'upgradePhaseSkills',
+    check: 'upgradePhaseCheck',
+    acquire: 'upgradePhaseAcquire',
+    stopDaemon: 'upgradePhaseStopDaemon',
+    resolveGlobalCli: 'upgradePhaseResolveGlobalCli',
+    npmInstall: 'upgradePhaseNpmInstall',
+    runtimeInstall: 'upgradePhaseRuntimeInstall',
+  } as Partial<Record<string, CliMessageKey>>)[failed[0]]
+  return failed === undefined
+    ? t('upgradeIncomplete')
+    : t('upgradeStopped', { label: failedLabel === undefined ? failed[0] : t(failedLabel), error: failed[1].error?.code ? ` (${failed[1].error.code})` : '' })
 }
 
-function emitUpgradeProgress(
-  deps: UpgradeDependencies,
-  phase: UpgradePhaseName,
-  status: UpgradeProgressEvent['status'],
-  result?: PhaseResult,
-) {
-  try {
-    deps.onProgress?.({
-      phase,
-      label: t(UPGRADE_PHASE_LABELS[phase]),
-      status,
-      ...(result?.error?.code ? { errorCode: result.error.code } : {}),
-    })
-  } catch {
-    // Presentation must never change upgrade execution or its structured result.
-  }
-}
-
-export async function runBoundedProcess(
-  command: string,
-  args: readonly string[],
-  options: {
-    cwd?: string
-    env?: NodeJS.ProcessEnv
-    timeoutMs?: number
-    maxOutputBytes?: number
-  } = {},
-): Promise<UpgradeProcessResult> {
+export async function runBoundedProcess(command: string, args: readonly string[], options: { timeoutMs?: number; maxOutputBytes?: number } = {}) {
   const maxBuffer = options.maxOutputBytes ?? MAX_PROCESS_OUTPUT_BYTES
-  return await new Promise((resolve) => {
+  return await new Promise<{ ok: boolean; stdout: string; stderr: string; exitCode: number | null; code?: string }>((resolve) => {
     execFile(command, [...args], {
-      cwd: options.cwd,
-      env: options.env ?? process.env,
+      env: process.env,
       timeout: options.timeoutMs,
       maxBuffer,
       windowsHide: true,
     }, (error, stdout, stderr) => {
-      const childError = error as (NodeJS.ErrnoException & {
-        code?: string | number
-        signal?: NodeJS.Signals
-        killed?: boolean
-      }) | null
-      const errorCode = childError?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
-        ? 'tokenless_upgrade_process_output_limit'
-        : childError?.killed
-          ? 'tokenless_upgrade_process_timeout'
-          : childError
-            ? 'tokenless_upgrade_process_failed'
-            : undefined
+      const childError = error as (NodeJS.ErrnoException & { code?: string | number; killed?: boolean }) | null
       resolve({
-        ok: !childError,
-        command,
-        args: [...args],
+        ok: childError === null,
         stdout: String(stdout ?? ''),
         stderr: String(stderr ?? ''),
-        exitCode: typeof childError?.code === 'number' ? childError.code : (childError ? 1 : 0),
-        signal: childError?.signal ?? null,
-        timedOut: childError?.killed === true,
-        outputTruncated: childError?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER',
-        ...(errorCode
-          ? {
-              error: {
-                code: errorCode,
-                message: childError?.message ?? 'Process failed.',
-              },
-            }
-          : {}),
+        exitCode: typeof childError?.code === 'number' ? childError.code : childError === null ? 0 : 1,
+        ...(childError === null ? {} : { code: childError?.killed ? 'process_timeout' : String(childError?.code ?? 'process_failed') }),
       })
     })
   })
 }
 
-function assertUpgradeArguments(args: UpgradeArgs) {
-  const allowed = new Set([
-    'attachFiles',
-    'files',
-    'json',
-    'home',
-    'daemonUrl',
-    'browser',
-    'browsers',
-    'daemonStartTimeoutMs',
-  ])
-  const unsupported = Object.entries(args)
-    .filter(([key, value]) => !['attachFiles', 'capabilities', 'files'].includes(key) && value !== undefined && !allowed.has(key))
-    .map(([key]) => `--${key.replace(/[A-Z]/g, (character) => `-${character.toLowerCase()}`)}`)
-  if ((args.files?.length ?? 0) > 0) unsupported.push('--file')
-  if ((args.attachFiles?.length ?? 0) > 0) unsupported.push('--attach-file')
-  if ((args.capabilities?.length ?? 0) > 0) unsupported.push('--capability')
-  if (unsupported.length > 0) {
-    throw upgradeUsageError(
-      'upgrade_option_invalid',
-      `tokenless upgrade accepts only --json, --home, --daemon-url, --browser, --browsers, and --daemon-start-timeout-ms. Unsupported option${unsupported.length === 1 ? '' : 's'}: ${unsupported.join(', ')}.`,
-    )
-  }
+function npmCheck(current: string, latest: TokenlessLatestVersionResult): UpgradeCheckResult {
+  if (!latest.ok) return unavailable('npm', current, latest.code, latest.message, latest.registryUrl)
+  return compareCheck(current, latest.latestVersion, { registryUrl: latest.registryUrl })
 }
 
-async function runNpmInstall(deps: UpgradeDependencies): Promise<PhaseResult> {
-  const command = npmCommand()
-  const processResult = await deps.runProcess(command, ['install', '--global', 'tokenless@latest'], {
-    env: process.env,
-    timeoutMs: NPM_INSTALL_TIMEOUT_MS,
-    maxOutputBytes: MAX_PROCESS_OUTPUT_BYTES,
-  })
-  if (!processResult.ok) {
-    return failedProcessPhase('npm_global_install_failed', 'npm install --global tokenless@latest failed.', processResult)
-  }
+function compareCheck(current: string, latest: string, details: { registryUrl?: string; artifact?: { path: string; version: string } }): UpgradeCheckResult {
+  const comparison = compareSemanticVersions(current, latest)
+  if (comparison === null) return unavailable('npm', current, 'tokenless_version_invalid', `Cannot compare installed version ${current} with target ${latest}.`, details.registryUrl)
   return {
     ok: true,
-    command,
-    args: ['install', '--global', 'tokenless@latest'],
-    exitCode: processResult.exitCode,
-    stdout: sanitizedProcessOutput(processResult.stdout),
-    stderr: sanitizedProcessOutput(processResult.stderr),
+    packageName: TOKENLESS_PACKAGE_NAME,
+    channel: 'npm',
+    current,
+    latest,
+    status: comparison < 0 ? 'update_available' : 'up_to_date',
+    updateAvailable: comparison < 0,
+    ...(details.registryUrl === undefined ? {} : { registryUrl: details.registryUrl }),
+    ...(details.artifact === undefined ? {} : { artifact: details.artifact }),
   }
 }
 
-async function resolveVerifiedGlobalTokenless(deps: UpgradeDependencies): Promise<{
-  phase: PhaseResult
-  entrypoint?: string
-  version?: string
-}> {
-  const command = npmCommand()
-  const rootResult = await deps.runProcess(command, ['root', '--global'], {
-    env: process.env,
-    timeoutMs: NPM_ROOT_TIMEOUT_MS,
-    maxOutputBytes: 64 * 1024,
-  })
-  if (!rootResult.ok) {
-    return {
-      phase: failedProcessPhase('npm_global_root_failed', 'Unable to resolve npm global root after installing tokenless@latest.', rootResult),
-    }
-  }
-  const globalRoot = rootResult.stdout.trim().split(/\r?\n/)[0]?.trim()
-  if (!globalRoot || !path.isAbsolute(globalRoot)) {
-    return {
-      phase: failedPhase(
-        'npm_global_root_invalid',
-        `npm root --global returned an invalid path: ${JSON.stringify(rootResult.stdout.trim())}.`,
-      ),
-    }
-  }
-
-  let realGlobalRoot: string
-  try {
-    realGlobalRoot = await fs.realpath(globalRoot)
-  } catch (error) {
-    return {
-      phase: failedPhase(
-        'npm_global_root_missing',
-        `npm global root ${globalRoot} could not be resolved: ${(error as Error).message}`,
-      ),
-    }
-  }
-
-  const packageDir = path.join(realGlobalRoot, 'tokenless')
-  let realPackageDir: string
-  let packageJson: Record<string, any>
-  try {
-    realPackageDir = await fs.realpath(packageDir)
-    packageJson = JSON.parse(await fs.readFile(path.join(realPackageDir, 'package.json'), 'utf8')) as Record<string, any>
-  } catch (error) {
-    return {
-      phase: failedPhase(
-        'global_tokenless_package_missing',
-        `The global npm package tokenless was not found at ${packageDir}: ${(error as Error).message}`,
-      ),
-    }
-  }
-  if (!isPathInside(realPackageDir, realGlobalRoot)) {
-    return {
-      phase: failedPhase(
-        'global_tokenless_package_outside_root',
-        `Refusing to use tokenless package outside npm global root: ${realPackageDir}.`,
-      ),
-    }
-  }
-
-  if (packageJson.name !== 'tokenless') {
-    return {
-      phase: failedPhase(
-        'global_tokenless_package_mismatch',
-        `Expected global package name tokenless at ${packageDir}, found ${JSON.stringify(packageJson.name)}.`,
-      ),
-    }
-  }
-  const packageVersion = typeof packageJson.version === 'string' ? packageJson.version : ''
-  if (!packageVersion) {
-    return {
-      phase: failedPhase('global_tokenless_version_missing', `Global tokenless package at ${packageDir} has no package.json version.`),
-    }
-  }
-  const bin = typeof packageJson.bin === 'string' ? packageJson.bin : packageJson.bin?.tokenless
-  if (typeof bin !== 'string' || bin.trim() === '' || path.isAbsolute(bin) || bin.includes('\0')) {
-    return {
-      phase: failedPhase('global_tokenless_bin_invalid', `Global tokenless package at ${packageDir} has an invalid bin.tokenless entry.`),
-    }
-  }
-
-  const entrypoint = path.resolve(realPackageDir, bin)
-  let realEntrypoint: string
-  try {
-    realEntrypoint = await fs.realpath(entrypoint)
-  } catch (error) {
-    return {
-      phase: failedPhase(
-        'global_tokenless_entrypoint_missing',
-        `Global tokenless entrypoint ${entrypoint} could not be resolved: ${(error as Error).message}`,
-      ),
-    }
-  }
-  if (!isPathInside(realEntrypoint, realPackageDir)) {
-    return {
-      phase: failedPhase(
-        'global_tokenless_entrypoint_outside_package',
-        `Refusing to execute tokenless entrypoint outside the verified global package: ${realEntrypoint}.`,
-      ),
-    }
-  }
-
-  const versionResult = await deps.runProcess(process.execPath, [realEntrypoint, '--version'], {
-    env: process.env,
-    timeoutMs: NEW_CLI_VERSION_TIMEOUT_MS,
-    maxOutputBytes: 64 * 1024,
-  })
-  if (!versionResult.ok) {
-    return {
-      phase: failedProcessPhase('global_tokenless_version_failed', 'The verified global tokenless entrypoint failed --version.', versionResult),
-    }
-  }
-  const reportedVersion = versionResult.stdout.trim()
-  if (reportedVersion !== packageVersion) {
-    return {
-      phase: failedPhase(
-        'global_tokenless_version_mismatch',
-        `The verified global tokenless entrypoint reported ${JSON.stringify(reportedVersion)}, but package.json says ${JSON.stringify(packageVersion)}.`,
-      ),
-    }
-  }
-
+function unavailable(channel: 'npm' | 'macos', current: string, code: string, message: string, registryUrl?: string): UpgradeCheckResult {
   return {
-    entrypoint: realEntrypoint,
-    version: packageVersion,
-    phase: {
-      ok: true,
-      npmGlobalRoot: realGlobalRoot,
-      packageDir: realPackageDir,
-      entrypoint: realEntrypoint,
-      packageVersion,
-      reportedVersion,
-    },
+    ok: false,
+    packageName: TOKENLESS_PACKAGE_NAME,
+    channel,
+    current,
+    latest: null,
+    status: 'check_unavailable',
+    updateAvailable: null,
+    ...(registryUrl === undefined ? {} : { registryUrl }),
+    error: { code, message, retryable: true },
   }
 }
 
-async function runNewCliJsonPhase({
-  deps,
-  entrypoint,
-  command,
-  args,
-  timeoutMs,
-}: {
-  deps: UpgradeDependencies
-  entrypoint: string
-  command: 'install' | 'doctor'
-  args: UpgradeArgs
-  timeoutMs: number
-}): Promise<PhaseResult> {
-  const forwardedArgs = forwardedMaintenanceArgs(command, args)
-  const reportedForwardedArgs = sanitizeReportedArgs(forwardedArgs)
-  const reportedArgs = sanitizeReportedArgs([entrypoint, command, '--json', ...forwardedArgs])
-  const processResult = await deps.runProcess(process.execPath, [entrypoint, command, '--json', ...forwardedArgs], {
-    env: process.env,
-    timeoutMs,
-    maxOutputBytes: MAX_JSON_OUTPUT_BYTES,
-  })
-  const parsed = parseJsonPayload(processResult.stdout)
-  if (!processResult.ok) {
-    return {
-      ...failedProcessPhase(`tokenless_${command}_failed`, `tokenless ${command} --json failed.`, processResult),
-      ...(parsed.ok ? { payload: sanitizeReportedValue(parsed.value) } : { parseError: sanitizedProcessOutput(parsed.error) }),
-      followUp: command === 'install'
-        ? `Run ${quotePath(process.execPath)} ${quotePath(sanitizedProcessOutput(entrypoint))} doctor --json${reportedForwardedArgs.length ? ` ${reportedForwardedArgs.map(quotePath).join(' ')}` : ''} and stop any unverified daemon named in the daemon check before retrying tokenless upgrade --json.`
-        : undefined,
+async function resolveVerifiedGlobalTokenless(expectedVersion: string): Promise<{ phase: PhaseResult; packageDir?: string; entrypoint?: string; version?: string }> {
+  const invoking = await invokingPackage()
+  if (!invoking.ok) return { phase: phaseError(invoking.code, invoking.message) }
+  if (invoking.version !== expectedVersion) return { phase: phaseError('tokenless_invoking_version_mismatch', `The invoking package is ${invoking.version}; expected ${expectedVersion}.`) }
+
+  const root = await runBoundedProcess(npmCommand(), ['root', '--global'], { timeoutMs: NPM_ROOT_TIMEOUT_MS, maxOutputBytes: 64 * 1024 })
+  if (!root.ok) return { phase: phaseError('npm_global_root_failed', 'Unable to resolve npm global root.') }
+  const globalRoot = root.stdout.trim().split(/\r?\n/)[0]
+  if (!globalRoot || !path.isAbsolute(globalRoot)) return { phase: phaseError('npm_global_root_invalid', 'npm root --global returned an invalid path.') }
+
+  try {
+    const realRoot = await fs.realpath(globalRoot)
+    const packageDir = await fs.realpath(path.join(realRoot, TOKENLESS_PACKAGE_NAME))
+    if (!isInside(packageDir, realRoot)) return { phase: phaseError('global_tokenless_package_outside_root', 'The global tokenless package is outside npm global root.') }
+    const manifest = await readManifest(path.join(packageDir, 'package.json'))
+    if (manifest.name !== TOKENLESS_PACKAGE_NAME) return { phase: phaseError('global_tokenless_package_mismatch', 'The npm global package is not tokenless.') }
+    if (manifest.version !== expectedVersion) return { phase: phaseError('global_tokenless_version_mismatch', `Global tokenless is ${manifest.version}; expected ${expectedVersion}.`) }
+    if (packageDir !== invoking.path) return { phase: phaseError('upgrade_not_global_install', 'The invoking tokenless package is not the npm global installation.') }
+    const entrypoint = await packageEntrypoint(packageDir, manifest)
+    if (!entrypoint.ok) return { phase: phaseError(entrypoint.code, entrypoint.message) }
+    return { packageDir, entrypoint: entrypoint.path, version: manifest.version, phase: { ok: true, packageDir, entrypoint: entrypoint.path, version: manifest.version } }
+  } catch (error) {
+    return { phase: phaseError('global_tokenless_package_missing', `Could not resolve the global tokenless package: ${formatError(error)}.`) }
+  }
+}
+
+async function invokingPackage(): Promise<{ ok: true; path: string; version: string } | { ok: false; code: string; message: string }> {
+  const candidate = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
+  try {
+    const packagePath = await fs.realpath(candidate)
+    const manifest = await readManifest(path.join(packagePath, 'package.json'))
+    if (manifest.name !== TOKENLESS_PACKAGE_NAME || !isSemanticVersion(manifest.version)) throw new Error('invalid tokenless package manifest')
+    return { ok: true, path: packagePath, version: manifest.version }
+  } catch (error) {
+    return { ok: false, code: 'tokenless_invoking_package_invalid', message: `Cannot read the invoking tokenless package: ${formatError(error)}.` }
+  }
+}
+
+async function packageEntrypoint(packageDir: string, manifest: PackageManifest): Promise<{ ok: true; path: string } | { ok: false; code: string; message: string }> {
+  const bin = typeof manifest.bin === 'string' ? manifest.bin : manifest.bin?.tokenless
+  if (!bin || path.isAbsolute(bin) || bin.includes('\0')) return { ok: false, code: 'global_tokenless_bin_invalid', message: 'The global tokenless package has an invalid bin entry.' }
+  try {
+    const entrypoint = await fs.realpath(path.resolve(packageDir, bin))
+    if (!isInside(entrypoint, packageDir)) return { ok: false, code: 'global_tokenless_entrypoint_outside_package', message: 'The tokenless entrypoint is outside its package.' }
+    return { ok: true, path: entrypoint }
+  } catch (error) {
+    return { ok: false, code: 'global_tokenless_entrypoint_missing', message: `The tokenless entrypoint is missing: ${formatError(error)}.` }
+  }
+}
+
+async function acquireRegistryArchive(version: string): Promise<{ ok: true; archivePath: string; cleanup: () => Promise<void> } | { ok: false; error: { code: string; message: string } }> {
+  const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-upgrade-'))
+  const packed = await runBoundedProcess(npmCommand(), ['pack', `${TOKENLESS_PACKAGE_NAME}@${version}`, '--registry=https://registry.npmjs.org', '--json', '--pack-destination', temporaryRoot], { timeoutMs: NPM_TIMEOUT_MS, maxOutputBytes: 256 * 1024 })
+  if (!packed.ok) {
+    await fs.rm(temporaryRoot, { recursive: true, force: true })
+    return { ok: false, error: { code: 'npm_registry_pack_failed', message: `npm pack tokenless@${version} failed.` } }
+  }
+  try {
+    const archives = (await fs.readdir(temporaryRoot)).filter((entry) => entry.endsWith('.tgz'))
+    if (archives.length !== 1) throw new Error('npm pack did not produce exactly one archive')
+    const archivePath = await fs.realpath(path.join(temporaryRoot, archives[0]!))
+    const stat = await fs.stat(archivePath)
+    if (!stat.isFile() || stat.size > MAX_ARCHIVE_BYTES) throw new Error('npm pack archive is invalid or too large')
+    const manifest = await readArchiveManifest(archivePath)
+    if (manifest.name !== TOKENLESS_PACKAGE_NAME || manifest.version !== version) throw new Error('npm pack archive manifest did not match target')
+    return { ok: true, archivePath, cleanup: async () => await fs.rm(temporaryRoot, { recursive: true, force: true }) }
+  } catch (error) {
+    await fs.rm(temporaryRoot, { recursive: true, force: true })
+    return { ok: false, error: { code: 'npm_registry_pack_invalid', message: formatError(error) } }
+  }
+}
+
+async function installGlobalArchive(archivePath: string): Promise<PhaseResult> {
+  const result = await runBoundedProcess(npmCommand(), ['install', '--global', archivePath], { timeoutMs: NPM_TIMEOUT_MS })
+  return result.ok ? { ok: true } : phaseError('npm_global_install_failed', 'npm install --global tokenless update archive failed.', true)
+}
+
+async function stopVerifiedDaemon(args: UpgradeArgs): Promise<PhaseResult> {
+  try {
+    const stopped = await stopDaemon({
+      homeDir: tokenlessHome(args.home),
+      ...(args.daemonUrl === undefined ? {} : { daemonUrl: args.daemonUrl }),
+      timeoutMs: requestedTimeout(args.daemonStartTimeoutMs),
+    })
+    return { ok: stopped.ok === true, status: stopped.status }
+  } catch (error) {
+    const typed = error as { code?: unknown; message?: unknown; retryable?: unknown }
+    return phaseError(typeof typed.code === 'string' ? typed.code : 'daemon_stop_identity_unverified', typeof typed.message === 'string' ? typed.message : formatError(error), typed.retryable === true)
+  }
+}
+
+async function activateInstalledRuntime({ packageDir, homeDir, daemonUrl, timeoutMs, expectedVersion }: { packageDir: string; homeDir: string; daemonUrl?: string; timeoutMs: number; expectedVersion: string }): Promise<PhaseResult> {
+  try {
+    const entrypoint = await fs.realpath(path.join(packageDir, 'dist', 'src', 'bootstrap', 'update-runtime.mjs'))
+    if (!isInside(entrypoint, packageDir)) return phaseError('upgrade_activation_entrypoint_outside_package', 'The update runtime is outside its package.')
+    const processResult = await runBoundedProcess(process.execPath, [entrypoint, homeDir, daemonUrl ?? '', String(timeoutMs)], { timeoutMs: ACTIVATION_TIMEOUT_MS, maxOutputBytes: 4 * 1024 * 1024 })
+    if (!processResult.ok) {
+      try {
+        const payload = JSON.parse(processResult.stdout) as any
+        const code = typeof payload?.error?.code === 'string' ? payload.error.code : 'upgrade_activation_failed'
+        return phaseError(code, `The newly installed runtime activation failed${code === 'upgrade_activation_failed' ? '' : ` (${code})`}.`, payload?.error?.retryable === true)
+      } catch {
+        return phaseError('upgrade_activation_failed', 'The newly installed runtime activation failed.', true)
+      }
     }
-  }
-  if (!parsed.ok) {
-    return failedPhase(
-      `tokenless_${command}_json_invalid`,
-      `tokenless ${command} --json did not return valid JSON: ${parsed.error}`,
-    )
-  }
-  const payloadOk = parsed.value?.ok === true
-  if (!payloadOk) {
-    return {
-      ok: false,
-      command: process.execPath,
-      args: reportedArgs,
-      exitCode: processResult.exitCode,
-      payload: sanitizeReportedValue(parsed.value),
-      error: {
-        code: `tokenless_${command}_unhealthy`,
-        message: `tokenless ${command} --json completed but reported ok: false.`,
-        retryable: command === 'doctor',
-      },
+    let payload: any
+    try { payload = JSON.parse(processResult.stdout) } catch { return phaseError('upgrade_activation_json_invalid', 'The newly installed runtime returned invalid JSON.') }
+    if (payload?.version !== expectedVersion) return phaseError('upgrade_activation_version_mismatch', 'The activated runtime version did not match the selected update.')
+    if (payload?.ok !== true || typeof payload.version !== 'string' || !Number.isSafeInteger(payload.databaseVersion) || payload.databaseVersion < 1 || payload.daemon?.version !== payload.version || payload.api?.ok !== true || payload.skills?.ok !== true) {
+      return phaseError('upgrade_activation_unhealthy', 'The newly installed runtime did not prove database, daemon, and API readiness.')
     }
-  }
-  return {
-    ok: true,
-    command: process.execPath,
-    args: reportedArgs,
-    exitCode: processResult.exitCode,
-    payload: sanitizeReportedValue(parsed.value),
+    return { ok: true, payload: { version: payload.version, databaseVersion: payload.databaseVersion, skills: payload.skills, daemon: payload.daemon, api: payload.api } }
+  } catch (error) {
+    return phaseError('upgrade_activation_failed', formatError(error), true)
   }
 }
 
-function skillPhaseFromMaintenance(maintenance: PhaseResult): PhaseResult {
-  if (!maintenance.ok) {
-    return failedPhase(
-      'tokenless_skill_upsert_unconfirmed',
-      'The verified new CLI maintenance command failed before global Tokenless skills could be confirmed.',
-      true,
-    )
-  }
-  const skills = maintenance.payload?.skills
-  if (!skills || skills.ok !== true || skills.upserted !== true) {
-    return failedPhase(
-      'tokenless_skill_upsert_unconfirmed',
-      'The verified new CLI maintenance result did not confirm global Tokenless skill upsert.',
-      true,
-    )
-  }
-  return {
-    ok: true,
-    result: sanitizeReportedValue(skills),
+async function readLocalPackageArchive(value: unknown): Promise<{ ok: true; archivePath: string; manifest: PackageManifest } | { ok: false; error: { code: string; message: string } }> {
+  if (typeof value !== 'string' || value.trim() === '' || value.includes('\0')) return { ok: false, error: { code: 'upgrade_package_invalid', message: '--package must name a local tokenless .tgz archive.' } }
+  const archivePath = path.resolve(value)
+  if (!/\.(?:tgz|tar\.gz)$/i.test(archivePath)) return { ok: false, error: { code: 'upgrade_package_invalid', message: 'Update package must be a .tgz or .tar.gz archive.' } }
+  try {
+    const canonicalPath = await fs.realpath(archivePath)
+    const stat = await fs.stat(canonicalPath)
+    if (!stat.isFile() || stat.size > MAX_ARCHIVE_BYTES) throw new Error('archive is not a regular file or is too large')
+    const manifest = await readArchiveManifest(canonicalPath)
+    if (manifest.name !== TOKENLESS_PACKAGE_NAME || !isSemanticVersion(manifest.version)) throw new Error('archive package name or version is invalid')
+    return { ok: true, archivePath: canonicalPath, manifest }
+  } catch (error) {
+    return { ok: false, error: { code: 'upgrade_package_invalid', message: `Could not read update package: ${formatError(error)}.` } }
   }
 }
 
-function forwardedMaintenanceArgs(command: 'install' | 'doctor', args: UpgradeArgs) {
-  const forwarded: string[] = []
-  appendValueFlag(forwarded, '--home', args.home)
-  appendValueFlag(forwarded, '--daemon-url', args.daemonUrl)
-  appendValueFlag(forwarded, '--browser', args.browser)
-  if (command === 'install') appendValueFlag(forwarded, '--browsers', args.browsers)
-  appendValueFlag(forwarded, '--daemon-start-timeout-ms', args.daemonStartTimeoutMs)
-  return forwarded
+async function readArchiveManifest(archivePath: string) {
+  const result = await runBoundedProcess(process.platform === 'win32' ? 'tar.exe' : 'tar', ['-xOf', archivePath, 'package/package.json'], { timeoutMs: 30_000, maxOutputBytes: MAX_MANIFEST_BYTES })
+  if (!result.ok) throw new Error('archive package.json could not be read')
+  return parseManifest(result.stdout)
 }
 
-function appendValueFlag(target: string[], flag: string, value: unknown) {
-  if (value === undefined) return
-  target.push(flag, String(value))
+async function readManifest(manifestPath: string) { return parseManifest(await fs.readFile(manifestPath, 'utf8')) }
+
+function parseManifest(value: string): PackageManifest {
+  const parsed = JSON.parse(value) as unknown
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('package.json must be an object')
+  const manifest = parsed as Partial<PackageManifest>
+  if (typeof manifest.name !== 'string' || typeof manifest.version !== 'string') throw new Error('package.json must contain name and version')
+  return manifest as PackageManifest
 }
 
-function finishUpgradeResult(result: Record<string, any>) {
-  result.skills = result.phases.skills ?? null
-  result.runtimeInstall = result.phases.runtimeInstall ?? null
-  result.doctor = result.phases.doctor ?? null
+function finish(result: Record<string, any>) {
   result.ok = Object.values(result.phases).every((phase: any) => phase?.ok === true)
-  return sanitizeReportedValue(result) as Record<string, any>
+  result.status ??= result.ok ? 'updated' : 'failed'
+  result.runtimeInstall = result.phases.runtimeInstall ?? null
+  return result
 }
 
-function failedProcessPhase(code: string, message: string, result: UpgradeProcessResult): PhaseResult {
-  return {
-    ok: false,
-    command: result.command,
-    args: sanitizeReportedArgs(result.args),
-    exitCode: result.exitCode,
-    signal: result.signal,
-    timedOut: result.timedOut,
-    outputTruncated: result.outputTruncated,
-    stderr: sanitizedProcessOutput(result.stderr),
-    stdout: sanitizedProcessOutput(result.stdout),
-    error: {
-      code,
-      message,
-      retryable: true,
-    },
-    ...(result.error?.code ? { processErrorCode: result.error.code } : {}),
-  }
+function phaseError(code: string, message: string, retryable = false): PhaseResult { return { ok: false, error: { code, message, retryable } } }
+
+function emit(dependencies: UpgradeDependencies, phase: UpgradeProgressEvent['phase'], status: UpgradeProgressEvent['status'], result?: PhaseResult) {
+  try { dependencies.onProgress?.({ phase, label: t(PHASE_LABELS[phase]), status, ...(result?.error?.code ? { errorCode: result.error.code } : {}) }) } catch { /* presentation must not affect update */ }
 }
 
-function failedPhase(code: string, message: string, retryable = false): PhaseResult {
-  return {
-    ok: false,
-    error: {
-      code,
-      message: sanitizedProcessOutput(message),
-      retryable,
-    },
-  }
+function requestedTimeout(value: unknown) {
+  if (value === undefined || value === null || value === '') return 120_000
+  const timeout = Number(value)
+  if (!Number.isSafeInteger(timeout) || timeout <= 0 || timeout > 2_147_483_647) throw new Error('--daemon-start-timeout-ms must be a positive integer no greater than 2147483647.')
+  return timeout
 }
 
-function parseJsonPayload(stdout: string): { ok: true; value: Record<string, any> } | { ok: false; error: string } {
-  try {
-    const value = JSON.parse(stdout) as unknown
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-      return { ok: false, error: 'top-level JSON payload is not an object' }
-    }
-    return { ok: true, value: value as Record<string, any> }
-  } catch (error) {
-    return { ok: false, error: (error as Error).message }
-  }
-}
-
-function sanitizedProcessOutput(value: string) {
-  const redacted = redactSensitiveText(value)
-  if (redacted.length <= 16_384) return redacted
-  return `${redacted.slice(0, 16_384)}\n[truncated]`
-}
-
-function sanitizeReportedArgs(args: readonly string[]) {
-  return args.map((arg) => sanitizedProcessOutput(arg))
-}
-
-function sanitizeReportedValue(value: unknown, depth = 0): unknown {
-  if (typeof value === 'string') return sanitizedProcessOutput(value)
-  if (value === null || typeof value !== 'object') return value
-  if (depth >= 20) return '[redacted]'
-  if (Array.isArray(value)) return value.map((item) => sanitizeReportedValue(item, depth + 1))
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .map(([key, entry]) => [key, sanitizeReportedValue(entry, depth + 1)]),
-  )
-}
-
-function redactSensitiveText(value: string) {
-  let redacted = value
-    .replace(/\b(https?:\/\/)([^@\s/?#]+)@/gi, '$1[redacted]@')
-    .replace(/\b(_authToken\s*[:=]\s*)[^\s"',}]+/gi, '$1[redacted]')
-    .replace(/(\/\/[^\s"']+:_authToken=)[^\s"']+/gi, '$1[redacted]')
-    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, '$1 [redacted]')
-    .replace(/([?&][^=\s"'&]*(?:token|auth|key|secret|password|credential)[^=\s"'&]*=)[^&\s"']+/gi, '$1[redacted]')
-  for (const [key, secret] of Object.entries(process.env)) {
-    if (!secret || secret.length < 8) continue
-    if (!/(TOKEN|PASSWORD|SECRET|KEY|AUTH|CREDENTIAL)/i.test(key)) continue
-    redacted = redacted.split(secret).join('[redacted]')
-  }
-  return redacted
-}
-
-function isPathInside(candidate: string, parent: string) {
+function isInside(candidate: string, parent: string) {
   const relative = path.relative(parent, candidate)
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
 }
 
-function quotePath(value: string) {
-  return /\s/.test(value) ? JSON.stringify(value) : value
-}
-
-function npmCommand() {
-  return process.platform === 'win32' ? 'npm.cmd' : 'npm'
-}
-
-function upgradeUsageError(code: string, message: string) {
-  const error = new Error(message) as Error & { code?: string; retryable?: boolean }
-  error.code = code
-  error.retryable = false
-  return error
-}
+function npmCommand() { return process.platform === 'win32' ? 'npm.cmd' : 'npm' }
+function formatError(error: unknown) { return error instanceof Error ? error.message : String(error) }

@@ -684,9 +684,150 @@
         "visible_parallel_progress",
         "terminal_state"
       ]
+    },
+    "github-copilot-controls": {
+      "gate": "non_submission",
+      "submissions": 0,
+      "actions": [
+        "github-copilot.mode.inspect",
+        "github-copilot.mode.select",
+        "model.inspect",
+        "model.select",
+        "effort.inspect",
+        "effort.select",
+        "github-copilot.repository.inspect",
+        "github-copilot.repository.select",
+        "github-copilot.usage.inspect"
+      ],
+      "closure": [
+        "cli",
+        "visible_dom",
+        "durable_state",
+        "restore_original"
+      ]
+    },
+    "github-copilot-repository": {
+      "gate": "mutation",
+      "submissions": 1,
+      "actions": [
+        "workspace.ensure",
+        "prompt.input",
+        "prompt.submit",
+        "response.read"
+      ],
+      "closure": [
+        "cli",
+        "project_identity",
+        "visible_response",
+        "exact_visible_identity"
+      ]
+    },
+    "github-copilot-agent": {
+      "gate": "mutation",
+      "submissions": 1,
+      "actions": [
+        "github-copilot.mode.select",
+        "workspace.ensure",
+        "model.select",
+        "prompt.input",
+        "prompt.submit",
+        "response.read"
+      ],
+      "closure": [
+        "cli",
+        "project_identity",
+        "visible_tool_steps",
+        "visible_response",
+        "visible_citation",
+        "terminal_state"
+      ]
+    },
+    "github-copilot-file-inputs": {
+      "gate": "mutation",
+      "submissions": 1,
+      "actions": [
+        "file.upload",
+        "prompt.input",
+        "prompt.submit",
+        "response.read"
+      ],
+      "closure": [
+        "cli",
+        "visible_attachment",
+        "visible_response"
+      ]
+    },
+    "github-copilot-agent-image": {
+      "gate": "mutation",
+      "submissions": 1,
+      "actions": [
+        "github-copilot.mode.select",
+        "workspace.ensure",
+        "model.select",
+        "file.upload",
+        "prompt.input",
+        "prompt.submit",
+        "response.read"
+      ],
+      "closure": [
+        "cli",
+        "project_identity",
+        "visible_attachment",
+        "visible_response",
+        "terminal_state"
+      ]
     }
   },
   "providers": {
+    "github-copilot": {
+      "stage": "experimental",
+      "account": "signed_in_selected_setup_profile",
+      "required": [
+        "session-readiness",
+        "prompt-draft",
+        "model-choice",
+        "file-selection",
+        "conversation-continuation",
+        "conversation-workflow",
+        "harness-attachment-roundtrip",
+        "github-copilot-controls",
+        "github-copilot-repository",
+        "github-copilot-agent",
+        "github-copilot-file-inputs",
+        "github-copilot-agent-image"
+      ],
+      "unavailable": {
+        "effort-choice": "agent_effort_covered_by_github_copilot_controls",
+        "deepseek-controls": "provider_specific_capability",
+        "deepseek-search-reasoning": "provider_specific_capability",
+        "deepseek-vision-input": "provider_specific_capability",
+        "model-comparison": "provider_specific_capability",
+        "arena-search": "provider_specific_capability",
+        "arena-image": "provider_specific_capability",
+        "meta-image": "provider_specific_capability",
+        "chatgpt-image": "provider_specific_capability",
+        "grok-image": "provider_specific_capability",
+        "gemini-image": "provider_specific_capability",
+        "dola-image": "provider_specific_capability",
+        "doubao-image": "provider_specific_capability",
+        "qwen-image": "provider_specific_capability",
+        "arena-code": "provider_specific_capability",
+        "arena-agent": "provider_specific_capability",
+        "arena-video": "provider_specific_capability",
+        "workspace-response-citations": "covered_by_conversation_workflow",
+        "workspace-response-baseline": "covered_by_conversation_continuation",
+        "qwen-mode-workspace": "provider_specific_capability",
+        "doubao-controls": "provider_specific_capability",
+        "native-project": "repository_selection_covered_by_github_copilot_repository",
+        "kimi-library-controls": "provider_specific_capability",
+        "kimi-search": "provider_specific_capability",
+        "kimi-library-workflows": "provider_specific_capability",
+        "kimi-deep-research": "provider_specific_capability",
+        "kimi-artifacts": "provider_specific_capability",
+        "kimi-long-running": "provider_specific_capability",
+        "kimi-agent-swarm": "provider_specific_capability"
+      }
+    },
     "arena": {
       "stage": "supported",
       "account": "signed_in_selected_setup_profile",
@@ -728,7 +869,12 @@
         "kimi-artifacts": "provider_specific_capability",
         "kimi-long-running": "provider_specific_capability",
         "kimi-agent-swarm": "provider_specific_capability",
-        "kimi-library-workflows": "provider_specific_capability"
+        "kimi-library-workflows": "provider_specific_capability",
+        "github-copilot-controls": "provider_specific_capability",
+        "github-copilot-repository": "provider_specific_capability",
+        "github-copilot-agent": "provider_specific_capability",
+        "github-copilot-file-inputs": "provider_specific_capability",
+        "github-copilot-agent-image": "provider_specific_capability"
       }
     },
     "chatgpt": {
@@ -772,7 +918,12 @@
         "kimi-artifacts": "provider_specific_capability",
         "kimi-long-running": "provider_specific_capability",
         "kimi-agent-swarm": "provider_specific_capability",
-        "kimi-library-workflows": "provider_specific_capability"
+        "kimi-library-workflows": "provider_specific_capability",
+        "github-copilot-controls": "provider_specific_capability",
+        "github-copilot-repository": "provider_specific_capability",
+        "github-copilot-agent": "provider_specific_capability",
+        "github-copilot-file-inputs": "provider_specific_capability",
+        "github-copilot-agent-image": "provider_specific_capability"
       }
     },
     "claude": {
@@ -816,7 +967,12 @@
         "kimi-artifacts": "provider_specific_capability",
         "kimi-long-running": "provider_specific_capability",
         "kimi-agent-swarm": "provider_specific_capability",
-        "kimi-library-workflows": "provider_specific_capability"
+        "kimi-library-workflows": "provider_specific_capability",
+        "github-copilot-controls": "provider_specific_capability",
+        "github-copilot-repository": "provider_specific_capability",
+        "github-copilot-agent": "provider_specific_capability",
+        "github-copilot-file-inputs": "provider_specific_capability",
+        "github-copilot-agent-image": "provider_specific_capability"
       }
     },
     "gemini": {
@@ -860,7 +1016,12 @@
         "kimi-artifacts": "provider_specific_capability",
         "kimi-long-running": "provider_specific_capability",
         "kimi-agent-swarm": "provider_specific_capability",
-        "kimi-library-workflows": "provider_specific_capability"
+        "kimi-library-workflows": "provider_specific_capability",
+        "github-copilot-controls": "provider_specific_capability",
+        "github-copilot-repository": "provider_specific_capability",
+        "github-copilot-agent": "provider_specific_capability",
+        "github-copilot-file-inputs": "provider_specific_capability",
+        "github-copilot-agent-image": "provider_specific_capability"
       }
     },
     "grok": {
@@ -903,7 +1064,12 @@
         "kimi-artifacts": "provider_specific_capability",
         "kimi-long-running": "provider_specific_capability",
         "kimi-agent-swarm": "provider_specific_capability",
-        "kimi-library-workflows": "provider_specific_capability"
+        "kimi-library-workflows": "provider_specific_capability",
+        "github-copilot-controls": "provider_specific_capability",
+        "github-copilot-repository": "provider_specific_capability",
+        "github-copilot-agent": "provider_specific_capability",
+        "github-copilot-file-inputs": "provider_specific_capability",
+        "github-copilot-agent-image": "provider_specific_capability"
       }
     },
     "qwen": {
@@ -947,7 +1113,12 @@
         "kimi-artifacts": "provider_specific_capability",
         "kimi-long-running": "provider_specific_capability",
         "kimi-agent-swarm": "provider_specific_capability",
-        "kimi-library-workflows": "provider_specific_capability"
+        "kimi-library-workflows": "provider_specific_capability",
+        "github-copilot-controls": "provider_specific_capability",
+        "github-copilot-repository": "provider_specific_capability",
+        "github-copilot-agent": "provider_specific_capability",
+        "github-copilot-file-inputs": "provider_specific_capability",
+        "github-copilot-agent-image": "provider_specific_capability"
       }
     },
     "deepseek": {
@@ -991,7 +1162,12 @@
         "kimi-artifacts": "provider_specific_capability",
         "kimi-long-running": "provider_specific_capability",
         "kimi-agent-swarm": "provider_specific_capability",
-        "kimi-library-workflows": "provider_specific_capability"
+        "kimi-library-workflows": "provider_specific_capability",
+        "github-copilot-controls": "provider_specific_capability",
+        "github-copilot-repository": "provider_specific_capability",
+        "github-copilot-agent": "provider_specific_capability",
+        "github-copilot-file-inputs": "provider_specific_capability",
+        "github-copilot-agent-image": "provider_specific_capability"
       }
     },
     "perplexity": {
@@ -1035,7 +1211,12 @@
         "kimi-artifacts": "provider_specific_capability",
         "kimi-long-running": "provider_specific_capability",
         "kimi-agent-swarm": "provider_specific_capability",
-        "kimi-library-workflows": "provider_specific_capability"
+        "kimi-library-workflows": "provider_specific_capability",
+        "github-copilot-controls": "provider_specific_capability",
+        "github-copilot-repository": "provider_specific_capability",
+        "github-copilot-agent": "provider_specific_capability",
+        "github-copilot-file-inputs": "provider_specific_capability",
+        "github-copilot-agent-image": "provider_specific_capability"
       }
     },
     "zai": {
@@ -1079,7 +1260,12 @@
         "kimi-artifacts": "provider_specific_capability",
         "kimi-long-running": "provider_specific_capability",
         "kimi-agent-swarm": "provider_specific_capability",
-        "kimi-library-workflows": "provider_specific_capability"
+        "kimi-library-workflows": "provider_specific_capability",
+        "github-copilot-controls": "provider_specific_capability",
+        "github-copilot-repository": "provider_specific_capability",
+        "github-copilot-agent": "provider_specific_capability",
+        "github-copilot-file-inputs": "provider_specific_capability",
+        "github-copilot-agent-image": "provider_specific_capability"
       }
     },
     "doubao": {
@@ -1123,7 +1309,12 @@
         "kimi-artifacts": "provider_specific_capability",
         "kimi-long-running": "provider_specific_capability",
         "kimi-agent-swarm": "provider_specific_capability",
-        "kimi-library-workflows": "provider_specific_capability"
+        "kimi-library-workflows": "provider_specific_capability",
+        "github-copilot-controls": "provider_specific_capability",
+        "github-copilot-repository": "provider_specific_capability",
+        "github-copilot-agent": "provider_specific_capability",
+        "github-copilot-file-inputs": "provider_specific_capability",
+        "github-copilot-agent-image": "provider_specific_capability"
       }
     },
     "kimi": {
@@ -1167,7 +1358,12 @@
         "kimi-deep-research": "visible_provider_blocker_in_repeated_real_runs_2026_08_10",
         "kimi-artifacts": "visible_provider_blocker_in_repeated_real_runs_2026_08_10",
         "kimi-long-running": "visible_provider_blocker_in_repeated_real_runs_2026_08_10",
-        "kimi-agent-swarm": "no_terminal_state_before_18_minute_timeout_2026_08_10"
+        "kimi-agent-swarm": "no_terminal_state_before_18_minute_timeout_2026_08_10",
+        "github-copilot-controls": "provider_specific_capability",
+        "github-copilot-repository": "provider_specific_capability",
+        "github-copilot-agent": "provider_specific_capability",
+        "github-copilot-file-inputs": "provider_specific_capability",
+        "github-copilot-agent-image": "provider_specific_capability"
       }
     },
     "dola": {
@@ -1211,7 +1407,12 @@
         "kimi-artifacts": "provider_specific_capability",
         "kimi-long-running": "provider_specific_capability",
         "kimi-agent-swarm": "provider_specific_capability",
-        "kimi-library-workflows": "provider_specific_capability"
+        "kimi-library-workflows": "provider_specific_capability",
+        "github-copilot-controls": "provider_specific_capability",
+        "github-copilot-repository": "provider_specific_capability",
+        "github-copilot-agent": "provider_specific_capability",
+        "github-copilot-file-inputs": "provider_specific_capability",
+        "github-copilot-agent-image": "provider_specific_capability"
       }
     },
     "meta": {
@@ -1255,7 +1456,61 @@
         "kimi-artifacts": "provider_specific_capability",
         "kimi-long-running": "provider_specific_capability",
         "kimi-agent-swarm": "provider_specific_capability",
-        "kimi-library-workflows": "provider_specific_capability"
+        "kimi-library-workflows": "provider_specific_capability",
+        "github-copilot-controls": "provider_specific_capability",
+        "github-copilot-repository": "provider_specific_capability",
+        "github-copilot-agent": "provider_specific_capability",
+        "github-copilot-file-inputs": "provider_specific_capability",
+        "github-copilot-agent-image": "provider_specific_capability"
+      }
+    },
+    "microsoft-copilot": {
+      "stage": "experimental",
+      "account": "signed_in_selected_setup_profile",
+      "required": [
+        "session-readiness",
+        "prompt-draft",
+        "file-selection",
+        "conversation-continuation",
+        "conversation-workflow"
+      ],
+      "unavailable": {
+        "model-choice": "no_independent_model_selector_observed",
+        "effort-choice": "response_modes_not_e2e_closed",
+        "deepseek-controls": "provider_specific_capability",
+        "deepseek-search-reasoning": "provider_specific_capability",
+        "deepseek-vision-input": "provider_specific_capability",
+        "harness-attachment-roundtrip": "harness_attachment_roundtrip_not_yet_proven",
+        "model-comparison": "provider_specific_capability",
+        "arena-search": "provider_specific_capability",
+        "arena-image": "provider_specific_capability",
+        "meta-image": "provider_specific_capability",
+        "chatgpt-image": "provider_specific_capability",
+        "grok-image": "provider_specific_capability",
+        "gemini-image": "provider_specific_capability",
+        "dola-image": "provider_specific_capability",
+        "doubao-image": "provider_specific_capability",
+        "qwen-image": "provider_specific_capability",
+        "arena-code": "provider_specific_capability",
+        "arena-agent": "provider_specific_capability",
+        "arena-video": "provider_specific_capability",
+        "workspace-response-citations": "visible_citations_not_yet_proven",
+        "workspace-response-baseline": "covered_by_conversation_continuation",
+        "qwen-mode-workspace": "provider_specific_capability",
+        "doubao-controls": "provider_specific_capability",
+        "native-project": "native_project_not_proven",
+        "kimi-library-controls": "provider_specific_capability",
+        "kimi-search": "provider_specific_capability",
+        "kimi-library-workflows": "provider_specific_capability",
+        "kimi-deep-research": "provider_specific_capability",
+        "kimi-artifacts": "provider_specific_capability",
+        "kimi-long-running": "provider_specific_capability",
+        "kimi-agent-swarm": "provider_specific_capability",
+        "github-copilot-controls": "provider_specific_capability",
+        "github-copilot-repository": "provider_specific_capability",
+        "github-copilot-agent": "provider_specific_capability",
+        "github-copilot-file-inputs": "provider_specific_capability",
+        "github-copilot-agent-image": "provider_specific_capability"
       }
     }
   }

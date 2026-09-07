@@ -24,7 +24,7 @@ test('built daemon records output savings directly from a completed result', { t
     daemonUrl,
     language: 'en',
     outputSavings: { enabled: true },
-    apiProxy: { enabled: false, conversationMode: 'new-conversation', executionMode: 'direct' },
+    apiProxy: { enabled: false, executionMode: 'direct' },
     g4f: { enabled: false },
     directProvider: { defaultBackend: 'native', providerBackends: {} },
     router: { enabled: false, engine: 'chrome-prompt-api', providers: [] },

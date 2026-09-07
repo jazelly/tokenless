@@ -1,0 +1,19 @@
+{
+  "schema": "tokenless.ifbench-revision.v1",
+  "benchmark": "IFBench",
+  "benchmarkRepository": "https://github.com/allenai/IFBench.git",
+  "benchmarkCommit": "fcd289db21d43aaa96c6d9291d32561cd6e19305",
+  "dataset": "data/IFBench_test.jsonl",
+  "datasetDigest": "sha256:d2ada7da94a38cfe406351614c4e686846ed2da6d1b339db95fa5ead19554a4a",
+  "taskCount": 300,
+  "wiringTaskKey": "17",
+  "attemptsPerTask": 1,
+  "retryLimit": 0,
+  "concurrency": 1,
+  "requestTimeoutMs": 660000,
+  "upstreamLock": "uv.lock",
+  "upstreamLockDigest": "sha256:b91b4586d0c510111822618dbe4b464c28435cc1bc6241e48a78111a1423afaa",
+  "officialVerifier": "run_eval.py",
+  "officialMetric": "prompt-level loose accuracy",
+  "officialSecondaryMetric": "prompt-level strict accuracy"
+}

@@ -103,7 +103,7 @@ export function providerSignInRequiredBlocker(
     userResolvable: true,
     retryable: true,
     visibleProof,
-    provider: provider.id,
+    provider: provider.descriptor.id,
     url: observation.url,
     family: 'provider_sign_in' as const,
   }

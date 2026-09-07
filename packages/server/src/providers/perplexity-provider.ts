@@ -18,9 +18,6 @@ export class PerplexityProvider extends BaseProvider<'perplexity'> {
       stage: 'experimental',
       setupOrder: 6,
       subscriptionSupport: 'supported',
-      protocolCompatibility: Object.freeze({
-        legacyRequests: false,
-      }),
       navigation: PROVIDER_NAVIGATION_CATALOG.perplexity,
       controls: Object.freeze({
         chatSurface: false,

@@ -26,9 +26,6 @@ export class DeepSeekProvider extends BaseProvider<'deepseek'> {
       stage: 'experimental',
       setupOrder: 5,
       subscriptionSupport: 'supported',
-      protocolCompatibility: Object.freeze({
-        legacyRequests: false,
-      }),
       navigation: PROVIDER_NAVIGATION_CATALOG.deepseek,
       controls: Object.freeze({
         chatSurface: false,

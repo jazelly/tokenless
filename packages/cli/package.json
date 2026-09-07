@@ -21,6 +21,7 @@
   },
   "files": [
     "dist/integrations",
+    "dist/skills",
     "dist/src",
     "dist/server",
     "dist/schemas",

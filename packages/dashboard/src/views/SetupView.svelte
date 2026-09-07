@@ -1,4 +1,5 @@
 <script lang="ts">
+  import markUrl from '../../../../assets/tokenless-mark.png'
   import { Check, ChevronRight, Globe2, Monitor, UserRound } from '@lucide/svelte'
   import { tick, untrack } from 'svelte'
   import type { MessageKey } from '../i18n/index.js'
@@ -118,7 +119,7 @@
 
 <main id="main" tabindex="-1" class="setup-shell" data-testid="setup-view">
   <div class="setup-brand">
-    <img src="/dashboard/mark.png" alt="" width="26" height="26" />
+    <img src={markUrl} alt="" width="26" height="26" />
     <span translate="no">Tokenless</span>
   </div>
   <section class="setup-card">

@@ -12,6 +12,7 @@ import { persistChatGptImageAsset } from '../browser/image-assets.js'
 import type { Page } from 'playwright-core'
 import type { ProviderExecutionContext } from './execution-context.js'
 import type { VisibleActionResult } from '../browser/actions.js'
+import { CHATGPT_CHAT_TRIGGER } from './capabilities/chatgpt-chat.js'
 
 const CHATGPT_ASSISTANT_SELECTOR = 'section[data-turn="assistant"]'
 const CHATGPT_IMAGE_SELECTOR = '[id^="image-"] img'
@@ -25,9 +26,6 @@ export class ChatGptProvider extends BaseProvider<'chatgpt'> {
       stage: 'supported',
       setupOrder: 0,
       subscriptionSupport: 'supported',
-      protocolCompatibility: Object.freeze({
-        legacyRequests: true,
-      }),
       navigation: PROVIDER_NAVIGATION_CATALOG.chatgpt,
       controls: Object.freeze({
         chatSurface: true,
@@ -98,13 +96,10 @@ export class ChatGptProvider extends BaseProvider<'chatgpt'> {
         'button[role="menuitem"][aria-label*="Upload files" i]',
       ]),
       modelControlSelectors: Object.freeze([
-        'button[data-testid="model-switcher-dropdown-button"]',
-        'button[aria-label*="model" i]',
-        'button:has-text("GPT")',
+        CHATGPT_CHAT_TRIGGER,
       ]),
       effortControlSelectors: Object.freeze([
-        'button[aria-label*="thinking" i]',
-        'button:has-text("Thinking")',
+        CHATGPT_CHAT_TRIGGER,
       ]),
       authIndicators: Object.freeze([
         '[data-testid="accounts-profile-button"][role="button"]:not([aria-label="Open profile menu"])',

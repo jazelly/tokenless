@@ -75,8 +75,7 @@ export type {
 
 export type { ManagedProfileConfig, TokenlessConfig } from '#tokenless-server/persistence/config.js'
 export type { OutputSavingsConfig } from '#tokenless-server/persistence/config.js'
-export { API_PROXY_CONVERSATION_MODES } from '#tokenless-server/persistence/config.js'
-export type { ApiProxyConfig, ApiProxyConversationMode } from '#tokenless-server/persistence/config.js'
+export type { ApiProxyConfig } from '#tokenless-server/persistence/config.js'
 export type { DirectProviderConfig, G4fConfig, ProviderBackend } from '#tokenless-server/persistence/config.js'
 export * from '#tokenless-server/providers/direct/g4f/index.js'
 export * from '#tokenless-server/providers/direct/g4f-map.js'
@@ -160,7 +159,6 @@ export {
   ensureDaemonReady,
   ensureSetupDaemonRunnable,
   inspectManagedRuntime,
-  openProviderUrl,
   persistDaemonSnapshot,
   probeDaemonReady,
   providerWakeUrl,
@@ -251,7 +249,7 @@ export async function buildTokenlessPrompt({
     '',
     '## Relevant Files',
     selectedFiles.length === 0
-      ? 'No relevant files were attached.'
+      ? 'No inline file contents were included. Files uploaded through the chat composer are separate attachments.'
       : selectedFiles.map(formatFile).join('\n\n'),
   ].join('\n')
 }

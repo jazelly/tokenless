@@ -70,20 +70,6 @@ export async function resolveProviderSession(
           observations,
         }
       }
-      if (provider.access.guest === 'unsupported') {
-        return {
-          decision: {
-            kind: 'handoff',
-            blocker: providerSignInRequiredBlocker(
-              provider,
-              observation,
-              'provider-access-policy-after-surface-timeout',
-            ),
-            observation,
-          },
-          observations,
-        }
-      }
       return {
         decision: {
           kind: 'terminal',
@@ -112,7 +98,7 @@ function providerSurfaceNotReadyBlocker(
     userResolvable: false,
     retryable: true,
     visibleProof: 'provider-session-observation-timeout',
-    provider: provider.id,
+    provider: provider.descriptor.id,
     url: observation.url,
   }
 }

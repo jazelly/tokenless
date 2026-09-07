@@ -2,8 +2,7 @@
   import { untrack } from 'svelte'
   import { RefreshCw } from '@lucide/svelte'
   import {
-    CHROME_PROMPT_API_MIN_MAJOR,
-    createGeminiNanoAiEngine,
+    createRouterAiEngine,
     createRouterEngine,
     ROUTER_TASK_TYPE_PATTERN,
     RouterEngineError,
@@ -40,6 +39,7 @@
   } = $props()
 
   let pendingEnabled = $state<boolean | null>(null)
+  let pendingEngine = $state<RouterEngineId | null>(null)
   let task = $state('')
   let availability = $state('disabled')
   let downloadProgress = $state<number | null>(null)
@@ -65,7 +65,7 @@
   const configuredRouter = $derived(snapshot.config.router)
   const configuredEnabled = $derived(configuredRouter.enabled)
   const enabled = $derived(pendingEnabled ?? configuredEnabled)
-  const engine: RouterEngineId = $derived(configuredRouter.engine)
+  const engine: RouterEngineId = $derived(pendingEngine ?? configuredRouter.engine)
   const configuredProviderRules = $derived(normalizedProviderRules())
   const browserBinding = $derived(selectedBrowserBinding())
   const browserBindingKey = $derived(bindingKey(browserBinding))
@@ -74,6 +74,7 @@
   const displayedAvailability = $derived(!enabled ? 'disabled' : observedAvailabilityContext === availabilityContext ? availability : 'checking')
   const displayedAvailabilityError = $derived(enabled && observedAvailabilityContext === availabilityContext ? availabilityError : '')
   const displayedDownloadProgress = $derived(enabled && observedAvailabilityContext === availabilityContext ? downloadProgress : null)
+  const engineRequirement = $derived(engine === 'spark-x2.5-4b-mlx' ? t('sparkServerRequirement') : t('routerBrowserRequirement'))
   const providers = $derived(snapshot.providers.filter((provider) => provider.stage !== 'disabled' && provider.executionModes.includes('browser')))
   const candidates = $derived(buildProviderCandidates())
   const enabledProviderCount = $derived(providers.filter((provider) => providerState(provider)?.enabled === true).length)
@@ -156,7 +157,7 @@
           observation = error.observation
           observationBindingKey = requestedBindingKey
         }
-        availability = isBrowserBlock(error.code) ? 'blocked' : 'unsupported'
+        availability = error.code === 'unavailable' ? 'unavailable' : isBrowserBlock(error.code) ? 'blocked' : 'unsupported'
         availabilityError = engineErrorMessage(error)
       } else {
         availability = 'unavailable'
@@ -223,6 +224,21 @@
     }
   }
 
+  async function changeEngine(next: RouterEngineId) {
+    if (next === engine) return
+    pendingEngine = next
+    formError = ''
+    try {
+      await actions.updateConfig({
+        router: { enabled, engine: next, providers: normalizedProviderRules() },
+      })
+    } catch (error) {
+      formError = error instanceof Error ? error.message : t('requestFailed')
+    } finally {
+      pendingEngine = null
+    }
+  }
+
   function selectedProfileState() {
     return snapshot.profiles.find((profile) => profile.slug === selectedProfile)
   }
@@ -286,6 +302,7 @@
   function semanticContextSignature() {
     return JSON.stringify([
       selectedProfile,
+      engine,
       enabled,
       browserBindingKey,
       candidates,
@@ -325,7 +342,7 @@
     const requestedContext = semanticContext
     const invocationId = ++routeInvocationId
     try {
-      const prepared = await createHarnessFrontDoorSidecar(createGeminiNanoAiEngine()).prepare({
+      const prepared = await createHarnessFrontDoorSidecar(createRouterAiEngine(engine)).prepare({
         taskPrompt: task.trim(),
         providers: candidates,
         browserBinding: binding,
@@ -447,15 +464,16 @@
     </div>
     <label class="field compact-field router-engine-field">
       <span>{t('routerEngine')}</span>
-      <select value={engine} disabled data-testid="router-engine">
+      <select value={engine} disabled={busy || pendingEngine !== null} onchange={(event) => void changeEngine((event.currentTarget as HTMLSelectElement).value as RouterEngineId)} data-testid="router-engine">
         <option value="chrome-prompt-api">{t('chromePromptApiEngine')}</option>
+        <option value="spark-x2.5-4b-mlx">{t('sparkX25MlxEngine')}</option>
       </select>
       <small>{t('routerEngineHelp')}</small>
     </label>
     <div class="router-compatibility" data-testid="router-compatibility">
       <div><small>{t('rendererBrowser')}</small><strong>{currentObservation?.browserFamily ?? t('unknown')} · {currentObservation?.browserId ?? t('unknown')}</strong></div>
       <div><small>{t('browserVersion')}</small><strong>{currentObservation?.browserVersion ?? t('unknown')}</strong></div>
-      <div><small>{t('routerRequirement')}</small><strong>{t('routerBrowserRequirement')}</strong></div>
+      <div><small>{t('routerRequirement')}</small><strong>{engineRequirement}</strong></div>
     </div>
     <div class="router-status-row">
       <div class="router-availability" data-testid="router-availability">
@@ -471,6 +489,7 @@
     {#if formError}<div class="inline-feedback error" role="alert" data-testid="router-error">{formError}</div>{/if}
   </section>
 
+  {#if engine === 'chrome-prompt-api'}
   <section class="settings-section system-card router-setup" data-testid="router-chrome-setup">
     <div class="settings-section-title"><div><h2>{t('chromeSetup')}</h2><p>{t('chromeSetupIntro')}</p></div></div>
     <ol>
@@ -481,20 +500,27 @@
     </ol>
     <p>{t('chromeModelVersionHelp')}</p>
   </section>
+  {:else}
+  <section class="settings-section system-card router-setup" data-testid="router-spark-setup">
+    <div class="settings-section-title"><div><h2>{t('sparkSetup')}</h2><p>{t('sparkSetupIntro')}</p></div></div>
+    <p>{t('sparkSetupCommand')}</p>
+    <p>{t('sparkSetupEndpoint')}</p>
+  </section>
+  {/if}
 
   <section class="settings-section system-card router-run-card">
     <div class="settings-section-title"><div><h2>{t('routerTest')}</h2><p>{t('routerTestHelp')}</p></div></div>
     <label class="field"><span>{t('taskPrompt')}</span><textarea bind:value={task} maxlength="4000" placeholder={t('taskPromptPlaceholder')} data-testid="router-prompt"></textarea></label>
     {#if enabledProviderCount === 0}<div class="inline-feedback error" data-testid="router-provider-block">{t('routerNeedsEnabledProviders')}</div>
     {:else if candidates.length === 0}<div class="inline-feedback warning" data-testid="router-provider-block">{t('routerNeedsProviderRules')}</div>{/if}
-    <div class="form-actions"><button class="button primary" type="button" disabled={!enabled || running || busy || displayedAvailability === 'checking' || currentObservation?.supported === false || candidates.length === 0} onclick={run} data-testid="router-run">{running ? t('routerRunning') : t('runSemanticRouter')}</button></div>
+    <div class="form-actions"><button class="button primary" type="button" disabled={!enabled || running || busy || displayedAvailability === 'checking' || displayedAvailability === 'unavailable' || displayedAvailability === 'unsupported' || displayedAvailability === 'blocked' || currentObservation?.supported === false || candidates.length === 0} onclick={run} data-testid="router-run">{running ? t('routerRunning') : t('runSemanticRouter')}</button></div>
     {#if result}<div class="router-result" data-testid="router-result"><h3>{t('routerResult')}</h3><pre>{JSON.stringify(result, null, 2)}</pre><button class="button secondary" type="button" disabled={startingHarnessRun || busy} onclick={startHarnessRun} data-testid="harness-run">{startingHarnessRun ? t('harnessStarting') : t('startHarnessRun')}</button>{#if harnessRun}<p class="muted" data-testid="harness-run-status">{t('harnessRun')}: {harnessRun.runId} · {harnessRun.status}</p>{/if}</div>{/if}
   </section>
 
   <section class="settings-section system-card router-manifest-card" data-testid="semantic-manifest-card">
     <div class="settings-section-title"><div><h2>{t('routerSemanticManifest')}</h2><p>{t('routerSemanticManifestHelp')}</p></div></div>
     <p class="form-note">{t('routerSemanticManifestTarget')}</p>
-    {#if manifestProgress > 0}<p class="form-note" data-testid="semantic-manifest-progress">{manifestProgress} / 89</p>{/if}
+    {#if manifestProgress > 0}<p class="form-note" data-testid="semantic-manifest-progress">{manifestProgress} / 66</p>{/if}
     {#if manifestError}<div class="inline-feedback error" role="alert" data-testid="semantic-manifest-error">{manifestError}</div>{/if}
     {#if manifestResult}<div class="inline-feedback success" role="status" data-testid="semantic-manifest-result">{t('routerSemanticManifestSaved')}: <code>{manifestResult.fileName}</code> · {manifestResult.manifestDigest}</div>{/if}
     {#if manifestBusy}<p class="form-note" role="status">{t('routerSemanticManifestRunning')}</p>{/if}

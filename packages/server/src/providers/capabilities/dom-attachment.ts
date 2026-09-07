@@ -88,7 +88,7 @@ async function uploadFiles(
 ): Promise<FileUploadResult> {
   const attachments = value.map((attachment) => validateAttachmentInput(attachment))
   const files = await Promise.all(attachments.map((attachment) => resolveAttachmentPayload(context.attachmentRoot, attachment)))
-  if (provider.id === 'qwen') {
+  if (provider.descriptor.id === 'qwen') {
     await clearQwenPendingSameFileCards(
       page,
       provider,
@@ -96,11 +96,11 @@ async function uploadFiles(
       context.signal,
     )
   }
-  let fileInput = provider.id === 'doubao' || provider.id === 'deepseek'
+  let fileInput = provider.descriptor.id === 'doubao' || provider.descriptor.id === 'deepseek'
     ? await firstFileInputLocator(page, provider.fileInputSelectors)
     : null
   let chooser: FileChooser | null = null
-  if (provider.id === 'qwen') {
+  if (provider.descriptor.id === 'qwen') {
     if (!await openQwenFileUploadMenu(page, provider)) {
       throw providerCapabilityFailure(
         'file_upload_unavailable',
@@ -137,7 +137,7 @@ async function uploadFiles(
   )
   if (!acceptedProof) {
     const message = `The provider did not visibly accept and finish processing the selected attachments within ${provider.interactionTimings.attachmentReadyTimeoutMs}ms.`
-    if (provider.id === 'qwen') {
+    if (provider.descriptor.id === 'qwen') {
       const visibleEvidenceAfterTimeout = await visibleAttachmentEvidence(page, provider, attachments)
       throw tokenlessError(
         'file_upload_not_visibly_accepted',
@@ -155,7 +155,7 @@ async function uploadFiles(
     }
     throw providerCapabilityFailure('file_upload_not_visibly_accepted', message, { retryable: true })
   }
-  if (provider.id === 'gemini') {
+  if (provider.descriptor.id === 'gemini') {
     await dismissGeminiFileDisclaimer(page)
   }
   return {
@@ -550,6 +550,14 @@ async function visibleAttachmentEvidence(
         })
       return [...imageEvidence, ...fileEvidence]
     }
+    if (providerId === 'github-copilot' && document.querySelector('button[class*="ImageAttachButton-module__attachButton"]')) {
+      const draft = (document.querySelector('textarea#copilot-chat-textarea') as HTMLTextAreaElement | null)?.value ?? ''
+      return Array.from(draft.matchAll(/!\[([^\]\n]+)\]\(https:\/\/github\.com\/user-attachments\/assets\/[a-f0-9-]+\)/gu)).map((match, index) => ({
+        id: `github-copilot-agent-image|${index}|${match[1]}`,
+        extensions: expectedExtensions.filter((extension) => match[1]!.toLowerCase().endsWith(extension)),
+        ready: true,
+      }))
+    }
     const selectors = [
       '[data-testid*="attachment" i]',
       '[data-testid*="upload" i]',
@@ -566,6 +574,7 @@ async function visibleAttachmentEvidence(
       '[data-default-action="true"] button[aria-label]',
       ...(providerId === 'meta' ? ['[class~="group/attachment-tile"]'] : []),
       ...(providerId === 'zai' ? ['.chip-scroll > button'] : []),
+      ...(providerId === 'github-copilot' ? ['form [role="toolbar"][aria-label="Attachments"] [class*="ReferenceToken-module__name__"]'] : []),
     ]
     const elements = selectors.flatMap((selector) => {
       try {
@@ -637,7 +646,7 @@ async function visibleAttachmentEvidence(
     return evidenceCandidates
       .filter(({ element }) => !evidenceCandidates.some((candidate) => candidate.element !== element && element.contains(candidate.element)))
       .map(({ evidence }) => evidence)
-  }, { expectedExtensions: extensions, expectedStems: stems, providerId: provider.id }).catch(() => [])
+  }, { expectedExtensions: extensions, expectedStems: stems, providerId: provider.descriptor.id }).catch(() => [])
   return Array.isArray(result)
     ? result.filter((entry): entry is VisibleAttachmentEvidence => (
       typeof entry === 'object' &&

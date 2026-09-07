@@ -8,6 +8,9 @@
   "exports": {
     "./*": "./dist/src/*"
   },
+  "imports": {
+    "#tokenless-shared/*": "tokenless-internal-shared/*"
+  },
   "scripts": {
     "build": "tsc -b ../shared && node scripts/build.mjs",
     "lint": "tsc -b ../shared && tsc -p tsconfig.json --noEmit"

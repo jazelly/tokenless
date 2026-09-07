@@ -1,5 +1,7 @@
 import { firstVisibleLocator, waitForVisibleLocator } from '../dom-locators.js'
 import { PROVIDER_CAPABILITIES } from '../provider-identity.js'
+import { CHATGPT_CHAT_EFFORTS, ensureChatGptChat } from './chatgpt-chat.js'
+import { tokenlessError } from '../../browser/errors.js'
 import type { Locator, Page } from 'playwright-core'
 import type { ProviderActionCapability } from '../capability-set.js'
 import type { VisibleAction, VisibleActionRequest } from '../contracts.js'
@@ -114,6 +116,7 @@ async function inspectChoices(
     }
   }
   await waitForProviderChoiceSurface(page, provider)
+  if (provider.descriptor.id === 'chatgpt') await ensureChatGptChat(page)
   const trigger = await waitForVisibleLocator(page, selectors, 10_000)
   if (!trigger) {
     return {
@@ -127,7 +130,19 @@ async function inspectChoices(
   await trigger.click({ timeout: 5000 })
   await page.waitForTimeout(300)
   await openNestedChoiceSurface(page, provider, kind)
-  const choices = await collectVisibleChoices(page, provider, trigger)
+  const choices = provider.descriptor.id === 'chatgpt'
+    ? kind === 'effort'
+      ? CHATGPT_CHAT_EFFORTS.map((label) => ({ label, selected: false, enabled: true }))
+      : await page.locator('[role="menu"] [data-active="true"] [role="menuitemradio"]').filter({ visible: true }).evaluateAll((elements) => elements.map((element) => ({
+          label: (element.textContent ?? '').trim(),
+          selected: element.getAttribute('aria-checked') === 'true',
+          enabled: element.getAttribute('aria-disabled') !== 'true',
+        })))
+    : await collectVisibleChoices(page, provider, trigger)
+  if (provider.descriptor.id === 'chatgpt' && kind === 'effort') {
+    const value = Number(await page.locator('[role="menu"] [role="slider"]').getAttribute('aria-valuenow'))
+    choices.forEach((choice, index) => { choice.selected = index === value })
+  }
   if (!keepOpen) await dismissChoiceSurface(page, trigger)
   return {
     supported: true as const,
@@ -136,7 +151,12 @@ async function inspectChoices(
 }
 
 async function openNestedChoiceSurface(page: Page, provider: ProviderDomDefinition, kind: ChoiceKind) {
-  if (provider.id !== 'claude' || kind !== 'model') return
+  if (provider.descriptor.id === 'chatgpt' && kind === 'model') {
+    await page.getByRole('menuitem', { name: 'Select model', exact: true }).click({ timeout: 5000 })
+    await page.locator('[role="menu"] [data-active="true"] [role="menuitemradio"]').first().waitFor({ state: 'visible', timeout: 5000 })
+    return
+  }
+  if (provider.descriptor.id !== 'claude' || kind !== 'model') return
   const moreModels = page.locator('[role="menuitem"]')
     .filter({ visible: true })
     .filter({ hasText: /^More models/u })
@@ -157,7 +177,7 @@ async function dismissChoiceSurface(page: Page, trigger: Locator) {
 }
 
 async function waitForProviderChoiceSurface(page: Page, provider: ProviderDomDefinition) {
-  if (provider.id !== 'qwen') return
+  if (provider.descriptor.id !== 'qwen') return
   const overlay = page.locator('.page-loading[aria-hidden="false"]').filter({ visible: true })
   if (await overlay.count() === 0) return
   await overlay.last().waitFor({ state: 'hidden', timeout: 10_000 })
@@ -176,11 +196,28 @@ async function selectChoice(
   if (!inspection.supported) return inspection
   const choice = inspection.choices.find((candidate) => candidate.label === label && candidate.enabled)
   if (!choice) {
+    if (provider.descriptor.id === 'github-copilot') {
+      await page.keyboard.press('Escape')
+      const locked = inspection.choices.find((candidate) => candidate.label === label)
+      throw tokenlessError('github_copilot_choice_unavailable', 'The requested GitHub Copilot choice is unavailable for the current mode and account.', {
+        retryable: false, details: { kind, label, ...(locked?.requiredPlan ? { requiredPlan: locked.requiredPlan } : {}) },
+      })
+    }
     return {
       supported: true as const,
       selectedLabel: '',
       visibleProof: 'exact-label-not-found',
     }
+  }
+  if (provider.descriptor.id === 'chatgpt' && kind === 'effort') {
+    const index = CHATGPT_CHAT_EFFORTS.findIndex((effort) => effort === label)
+    const slider = page.locator('[role="menu"] [role="slider"]')
+    const current = Number(await slider.getAttribute('aria-valuenow'))
+    await slider.focus()
+    for (let step = 0; step < Math.abs(index - current); step += 1) await slider.press(index > current ? 'ArrowRight' : 'ArrowLeft')
+    const selected = Number(await slider.getAttribute('aria-valuenow')) === index
+    await page.keyboard.press('Escape')
+    return { supported: true, selectedLabel: selected ? label : '', visibleProof: selected ? 'chatgpt-power-slider-selected' : 'selected-label-not-visible' }
   }
   const option = await exactVisibleChoiceLocator(page, provider, label)
   if (!option) {
@@ -190,15 +227,20 @@ async function selectChoice(
       visibleProof: 'exact-label-not-found',
     }
   }
-  if (provider.id === 'claude') {
+  if (provider.descriptor.id === 'claude') {
     await option.focus()
     await option.press('Enter')
-  } else if (provider.id === 'arena') {
+  } else if (provider.descriptor.id === 'arena') {
     await option.evaluate((element) => (element as HTMLElement).click())
   } else {
     await option.click({ timeout: 5000 })
   }
-  const visible = await waitForSelectedLabel(page, provider, kind, label)
+  const visible = provider.descriptor.id === 'chatgpt' && kind === 'model'
+    ? await inspectChoices(page, provider, kind).then((result) => result.supported && result.choices.some((choice) => choice.label === label && choice.selected))
+    : await waitForSelectedLabel(page, provider, kind, label)
+  if (!visible && provider.descriptor.id === 'github-copilot') {
+    throw tokenlessError('github_copilot_choice_not_selected', 'GitHub Copilot did not visibly select the requested choice.', { retryable: false, details: { kind, label } })
+  }
   return {
     supported: true as const,
     selectedLabel: visible ? label : '',
@@ -219,15 +261,20 @@ async function exactVisibleChoiceLocator(
     '[cmdk-item]',
     '.ant-select-item-option',
   ]
-  if (provider.id === 'arena') selectors.push('button')
-  const surface = provider.id === 'arena'
+  if (provider.descriptor.id === 'arena') selectors.push('button')
+  const surface = provider.descriptor.id === 'arena'
     ? page.locator('[role="dialog"]').filter({ visible: true }).last()
     : page
-  const candidates = surface.locator(selectors.join(',')).filter({ visible: true })
+  const candidates = surface.locator(provider.descriptor.id === 'chatgpt'
+    ? '[role="menu"] [data-active="true"] [role="menuitemradio"]'
+    : selectors.join(',')).filter({ visible: true })
   const count = Math.min(await candidates.count(), 80)
   for (let index = 0; index < count; index += 1) {
     const candidate = candidates.nth(index)
     const text = await candidate.evaluate((element, providerId) => (
+      (providerId === 'github-copilot'
+        ? element.querySelector('[data-component="ActionList.Item.Label"] > span')?.firstChild?.textContent ?? element.querySelector('[data-component="ActionList.Item.Label"]')?.textContent
+        : null) ??
       (providerId === 'arena' && element.closest('[data-arena-buttons]') !== null ? '' : null) ??
       (providerId === 'arena'
         ? element.querySelector('.text-lg, .font-mono')?.textContent
@@ -238,7 +285,7 @@ async function exactVisibleChoiceLocator(
       element.getAttribute('aria-label') ??
       element.textContent ??
       ''
-    ).replace(/\s+/gu, ' ').trim(), provider.id)
+    ).replace(/\s+/gu, ' ').trim(), provider.descriptor.id)
     if (text === label) return candidate
   }
   return null
@@ -274,11 +321,11 @@ async function collectVisibleChoices(page: Page, provider: ProviderDomDefinition
     ? page.locator(`[id="${controlledId.replace(/["\\]/gu, '\\$&')}"]`).filter({ visible: true })
     : null
   const overlayRoot = page.locator('[role="menu"], [role="listbox"], [role="dialog"]').filter({ visible: true }).last()
-  const root = provider.id !== 'claude' && controlledRoot && await controlledRoot.count() > 0
+  const root = provider.descriptor.id !== 'claude' && controlledRoot && await controlledRoot.count() > 0
     ? controlledRoot
     : overlayRoot
   const locators = [
-    provider.id === 'claude'
+    provider.descriptor.id === 'claude' || provider.descriptor.id === 'github-copilot'
       ? page.locator('[role="menuitemradio"]').filter({ visible: true })
       : root.locator('[role="menuitem"], [role="menuitemcheckbox"], [role="option"], [cmdk-item], button').filter({ visible: true }),
     page.locator('.ant-select-dropdown').filter({ visible: true })
@@ -300,7 +347,10 @@ async function collectVisibleChoices(page: Page, provider: ProviderDomDefinition
           : null) ?? element.querySelector('.label') ??
           (element.matches('[role="menuitemcheckbox"]') ? element.querySelector('.text-subheadline') : null) ??
           (element.matches('[role="menuitemradio"], [role="menuitemcheckbox"]') ? element.querySelector('.truncate') : null)
-        const text = (labelElement?.textContent ?? element.getAttribute('aria-label') ?? element.textContent ?? '').replace(/\s+/g, ' ').trim()
+        const githubLabel = options.providerId === 'github-copilot'
+          ? element.querySelector('[data-component="ActionList.Item.Label"] > span')?.firstChild?.textContent ?? element.querySelector('[data-component="ActionList.Item.Label"]')?.textContent
+          : null
+        const text = (githubLabel ?? labelElement?.textContent ?? element.getAttribute('aria-label') ?? element.textContent ?? '').replace(/\s+/g, ' ').trim()
         const fullText = (element.textContent ?? '').replace(/\s+/g, ' ').trim()
         const ariaSelected = element.getAttribute('aria-selected') === 'true' ||
           element.getAttribute('aria-checked') === 'true' ||
@@ -329,15 +379,19 @@ async function collectVisibleChoices(page: Page, provider: ProviderDomDefinition
           grokUpgradeRestricted ||
           unrelatedAccountControl
         )
+        const description = options.providerId === 'github-copilot' ? element.getAttribute('aria-description') : null
+        const requiredPlan = description ? /Upgrade to (.+?) to access/u.exec(description)?.[1] : null
         return {
           label: text.slice(0, 120),
           selected: ariaSelected,
           enabled: !disabled,
+          ...(description ? { description } : {}),
+          ...(requiredPlan ? { requiredPlan } : {}),
         }
       }).filter((entry) => entry.label.length > 0)
     }, {
       choiceAvailability: provider.choiceAvailability,
-      providerId: provider.id,
+      providerId: provider.descriptor.id,
     })
     choices.push(...values)
   }

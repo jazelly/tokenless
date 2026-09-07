@@ -39,13 +39,8 @@ export function activeTokenlessLanguage() {
  * Render a customer-facing message from the shared catalog. Business logic
  * supplies a stable key; the display boundary chooses the active language.
  */
-type LegacyCliMessageKey = `cli${Capitalize<CliMessageKey>}`
-
-export function t(key: CliMessageKey | LegacyCliMessageKey, params: Record<string, string | number> = {}, language = activeLanguage) {
-  const canonicalKey = (key.startsWith('cli')
-    ? `${key[3]!.toLowerCase()}${key.slice(4)}` as CliMessageKey
-    : key) as CliMessageKey
-  return interpolateTokenlessMessage(CLI_MESSAGES[language][canonicalKey], params)
+export function t(key: CliMessageKey, params: Record<string, string | number> = {}, language = activeLanguage) {
+  return interpolateTokenlessMessage(CLI_MESSAGES[language][key], params)
 }
 
 export function localizedError(code: string, fallback?: string, language = activeLanguage) {

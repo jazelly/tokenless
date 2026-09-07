@@ -40,7 +40,6 @@ export class BrowserRuntimeController {
   private state: BrowserRuntimeState = 'stopped'
   private terminal = false
   private quiesceRequested = false
-  private quiesceFailure: unknown
   private lane: Promise<unknown> = Promise.resolve()
   private g4fClient: G4fServiceClient | undefined
 
@@ -69,11 +68,9 @@ export class BrowserRuntimeController {
   }
 
   async wake(): Promise<BrowserRuntimeStatus> {
-    if (this.quiesceFailure) return this.status()
     if (this.quiesceRequested) return this.status()
     return await this.enqueue(async () => {
       if (this.terminal) return this.status()
-      if (this.quiesceFailure) return this.status()
       if (this.quiesceRequested) return this.status()
       if (this.state === 'quiescing') return this.status()
       if (this.runner && this.state === 'running') return this.status()
@@ -114,10 +111,6 @@ export class BrowserRuntimeController {
   async quiesce(): Promise<BrowserRuntimeStatus> {
     this.quiesceRequested = true
     return await this.enqueue(async () => {
-      if (this.quiesceFailure) {
-        this.quiesceRequested = false
-        throw this.quiesceFailure
-      }
       if (this.terminal) {
         this.quiesceRequested = false
         return this.status()
@@ -210,7 +203,6 @@ export class BrowserRuntimeController {
     if (this.terminal) {
       throw tokenlessError('browser_runtime_stopped', 'Tokenless browser runtime is stopped.')
     }
-    if (this.quiesceFailure) throw this.quiesceFailure
     if (this.quiesceRequested || this.state === 'quiescing') {
       throw tokenlessError('browser_runtime_quiescing', 'Tokenless browser runtime is quiescing.', { retryable: true })
     }

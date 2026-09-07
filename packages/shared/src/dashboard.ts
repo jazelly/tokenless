@@ -72,7 +72,6 @@ export type DashboardProfileConfig = {
 
 export type DashboardApiProxyConfig = {
   enabled: boolean
-  conversationMode: 'new-conversation' | 'continue-conversation'
   executionMode: 'browser' | 'direct'
 }
 
@@ -88,7 +87,7 @@ export type DashboardRouterProviderRule = {
 
 export type DashboardRouterConfig = {
   enabled: boolean
-  engine: 'chrome-prompt-api'
+  engine: 'chrome-prompt-api' | 'spark-x2.5-4b-mlx'
   providers: DashboardRouterProviderRule[]
 }
 
@@ -389,6 +388,104 @@ export type DashboardJobDetail = DashboardJobSummary & {
   result: unknown
   error: unknown
   outputSavingsEvents: DashboardOutputSavingsEvent[]
+}
+
+export type DashboardAnalyticsRange = '7d' | '30d' | '90d' | '1y' | 'all'
+
+export type DashboardAnalyticsTotals = {
+  finishedJobs: number
+  succeededJobs: number
+  failedJobs: number
+  canceledJobs: number
+  successRate: number | null
+  estimatedOutputTokens: number
+  visibleCharacters: number
+  measuredResponses: number
+  measuredJobs: number
+  capabilitiesUsed: number
+  catalogCapabilities: number
+}
+
+export type DashboardAnalyticsDailyPoint = {
+  day: string
+  succeededJobs: number
+  failedJobs: number
+  canceledJobs: number
+  finishedJobs: number
+  estimatedOutputTokens: number
+  cumulativeEstimatedOutputTokens: number
+  measuredResponses: number
+  capabilityFamilies: Record<string, number>
+}
+
+export type DashboardAnalyticsProvider = {
+  provider: string
+  succeededJobs: number
+  failedJobs: number
+  canceledJobs: number
+  finishedJobs: number
+  share: number
+  successRate: number | null
+  estimatedOutputTokens: number
+  measuredResponses: number
+  capabilitiesUsed: number
+  browserJobs: number
+  directJobs: number
+  unknownModeJobs: number
+  lastUsedDay: string | null
+}
+
+export type DashboardAnalyticsCapability = {
+  capabilityId: string
+  family: string
+  succeededJobs: number
+  failedJobs: number
+  canceledJobs: number
+  finishedJobs: number
+  successRate: number | null
+  providersUsed: number
+}
+
+export type DashboardAnalyticsCapabilityFamily = {
+  family: string
+  succeededJobs: number
+  failedJobs: number
+  canceledJobs: number
+  finishedJobs: number
+}
+
+export type DashboardAnalyticsCapabilityMatrixCell = DashboardAnalyticsCapabilityFamily & {
+  capabilityId: string
+  provider: string
+}
+
+export type DashboardAnalyticsExecutionMode = {
+  mode: 'browser' | 'direct' | 'unknown'
+  finishedJobs: number
+  share: number
+}
+
+export type DashboardAnalytics = {
+  schema: 'tokenless.dashboard-analytics.v1'
+  generatedAt: string
+  timeZone: 'UTC'
+  range: {
+    id: DashboardAnalyticsRange
+    fromDay: string
+    toDay: string
+  }
+  profileId: string | null
+  totals: DashboardAnalyticsTotals
+  daily: DashboardAnalyticsDailyPoint[]
+  providers: DashboardAnalyticsProvider[]
+  capabilities: DashboardAnalyticsCapability[]
+  capabilityFamilies: DashboardAnalyticsCapabilityFamily[]
+  capabilityMatrix: DashboardAnalyticsCapabilityMatrixCell[]
+  executionModes: DashboardAnalyticsExecutionMode[]
+  measurementCoverage: {
+    firstMeasuredAt: string | null
+    lastMeasuredAt: string | null
+  }
 }
 
 export type DashboardRuntimeStatus = {

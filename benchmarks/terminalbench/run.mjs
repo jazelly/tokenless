@@ -252,7 +252,7 @@ async function runDeepSeekLane(kind, args) {
   const semanticManifest = await validateSemanticManifest(path.resolve(requiredOption(args, '--semantic-manifest')))
   if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(profile)) throw new Error('--profile is invalid.')
   if ((kind === 'full' || kind === 'sweep') && option(args, '--task') !== undefined) {
-    throw new Error(`The ${kind} command always runs the unchanged 89-task dataset.`)
+    throw new Error(`The ${kind} command always runs the unchanged ${revision.taskCount}-task dataset.`)
   }
   const task = kind === 'wiring' ? (option(args, '--task') ?? revision.wiringTask) : null
   const taskManifestIdentity = await validateTaskManifest()
@@ -354,9 +354,11 @@ async function ensureHostDaemon(homeDir, explicitDaemonUrl) {
   if (config?.apiProxy?.executionMode !== 'browser') {
     throw new Error('The DeepSeek Harness lane requires browser execution mode in the selected Tokenless API home.')
   }
-  const daemon = await runtime.ensureDaemonReady({
+  const daemonUrl = runtime.daemonUrl(explicitDaemonUrl ?? config.daemonUrl ?? undefined)
+  const ready = await runtime.probeDaemonReady({ homeDir, daemonUrl, timeoutMs: 10_000 })
+  const daemon = ready.ok ? ready : await runtime.ensureDaemonReady({
     homeDir,
-    daemonUrl: runtime.daemonUrl(explicitDaemonUrl ?? config.daemonUrl ?? undefined),
+    daemonUrl,
   })
   return { ...daemon, executionMode: config.apiProxy.executionMode }
 }
@@ -461,7 +463,7 @@ async function writeRunReport({
     harborVersion: revision.harborVersion,
     dataset: revision.dataset,
     datasetRef: revision.datasetRef,
-    taskCount: kind === 'wiring' ? 1 : revision.taskCount,
+    taskCount: kind === 'oracle' || kind === 'wiring' ? 1 : revision.taskCount,
     task,
     attemptsPerTask,
     expectedTrials,
@@ -634,7 +636,7 @@ function inferRunKind(report, jobName) {
   if (report.task !== null && report.task !== undefined) return 'wiring'
   if (report.attemptsPerTask === 1 && report.expectedTrials === revision.taskCount) return 'sweep'
   if (report.attemptsPerTask === revision.attemptsPerTask && report.expectedTrials === revision.taskCount * revision.attemptsPerTask) return 'full'
-  const match = /^tokenless-tb2-(oracle|wiring|sweep|full)-/u.exec(jobName)
+  const match = /^tokenless-tb4-(oracle|wiring|sweep|full)-/u.exec(jobName)
   return match?.[1] ?? 'unknown'
 }
 
@@ -1018,7 +1020,7 @@ function preRoutingException(trial, directory) {
   const stage = trial?.agent_execution === null
     ? 'before_agent_execution'
     : exception?.exception_type === 'ValueError'
-      && exception?.exception_message === 'The Harbor instruction is not one of the pinned Terminal-Bench 2.0 task instructions.'
+      && exception?.exception_message === 'The Harbor instruction is not one of the pinned Terminal-Bench 4.0 task instructions.'
       ? 'instruction_validation'
       : null
   if (
@@ -1169,7 +1171,7 @@ function validateResolvedRun({
     throw new Error('Harbor job config must resolve exactly one dataset.')
   }
   const dataset = jobConfig.datasets[0]
-  const expectedTaskCount = kind === 'wiring' ? 1 : revision.taskCount
+  const expectedTaskCount = kind === 'oracle' || kind === 'wiring' ? 1 : revision.taskCount
   if (
     dataset.name !== revision.dataset
     || dataset.ref !== revision.datasetRef
@@ -1450,11 +1452,12 @@ function deepIntegrationStats(events, trial) {
     }
     if (event.type === 'api.completion.request') {
       if (
-        Object.keys(event).some((key) => !['protocol', 'sequence', 'type', 'ordinal', 'forcedSubagent'].includes(key))
+        Object.keys(event).some((key) => !['protocol', 'sequence', 'type', 'ordinal', 'forcedSubagent', 'finalOnly'].includes(key))
         || event.ordinal !== nextParentOrdinal
         || !Number.isSafeInteger(event.ordinal)
         || event.ordinal < 1
         || event.forcedSubagent !== true && event.forcedSubagent !== false
+        || event.finalOnly !== undefined && event.finalOnly !== true && event.finalOnly !== false
       ) {
         throw new Error('Host parent completion evidence is invalid.')
       }
@@ -1703,7 +1706,9 @@ function validateProviderRoutingEvent(event) {
         || attempt.retryAfterSeconds < 1
         || attempt.retryAfterSeconds > 604_800
       )
-      || (attempt.visibleProof !== undefined || attempt.limitWindow !== undefined || attempt.retryAfterSeconds !== undefined)
+      || attempt.visibleProof !== undefined
+        && !['rate_limit', 'capacity', 'auth', 'captcha', 'unreachable'].includes(attempt.reason)
+      || (attempt.limitWindow !== undefined || attempt.retryAfterSeconds !== undefined)
         && !['rate_limit', 'capacity', 'captcha', 'unreachable'].includes(attempt.reason)
       || attempt.reason === 'captcha' && attempt.visibleProof === undefined
       || attempt.reason === 'rate_limit' && (attempt.visibleProof === undefined || attempt.limitWindow === undefined)
@@ -2024,7 +2029,7 @@ async function existingJobDirectory(args) {
 }
 
 function uniqueJobName(kind) {
-  return `tokenless-tb2-${kind}-${new Date().toISOString().replace(/[-:.TZ]/g, '')}`
+  return `tokenless-tb4-${kind}-${new Date().toISOString().replace(/[-:.TZ]/g, '')}`
 }
 
 function resolveJobName(args, kind) {
@@ -2125,7 +2130,7 @@ function output(value) {
 }
 
 function helpText() {
-  return `Terminal-Bench 2.0 DeepSeek Harness lane\n\n` +
+  return `Terminal-Bench 4.0 DeepSeek Harness lane\n\n` +
     `Commands:\n` +
     `  inspect\n` +
     `  prepare --dsh-checkout <path>\n` +
@@ -2136,5 +2141,5 @@ function helpText() {
     `  full --home <path> --dsh-checkout <path> --profile <id> --semantic-manifest <path> [--jobs-dir <path>]\n\n` +
     `  Default jobs directory: benchmarks/terminalbench/results; explicit --jobs-dir must stay within it.\n` +
     `  observe writes benchmarks/terminalbench/observations/<job-name>/run-observation.json and never overwrites evidence.\n` +
-    `The sweep command is a fixed 89-task, k=1 phase gate; full is fixed to Harbor ${revision.harborVersion}, the 89-task Terminal-Bench 2.0 dataset, k=5, one concurrent trial, and zero Harbor retries.\n`
+    `The sweep command is a fixed ${revision.taskCount}-task, k=1 phase gate; full is fixed to Harbor ${revision.harborVersion}, the ${revision.taskCount}-task Terminal-Bench 4.0 dataset, k=5, one concurrent trial, and zero Harbor retries.\n`
 }

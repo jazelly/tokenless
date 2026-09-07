@@ -57,7 +57,7 @@ export abstract class BaseProvider<TId extends ProviderId = ProviderId> {
   }
 
   get id() {
-    return this.definition.id
+    return this.definition.descriptor.id
   }
 
   get descriptor() {

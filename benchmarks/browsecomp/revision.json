@@ -1,0 +1,9 @@
+{
+  "schema": "tokenless.browsecomp-revision.v1",
+  "benchmark": "BrowseComp",
+  "benchmarkRepository": "https://github.com/openai/simple-evals.git",
+  "benchmarkCommit": "652c89d0ca9df547706735883097e9537d40dc47",
+  "dataset": "https://openaipublic.blob.core.windows.net/simple-evals/browse_comp_test_set.csv",
+  "datasetDigest": "sha256:7b24471cd5b3eb2a46830a14802b5c029ea62f488ff75a0f88af7923d1454abf",
+  "taskCount": 1266
+}

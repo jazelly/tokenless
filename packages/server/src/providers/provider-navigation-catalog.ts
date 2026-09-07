@@ -17,6 +17,8 @@ export type ProviderNavigationCatalogId =
   | 'kimi'
   | 'dola'
   | 'meta'
+  | 'microsoft-copilot'
+  | 'github-copilot'
 
 function pages(...patterns: ProviderPagePattern[]) {
   return Object.freeze(patterns.map((pattern) => Object.freeze(pattern)))
@@ -206,6 +208,27 @@ export const PROVIDER_NAVIGATION_CATALOG = Object.freeze({
     pagePatterns: pages(
       { kind: 'entry', urlPattern: 'https://meta.ai/' },
       { kind: 'conversation', urlPattern: 'https://meta.ai/prompt/:conversationId' },
+    ),
+    trustedSignInOrigins: [],
+  }),
+  'microsoft-copilot': navigation({
+    entryUrl: 'https://copilot.microsoft.com/',
+    homeUrl: 'https://copilot.microsoft.com/',
+    origins: ['https://copilot.microsoft.com'],
+    pagePatterns: pages(
+      { kind: 'entry', urlPattern: 'https://copilot.microsoft.com/' },
+      { kind: 'conversation', urlPattern: 'https://copilot.microsoft.com/chats/:conversationId' },
+    ),
+    trustedSignInOrigins: [],
+  }),
+  'github-copilot': navigation({
+    entryUrl: 'https://github.com/copilot',
+    homeUrl: 'https://github.com/copilot',
+    origins: ['https://github.com'],
+    pagePatterns: pages(
+      { kind: 'entry', urlPattern: 'https://github.com/copilot' },
+      { kind: 'conversation', urlPattern: 'https://github.com/copilot/c/:conversationId' },
+      { kind: 'conversation', urlPattern: 'https://github.com/:owner/:repo/tasks/:conversationId' },
     ),
     trustedSignInOrigins: [],
   }),

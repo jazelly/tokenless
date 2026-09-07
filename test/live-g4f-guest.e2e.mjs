@@ -24,7 +24,7 @@ test('authenticated daemon reaches real GLM guest mode through the isolated G4F 
   if (!profile) throw new Error(`The configured profile '${target.profile.slug}' is missing.`)
   await writeTokenlessConfig({
     homeDir: target.homeDir,
-    apiProxy: { enabled: true, conversationMode: 'new-conversation', executionMode: 'direct' },
+    apiProxy: { enabled: true, executionMode: 'direct' },
     directProvider: { defaultBackend: 'g4f', providerBackends: current.directProvider.providerBackends },
     profiles: {
       ...current.profiles,

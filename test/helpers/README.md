@@ -22,7 +22,7 @@ Declare required cases in `test/live-provider-capability-matrix.json`, implement
 
 ## Live Capability Case Isolation
 
-The live capability suite reuses the configured profile, browser process, context, and authentication. Each independent matrix case passes a distinct Page Ref and gets a distinct managed Chromium target.
-One explicit test daemon owns the full suite, so separate CLI processes preserve the runtime's Page Ref binding.
+The live capability suite reuses the configured profile, browser process, context, and authentication. Each independent matrix case passes a distinct Page Ref and gets a distinct managed Chromium target; the API also permits concurrent callers to reuse one Page Ref without a busy rejection.
+One explicit test daemon owns the full suite, so separate CLI processes preserve the runtime's Page Ref binding. The Tokenless Harness remains responsible for sequencing turns that share one conversation, while runtime detach leaves resident provider tabs available for a later binding.
 
 Actions and turns inside one case keep the same Page Ref and target. This preserves conversation and native Project continuity without leaking composer, attachment, model, or effort state into the next case.

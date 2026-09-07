@@ -277,8 +277,7 @@ export class PrivateProviderTurnV0Adapter {
     if (request.conversation.mode !== 'continue' || !request.continuation) throw invalidInput('web ai continuation is invalid')
     const previous = this.store.getLatestWebAiTurnForConversation(request.conversation.conversationRef)
     if (!previous || previous.binding_ref !== binding.binding_ref) throw invalidInput('web ai continuation conversation was not found')
-    const previousJob = hydrateEphemeralProviderJob(this.store.getJob(previous.job_id))
-    if (previousJob.status !== 'succeeded' || !successfulResult(previousJob.result_json)) throw invalidInput('web ai continuation source turn has not succeeded')
+    const previousJob = this.store.getJob(previous.job_id)
     const previousRequest = previousJob.request_json as { taskId?: unknown }
     if (typeof previousRequest.taskId !== 'string') throw invalidInput('web ai continuation task identity is unavailable')
     const previousProvider = previousJob.provider

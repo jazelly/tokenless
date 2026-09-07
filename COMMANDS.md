@@ -11,13 +11,14 @@ This document is the public inventory of the `tokenless` command-line interface.
 | `tokenless help` | Show the built-in command summary. | None |
 | `tokenless --version` | Print the installed CLI version. | None |
 | `tokenless install` | Low-level local runtime provisioning; use `tokenless upgrade` for normal maintenance. | None |
+| `tokenless skills sync` | Synchronize the two bundled agent skills. | None |
 | `tokenless setup` | Configure skills, browser, profiles, daemon, and one-time provider sign-in checks. | Yes |
 | `tokenless agents <install\|status\|inspect\|uninstall> codex` | Manage the optional Codex guidance, native hooks, and exact Harness context binding. | None |
 | `tokenless dashboard` | Open the local web control plane, or print its direct loopback URL. | None |
 | `tokenless menubar status` | Print the same-home menu bar snapshot for a native macOS client. | None |
 | `tokenless doctor` | Read local configuration and runtime health without refreshing providers. | None |
 | `tokenless config` | Read or update persistent Tokenless configuration. | None |
-| `tokenless upgrade` | Upgrade the global CLI, skills, local runtime, and run doctor. | None |
+| `tokenless upgrade` | Update the installed CLI or macOS app and verify its daemon and database. | None |
 | `tokenless profiles add` | Create a logical Tokenless profile for tabs and provider configuration. | None |
 | `tokenless profiles list` | List profiles and their persisted provider observations. | None |
 | `tokenless profiles status` | Check one provider live and persist the observation in the shared Tokenless database. | Yes |
@@ -28,7 +29,7 @@ This document is the public inventory of the `tokenless` command-line interface.
 | `tokenless capabilities list` | List canonical task capabilities and evidence-backed provider routes. | None |
 | `tokenless limits inspect` | Inspect the next-prompt provider/profile capacity estimate from the packaged catalog and local job history. | None |
 | `tokenless savings <status\|enable\|disable\|clear\|uninstall>` | Manage optional local output savings measurement and its tokenizer, downloaded on the first successful visible response. | None |
-| `tokenless api-proxy <status\|enable\|disable>` | Manage the OpenAI/Anthropic-compatible local API proxy and its compatibility conversation-mode setting. | None |
+| `tokenless api-proxy <status\|enable\|disable>` | Manage the OpenAI/Anthropic-compatible local API proxy. | None |
 | `tokenless run` | Send a prompt and optional files through a visible provider session. | Yes |
 | `tokenless state` | Inspect current daemon job state. | None |
 | `tokenless cancel` | Cancel a daemon job and confirm its canceled state. | None |
@@ -36,8 +37,6 @@ This document is the public inventory of the `tokenless` command-line interface.
 | `tokenless provider-controls` | Inspect visible model and effort controls. | Yes |
 | `tokenless provider-configure` | Select exact visible model or effort labels. | Yes |
 | `tokenless provider-action` | Execute one low-level visible provider action. | Yes |
-| `tokenless chatgpt-controls` | Inspect ChatGPT model and effort controls. | Yes |
-| `tokenless chatgpt-configure` | Configure ChatGPT-specific visible controls. | Yes |
 | `tokenless snapshot-dom` | Capture and persist a sanitized provider DOM snapshot. | Yes |
 | `tokenless daemon stop` | Gracefully stop a compatible local daemon. | None |
 | `tokenless prompt` | Build a shareable Tokenless prompt without submitting it. | None |
@@ -143,7 +142,19 @@ Main options:
 
 This command does not update the global npm CLI, configure a managed profile, or check provider sign-in. Run `tokenless setup` afterward when using it directly.
 
+### `tokenless skills sync`
+
+Synchronizes the complete bundled `tokenless` and `tokenless-install` skills into `~/.agents/skills` and existing supported agent roots. Includes default prompts and resources; does not download remote skills, change configuration, start a daemon, or access providers.
+
+```bash
+tokenless skills sync --json
+```
+
+Install, setup, and upgrade share this synchronizer; upgrade also syncs when the software is already current. Doctor compares every file with the installed package. Source users run `npm run sync:skill` after pulling and building the CLI; reload agent sessions that already loaded older skills.
+
 ### `tokenless setup`
+
+Requires `uv` on PATH to prepare the G4F Python runtime enabled by current setup.
 
 Runs the complete onboarding flow: asks about Anti-Detect, selects a user-supplied Chrome or Brave for native mode or prepares CloakBrowser, creates or selects a logical Tokenless profile, saves configuration, upserts the global Tokenless agent skills, reconciles the daemon to the installed CLI version, and checks enabled providers when browser access is available. With `--install-codex`, setup explicitly installs Tokenless guidance and hooks after preferences are saved and before skill maintenance; setup without the flag never installs them, including non-interactive runs. Manual trust in Codex `/hooks` remains required. Skill maintenance keeps `~/.agents/skills` canonical and refreshes direct copies for already-present common agent roots, including `~/.codex/skills` and `~/.claude/skills`; it also repairs the legacy `~/.agent/skills` location. No browser is downloaded by npm postinstall, daemon startup, or ordinary job execution. If no language preference exists, setup detects the system locale, selects `zh-CN` for Chinese locales or `en` otherwise, and persists it in config.
 
@@ -247,7 +258,7 @@ tokenless dashboard --semantic-manifest-output /absolute/path/terminal-bench-sem
 
 The dashboard provides Overview, Profiles, Providers, Capabilities, Jobs, and System/Diagnostics areas. Provider membership, visibility, role label, and an optional credential-free HTTP/HTTPS/SOCKS5 proxy are profile scoped. CLI state and cancellation commands remain available:
 
-Provider readiness refreshes run serially per profile. Tokenless starts a resident headless browser when the profile is idle, or reuses an already-running headed profile without replacing its browser, closing its existing tabs, or bringing the check to the foreground. Each check owns one temporary background tab and closes it on every completion, failure, blocker, timeout, or cancellation path; user-owned tabs remain untouched. A readiness check that encounters sign-in or verification records the required action; visible browser interaction starts only from an explicit provider, browser, or job action.
+Provider readiness refreshes use independent background tabs without a profile-wide execution lock. Tokenless starts a resident headless browser when the profile is idle, or reuses an already-running headed profile without replacing its browser, closing its existing tabs, or bringing the check to the foreground. Each check owns one temporary background tab and closes it on every completion, failure, blocker, timeout, or cancellation path; user-owned tabs remain untouched. A readiness check that encounters sign-in or verification records the required action; visible browser interaction starts only from an explicit provider, browser, or job action.
 
 ```bash
 tokenless config --profile work --provider-whitelist chatgpt,claude --browser-visibility headed --json
@@ -343,15 +354,15 @@ Tokenless always controls managed Chromium through CDP while exposing Playwright
 
 ### `tokenless upgrade`
 
-Runs the canonical user-facing maintenance pipeline. It updates the global npm CLI, resolves and verifies the installed CLI, invokes that new CLI's shared maintenance module to upsert global agent skills across the canonical and detected direct agent roots and reconcile the matching daemon, then runs doctor. Use this instead of `tokenless install` for normal installation maintenance and upgrades.
+Updates the current global npm installation or the complete macOS app. The new runtime migrates the database and verifies its daemon and authenticated API without rerunning setup or changing user configuration. See [Updates](docs/updates.md) for the lifecycle and release requirements.
 
 ```bash
 tokenless upgrade
-tokenless upgrade --json
+tokenless upgrade --yes --json
 tokenless upgrade --check --json
 ```
 
-Accepted options are `--check`, `--json`, `--home`, `--daemon-url`, `--browser`, `--browsers`, and `--daemon-start-timeout-ms`. `--check` only queries npm for the latest published version and does not mutate the CLI, runtime, or daemon.
+Accepted options are `--check`, `--yes`, `--package <local-archive>`, `--json`, `--home`, `--daemon-url`, and `--daemon-start-timeout-ms`. `--check` queries the matching release channel without changing local state. Applying an update requires interactive confirmation or `--yes`; active tasks may be interrupted. A local `.tgz` or macOS `.zip` explicitly selects an offline package. Browser and provider choices belong to setup/config, not upgrade.
 
 ### `tokenless daemon stop`
 
@@ -490,8 +501,7 @@ Manages the local API proxy: an OpenAI- and Anthropic-compatible surface on the 
 
 ```bash
 tokenless api-proxy status --json
-tokenless api-proxy enable --conversation-mode new-conversation --json
-tokenless api-proxy enable --conversation-mode continue-conversation --json
+tokenless api-proxy enable --json
 tokenless api-proxy disable --json
 ```
 
@@ -504,7 +514,7 @@ Point a client at the daemon and use the daemon control token as the API key:
 
 `model` must name the provider explicitly as `tokenless/<provider>`, for example `tokenless/chatgpt`. An unmapped model is rejected rather than redirected to a provider the caller did not choose. `GET /v1/openai/models` lists every accepted name.
 
-The `--conversation-mode` option is retained for config/status compatibility, but it does not override the API contract. Chat Completions and Anthropic always start a fresh provider conversation and send the full request history. Responses starts fresh when `previous_response_id` is omitted, and continues a mapped provider conversation only when a valid `previous_response_id` is supplied; a missing mapping falls back to a fresh chat with the reconstructed transcript. See [API proxy integration](docs/api-proxy-integration.md#conversation-state) for the exact continuation rules.
+The persisted API proxy config only controls whether the proxy is enabled and which execution mode it uses. Conversation selection belongs to each API request and its caller; Responses continuation requires an explicit `previous_response_id`. See [API proxy integration](docs/api-proxy-integration.md#conversation-state) for the exact continuation rules.
 
 `tools`, `tool_choice`, `functions`, `function_call`, and `response_format` are rejected because visible provider pages expose no equivalent control. `stream: true` returns the documented event sequence for that dialect, delivered as one terminal chunk, because a visible response is only readable once it has finished rendering. Reported `usage` counts are always zero: Tokenless does not meter provider tokens, and the response is billed by your own web subscription.
 
@@ -641,29 +651,7 @@ tokenless provider-configure \
   --json
 ```
 
-At least one control is required. Labels must match visible UI labels; model fallback lists are not supported by managed visible jobs.
-
-### `tokenless chatgpt-controls`
-
-ChatGPT-specific alias for inspecting model and effort controls.
-
-```bash
-tokenless chatgpt-controls -P default --json
-```
-
-### `tokenless chatgpt-configure`
-
-Selects ChatGPT-specific model or effort controls. It also accepts `--chat-surface chat` as an explicit surface constraint; other ChatGPT surfaces are rejected.
-
-```bash
-tokenless chatgpt-configure \
-  -P default \
-  --model "GPT-5" \
-  --effort "High" \
-  --json
-```
-
-If `--provider` is supplied, it must be `chatgpt`.
+At least one control is required. Labels must match visible UI labels.
 
 ### `tokenless provider-action`
 
@@ -763,7 +751,6 @@ The following aliases are accepted for compatibility. Prefer the canonical form 
 | `tokenless status` | `tokenless state` |
 | `tokenless provider-auth-status` | `tokenless provider-status` |
 | `tokenless inspect-provider-controls` | `tokenless provider-controls` |
-| `tokenless inspect-chatgpt-controls` | `tokenless chatgpt-controls` |
 | `--turn-context` | `--context` |
 | `--turn-context-file` | `--context-file` |
 

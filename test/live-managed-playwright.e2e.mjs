@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import fs from 'node:fs/promises'
 import net from 'node:net'
 import path from 'node:path'
@@ -69,6 +70,11 @@ const handlers = {
   'kimi-artifacts': kimiArtifacts,
   'kimi-long-running': kimiLongRunning,
   'kimi-agent-swarm': kimiAgentSwarm,
+  'github-copilot-controls': githubCopilotControls,
+  'github-copilot-repository': githubCopilotRepository,
+  'github-copilot-agent': githubCopilotAgent,
+  'github-copilot-agent-image': githubCopilotAgentImage,
+  'github-copilot-file-inputs': githubCopilotFileInputs,
 }
 
 const selectedProviders = Object.entries(matrix.providers)
@@ -259,6 +265,155 @@ async function promptDraft({ provider, journey }) {
 
 async function modelChoice(context) {
   await choiceCase(context, 'model')
+}
+
+function githubCopilotTestRepository() {
+  const remote = execFileSync('git', ['remote', 'get-url', 'origin'], { cwd: root, encoding: 'utf8' }).trim()
+  const repository = /github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?$/u.exec(remote)?.[1]
+  assert.ok(repository, 'GitHub Copilot E2E requires this repository GitHub origin')
+  return repository
+}
+
+async function githubCopilotControls({ journey }) {
+  await (await journey.action('github-copilot.mode.select', ['--copilot-mode', 'ask'])).close()
+  const modes = await journey.action('github-copilot.mode.inspect')
+  assert.deepEqual(responseResult(modes.payload, 'github-copilot.mode.inspect').choices.map((choice) => choice.label), ['Ask', 'Agent'])
+  await modes.close()
+  const models = await journey.action('model.inspect')
+  const choices = responseResult(models.payload, 'model.inspect').choices
+  assert.equal(choices.find((choice) => choice.label === 'GPT-5.6 Luna')?.enabled, true)
+  const locked = choices.filter((choice) => !choice.enabled)
+  assert.ok(locked.length > 0, 'selected Copilot Pro account must expose locked premium models')
+  for (const choice of locked) {
+    assert.match(choice.requiredPlan, /^Copilot (Pro\+|Max)$/u)
+    assert.match(choice.description, /Model locked/u)
+  }
+  await models.close()
+  await assert.rejects(journey.action('model.select', ['--model', locked[0].label]), /github_copilot_choice_unavailable/u)
+  const repository = githubCopilotTestRepository()
+  await (await journey.action('github-copilot.repository.select', ['--copilot-repo', repository])).close()
+  const repositories = await journey.action('github-copilot.repository.inspect')
+  assert.equal(responseResult(repositories.payload, 'github-copilot.repository.inspect').choices.find((choice) => choice.label === repository)?.selected, true)
+  await repositories.close()
+  const usage = await journey.action('github-copilot.usage.inspect')
+  const counters = responseResult(usage.payload, 'github-copilot.usage.inspect')
+  assert.equal(counters.unit, 'AI credits')
+  assert.ok(counters.included.limit > 0)
+  assert.ok(counters.included.used >= 0)
+  assert.equal(counters.included.remaining, Math.max(0, counters.included.limit - counters.included.used))
+  assert.ok(counters.included.resetsOn.length > 0)
+  assert.equal(typeof counters.additional.enabled, 'boolean')
+  await usage.close()
+  await (await journey.action('github-copilot.mode.select', ['--copilot-mode', 'agent'])).close()
+  const agentModels = await journey.action('model.inspect')
+  assert.equal(responseResult(agentModels.payload, 'model.inspect').choices.find((choice) => choice.label === 'GPT-5.6 Luna')?.enabled, true)
+  await agentModels.close()
+  await (await journey.action('model.select', ['--model', 'GPT-5.4'])).close()
+  const efforts = await journey.action('effort.inspect')
+  const effort = responseResult(efforts.payload, 'effort.inspect').choices.find((choice) => choice.enabled && !choice.selected)
+  assert.ok(effort, 'Agent GPT-5.4 must expose reasoning choices')
+  await efforts.close()
+  const effortChange = await journey.action('effort.select', ['--effort', effort.label])
+  assert.equal(responseResult(effortChange.payload, 'effort.select').selectedLabel, effort.label)
+  await effortChange.close()
+  await (await journey.action('github-copilot.mode.select', ['--copilot-mode', 'ask'])).close()
+  await (await journey.action('model.select', ['--model', 'GPT-5.6 Luna'])).close()
+}
+
+async function githubCopilotRepository({ journey }) {
+  const repository = githubCopilotTestRepository()
+  const run = await journey.run([
+    '--workspace-mode', 'native', '--project-name', repository, '--model', 'GPT-5.6 Luna',
+    '--prompt', 'Read the root package.json from the selected repository. Return its package name and its exact npm test script. Do not edit files or create any GitHub artifacts.',
+  ])
+  const workspace = responseResult(run.payload, 'workspace.ensure')
+  assert.equal(workspace.resource.kind, 'project')
+  assert.equal(workspace.resource.native, true)
+  assert.equal(workspace.identity.resourceId, repository)
+  assert.equal(workspace.identity.canonicalUrl, `https://github.com/${repository}`)
+  const response = responseResult(run.payload, 'response.read')
+  assert.match(response.text, /tokenless/iu)
+  assert.match(response.text, /npm run build && node dist\/scripts\/test-all\.mjs/u)
+  assert.match(run.page.url(), /github\.com\/copilot\/c\//u)
+  await run.close()
+}
+
+async function githubCopilotAgent({ provider, journey }) {
+  const repository = githubCopilotTestRepository()
+  const marker = markerFor(provider, 'AGENT_COMPLETE')
+  const run = await journey.run([
+    '--workspace-mode', 'native', '--project-name', repository, '--copilot-mode', 'agent', '--model', 'GPT-5.6 Luna',
+    '--prompt', `Read only the root package.json of the selected repository and report its package name and exact npm test script. Also retrieve https://nodejs.org/en/about using a tool and report one fact from that page with its link. Do not edit files, commit, push, create issues, or open pull requests. Finish with ${marker}.`,
+  ], 600_000)
+  const response = responseResult(run.payload, 'response.read')
+  assert.equal(responseResult(run.payload, 'model.select').selectedLabel, 'GPT-5.6 Luna')
+  assert.equal(response.agentRun.status, 'succeeded')
+  assert.equal(response.agentRun.sessionUrl, canonicalPageUrl(run.page.url()))
+  assert.ok(response.agentRun.steps.some((step) => /package\.json/u.test(step.label)))
+  assert.ok(response.agentRun.steps.some((step) => /web|fetch|curl|nodejs|bash|shell/iu.test(step.label)))
+  assert.ok(response.citations.some((citation) => citation.href.startsWith('https://nodejs.org/')))
+  assert.match(response.text, new RegExp(escapeRegExp(marker)))
+  assert.match(response.text, /npm run build && node dist\/scripts\/test-all\.mjs/u)
+  assert.match(run.page.url(), new RegExp(`github\\.com/${escapeRegExp(repository)}/tasks/`, 'u'))
+  assert.equal(response.agentRun.creditUnit, 'AI credits')
+  assert.ok(response.agentRun.creditsUsed >= 0)
+  await run.close()
+}
+
+async function githubCopilotAgentImage({ journey }) {
+  const directory = path.join(root, 'test-results', 'live-provider-inputs', randomUUID())
+  await fs.mkdir(directory, { recursive: true, mode: 0o700 })
+  const picture = path.join(directory, `${randomUUID()}.png`)
+  await fs.copyFile(path.join(root, 'assets', 'tokenless-wordmark.png'), picture)
+  try {
+    const run = await journey.run([
+      '--workspace-mode', 'native', '--project-name', githubCopilotTestRepository(), '--copilot-mode', 'agent', '--model', 'GPT-5.6 Luna',
+      '--attach-file', picture,
+      '--prompt', 'Transcribe the large word visible in the attached image. Do not change any repository files or create GitHub artifacts.',
+    ], 600_000)
+    assert.equal(responseResult(run.payload, 'file.upload').attachments.length, 1)
+    const response = responseResult(run.payload, 'response.read')
+    assert.equal(response.agentRun.status, 'succeeded')
+    assert.equal(response.agentRun.sessionUrl, canonicalPageUrl(run.page.url()))
+    assert.match(response.text, /\btokenless\b/iu)
+    await run.close()
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true })
+  }
+}
+
+async function githubCopilotFileInputs({ journey }) {
+  const directory = path.join(root, 'test-results', 'live-provider-inputs', randomUUID())
+  await fs.mkdir(directory, { recursive: true, mode: 0o700 })
+  const codes = ['txt', 'md', 'json', 'csv', 'ts'].map((extension) => ({ extension, code: `REFERENCE_${randomUUID().replaceAll('-', '')}` }))
+  const paths = []
+  try {
+    for (const { extension, code } of codes) {
+      const source = path.join(directory, `${randomUUID()}.${extension}`)
+      const content = extension === 'json' ? JSON.stringify({ reference: code }) : extension === 'ts' ? `export const reference = '${code}'\n` : extension === 'csv' ? `reference\n${code}\n` : `${code}\n`
+      await fs.writeFile(source, content, { mode: 0o600 })
+      paths.push(source)
+    }
+    const picture = path.join(directory, `${randomUUID()}.png`)
+    await fs.copyFile(path.join(root, 'assets', 'tokenless-wordmark.png'), picture)
+    paths.push(picture)
+    const run = await journey.run([
+      '--model', 'GPT-5.6 Luna', ...paths.flatMap((file) => ['--attach-file', file]),
+      '--prompt', 'Read all five attached text/code documents and return each reference value exactly. Then transcribe the large word visible in the attached image. These are fictional reference codes for an attachment reading check.',
+    ])
+    const upload = responseResult(run.payload, 'file.upload')
+    assert.equal(upload.attachments.length, paths.length)
+    const response = responseResult(run.payload, 'response.read')
+    for (const { code } of codes) assert.ok(response.text.includes(code), 'every attached document must be read')
+    assert.match(response.text, /tokenless/iu)
+    assert.ok(response.usage.inputTokens > 0)
+    assert.ok(response.usage.outputTokens > 0)
+    assert.ok(response.usage.creditsUsed >= 0)
+    assert.equal(response.usage.creditUnit, 'AI credits')
+    await run.close()
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true })
+  }
 }
 
 async function effortChoice(context) {
@@ -717,6 +872,7 @@ async function harnessAttachmentRoundtrip({ provider, journey }) {
       '--workspace-root', workspace,
       '--prompt', [
         `Use the read-only workspace.read tool to read ${proofFile}.`,
+        'No Skill loads are needed. Propose workspace.read directly in your first response.',
         'Then return exactly the complete file contents with no additional text.',
         'Do not call any write tool.',
       ].join(' '),
@@ -1339,7 +1495,7 @@ async function conversationWorkflow({ provider, journey }) {
   const name = markerFor(provider, 'CONVERSATION_WORKFLOW')
   const attachmentMarker = markerFor(provider, 'ATTACHMENT')
   const responseMarker = markerFor(provider, 'TURN_ONE_RESPONSE')
-  const contextSecret = markerFor(provider, 'CONTEXT_SECRET')
+  const contextNote = markerFor(provider, 'CONTEXT_NOTE')
   const attachmentName = `${attachmentMarker}.txt`
   const attachment = path.join(root, 'test-results', 'live-provider-inputs', attachmentName)
   await fs.mkdir(path.dirname(attachment), { recursive: true, mode: 0o700 })
@@ -1359,7 +1515,7 @@ async function conversationWorkflow({ provider, journey }) {
         'Read the attached text file.',
         'Respond with exactly three lines: the exact file contents; then the following response marker;',
         `${responseMarker}; then a Markdown link to the official Node.js homepage.`,
-        `Remember ${contextSecret} for my next message, but do not include it in this response.`,
+        `Remember this fictional reference code for my next message: ${contextNote}. Do not include the reference code in this response.`,
       ].join(' '),
     ], 360_000, ({ page }) => waitForExactText(
       page,
@@ -1370,7 +1526,7 @@ async function conversationWorkflow({ provider, journey }) {
     const citations = responseResult(first.payload, 'response.read')?.citations
     assert.match(firstText, new RegExp(escapeRegExp(attachmentMarker)))
     assert.match(firstText, new RegExp(escapeRegExp(responseMarker)))
-    assert.doesNotMatch(firstText, new RegExp(escapeRegExp(contextSecret)))
+    assert.doesNotMatch(firstText, new RegExp(escapeRegExp(contextNote)))
     assert.ok(responseResult(first.payload, 'file.upload')?.attachments?.some(
       (attachmentResult) => attachmentResult.name === attachmentName,
     ))
@@ -1389,10 +1545,10 @@ async function conversationWorkflow({ provider, journey }) {
         '--deepseek-deepthink', 'off',
         '--deepseek-search', 'on',
       ] : []),
-      '--prompt', 'Return a JSON object with the secret from my previous message and its exact character count.',
+      '--prompt', 'Return a JSON object with the fictional reference code I asked you to remember and its exact character count.',
     ])
     const secondText = responseResult(second.payload, 'response.read')?.text ?? ''
-    assert.match(secondText, new RegExp(escapeRegExp(contextSecret)))
+    assert.match(secondText, new RegExp(escapeRegExp(contextNote)))
     assert.equal(canonicalPageUrl(second.page.url()), firstUrl, `${provider} both CLI processes must share one exact conversation`)
     await second.close()
   } finally {

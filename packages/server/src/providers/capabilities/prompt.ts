@@ -1,6 +1,7 @@
 import { VISIBLE_ACTIONS } from '../contracts.js'
 import { tokenlessError } from '../../browser/errors.js'
 import { observeProviderSession } from '../../browser/provider-session/observe.js'
+import { dismissChatGptHistoryWarning, ensureChatGptChat } from './chatgpt-chat.js'
 import {
   countVisibleLocators,
   firstEnabledLocator,
@@ -22,7 +23,7 @@ export async function clearDomPrompt(
   signal?: AbortSignal,
   resetDraft = false,
 ) {
-  if (provider.id === 'claude') {
+  if (provider.descriptor.id === 'claude') {
     await clearClaudePromptDraft(provider, page, signal)
     await clearClaudeDraftAttachments(provider, page, signal)
     if (resetDraft) await reloadClearedClaudeDraft(provider, page, signal)
@@ -132,6 +133,7 @@ export async function inputDomPrompt(
   signal?: AbortSignal,
 ) {
   await dismissProviderAnnouncement(page, provider)
+  if (provider.descriptor.id === 'chatgpt') await ensureChatGptChat(page)
   const timeoutMs = provider.interactionTimings.promptControlTimeoutMs
   const deadline = Date.now() + timeoutMs
   let composerObserved = false
@@ -145,7 +147,7 @@ export async function inputDomPrompt(
     )
     if (!composer) break
     composerObserved = true
-    if (await writePrompt(page, composer, text, provider.id === 'claude')) {
+    if (await writePrompt(page, composer, text, provider.descriptor.id === 'claude')) {
       await dismissProviderAnnouncement(page, provider)
       return {
         visible: true as const,
@@ -202,7 +204,11 @@ async function promptInputDiagnostics(page: Page) {
 }
 
 async function dismissProviderAnnouncement(page: Page, provider: ProviderDomDefinition) {
-  if (provider.id === 'claude') {
+  if (provider.descriptor.id === 'chatgpt') {
+    await dismissChatGptHistoryWarning(page)
+    return
+  }
+  if (provider.descriptor.id === 'claude') {
     const notNow = page.locator('button')
       .filter({ visible: true, hasText: /^\s*Not now\s*$/u })
       .last()
@@ -212,7 +218,7 @@ async function dismissProviderAnnouncement(page: Page, provider: ProviderDomDefi
     await notNow.waitFor({ state: 'hidden', timeout: 2000 })
     return
   }
-  if (provider.id !== 'zai') return
+  if (provider.descriptor.id !== 'zai') return
   const dialog = page.locator('[role="dialog"]')
     .filter({ visible: true })
     .last()
@@ -275,9 +281,10 @@ export async function submitDomPrompt(
   signal?: AbortSignal,
 ) {
   await dismissProviderAnnouncement(page, provider)
+  if (provider.descriptor.id === 'chatgpt') await ensureChatGptChat(page)
   const controlTimeoutMs = provider.interactionTimings.promptControlTimeoutMs
   const button = await waitForActionableSubmitControl(provider, page, signal)
-  const disabledClaudeSubmit = provider.id === 'claude' && !button
+  const disabledClaudeSubmit = provider.descriptor.id === 'claude' && !button
     ? await firstVisibleLocator(page, provider.submitSelectors, 50)
     : null
   const keyboardSubmitComposer = !button && !disabledClaudeSubmit
@@ -323,7 +330,7 @@ export async function submitDomPrompt(
       attempt += 1
     }
   } while (Date.now() < deadline)
-  if (provider.id === 'zai') {
+  if (provider.descriptor.id === 'zai') {
     const composer = await firstVisibleLocator(page, provider.composerSelectors, 50)
     if (composer && !await composerIsVisiblyEmpty(composer)) {
       await composer.focus({ timeout: 5_000 })
@@ -356,7 +363,7 @@ async function claudeKeyboardSubmitComposer(
   provider: ProviderDomDefinition,
   page: Page,
 ) {
-  if (provider.id !== 'claude') return null
+  if (provider.descriptor.id !== 'claude') return null
   const composer = await firstVisibleLocator(page, provider.composerSelectors, 50)
   return composer && !await composerIsVisiblyEmpty(composer) ? composer : null
 }
@@ -517,13 +524,14 @@ async function waitForActionableSubmitControl(
   let attempt = 0
   while (Date.now() <= deadline) {
     assertNotAborted(signal)
+    if (provider.descriptor.id === 'chatgpt') await dismissProviderAnnouncement(page, provider)
     const button = await firstEnabledLocator(page, provider.submitSelectors)
     if (button) {
       const trialTimeoutMs = Math.min(2_000, Math.max(1, deadline - Date.now()))
       const actionable = await button.click({ trial: true, timeout: trialTimeoutMs })
         .then(() => true)
         .catch(() => false)
-      if (actionable || provider.id === 'claude') return button
+      if (actionable || provider.descriptor.id === 'claude') return button
     }
     if (Date.now() >= deadline) break
     await waitForNextDomObservation(page, deadline, attempt, signal)
@@ -546,7 +554,7 @@ async function submissionTransitionIsVisible(
   const answerStarted = await countVisibleLocators(page, provider.answerSelectors) > baseline.answerCount
   const providerBusy = await countVisibleLocators(page, provider.busySelectors) > 0
   if (conversationChanged || answerStarted || providerBusy) return true
-  if (provider.id === 'qwen') return false
+  if (provider.descriptor.id === 'qwen') return false
   if (clickedButton && !await clickedButton.isVisible({ timeout: 50 }).catch(() => false)) return true
   if (clickedButton && !await clickedButton.isEnabled({ timeout: 50 }).catch(() => false)) return true
   const composer = await firstVisibleLocator(page, provider.composerSelectors, 50)

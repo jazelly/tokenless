@@ -162,6 +162,25 @@ export type Choice = {
   selected: boolean
   enabled: boolean
   description?: string
+  requiredPlan?: string
+}
+
+export type GitHubCopilotUsageResult = {
+  supported: true
+  observedAt: string
+  unit: 'AI credits'
+  included: { used: number; limit: number; remaining: number; resetsOn: string }
+  additional: { enabled: boolean; spent: number; budget: number; currency: 'USD' }
+  latestMessage: GitHubCopilotMessageUsage | null
+  visibleProof: string
+}
+
+export type GitHubCopilotMessageUsage = {
+  inputTokens: number
+  outputTokens: number
+  creditsUsed: number
+  creditUnit: 'AI credits'
+  observedAt: string
 }
 
 export type ChoiceInspectResult = {
@@ -510,6 +529,7 @@ export type ResponseReadResult = {
   alternatives?: readonly ResponseAlternative[]
   artifacts?: readonly VisibleResponseArtifact[]
   agentRun?: VisibleAgentRun
+  usage?: GitHubCopilotMessageUsage
   visibleProof: string
   decisionDiagnostics: ResponseDecisionDiagnostics
   outputSavings?: import('../output-savings/index.js').OutputSavingsResult
@@ -519,6 +539,9 @@ export type VisibleResponseArtifact = VisibleImageArtifact | VisibleCodeArtifact
 
 export type VisibleAgentRun = {
   status: 'succeeded'
+  sessionUrl?: string
+  creditsUsed?: number
+  creditUnit?: 'AI credits'
   steps: readonly {
     label: string
     details: string | null
@@ -700,6 +723,7 @@ type VisibleActionResultBase = {
 }
 
 export type VisibleActionResult = (
+  | GitHubCopilotUsageResult
   | CapabilityInspectResult
   | AuthStatusResult
   | ChoiceInspectResult

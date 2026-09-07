@@ -59,7 +59,6 @@ import {
   openTokenlessDashboard,
   addControlProfile,
   clearControlProfiles,
-  openProviderUrl,
   persistDaemonSnapshot,
   probeDaemonReady,
   providerWakeUrl,
@@ -88,8 +87,6 @@ import {
   updateOutputSavings,
   writeTokenlessConfig,
   configPath,
-  API_PROXY_CONVERSATION_MODES,
-  type ApiProxyConversationMode,
 } from './index.js'
 import type { TokenlessConfig } from '#tokenless-server/persistence/config.js'
 import { G4fRuntimeManager } from '#tokenless-server/providers/direct/g4f/runtime-manager.js'
@@ -110,16 +107,16 @@ import { paintCliText, resolveCliColorEnabled, type CliColor } from './output/cl
 import { DAEMON_CONTROL_API_REVISION, DAEMON_TASK_STATE_SCHEMA_ID } from '#tokenless-server/schema-ids.js'
 import {
   inspectTokenlessSkills,
+  installTokenlessSkills,
 } from './bootstrap/setup-workflow.js'
 import { reconcileTokenlessMaintenance } from './bootstrap/maintenance.js'
-import { fetchTokenlessLatestVersion } from './http/npm-registry.js'
 import {
   createSetupPresenter,
   resolveSetupTerminalCapabilities,
   type SetupPresenter,
 } from './output/setup-presenter.js'
 import { tokenlessPackageVersion } from '#tokenless-server/platform-package.js'
-import { formatUpgradeProgress, formatUpgradeSummary, runUpgradeCommand, type UpgradeProgressEvent } from './commands/upgrade.js'
+import { checkUpgrade, formatUpgradeProgress, formatUpgradeSummary, runUpgradeCommand, type UpgradeProgressEvent } from './commands/upgrade.js'
 import {
   BrowserRuntimeManager,
   normalizeBrowserSelection,
@@ -211,6 +208,7 @@ type ManagedAuthObservation = {
 }
 type SetupCliVersionCheck = {
   packageName: 'tokenless'
+  channel: string
   registryUrl: string
   currentVersion: string
   currentMajor: number | null
@@ -259,6 +257,11 @@ const PRIORITY_VISIBLE_PROVIDER_ACTIONS = new Set([
   'kimi.plugin.select',
   'kimi.skill.inspect',
   'kimi.skill.select',
+  'github-copilot.mode.inspect',
+  'github-copilot.mode.select',
+  'github-copilot.repository.inspect',
+  'github-copilot.repository.select',
+  'github-copilot.usage.inspect',
   'file.upload',
   'workspace.ensure',
   'prompt.clear',
@@ -321,7 +324,7 @@ try {
   } else {
     command = argv[0]?.startsWith('-') ? 'prompt' : (argv.shift() ?? 'help')
   }
-  const subcommand = (command === 'profiles' || command === 'daemon' || command === 'capabilities' || command === 'limits' || command === 'savings' || command === 'api-proxy' || command === 'agents' || command === 'agent' || command === 'featurebench' || command === 'menubar') && argv[0] && !argv[0].startsWith('-')
+  const subcommand = (command === 'skills' || command === 'profiles' || command === 'daemon' || command === 'capabilities' || command === 'limits' || command === 'savings' || command === 'api-proxy' || command === 'agents' || command === 'agent' || command === 'featurebench' || command === 'menubar') && argv[0] && !argv[0].startsWith('-')
     ? argv.shift()
     : undefined
   const agentTarget = command === 'agents' && argv[0] && !argv[0].startsWith('-')
@@ -386,16 +389,16 @@ try {
     await providerControlsCommand(args)
   } else if (command === 'provider-configure') {
     await providerConfigureCommand(args)
-  } else if (command === 'chatgpt-controls' || command === 'inspect-chatgpt-controls') {
-    await chatGptControlsCommand(args)
-  } else if (command === 'chatgpt-configure') {
-    await chatGptConfigureCommand(args)
   } else if (command === 'snapshot-dom') {
     await snapshotDomCommand(args)
   } else if (command === 'state' || command === 'status') {
     await stateCommand(args)
   } else if (command === 'cancel') {
     await cancelCommand(args)
+  } else if (command === 'skills') {
+    const { check } = await installTokenlessSkills()
+    if (args.json) printPayload(check, args)
+    else console.log(t('skillsSynced', { version: check.version }))
   } else if (command === 'setup') {
     await setupCommand(args)
   } else if (command === 'install') {
@@ -404,8 +407,22 @@ try {
     if (args.check === true) {
       await upgradeCheckCommand(args)
     } else {
+      if (args.yes !== true) {
+        if (args.json === true || !process.stdin.isTTY || !process.stdout.isTTY) {
+          throw usageError('upgrade_confirmation_required', 'Updating restarts the Tokenless API daemon and may interrupt active tasks. Run with --yes to confirm.')
+        }
+        const prompt = createSetupPrompt()
+        try {
+          if (!await prompt.confirm(t('upgradeConfirm'), false)) {
+            console.log(t('upgradeCanceled'))
+            process.exit(0)
+          }
+        } finally {
+          prompt.close()
+        }
+      }
       const humanOutput = args.json !== true
-      if (humanOutput && !args.quiet) console.error(t('cliUpgradeTitle'))
+      if (humanOutput && !args.quiet) console.error(t('upgradeTitle'))
       const result = await runUpgradeCommand(args, humanOutput && args.verbose
         ? { onProgress: (event) => console.error(formatUpgradeProgressLine(event, args)) }
         : undefined)
@@ -431,7 +448,7 @@ try {
   const errorCode = cliError.code || 'tokenless_cli_error'
   const localizedMessage = cliError.messageKey
     ? tError(cliError.messageKey, cliError.messageParams)
-    : localizedError(errorCode, cliError.message || t('cliFailed'))
+    : localizedError(errorCode, cliError.message || t('failed'))
   const payload: Record<string, any> = {
     ok: false,
     error: {
@@ -449,7 +466,7 @@ try {
   if (cliError.context) payload.error.context = cliError.context
   if (args.json) console.log(JSON.stringify(payload, null, 2))
   else console.error(formatCliError(payload, cliError.usage, args, cliError))
-  process.exit(cliError.exitCode ?? 1)
+  process.exitCode = cliError.exitCode ?? 1
 }
 
 async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
@@ -561,6 +578,7 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
     const result = await executeManagedPlaywrightJob({
       args: subcommand === 'open' ? { ...args, browserVisibility: 'headed' } : args,
       provider,
+      control,
       request: createManagedPlaywrightJobRequest({
         provider,
         target: { kind: 'provider_home', url: managedProviderExplicitTargetUrl(provider, args.targetUrl) },
@@ -750,19 +768,19 @@ async function menubarCommand(subcommand: string | undefined, args: CliArgs) {
 }
 
 async function upgradeCheckCommand(args: CliArgs) {
-  const check = await setupCliVersionCheck()
+  const check = await checkUpgrade(args)
   const payload = {
-    ok: check.ok,
+    ...check,
     command: 'upgrade',
-    current: check.currentVersion,
-    latest: check.latestVersion,
-    status: check.status,
-    updateAvailable: check.updateAvailable,
-    ...(check.error === undefined ? {} : { error: check.error }),
+    ...(check.error ? { error: { ...check.error, message: localizedError(check.error.code, check.error.message) } } : {}),
   }
   printPayload(args.json === true ? payload : {
     ...payload,
-    compactOutput: setupCliVersionCompact(check),
+    compactOutput: !check.ok
+      ? t('upgradeCheckUnavailable', { code: check.error?.code ?? 'unknown' })
+      : check.updateAvailable
+        ? t('upgradeAvailable', { current: check.current, latest: check.latest ?? 'unknown', channel: check.channel })
+        : t('upgradeNoChange', { version: check.current, channel: check.channel }),
   }, args)
   if (!check.ok) process.exitCode = 1
 }
@@ -1117,61 +1135,40 @@ function setupFailedCompactOutput({
 }
 
 async function setupCliVersionCheck(): Promise<SetupCliVersionCheck> {
-  const currentVersion = tokenlessPackageVersion()
-  const currentMajor = semanticVersionMajor(currentVersion)
-  const latest = await fetchTokenlessLatestVersion()
-  if (!latest.ok) {
-    return {
-      packageName: 'tokenless',
-      registryUrl: latest.registryUrl,
-      currentVersion,
-      currentMajor,
-      latestVersion: null,
-      latestMajor: null,
-      status: 'check_unavailable',
-      updateAvailable: null,
-      ok: false,
-      error: {
-        code: latest.code,
-        message: latest.message,
-        retryable: true,
-      },
-    }
-  }
-  const latestMajor = semanticVersionMajor(latest.latestVersion)
-  const comparison = compareSemanticVersions(currentVersion, latest.latestVersion)
-  const updateAvailable = comparison === null ? latest.latestVersion !== currentVersion : comparison < 0
+  const check = await checkUpgrade({})
   return {
     packageName: 'tokenless',
-    registryUrl: latest.registryUrl,
-    currentVersion,
-    currentMajor,
-    latestVersion: latest.latestVersion,
-    latestMajor,
-    status: updateAvailable ? 'update_available' : 'up_to_date',
-    updateAvailable,
-    ok: true,
+    channel: check.channel,
+    registryUrl: check.channel === 'macos' ? 'https://github.com/jazelly/tokenless/releases' : 'https://registry.npmjs.org/tokenless/latest',
+    currentVersion: check.current,
+    currentMajor: semanticVersionMajor(check.current),
+    latestVersion: check.latest,
+    latestMajor: check.latest ? semanticVersionMajor(check.latest) : null,
+    status: !check.ok ? 'check_unavailable' : check.updateAvailable ? 'update_available' : 'up_to_date',
+    updateAvailable: check.updateAvailable,
+    ok: check.ok,
+    ...(check.error ? { error: check.error } : {}),
   }
 }
 
 function noteSetupCliVersion(check: SetupCliVersionCheck, presenter: SetupPresenter) {
   if (check.status === 'check_unavailable') {
-    presenter.note(t('setupNpmUnavailable', { code: check.error?.code ?? 'npm_registry_unavailable' }))
+    presenter.note(t('upgradeCheckUnavailable', { code: check.error?.code ?? 'upgrade_check_unavailable' }))
   } else if (check.updateAvailable) {
-    presenter.note(t('setupNpmAvailable', { latest: check.latestVersion ?? 'latest', current: check.currentVersion }))
+    presenter.note(t('upgradeAvailable', { latest: check.latestVersion ?? 'latest', current: check.currentVersion, channel: check.channel }))
   } else {
-    presenter.success(t('setupNpmCurrent', { current: check.currentVersion }))
+    presenter.success(t('upgradeNoChange', { version: check.currentVersion, channel: check.channel }))
   }
 }
 
 function setupCliVersionCompact(check: SetupCliVersionCheck) {
   if (check.status === 'check_unavailable') {
-    return t('setupCliUnavailable', { current: check.currentVersion, code: check.error?.code ?? 'npm_registry_unavailable' })
+    return t('upgradeCheckUnavailable', { code: check.error?.code ?? 'upgrade_check_unavailable' })
   }
   if (check.updateAvailable) {
-    return t('setupCliAvailable', { current: check.currentVersion, latest: check.latestVersion ?? 'latest' })
+    return t('upgradeAvailable', { current: check.currentVersion, latest: check.latestVersion ?? 'latest', channel: check.channel })
   }
-  return t('setupCliCurrent', { current: check.currentVersion, latest: check.latestVersion ?? check.currentVersion })
+  return t('upgradeNoChange', { version: check.currentVersion, channel: check.channel })
 }
 
 function setupDaemonCompact(daemon: {
@@ -1182,49 +1179,6 @@ function setupDaemonCompact(daemon: {
     version: daemon.runningVersion ?? 'unknown',
     revision: daemon.runningControlApiRevision ?? 'unknown',
   })
-}
-
-function compareSemanticVersions(left: string, right: string) {
-  const leftVersion = parseSemanticVersion(left)
-  const rightVersion = parseSemanticVersion(right)
-  if (!leftVersion || !rightVersion) return null
-  for (const key of ['major', 'minor', 'patch'] as const) {
-    const diff = leftVersion[key] - rightVersion[key]
-    if (diff !== 0) return diff
-  }
-  if (leftVersion.prerelease.length === 0 && rightVersion.prerelease.length > 0) return 1
-  if (leftVersion.prerelease.length > 0 && rightVersion.prerelease.length === 0) return -1
-  for (let index = 0; index < Math.max(leftVersion.prerelease.length, rightVersion.prerelease.length); index += 1) {
-    const leftIdentifier = leftVersion.prerelease[index]
-    const rightIdentifier = rightVersion.prerelease[index]
-    if (leftIdentifier === undefined) return -1
-    if (rightIdentifier === undefined) return 1
-    const diff = comparePrereleaseIdentifier(leftIdentifier, rightIdentifier)
-    if (diff !== 0) return diff
-  }
-  return 0
-}
-
-function parseSemanticVersion(value: string) {
-  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(value)
-  if (!match) return null
-  const [major, minor, patch] = [Number(match[1]), Number(match[2]), Number(match[3])]
-  if (![major, minor, patch].every(Number.isSafeInteger)) return null
-  return {
-    major,
-    minor,
-    patch,
-    prerelease: match[4] ? match[4].split('.') : [],
-  }
-}
-
-function comparePrereleaseIdentifier(left: string, right: string) {
-  const leftNumeric = /^(0|[1-9]\d*)$/.test(left)
-  const rightNumeric = /^(0|[1-9]\d*)$/.test(right)
-  if (leftNumeric && rightNumeric) return Number(left) - Number(right)
-  if (leftNumeric) return -1
-  if (rightNumeric) return 1
-  return left < right ? -1 : (left > right ? 1 : 0)
 }
 
 async function defaultProfileSlug(registry: ManagedProfileRegistry) {
@@ -1464,13 +1418,6 @@ async function capabilitiesCommand(subcommand: string | undefined, args: CliArgs
   printPayload({ ok: true, ...catalog }, args)
 }
 
-async function chatGptControlsCommand(args: CliArgs) {
-  await executeDaemonJob({
-    args: { ...args, provider: requiredChatGptProvider(args) },
-    action: 'inspect_chatgpt_controls',
-  })
-}
-
 async function providerControlsCommand(args: CliArgs) {
   await executeDaemonJob({ args, action: 'inspect_controls' })
 }
@@ -1518,6 +1465,18 @@ async function visibleProviderActionFromArgs(args: CliArgs) {
     throw usageError('kimi_control_unsupported', 'kimi actions are available only for the Kimi provider.')
   }
 
+  if (action.startsWith('github-copilot.') && normalizeProvider(args.provider) !== 'github-copilot') {
+    throw usageError('github_copilot_control_unsupported', 'GitHub Copilot controls are available only for github-copilot.')
+  }
+  if (action === 'github-copilot.mode.select') {
+    assertProviderActionPayloadOptions(args, new Set(['copilotMode']))
+    return { action, payload: { mode: normalizeCopilotMode(args.copilotMode) } }
+  }
+  if (action === 'github-copilot.repository.select') {
+    assertProviderActionPayloadOptions(args, new Set(['copilotRepo']))
+    return { action, payload: { label: normalizeCopilotRepository(args.copilotRepo) } }
+  }
+
   if (action === 'capability.inspect') {
     assertProviderActionPayloadOptions(args, new Set())
     return { action, payload: {} }
@@ -1538,7 +1497,10 @@ async function visibleProviderActionFromArgs(args: CliArgs) {
     action === 'doubao.skill.inspect' ||
     action === 'kimi.search.inspect' ||
     action === 'kimi.plugin.inspect' ||
-    action === 'kimi.skill.inspect'
+    action === 'kimi.skill.inspect' ||
+    action === 'github-copilot.mode.inspect' ||
+    action === 'github-copilot.repository.inspect' ||
+    action === 'github-copilot.usage.inspect'
   ) {
     assertProviderActionPayloadOptions(args, new Set())
     return { action, payload: {} }
@@ -1557,18 +1519,12 @@ async function visibleProviderActionFromArgs(args: CliArgs) {
   }
 
   if (action === 'model.select') {
-    assertProviderActionPayloadOptions(args, new Set(['model', 'modelFallbacks']))
+    assertProviderActionPayloadOptions(args, new Set(['model']))
     const label = args.model === undefined
       ? undefined
       : normalizeVisibleModelLabel(args.model, '--model')
     if (!label) {
       throw usageError('missing_visible_action_model', 'model.select requires --model <exact-visible-model>.')
-    }
-    const fallbacks = args.modelFallbacks === undefined
-      ? undefined
-      : normalizeVisibleModelFallbacks(args.modelFallbacks)
-    if (fallbacks !== undefined) {
-      throw usageError('model_fallback_unsupported', 'provider-action model.select accepts one exact --model label; --model-fallback is not supported.')
     }
     return { action, payload: { label } }
   }
@@ -1739,7 +1695,6 @@ function assertProviderActionPayloadOptions(args: CliArgs, allowed: Set<string>)
     ['contextFile', '--context-file'],
     ['turnContextFile', '--turn-context-file'],
     ['model', '--model'],
-    ['modelFallbacks', '--model-fallback'],
     ['effort', '--effort'],
     ['thinkingEffort', '--thinking-effort'],
     ['qwenMode', '--qwen-mode'],
@@ -1754,6 +1709,8 @@ function assertProviderActionPayloadOptions(args: CliArgs, allowed: Set<string>)
     ['kimiSearch', '--kimi-search'],
     ['kimiPlugin', '--kimi-plugin'],
     ['kimiSkill', '--kimi-skill'],
+    ['copilotMode', '--copilot-mode'],
+    ['copilotRepo', '--copilot-repo'],
     ['chatSurface', '--chat-surface'],
     ['projectName', '--project-name'],
     ['projectInstructions', '--project-instructions'],
@@ -1774,16 +1731,8 @@ function assertProviderActionPayloadOptions(args: CliArgs, allowed: Set<string>)
 }
 
 async function providerConfigureCommand(args: CliArgs) {
-  assertProviderConfigureArguments(args, 'provider-configure')
+  assertProviderConfigureArguments(args)
   await executeDaemonJob({ args, action: 'configure_controls' })
-}
-
-async function chatGptConfigureCommand(args: CliArgs) {
-  assertProviderConfigureArguments(args, 'chatgpt-configure')
-  await executeDaemonJob({
-    args: { ...args, provider: requiredChatGptProvider(args) },
-    action: 'configure_chatgpt',
-  })
 }
 
 async function snapshotDomCommand(args: CliArgs) {
@@ -1988,6 +1937,8 @@ async function executeDaemonJob({
       args,
       provider,
       request,
+      control,
+      profile: profileForTarget,
       taskId,
       jobId: managedJobId,
       statusEventAction: MANAGED_PLAYWRIGHT_JOB_ACTION,
@@ -2137,6 +2088,8 @@ function automaticProviderFallbackAllowed({
     args.kimiSearch === undefined &&
     args.kimiPlugin === undefined &&
     args.kimiSkill === undefined &&
+    args.copilotMode === undefined &&
+    args.copilotRepo === undefined &&
     args.chatSurface === undefined
 }
 
@@ -2144,6 +2097,8 @@ async function executeManagedPlaywrightJob({
   args,
   provider,
   request,
+  control: resolvedControl,
+  profile: resolvedProfile,
   taskId,
   statusEventAction,
   noWait,
@@ -2153,6 +2108,8 @@ async function executeManagedPlaywrightJob({
   args: CliArgs
   provider: string
   request: ReturnType<typeof createManagedPlaywrightJobRequest>
+  control?: Awaited<ReturnType<typeof ensureControlDaemon>>
+  profile?: Awaited<ReturnType<typeof resolveControlProfile>>['profile']
   taskId?: string | null | undefined
   statusEventAction: string
   noWait: boolean
@@ -2160,11 +2117,11 @@ async function executeManagedPlaywrightJob({
   jobId?: string | undefined
 }) {
   const homeDir = tokenlessHome(args.home)
-  const control = await ensureControlDaemon(args, homeDir, provider)
+  const control = resolvedControl ?? await ensureControlDaemon(args, homeDir, provider)
   const config = control.state.config
   const browserVisibility = requiredBrowserVisibility(args.browserVisibility ?? config.browserVisibility)
   const statusReporter = createCliStatusReporter(args)
-  const profile = (await resolveControlProfile({
+  const profile = resolvedProfile ?? (await resolveControlProfile({
     homeDir,
     daemonUrl: control.daemon.url,
     profile: args.profile,
@@ -2319,16 +2276,21 @@ function managedVisibleActions({
     }]
   }
 
-  if (providerControls.modelFallbacks !== undefined) {
-    throw usageError('model_fallback_unsupported', '--model-fallback is not supported by managed Playwright visible jobs; pass one exact --model label.')
-  }
-
   const actions: Array<{ requestId: string; action: VisibleAction; payload: Record<string, unknown> }> = []
   if (action === 'inspect_auth') {
     actions.push({ requestId, action: VISIBLE_ACTIONS.AUTH_STATUS, payload: {} })
     return actions
   }
-  if (action === 'inspect_controls' || action === 'inspect_chatgpt_controls') {
+  if (action === 'inspect_controls') {
+    if (provider === 'github-copilot') {
+      return [
+        { requestId: `${requestId}:mode`, action: VISIBLE_ACTIONS.GITHUB_COPILOT_MODE_INSPECT, payload: {} },
+        { requestId: `${requestId}:model`, action: VISIBLE_ACTIONS.MODEL_INSPECT, payload: {} },
+        { requestId: `${requestId}:effort`, action: VISIBLE_ACTIONS.EFFORT_INSPECT, payload: {} },
+        { requestId: `${requestId}:repository`, action: VISIBLE_ACTIONS.GITHUB_COPILOT_REPOSITORY_INSPECT, payload: {} },
+        { requestId: `${requestId}:usage`, action: VISIBLE_ACTIONS.GITHUB_COPILOT_USAGE_INSPECT, payload: {} },
+      ]
+    }
     if (provider === 'deepseek') {
       actions.push(
         { requestId: `${requestId}:deepseek-mode`, action: VISIBLE_ACTIONS.DEEPSEEK_MODE_INSPECT, payload: {} },
@@ -2353,7 +2315,13 @@ function managedVisibleActions({
     )
     return actions
   }
-  if (action === 'configure_controls' || action === 'configure_chatgpt') {
+  if (providerControls.copilotMode !== undefined) {
+    actions.push({ requestId: `${requestId}:copilot-mode`, action: VISIBLE_ACTIONS.GITHUB_COPILOT_MODE_SELECT, payload: { mode: providerControls.copilotMode } })
+  }
+  if (providerControls.copilotRepo !== undefined) {
+    actions.push({ requestId: `${requestId}:copilot-repository`, action: VISIBLE_ACTIONS.GITHUB_COPILOT_REPOSITORY_SELECT, payload: { label: providerControls.copilotRepo } })
+  }
+  if (action === 'configure_controls') {
     if (providerControls.deepSeekMode !== undefined) {
       actions.push({ requestId: `${requestId}:deepseek-mode`, action: VISIBLE_ACTIONS.DEEPSEEK_MODE_SELECT, payload: { mode: providerControls.deepSeekMode } })
     }
@@ -2600,7 +2568,7 @@ async function managedProviderTarget({
   }
   const kimiSurface = provider === 'kimi' ? kimiCapabilitySurface(taskCapabilities) : null
   if (kimiSurface) return { url: new URL(kimiSurface, 'https://www.kimi.com').toString(), resumesConversation: false }
-  if ((workspaceMode === 'auto' || workspaceMode === 'native') && projectName) {
+  if (provider !== 'github-copilot' && (workspaceMode === 'auto' || workspaceMode === 'native') && projectName) {
     const daemon = await ensureDaemonReady({ homeDir, daemonUrl, timeoutMs: daemonStartTimeoutMs, requiredProvider: provider })
     const mapped = await mappedDaemonTarget({
       homeDir,
@@ -3217,8 +3185,8 @@ async function agentsCommand(subcommand: string | undefined, args: CliArgs) {
     printPayload({
       ok: true,
       status,
-      nextStep: t('cliAgentsInstallNextStep'),
-      compactOutput: t('cliAgentsInstalled'),
+      nextStep: t('agentsInstallNextStep'),
+      compactOutput: t('agentsInstalled'),
     }, args)
     return
   }
@@ -3227,7 +3195,7 @@ async function agentsCommand(subcommand: string | undefined, args: CliArgs) {
     printPayload({
       ok: true,
       status,
-      compactOutput: t('cliAgentsRemoved'),
+      compactOutput: t('agentsRemoved'),
     }, args)
     return
   }
@@ -3490,8 +3458,8 @@ async function setupCodexIntegration({
 }) {
   const input = codexIntegrationInput(args, homeDir)
   if (args.installCodex !== true) {
-    const message = t('cliAgentsNotInstalled')
-    const nextStep = t('cliAgentsInstallHint')
+    const message = t('agentsNotInstalled')
+    const nextStep = t('agentsInstallHint')
     presenter.note(message)
     return {
       requested: false,
@@ -3505,7 +3473,7 @@ async function setupCodexIntegration({
 
   const harness = await loadWebAgentHarness()
   const status = await presenter.withProgress(
-    t('cliSetupInstallingCodex'),
+    t('setupInstallingCodex'),
     () => harness.installCodexIntegration(input),
   )
   const guidance = objectRecord(status.guidance)
@@ -3516,8 +3484,8 @@ async function setupCodexIntegration({
     error.context = { status }
     throw error
   }
-  const message = t('cliAgentsInstalled')
-  const nextStep = t('cliAgentsInstallNextStep')
+  const message = t('agentsInstalled')
+  const nextStep = t('agentsInstallNextStep')
   presenter.note(nextStep)
   return {
     requested: true,
@@ -3554,9 +3522,9 @@ async function setupCommand(args: CliArgs) {
     ? createSetupPrompt(cliColorEnabled(args, process.stdout))
     : null
   try {
-    presenter.welcome(t('cliSetupTitle'))
-    presenter.success(t('cliSetupReadingConfig'))
-    const cliVersion = await presenter.withProgress(t('cliSetupCheckingNpm'), setupCliVersionCheck)
+    presenter.welcome(t('setupTitle'))
+    presenter.success(t('setupReadingConfig'))
+    const cliVersion = await presenter.withProgress(t('setupCheckingNpm'), setupCliVersionCheck)
     noteSetupCliVersion(cliVersion, presenter)
     const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
     const explicitBrowser = args.browser === undefined ? null : normalizeCliBrowser(args.browser)
@@ -3571,7 +3539,7 @@ async function setupCommand(args: CliArgs) {
     }
     const useCloak = args.antiDetect === true || explicitBrowser === 'cloak' || (
       prompt !== null && explicitBrowser === null
-        ? await prompt.confirm(t('cliSetupAntiDetectPrompt'), false)
+        ? await prompt.confirm(t('setupAntiDetectPrompt'), false)
         : false
     )
     if (useCloak && args.browserExecutablePath !== undefined) {
@@ -3586,10 +3554,10 @@ async function setupCommand(args: CliArgs) {
       ? explicitBrowser
       : prompt
       ? await prompt.select(
-          t('cliSetupNativeBrowserPrompt'),
+          t('setupNativeBrowserPrompt'),
           [
-            { label: t('cliSetupNativeBrowserChrome'), value: 'chrome' as const },
-            { label: t('cliSetupNativeBrowserBrave'), value: 'brave' as const },
+            { label: t('setupNativeBrowserChrome'), value: 'chrome' as const },
+            { label: t('setupNativeBrowserBrave'), value: 'brave' as const },
           ],
           config.browser === 'brave' ? 1 : 0,
         )
@@ -3607,7 +3575,7 @@ async function setupCommand(args: CliArgs) {
     const nativeRuntime = useCloak
       ? null
       : await presenter.withProgress(
-          t('cliSetupCheckingNativeBrowser', {
+          t('setupCheckingNativeBrowser', {
             browser: nativeBrowser === 'brave' ? 'Brave Browser' : 'Google Chrome',
           }),
           async () => {
@@ -3622,8 +3590,8 @@ async function setupCommand(args: CliArgs) {
               const browserName = nativeBrowser === 'brave' ? 'Brave Browser' : 'Google Chrome'
               nativeBrowserWarning = {
                 code: 'browser_executable_not_found',
-                message: t('cliSetupNativeBrowserMissing', { browser: browserName }),
-                nextStep: t('cliSetupNativeBrowserPathNextStep', { browser: nativeBrowser }),
+                message: t('setupNativeBrowserMissing', { browser: browserName }),
+                nextStep: t('setupNativeBrowserPathNextStep', { browser: nativeBrowser }),
               }
               presenter.note(nativeBrowserWarning.message)
               return null
@@ -3672,7 +3640,7 @@ async function setupCommand(args: CliArgs) {
       prompt,
       presenter,
     })
-    const apiProxy = await selectSetupApiProxy({ args, config, prompt })
+    const apiProxy = await selectSetupApiProxy({ config, prompt, setupDefaults: args.setupDefaults === true })
     await presenter.withProgress(t('setupSavingConfiguration'), async () => {
       const current = await readTokenlessConfig(homeDir)
       await upsertTokenlessProfileConfig({
@@ -3732,7 +3700,7 @@ async function setupCommand(args: CliArgs) {
     const browserReady = selectedRuntime !== null || nativeRuntime !== null
     if (browserReady) {
       presenter.explain({
-        title: t('cliSetupProviderSignIn'),
+        title: t('setupProviderSignIn'),
         lines: [t('setupReadinessDisclosure')],
       })
       for (const provider of providers) {
@@ -4190,7 +4158,7 @@ function createSetupPrompt(colorEnabled = false) {
     ): Promise<T> {
       console.error(paintCliText(message, 'cyan', colorEnabled))
       choices.forEach((choice, index) => console.error(`  ${paintCliText(`${index + 1}.`, 'yellow', colorEnabled)} ${choice.label}`))
-      const answer = (await terminal.question(paintCliText(t('cliSetupChoice', { index: defaultIndex + 1 }), 'cyan', colorEnabled))).trim()
+      const answer = (await terminal.question(paintCliText(t('setupChoice', { index: defaultIndex + 1 }), 'cyan', colorEnabled))).trim()
       const index = answer ? Number(answer) - 1 : defaultIndex
       if (!Number.isInteger(index) || !choices[index]) {
         throw usageError('setup_selection_invalid', 'Setup selection must be one of the displayed numbers.')
@@ -4204,7 +4172,7 @@ function createSetupPrompt(colorEnabled = false) {
       console.error(paintCliText(message, 'cyan', colorEnabled))
       choices.forEach((choice, index) => console.error(`  ${paintCliText(`${index + 1}.`, 'yellow', colorEnabled)} ${choice.label}`))
       const answer = (await terminal.question(
-        paintCliText(t('cliSetupChooseProviderRemoval'), 'cyan', colorEnabled),
+        paintCliText(t('setupChooseProviderRemoval'), 'cyan', colorEnabled),
       )).trim()
       if (!answer) return choices.map((choice) => choice.value)
 
@@ -4231,29 +4199,17 @@ function createSetupPrompt(colorEnabled = false) {
  * default would widen what the daemon answers without anyone asking.
  */
 async function selectSetupApiProxy({
-  args,
   config,
   prompt,
+  setupDefaults,
 }: {
-  args: CliArgs
   config: Awaited<ReturnType<typeof readTokenlessConfig>>
   prompt: ReturnType<typeof createSetupPrompt> | null
+  setupDefaults: boolean
 }) {
-  if (args.conversationMode !== undefined) {
-    return { enabled: true, conversationMode: requiredApiProxyConversationMode(args.conversationMode), executionMode: 'direct' as const }
-  }
-  if (!prompt || args.setupDefaults === true) return config.apiProxy
+  if (!prompt || setupDefaults) return config.apiProxy
   const enabled = await prompt.confirm(t('setupApiProxyPrompt'), config.apiProxy.enabled)
-  if (!enabled) return { enabled: false, conversationMode: config.apiProxy.conversationMode, executionMode: config.apiProxy.executionMode }
-  const conversationMode = await prompt.select<ApiProxyConversationMode>(
-    t('setupApiProxyModePrompt'),
-    [
-      { label: t('setupApiProxyNewConversation'), value: 'new-conversation' },
-      { label: t('setupApiProxyContinueConversation'), value: 'continue-conversation' },
-    ],
-    config.apiProxy.conversationMode === 'continue-conversation' ? 1 : 0,
-  )
-  return { enabled: true, conversationMode, executionMode: 'direct' as const }
+  return { enabled, executionMode: config.apiProxy.executionMode }
 }
 
 async function selectSetupProviders({
@@ -4616,15 +4572,18 @@ async function doctorCommand(args: CliArgs) {
       managedProfile = profileReport
     } else {
       const profile = profileReport.profile
+      const profileBrowserInspection = profile.runtimeBinding
+        ? await runtimeManager.inspect(profile, {
+            browserExecutablePath: profile.runtimeBinding.browserId === config.browser
+              ? config.browserExecutablePath
+              : null,
+          })
+        : configuredBrowserInspection
       managedProfile = {
         ok: true,
         slug: profile.slug,
-        browserMode: 'native',
-        runtime: await runtimeManager.inspect(profile, {
-          browserExecutablePath: profile.runtimeBinding?.browserId === config.browser
-            ? config.browserExecutablePath
-            : null,
-        }),
+        browserMode: profile.runtimeBinding && profile.runtimeBinding.family !== 'system' ? 'managed' : 'native',
+        runtime: profileBrowserInspection,
       }
       profileRuntime = managedProfile.runtime
       const providers = requiredProfileConfig(config, profile.slug).enabledProviders
@@ -4987,9 +4946,6 @@ async function apiProxyCommand(subcommand: string | undefined, args: CliArgs) {
       daemonUrl: control.daemon.url,
       config: { apiProxy: {
           enabled: true,
-          conversationMode: args.conversationMode === undefined
-            ? config.apiProxy.conversationMode
-            : requiredApiProxyConversationMode(args.conversationMode),
           executionMode: config.apiProxy.executionMode,
         } },
     })
@@ -4999,14 +4955,13 @@ async function apiProxyCommand(subcommand: string | undefined, args: CliArgs) {
       daemonUrl: control.daemon.url,
       config: { apiProxy: {
           enabled: false,
-          conversationMode: config.apiProxy.conversationMode,
           executionMode: config.apiProxy.executionMode,
         } },
     })
   } else if (subcommand !== 'status') {
     throw usageError(
       'invalid_api_proxy_command',
-      'Usage: tokenless api-proxy <status|enable|disable> [--conversation-mode <new-conversation|continue-conversation>] --json',
+      'Usage: tokenless api-proxy <status|enable|disable> --json',
     )
   }
   const baseUrl = config.daemonUrl ?? DEFAULT_DAEMON_URL
@@ -5023,7 +4978,6 @@ async function apiProxyCommand(subcommand: string | undefined, args: CliArgs) {
     ok: true,
     apiProxy: {
       enabled: config.apiProxy.enabled,
-      conversationMode: config.apiProxy.conversationMode,
       endpoints: {
         openai: `${baseUrl}/v1/openai`,
         anthropic: `${baseUrl}/v1/anthropic`,
@@ -5037,17 +4991,6 @@ async function apiProxyCommand(subcommand: string | undefined, args: CliArgs) {
       providers: profile ? config.profiles[profile.slug]?.enabledProviders ?? [] : [],
     },
   }, args)
-}
-
-function requiredApiProxyConversationMode(value: unknown): ApiProxyConversationMode {
-  const normalized = typeof value === 'string' ? value.trim() : ''
-  if (!API_PROXY_CONVERSATION_MODES.includes(normalized as ApiProxyConversationMode)) {
-    throw usageError(
-      'invalid_api_proxy_conversation_mode',
-      'Conversation mode must be new-conversation or continue-conversation.',
-    )
-  }
-  return normalized as ApiProxyConversationMode
 }
 
 async function promptFromArgs(args: CliArgs) {
@@ -5296,7 +5239,7 @@ function waitingForUserPayload({
     browser,
     userAction: {
       ...(waitResult?.userAction ?? {}),
-      message: t(windowOpen ? 'cliWaitingForUser' : 'cliWaitingNoWindow'),
+      message: t(windowOpen ? 'waitingForUser' : 'waitingNoWindow'),
       queryGuidance: windowOpen
         ? 'The current daemon execution will continue after the visible check is complete.'
         : 'This execution cannot continue without a visible browser; start a new job if the daemon cannot open one.',
@@ -5460,9 +5403,9 @@ function createCommandContracts(): CommandContract[] {
     'executionMode', 'providerBackend', 'authContextId',
     'timeoutMs', 'cancelTimeoutMs', 'targetUrl', 'taskId', 'pageRef',
     'projectName', 'chatName', 'workspaceMode', 'projectInstructions', 'projectInstructionsFile',
-    'model', 'modelFallbacks', 'effort', 'thinkingEffort', 'qwenMode', 'qwenModeVariant',
+    'model', 'effort', 'thinkingEffort', 'qwenMode', 'qwenModeVariant',
     'arenaMode', 'arenaModality',
-    'deepSeekMode', 'deepSeekDeepThink', 'deepSeekSearch', 'kimiSearch', 'kimiPlugin', 'kimiSkill',
+    'deepSeekMode', 'deepSeekDeepThink', 'deepSeekSearch', 'kimiSearch', 'kimiPlugin', 'kimiSkill', 'copilotMode', 'copilotRepo',
     'chatSurface', 'noWait',
     'agentKind', 'agentSessionId',
   ] as const
@@ -5476,8 +5419,8 @@ function createCommandContracts(): CommandContract[] {
     'taskId', 'pageRef', 'noWait', 'agentKind', 'agentSessionId',
   ] as const
   const providerConfigureOptions = [
-    ...providerInspectOptions, 'model', 'modelFallbacks', 'effort', 'thinkingEffort', 'chatSurface',
-    'deepSeekMode', 'deepSeekDeepThink', 'deepSeekSearch', 'kimiSearch', 'kimiPlugin', 'kimiSkill',
+    ...providerInspectOptions, 'model', 'effort', 'thinkingEffort', 'chatSurface',
+    'deepSeekMode', 'deepSeekDeepThink', 'deepSeekSearch', 'kimiSearch', 'kimiPlugin', 'kimiSkill', 'copilotMode', 'copilotRepo',
   ] as const
 
   const contracts: CommandContract[] = [
@@ -5497,7 +5440,7 @@ function createCommandContracts(): CommandContract[] {
     { command: 'savings', subcommand: 'uninstall', usage: ['tokenless savings uninstall --confirm-delete --json'], options: ['home', 'json', 'confirmDelete'] },
     { command: 'savings', subcommand: 'clear', usage: ['tokenless savings clear --confirm-delete --json'], options: ['home', 'json', 'confirmDelete'] },
     { command: 'api-proxy', subcommand: 'status', usage: ['tokenless api-proxy status [--profile <slug>] --json'], options: ['home', 'json', 'profile', 'daemonUrl'] },
-    { command: 'api-proxy', subcommand: 'enable', usage: ['tokenless api-proxy enable [--conversation-mode <new-conversation|continue-conversation>] --json'], options: ['home', 'json', 'conversationMode', 'daemonUrl'] },
+    { command: 'api-proxy', subcommand: 'enable', usage: ['tokenless api-proxy enable --json'], options: ['home', 'json', 'daemonUrl'] },
     { command: 'api-proxy', subcommand: 'disable', usage: ['tokenless api-proxy disable --json'], options: ['home', 'json'] },
     { command: 'featurebench', subcommand: 'inspect', usage: ['tokenless featurebench inspect --json'], options: ['json'] },
     { command: 'featurebench', subcommand: 'issue-channel', usage: ['tokenless featurebench issue-channel --instance-id <id> --benchmark-run-id <id> --provider <provider> [--profile <slug>] [--execution-mode browser|direct] [--model <label>] --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'executionMode', 'model', 'effort', 'instanceId', 'benchmarkRunId', 'maxSteps', 'expiresInMs', 'providerTurnTimeoutMs'] },
@@ -5506,18 +5449,16 @@ function createCommandContracts(): CommandContract[] {
     { command: 'provider-auth-status', usage: ['tokenless provider-auth-status --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
     { command: 'provider-controls', usage: ['tokenless provider-controls --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
     { command: 'inspect-provider-controls', usage: ['tokenless inspect-provider-controls --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
-    { command: 'chatgpt-controls', usage: ['tokenless chatgpt-controls --profile <slug> --json'], options: providerInspectOptions },
-    { command: 'inspect-chatgpt-controls', usage: ['tokenless inspect-chatgpt-controls --profile <slug> --json'], options: providerInspectOptions },
     { command: 'provider-configure', usage: ['tokenless provider-configure --profile <slug> --provider <provider> [--model <label>] [--effort <label>] --json'], options: providerConfigureOptions },
-    { command: 'chatgpt-configure', usage: ['tokenless chatgpt-configure --profile <slug> [--model <label>] [--effort <label>] --json'], options: providerConfigureOptions },
-    { command: 'provider-action', usage: [`tokenless provider-action --profile <slug> --provider <provider> --action <${PRIORITY_VISIBLE_PROVIDER_ACTION_LIST.replace(/, /g, '|')}> --json`], options: [...providerInspectOptions, 'action', 'prompt', 'promptFile', 'attachFiles', 'projectName', 'projectInstructions', 'projectInstructionsFile', 'workspaceMode', 'model', 'modelFallbacks', 'effort', 'thinkingEffort', 'qwenMode', 'qwenModeVariant', 'arenaMode', 'arenaModality', 'deepSeekMode', 'deepSeekDeepThink', 'deepSeekSearch', 'doubaoMode', 'doubaoSkill', 'kimiSearch', 'kimiPlugin', 'kimiSkill'] },
+    { command: 'provider-action', usage: [`tokenless provider-action --profile <slug> --provider <provider> --action <${PRIORITY_VISIBLE_PROVIDER_ACTION_LIST.replace(/, /g, '|')}> --json`], options: [...providerInspectOptions, 'action', 'prompt', 'promptFile', 'attachFiles', 'projectName', 'projectInstructions', 'projectInstructionsFile', 'workspaceMode', 'model', 'effort', 'thinkingEffort', 'qwenMode', 'qwenModeVariant', 'arenaMode', 'arenaModality', 'deepSeekMode', 'deepSeekDeepThink', 'deepSeekSearch', 'doubaoMode', 'doubaoSkill', 'kimiSearch', 'kimiPlugin', 'kimiSkill', 'copilotMode', 'copilotRepo'] },
     { command: 'snapshot-dom', usage: ['tokenless snapshot-dom --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
     { command: 'state', usage: ['tokenless state (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'jobId', 'projectName', 'chatName', 'limit', 'agentKind', 'agentSessionId'] },
     { command: 'status', usage: ['tokenless status (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'jobId', 'projectName', 'chatName', 'limit', 'agentKind', 'agentSessionId'] },
     { command: 'cancel', usage: ['tokenless cancel --job-id <job-id> --json'], options: ['home', 'json', 'jobId', 'daemonUrl', 'daemonStartTimeoutMs', 'cancelTimeoutMs'] },
     { command: 'setup', usage: ['tokenless setup [--browser <chrome|brave|cloak>|--anti-detect] [--browser-executable-path <absolute-path>] [--install-codex [--codex-home <dir>]] [--profile <slug>] [--provider-whitelist <list>] [--no-open] [--defaults] --json'], options: ['home', 'json', 'quiet', 'browser', 'browserExecutablePath', 'antiDetect', 'profile', 'providerWhitelist', 'noOpen', 'daemonUrl', 'daemonStartTimeoutMs', 'cancelTimeoutMs', 'timeoutMs', 'targetUrl', 'setDefault', 'setupDefaults', 'installCodex', 'codexHome'] },
+    { command: 'skills', subcommand: 'sync', usage: ['tokenless skills sync [--json]'], options: ['json'] },
     { command: 'install', usage: ['tokenless install [--browser <browser>|--browsers <list>] [--repair-browser] --json'], options: ['home', 'json', 'browser', 'browsers', 'repairBrowser', 'daemonUrl', 'daemonStartTimeoutMs'] },
-    { command: 'upgrade', usage: ['tokenless upgrade [--check] [--json] [--home <dir>] [--daemon-url <url>] [--browser <browser>|--browsers <list>]'], options: ['check', 'json', 'home', 'daemonUrl', 'browser', 'browsers', 'daemonStartTimeoutMs'] },
+    { command: 'upgrade', usage: ['tokenless upgrade [--check | --yes] [--package <local-archive>] [--json] [--home <dir>] [--daemon-url <url>]'], options: ['check', 'yes', 'package', 'json', 'home', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'doctor', usage: ['tokenless doctor --json'], options: ['home', 'json', 'browser', 'daemonUrl'] },
     { command: 'config', usage: ['tokenless config [--language <en|zh-CN>] [--browser <chrome|brave>] [--browser-executable-path <absolute-path>|--clear-browser-executable-path] [--daemon-url <url>] --json', 'tokenless config --profile <slug> [--provider-whitelist <list>] [--browser-visibility headed] --json'], options: ['home', 'json', 'profile', 'language', 'providerWhitelist', 'browser', 'browserExecutablePath', 'clearBrowserExecutablePath', 'browserVisibility', 'daemonUrl'] },
     { command: 'dashboard', usage: ['tokenless dashboard [--profile <slug>] [--job-id <id>] [--semantic-manifest-output <absolute-path>] [--no-open] [--json]'], options: ['home', 'json', 'profile', 'jobId', 'semanticManifestOutput', 'noOpen', 'daemonUrl', 'daemonStartTimeoutMs'] },
@@ -5560,6 +5501,7 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     enumerable: false,
   })
   const valueFlags: Record<string, string> = {
+    '--package': 'package',
     '--prompt': 'prompt',
     '--prompt-file': 'promptFile',
     '--project-root': 'projectRoot',
@@ -5567,7 +5509,6 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--project-instructions': 'projectInstructions',
     '--project-instructions-file': 'projectInstructionsFile',
     '--workspace-mode': 'workspaceMode',
-    '--conversation-mode': 'conversationMode',
     '--chat-name': 'chatName',
     '--context': 'context',
     '--context-file': 'contextFile',
@@ -5610,7 +5551,6 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--read-timeout-ms': 'readTimeoutMs',
     '--max-text-chars': 'maxTextChars',
     '--model': 'model',
-    '--model-fallback': 'modelFallbacks',
     '--effort': 'effort',
     '--thinking-effort': 'thinkingEffort',
     '--qwen-mode': 'qwenMode',
@@ -5622,6 +5562,8 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--deepseek-search': 'deepSeekSearch',
     '--doubao-mode': 'doubaoMode',
     '--doubao-skill': 'doubaoSkill',
+    '--copilot-mode': 'copilotMode',
+    '--copilot-repo': 'copilotRepo',
     '--kimi-search': 'kimiSearch',
     '--kimi-plugin': 'kimiPlugin',
     '--kimi-skill': 'kimiSkill',
@@ -5646,6 +5588,7 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--provider-turn-timeout-ms': 'providerTurnTimeoutMs',
   }
   const booleanFlags: Record<string, string> = {
+    '--yes': 'yes',
     '--include-text': 'includeText',
     '--help': 'help',
     '-h': 'help',
@@ -5722,10 +5665,8 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
       continue
     }
     throw commandUsageError(
-      arg === '--no-daemon' ? 'daemon_only' : 'unknown_argument',
-      arg === '--no-daemon'
-        ? 'Tokenless run is daemon-only; --no-daemon and local task-page fallback remain removed.'
-        : `Unknown Tokenless argument: ${arg}`,
+      'unknown_argument',
+      `Unknown Tokenless argument: ${arg}`,
       context,
       [arg]
     )
@@ -5803,19 +5744,6 @@ function defaultVisibleProviderId(): ProviderId {
   return provider
 }
 
-function requireLegacyChatGptProviderId(): ProviderId {
-  const candidates = listProviderDescriptors().filter((provider) => (
-    provider.stage !== 'disabled' && provider.controls.chatSurface
-  ))
-  if (candidates.length !== 1) {
-    throw usageError(
-      'chatgpt_controls_unsupported',
-      'ChatGPT compatibility commands require exactly one enabled provider that owns the chat surface.'
-    )
-  }
-  return candidates[0]!.id
-}
-
 function providerSupportsChatSurface(providerId: string) {
   const descriptor = getProviderDescriptorById(providerId)
   return descriptor?.stage !== 'disabled' && descriptor?.controls.chatSurface === true
@@ -5868,12 +5796,9 @@ function assertCommandRoutingArguments(command: string, subcommand: string | und
     'provider-auth-status',
     'provider-controls',
     'inspect-provider-controls',
-    'chatgpt-controls',
-    'inspect-chatgpt-controls',
   ])
   const inspectionControlOptions = selectedArgumentFlags(args, [
     'model',
-    'modelFallbacks',
     'effort',
     'thinkingEffort',
     'chatSurface',
@@ -5881,7 +5806,7 @@ function assertCommandRoutingArguments(command: string, subcommand: string | und
   if (inspectionCommands.has(command) && inspectionControlOptions.length > 0) {
     const error = commandUsageError(
       'controls_unsupported_for_action',
-      'Control selection options are not accepted by provider-controls or chatgpt-controls; use a configure command.',
+      'Control selection options are not accepted by provider-controls; use provider-configure.',
       context,
       inspectionControlOptions,
     )
@@ -5946,7 +5871,7 @@ function assertVisibleRunArguments(args: CliArgs) {
     }
     const unsupported = explicitlySelectedArgumentFlags(args, [
       'targetUrl', 'projectName', 'chatName',
-      'projectInstructions', 'projectInstructionsFile', 'modelFallbacks', 'effort',
+      'projectInstructions', 'projectInstructionsFile', 'effort',
       'thinkingEffort', 'qwenMode', 'qwenModeVariant',
       'deepSeekMode', 'deepSeekDeepThink', 'deepSeekSearch', 'kimiSearch', 'kimiPlugin',
       'kimiSkill', 'chatSurface', 'longRunning', 'noWait',
@@ -5983,9 +5908,9 @@ function assertVisibleRunArguments(args: CliArgs) {
   }
   const unsupported = explicitlySelectedArgumentFlags(args, [
     'targetUrl', 'taskId', 'projectName', 'chatName', 'workspaceMode',
-    'projectInstructions', 'projectInstructionsFile', 'model', 'modelFallbacks', 'effort',
+    'projectInstructions', 'projectInstructionsFile', 'model', 'effort',
     'thinkingEffort', 'qwenMode', 'qwenModeVariant', 'arenaMode', 'arenaModality', 'deepSeekMode', 'deepSeekDeepThink',
-    'deepSeekSearch', 'kimiSearch', 'kimiPlugin', 'kimiSkill', 'chatSurface', 'longRunning',
+    'deepSeekSearch', 'kimiSearch', 'kimiPlugin', 'kimiSkill', 'copilotMode', 'copilotRepo', 'chatSurface', 'longRunning',
   ])
   if (unsupported.length > 0) {
     throw usageError(
@@ -6117,6 +6042,7 @@ function taskCapabilityRequirementsForExecution(
   }
 
   const inferred: TaskCapabilityId[] = []
+  if (args.copilotMode === 'agent') inferred.push(TASK_CAPABILITIES.AGENT_EXECUTE)
   if (action === 'submit_and_read') inferred.push(TASK_CAPABILITIES.CONVERSATION_CHAT)
   if (args.attachFiles.length > 0) {
     inferred.push(TASK_CAPABILITIES.FILE_UPLOAD)
@@ -6137,18 +6063,9 @@ function taskCapabilityRequirementsForExecution(
   return normalizeTaskCapabilityRequirements([...explicit, ...inferred])
 }
 
-function requiredChatGptProvider(args: CliArgs) {
-  const legacyProvider = requireLegacyChatGptProviderId()
-  if (args.provider !== undefined && normalizeProvider(args.provider) !== legacyProvider) {
-    throw usageError('chatgpt_controls_unsupported', 'ChatGPT controls require --provider chatgpt or no provider argument.')
-  }
-  return legacyProvider
-}
-
-function assertProviderConfigureArguments(args: CliArgs, command: string) {
+function assertProviderConfigureArguments(args: CliArgs) {
   if (
     args.model === undefined &&
-    args.modelFallbacks === undefined &&
     args.effort === undefined &&
     args.thinkingEffort === undefined &&
     args.deepSeekMode === undefined &&
@@ -6157,13 +6074,13 @@ function assertProviderConfigureArguments(args: CliArgs, command: string) {
     args.kimiSearch === undefined &&
     args.kimiPlugin === undefined &&
     args.kimiSkill === undefined &&
+    args.copilotMode === undefined &&
+    args.copilotRepo === undefined &&
     args.chatSurface === undefined
   ) {
     throw usageError(
-      command === 'chatgpt-configure' ? 'missing_chatgpt_control' : 'missing_provider_control',
-      `${command} requires --model${command === 'chatgpt-configure'
-        ? ', --effort, or --chat-surface chat'
-        : ', --effort, or a provider-specific control'}.`
+      'missing_provider_control',
+      'provider-configure requires --model, --effort, or a provider-specific control.'
     )
   }
 }
@@ -6179,7 +6096,7 @@ function resolveProviderControls({
   action: string
   requirements: readonly TaskCapabilityId[]
 }) {
-  const hasRequestedModelControl = args.model !== undefined || args.modelFallbacks !== undefined
+  const hasRequestedModelControl = args.model !== undefined
   const hasRequestedEffortControl = args.effort !== undefined || args.thinkingEffort !== undefined
   const hasRequestedQwenMode = args.qwenMode !== undefined || args.qwenModeVariant !== undefined
   const hasRequestedArenaSurface = args.arenaMode !== undefined || args.arenaModality !== undefined
@@ -6188,19 +6105,20 @@ function resolveProviderControls({
     args.deepSeekDeepThink !== undefined ||
     args.deepSeekSearch !== undefined
   )
+  const hasRequestedCopilotControl = args.copilotMode !== undefined || args.copilotRepo !== undefined
+  if (hasRequestedCopilotControl && provider !== 'github-copilot') throw usageError('github_copilot_control_unsupported', 'GitHub Copilot controls are available only for github-copilot.')
   const hasRequestedKimiControl = args.kimiSearch !== undefined || args.kimiPlugin !== undefined || args.kimiSkill !== undefined
   const hasRequestedChatGptControl = (
     args.chatSurface !== undefined
   )
   const inspectionAction = (
     action === 'inspect_auth' ||
-    action === 'inspect_controls' ||
-    action === 'inspect_chatgpt_controls'
+    action === 'inspect_controls'
   )
-  if (inspectionAction && (hasRequestedModelControl || hasRequestedEffortControl || hasRequestedQwenMode || hasRequestedArenaSurface || hasRequestedDeepSeekControl || hasRequestedKimiControl || hasRequestedChatGptControl)) {
+  if (inspectionAction && (hasRequestedModelControl || hasRequestedEffortControl || hasRequestedQwenMode || hasRequestedArenaSurface || hasRequestedDeepSeekControl || hasRequestedKimiControl || hasRequestedChatGptControl || hasRequestedCopilotControl)) {
     throw usageError(
       'controls_unsupported_for_action',
-      'Control selection options are not accepted by provider-controls or chatgpt-controls; use a configure command.'
+      'Control selection options are not accepted by provider-controls; use provider-configure.'
     )
   }
   if (!providerSupportsChatSurface(provider) && hasRequestedChatGptControl) {
@@ -6230,6 +6148,15 @@ function resolveProviderControls({
   if (inspectionAction) return {}
 
   const requestedCapabilities = new Set(requirements)
+  const requiresCopilotAgent = provider === 'github-copilot' && (requestedCapabilities.has(TASK_CAPABILITIES.AGENT_EXECUTE) || requestedCapabilities.has(TASK_CAPABILITIES.SEARCH_WEB))
+  const copilotMode = args.copilotMode !== undefined
+    ? normalizeCopilotMode(args.copilotMode)
+    : requiresCopilotAgent ? 'agent'
+      : provider === 'github-copilot' && action !== 'configure_controls' && args.targetUrl === undefined && !requestedCapabilities.has(TASK_CAPABILITIES.CONVERSATION_CONTINUE) ? 'ask'
+        : undefined
+  const copilotRepo = args.copilotRepo === undefined ? undefined : normalizeCopilotRepository(args.copilotRepo)
+  if (requiresCopilotAgent && copilotMode !== 'agent') throw usageError('github_copilot_agent_mode_required', 'GitHub Copilot agent.execute requires --copilot-mode agent.')
+  if (copilotRepo !== undefined && args.workspaceMode !== undefined && args.projectName !== copilotRepo) throw usageError('github_copilot_repository_mismatch', '--copilot-repo and --project-name must refer to the same repository when --workspace-mode is present.')
   const requiresArenaAgent = provider === 'arena' && requestedCapabilities.has(TASK_CAPABILITIES.AGENT_EXECUTE)
   const requiresArenaComparison = provider === 'arena' && requestedCapabilities.has(TASK_CAPABILITIES.MODEL_COMPARE)
   const requiresArenaSearch = provider === 'arena' && (
@@ -6250,7 +6177,7 @@ function resolveProviderControls({
   if (requiresArenaAgent && hasRequestedModelControl) {
     throw usageError(
       'arena_agent_model_control_unavailable',
-      'Arena agent.execute cannot be combined with --model or --model-fallback.',
+      'Arena agent.execute cannot be combined with --model.',
     )
   }
   if (requiresArenaAgent && hasRequestedArenaSurface) {
@@ -6289,25 +6216,25 @@ function resolveProviderControls({
   if (requiresArenaComparison && hasRequestedModelControl) {
     throw usageError(
       'arena_comparison_model_control_unavailable',
-      'model.compare on Arena cannot be combined with --model or --model-fallback.',
+      'model.compare on Arena cannot be combined with --model.',
     )
   }
   if (requiresArenaImage && hasRequestedModelControl) {
     throw usageError(
       'arena_image_model_control_unavailable',
-      'Arena image generation and editing cannot be combined with --model or --model-fallback.',
+      'Arena image generation and editing cannot be combined with --model.',
     )
   }
   if (requiresArenaCode && hasRequestedModelControl) {
     throw usageError(
       'arena_code_model_control_unavailable',
-      'Arena website generation cannot be combined with --model or --model-fallback.',
+      'Arena website generation cannot be combined with --model.',
     )
   }
   if (requiresArenaVideo && hasRequestedModelControl) {
     throw usageError(
       'arena_video_model_control_unavailable',
-      'Arena video.generation cannot be combined with --model or --model-fallback.',
+      'Arena video.generation cannot be combined with --model.',
     )
   }
   if (requiresArenaVideo && hasRequestedArenaSurface) {
@@ -6350,13 +6277,6 @@ function resolveProviderControls({
   const model = args.model === undefined
     ? undefined
     : normalizeVisibleModelLabel(args.model, '--model')
-  const modelFallbacks = args.modelFallbacks === undefined
-    ? undefined
-    : normalizeVisibleModelFallbacks(args.modelFallbacks)
-  if (modelFallbacks !== undefined && model === undefined) {
-    throw usageError('model_fallback_requires_model', '--model-fallback requires --model.')
-  }
-
   const effortValue = args.effort ?? args.thinkingEffort
   const effort = effortValue === undefined
     ? undefined
@@ -6521,7 +6441,6 @@ function resolveProviderControls({
   if (!providerSupportsChatSurface(provider)) {
     return {
       model,
-      modelFallbacks,
       effort,
       qwenMode,
       qwenModeVariant,
@@ -6534,6 +6453,8 @@ function resolveProviderControls({
       kimiPlugin,
       kimiSkill,
       geminiImageSurface: requiresGeminiImage,
+      copilotMode,
+      copilotRepo,
     }
   }
 
@@ -6544,9 +6465,18 @@ function resolveProviderControls({
   return {
     chatSurface,
     model,
-    modelFallbacks,
     effort,
   }
+}
+
+function normalizeCopilotMode(value: unknown): 'ask' | 'agent' {
+  if (value === 'ask' || value === 'agent') return value
+  throw usageError('invalid_github_copilot_mode', '--copilot-mode must be ask or agent.')
+}
+
+function normalizeCopilotRepository(value: unknown): string {
+  if (typeof value === 'string' && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(value)) return value
+  throw usageError('invalid_github_copilot_repository', '--copilot-repo must be owner/repo.')
 }
 
 function qwenModeSelectionPayload(args: CliArgs) {
@@ -6671,14 +6601,6 @@ function normalizeWorkspaceText(value: unknown, flag: string, errorCode: Localiz
   return normalized
 }
 
-function normalizeVisibleModelFallbacks(value: unknown) {
-  const labels = parseList(value).map((label) => normalizeVisibleModelLabel(label, '--model-fallback'))
-  if (labels.length === 0 || labels.length > 8) {
-    throw usageError('invalid_model_fallbacks', '--model-fallback must contain between one and eight visible UI labels.')
-  }
-  return labels
-}
-
 function parseProviderList(value: unknown) {
   return parseList(value).map(normalizeProvider)
 }
@@ -6746,7 +6668,7 @@ function formatStatusEvent(event: StatusEvent, args: CliArgs) {
       event.jobId ? `job=${String(event.jobId).slice(0, 8)}` : '',
       event.elapsedMs !== undefined ? `elapsed=${formatElapsed(event.elapsedMs)}` : '',
     ].filter(Boolean).join(' ')
-    return `${prefix} ${eventName} ${context} ${t('cliWaitingForUser')}`
+    return `${prefix} ${eventName} ${context} ${t('waitingForUser')}`
   }
   const parts = [prefix, eventName]
   for (const [key, value] of [
@@ -6792,7 +6714,7 @@ function formatCompactPayload(payload: Record<string, any>) {
     const userAction = objectRecord(payload.userAction)
     const message = typeof userAction.message === 'string'
       ? userAction.message
-      : t('cliWaitingForUser')
+      : t('waitingForUser')
     return message
   }
 
@@ -6851,12 +6773,12 @@ function formatHumanLine(message: string, ok: boolean, args: CliArgs, status?: u
   const waiting = typeof status === 'string' && status.startsWith('waiting_')
   const label = waiting ? 'Waiting for user' : ok ? 'Completed' : 'Failed'
   const color: CliColor = waiting ? 'yellow' : ok ? 'green' : 'red'
-  return `${paintCliText(t(waiting ? 'cliWaitingLabel' : ok ? 'cliCompleted' : 'cliFailedLabel'), color, cliColorEnabled(args, process.stdout))}: ${message}`
+  return `${paintCliText(t(waiting ? 'waitingLabel' : ok ? 'completed' : 'failedLabel'), color, cliColorEnabled(args, process.stdout))}: ${message}`
 }
 
 function printVerbosePayload(payload: Record<string, any>, args: CliArgs) {
   const details = Object.fromEntries(Object.entries(payload).filter(([key]) => key !== 'compactOutput'))
-  console.error(paintCliText(t('cliDetails'), 'dim', cliColorEnabled(args, process.stderr)))
+  console.error(paintCliText(t('details'), 'dim', cliColorEnabled(args, process.stderr)))
   console.error(JSON.stringify(details, null, 2))
 }
 
@@ -6933,6 +6855,7 @@ function usage(args: CliArgs) {
       commands: [
         'tokenless daemon stop [--json]',
         'tokenless doctor --json',
+        'tokenless skills sync --json',
         'tokenless savings status --json',
         'tokenless upgrade [--json]',
         'tokenless help',
@@ -6977,8 +6900,8 @@ function usage(args: CliArgs) {
       description: t('helpAdvancedProviderDescription'),
       commands: [
         `tokenless provider-action --profile <slug> --provider ${VISIBLE_PROVIDER_USAGE} --action <${PRIORITY_VISIBLE_PROVIDER_ACTION_LIST.replace(/, /g, '|')}> [action options] --json`,
-        'tokenless chatgpt-controls --json',
-        'tokenless chatgpt-configure --model <visible-model> --effort <level> --json',
+        'tokenless provider-controls --provider chatgpt --json',
+        'tokenless provider-configure --provider chatgpt --model <visible-model> --effort <level> --json',
         'tokenless snapshot-dom --provider chatgpt --json',
       ],
     },
@@ -7058,7 +6981,7 @@ function commandUsageError(
     }
   }
   error.usage = usageDetailsForContext(context, invalidOptions, validCommands)
-  error.exitCode = code === 'daemon_only' ? 1 : 2
+  error.exitCode = 2
   return error
 }
 
@@ -7113,6 +7036,8 @@ function commonOptionsFor(options: readonly string[]) {
 function optionUsageLabel(option: string) {
   return ({
     action: '--action <action>',
+    copilotMode: '--copilot-mode <ask|agent>',
+    copilotRepo: '--copilot-repo <owner/repo>',
     allProfiles: '--all',
     answers: '--answer <need-id=json>',
     approvals: '--approve <call-id:digest>',
@@ -7126,12 +7051,13 @@ function optionUsageLabel(option: string) {
     bridgeTimeoutMs: '--bridge-timeout-ms <ms>',
     cancelTimeoutMs: '--cancel-timeout-ms <ms>',
     check: '--check',
+    yes: '--yes',
+    package: '--package <local-archive>',
     color: '--color',
     chatName: '--chat-name <name>',
     chatId: '--chat-id <id>',
     chatSurface: '--chat-surface <surface>',
     confirmDelete: '--confirm-delete',
-    conversationMode: '--conversation-mode <new-conversation|continue-conversation>',
     context: '--context <text>',
     contextFile: '--context-file <path>',
     codexHome: '--codex-home <dir>',
@@ -7154,7 +7080,6 @@ function optionUsageLabel(option: string) {
     maxTurns: '--max-turns <count>',
     mcpConfig: '--mcp-config <path>',
     model: '--model <label>',
-    modelFallbacks: '--model-fallback <label>',
     noColor: '--no-color',
     noOpen: '--no-open',
     antiDetect: '--anti-detect',
@@ -7201,17 +7126,17 @@ function printCommandHelp(context: CommandContext, args: CliArgs) {
   const colorEnabled = cliColorEnabled(args, process.stderr)
   const optionLines = details.validOptions.filter((option) => !details.commonOptions.includes(option))
   const lines = [
-    paintCliText(t('cliUsage'), 'bright', colorEnabled),
+    paintCliText(t('usage'), 'bright', colorEnabled),
     ...details.usage.map((entry) => `  ${entry}`),
     '',
-    paintCliText(t('cliCommonOptions'), 'bright', colorEnabled),
+    paintCliText(t('commonOptions'), 'bright', colorEnabled),
     ...details.commonOptions.map((entry) => `  ${entry}`),
   ]
   if (optionLines.length > 0) {
-    lines.push('', paintCliText(t('cliOptions'), 'bright', colorEnabled), ...optionLines.map((entry) => `  ${entry}`))
+    lines.push('', paintCliText(t('options'), 'bright', colorEnabled), ...optionLines.map((entry) => `  ${entry}`))
   }
   if (details.validCommands && details.validCommands.length > 0) {
-    lines.push('', paintCliText(t('cliValidCommands'), 'bright', colorEnabled), ...details.validCommands.map((entry) => `  ${entry}`))
+    lines.push('', paintCliText(t('validCommands'), 'bright', colorEnabled), ...details.validCommands.map((entry) => `  ${entry}`))
   }
   console.error(lines.join('\n'))
 }
@@ -7221,22 +7146,22 @@ function formatCliError(payload: Record<string, any>, usageDetails: CliUsageDeta
   const colorEnabled = cliColorEnabled(args, process.stderr)
   const localizedMessage = cliError.messageKey
     ? tError(cliError.messageKey, cliError.messageParams)
-    : localizedError(String(error.code || ''), String(error.message || t('cliFailed')))
-  const lines = [`${paintCliText(t('cliError'), 'red', colorEnabled)} ${String(error.code || 'tokenless_cli_error')}: ${localizedMessage}`]
+    : localizedError(String(error.code || ''), String(error.message || t('failed')))
+  const lines = [`${paintCliText(t('error'), 'red', colorEnabled)} ${String(error.code || 'tokenless_cli_error')}: ${localizedMessage}`]
   if (!usageDetails) {
     if (args.verbose) {
-      lines.push('', paintCliText(t('cliDetails'), 'dim', colorEnabled), JSON.stringify(payload, null, 2))
+      lines.push('', paintCliText(t('details'), 'dim', colorEnabled), JSON.stringify(payload, null, 2))
     }
     return lines.join('\n')
   }
-  lines.push('', paintCliText(t('cliUsage'), 'bright', colorEnabled), ...usageDetails.usage.map((entry) => `  ${entry}`), '', paintCliText(t('cliCommonOptions'), 'bright', colorEnabled))
+  lines.push('', paintCliText(t('usage'), 'bright', colorEnabled), ...usageDetails.usage.map((entry) => `  ${entry}`), '', paintCliText(t('commonOptions'), 'bright', colorEnabled))
   if (usageDetails.commonOptions.length > 0) {
     lines.push(...usageDetails.commonOptions.map((entry) => `  ${entry}`))
   } else {
-    lines.push(`  ${t('cliNone')}`)
+    lines.push(`  ${t('none')}`)
   }
   if (usageDetails.validCommands && usageDetails.validCommands.length > 0) {
-    lines.push('', paintCliText(t('cliValidCommands'), 'bright', colorEnabled), ...usageDetails.validCommands.map((entry) => `  ${entry}`))
+    lines.push('', paintCliText(t('validCommands'), 'bright', colorEnabled), ...usageDetails.validCommands.map((entry) => `  ${entry}`))
   }
   if (args.verbose) {
     const detailPayload = {
@@ -7246,7 +7171,7 @@ function formatCliError(payload: Record<string, any>, usageDetails: CliUsageDeta
         usage: undefined,
       },
     }
-    lines.push('', paintCliText(t('cliDetails'), 'dim', colorEnabled), JSON.stringify(detailPayload, null, 2))
+    lines.push('', paintCliText(t('details'), 'dim', colorEnabled), JSON.stringify(detailPayload, null, 2))
   }
   return lines.join('\n')
 }

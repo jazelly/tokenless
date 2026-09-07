@@ -22,7 +22,9 @@ export default defineConfig({
         chunkFileNames: 'chunks/[name]-[hash].js',
         assetFileNames: (asset) => asset.names.some((name) => name.endsWith('.css'))
           ? 'styles.css'
-          : 'assets/[name]-[hash][extname]',
+          : asset.names.includes('tokenless-mark.png')
+            ? 'mark.png'
+            : 'assets/[name]-[hash][extname]',
       },
     },
   },

@@ -18,6 +18,7 @@ import type {
   ProviderId,
 } from '../../providers/registry.js'
 import type { BrowserRuntimeBinding } from '../../browser/runtime/types.js'
+import { migrateDatabase } from '#tokenless-shared/database/migrate.js'
 
 const TOKENLESS_DATABASE_FILE = 'tokenless.sqlite3'
 const PROVIDER_AUTH_STATES = new Set(['authenticated', 'unauthenticated', 'unknown'])
@@ -105,6 +106,8 @@ export class ManagedProfileRegistry {
       browserVisibility: 'headed',
       proxy: null,
     }
+    await mkdir(this.paths.tokenlessHome, { recursive: true, mode: 0o700 })
+    this.ensureDatabaseSchema()
     const directory = this.profileDirectory(slug)
     try {
       const saved = await createTokenlessProfileConfig({
@@ -166,6 +169,7 @@ export class ManagedProfileRegistry {
     if (!profile) {
       throw tokenlessError('profile_not_found', `Managed profile '${normalized}' is not registered.`)
     }
+    this.ensureDatabaseSchema()
 
     // Runtime quiescing and pending-job checks happen at the application boundary.
     // Remove config first; an orphan directory is safer than an active config
@@ -264,19 +268,16 @@ export class ManagedProfileRegistry {
   private withStatusDatabase<T>(callback: (database: DatabaseSync) => T): T {
     const database = new DatabaseSync(join(this.paths.tokenlessHome, TOKENLESS_DATABASE_FILE))
     try {
-      database.exec(`
-        PRAGMA busy_timeout = 250;
-        CREATE TABLE IF NOT EXISTS provider_statuses (
-          profile_id TEXT NOT NULL,
-          provider TEXT NOT NULL,
-          status_json TEXT NOT NULL,
-          PRIMARY KEY (profile_id, provider)
-        );
-      `)
+      database.exec('PRAGMA busy_timeout = 250;')
+      migrateDatabase(database)
       return callback(database)
     } finally {
       database.close()
     }
+  }
+
+  private ensureDatabaseSchema() {
+    this.withStatusDatabase(() => undefined)
   }
 
   private async ensureDirectories() {

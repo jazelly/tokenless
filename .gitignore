@@ -3,6 +3,8 @@ test-results/
 packages/cli/npm/*/bin/
 dist/
 packages/*/dist/
+apps/macos-menu/.build/
+/packages/dashboard/design-atlas-static/
 *.tsbuildinfo
 /tokenless-beta
 /benchmarks/terminalbench/cache/
@@ -10,6 +12,7 @@ packages/*/dist/
 /benchmarks/terminalbench/results/
 /benchmarks/__pycache__/
 /benchmarks/terminalbench/__pycache__/
+/benchmarks/ifbench/results/
 .DS_Store
 
 .env
@@ -24,8 +27,14 @@ docs/*
 !docs/api-proxy-integration.zh-CN.md
 !docs/capability-matrix.md
 !docs/capability-matrix.zh-CN.md
+!docs/database-migrations.md
+!docs/database-migrations.zh-CN.md
+!docs/updates.md
+!docs/updates.zh-CN.md
 !docs/g4f-direct-provider-service.md
 !docs/g4f-direct-provider-service.zh-CN.md
+!docs/github-copilot.md
+!docs/github-copilot.zh-CN.md
 !docs/glossary.md
 !docs/glossary.zh-CN.md
 !docs/harness-browser-extension.md

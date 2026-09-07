@@ -96,7 +96,7 @@ class UnsupportedDolaImageSurfaceCapability implements InspectableProviderAction
 export function createDolaImageSurfaceCapability(provider: ProviderDomDefinition): InspectableProviderActionCapability<typeof VISIBLE_ACTIONS.DOLA_IMAGE_SELECT> & {
   readonly capability: typeof PROVIDER_CAPABILITIES.DOLA_IMAGE_SURFACE
 } {
-  return provider.id === 'dola'
+  return provider.descriptor.id === 'dola'
     ? new DolaImageSurfaceCapability(provider as ProviderDomDefinition<'dola'>)
     : new UnsupportedDolaImageSurfaceCapability(provider)
 }

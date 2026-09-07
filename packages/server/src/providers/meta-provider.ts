@@ -24,9 +24,6 @@ export class MetaProvider extends BaseProvider<'meta'> {
       stage: 'experimental',
       setupOrder: 12,
       subscriptionSupport: 'supported',
-      protocolCompatibility: Object.freeze({
-        legacyRequests: false,
-      }),
       navigation: PROVIDER_NAVIGATION_CATALOG.meta,
       controls: Object.freeze({
         chatSurface: false,

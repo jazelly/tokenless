@@ -6,16 +6,17 @@ import { DolaProvider } from './dola-provider.js'
 import { createDirectOnlyG4fProviders } from './direct/direct-only-provider.js'
 import { DoubaoProvider } from './doubao-provider.js'
 import { GeminiProvider } from './gemini-provider.js'
+import { GitHubCopilotProvider } from './github-copilot-provider.js'
 import { GrokProvider } from './grok-provider.js'
 import { KimiProvider } from './kimi-provider.js'
 import { MetaProvider } from './meta-provider.js'
+import { MicrosoftCopilotProvider } from './microsoft-copilot-provider.js'
 import { PerplexityProvider } from './perplexity-provider.js'
 import { QwenProvider } from './qwen-provider.js'
 import { ZaiProvider } from './zai-provider.js'
 import { PROVIDER_CAPABILITIES, isProviderIdSyntax } from './provider-identity.js'
 import type { BaseProvider } from './base-provider.js'
 import type {
-  CanonicalProviderTarget,
   ProviderNavigationPolicy,
 } from './navigation-policy.js'
 import type {
@@ -65,9 +66,6 @@ export {
 export {
   ProviderNavigationPolicy,
   assertProviderUrlAllowed,
-  canonicalProviderTarget,
-  safeProviderTargetUrl,
-  trustedProviderSignInNavigation,
 } from './navigation-policy.js'
 export { PROVIDER_NAVIGATION_CATALOG } from './provider-navigation-catalog.js'
 export {
@@ -182,9 +180,6 @@ export class ProviderRegistry<TProviders extends readonly ProviderInstance[]> {
     return this.originOwner.get(parsed.origin.toLowerCase()) ?? null
   }
 
-  canonicalTarget(providerId: unknown, value?: unknown): CanonicalProviderTarget | null {
-    return this.resolve(providerId)?.navigation.canonicalTarget(value) ?? null
-  }
 }
 
 export const providerInstances = Object.freeze([
@@ -201,6 +196,8 @@ export const providerInstances = Object.freeze([
   new DolaProvider(),
   new ArenaProvider(),
   new MetaProvider(),
+  new MicrosoftCopilotProvider(),
+  new GitHubCopilotProvider(),
   ...createDirectOnlyG4fProviders(100),
 ] satisfies readonly ProviderInstance[])
 
@@ -261,9 +258,6 @@ function validateProviderDescriptor(descriptor: ProviderDescriptor<ProviderId>) 
   }
   if (!Number.isSafeInteger(descriptor.setupOrder) || descriptor.setupOrder < 0) {
     throw new Error(`Provider ${descriptor.id} setup order is invalid.`)
-  }
-  if (descriptor.protocolCompatibility?.legacyRequests !== true && descriptor.protocolCompatibility?.legacyRequests !== false) {
-    throw new Error(`Provider ${descriptor.id} protocol compatibility policy is invalid.`)
   }
   if (descriptor.controls?.chatSurface !== true && descriptor.controls?.chatSurface !== false) {
     throw new Error(`Provider ${descriptor.id} controls policy is invalid.`)

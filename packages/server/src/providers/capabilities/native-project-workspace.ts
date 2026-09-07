@@ -85,7 +85,7 @@ export class NativeProjectWorkspaceCapability implements ProviderActionCapabilit
         ...strategy.native,
         availability,
         identity: {
-          provider: this.provider.id,
+          provider: this.provider.descriptor.id,
           canonicalUrl: currentProject?.canonicalUrl ?? null,
         },
         updateInstructions: {
@@ -231,11 +231,11 @@ export class NativeProjectWorkspaceCapability implements ProviderActionCapabilit
       resolvedMode: 'native',
       name: payload.name,
       scope: {
-        provider: this.provider.id,
+        provider: this.provider.descriptor.id,
         profileId: context.profileId,
       },
       identity: {
-        provider: this.provider.id,
+        provider: this.provider.descriptor.id,
         name: payload.name,
         resourceId: identity.resourceId,
         canonicalUrl: identity.canonicalUrl,

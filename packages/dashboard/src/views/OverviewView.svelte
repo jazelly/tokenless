@@ -1,131 +1,303 @@
 <script lang="ts">
-  import { ArrowUpRight, Clock3, RefreshCw } from '@lucide/svelte'
-  import { onDestroy, onMount } from 'svelte'
-  import ProviderAccessIndicators from '../components/ProviderAccessIndicators.svelte'
-  import ProviderModeBadges from '../components/ProviderModeBadges.svelte'
-  import { formatAge, formatChatTitle, formatNumber, isConversationJob } from '../formatting.js'
-  import { stateLabel, type MessageKey } from '../i18n/index.js'
+  import { tick } from 'svelte'
+  import { Activity, CircleHelp, RefreshCw } from '@lucide/svelte'
+  import TokenUnit from '../components/TokenUnit.svelte'
+  import MetricCard from '../components/MetricCard.svelte'
+  import { capabilityFamilyLabel, capabilityText, type MessageKey } from '../i18n/index.js'
+  import { formatNumber } from '../formatting.js'
   import type {
-    Language,
-    ReadinessJobs,
-    DashboardProvider,
+    DashboardActions,
+    DashboardAnalytics,
+    DashboardAnalyticsCapabilityMatrixCell,
+    DashboardAnalyticsRange,
     DashboardSnapshot,
+    Language,
   } from '../types.js'
 
-  let { snapshot, selectedProfile, language, t, readinessBusy, readinessJobs, onrefreshreadiness, onrefreshproviderreadiness }: {
+  let { snapshot, selectedProfile, language, t, actions }: {
     snapshot: DashboardSnapshot
     selectedProfile: string
     language: Language
-    t: (key: MessageKey) => string
-    readinessBusy: boolean
-    readinessJobs: ReadinessJobs
-    onrefreshreadiness: (profileSlug: string) => Promise<void>
-    onrefreshproviderreadiness: (profileSlug: string, providerId: string) => Promise<void>
+    t: (key: MessageKey, params?: Readonly<Record<string, string | number>>) => string
+    actions: DashboardActions
   } = $props()
 
-  let profile = $derived(snapshot.profiles.find((entry) => entry.slug === selectedProfile) ?? snapshot.profiles[0])
-  let enabledProviders = $derived(snapshot.providers.filter((provider) => profileState(provider)?.enabled))
-  let authenticatedProviders = $derived(enabledProviders.filter((provider) => profileState(provider)?.observation?.auth === 'authenticated'))
-  let recentJobs = $derived(snapshot.jobs.filter(isConversationJob).slice(0, 6))
-  let now = $state(Date.now())
-  let nowTimer = 0
+  const ranges: Array<{ id: DashboardAnalyticsRange; key: MessageKey }> = [
+    { id: '7d', key: 'range7d' },
+    { id: '30d', key: 'range30d' },
+    { id: '90d', key: 'range90d' },
+    { id: '1y', key: 'range1y' },
+    { id: 'all', key: 'rangeAll' },
+  ]
+  const families = [
+    'conversation',
+    'input',
+    'retrieval_reasoning',
+    'media_generation',
+    'artifact_generation',
+    'workspace_knowledge',
+    'evidence_lifecycle',
+  ]
+  const lineChart = { left: 52, right: 716, top: 18, bottom: 206 }
 
-  onMount(() => {
-    nowTimer = window.setInterval(() => { now = Date.now() }, 60_000)
+  let range = $state<DashboardAnalyticsRange>('30d')
+  let analytics = $state<DashboardAnalytics | null>(null)
+  let loading = $state(true)
+  let loadError = $state('')
+  let matrixDetail = $state<{ provider: string; capabilityId: string; x: number; y: number } | null>(null)
+  let requestSequence = 0
+  let activityKey = $derived(`${snapshot.jobs[0]?.updatedAt ?? ''}:${snapshot.outputSavings.summary.lastMeasuredAt ?? ''}`)
+  let matrixCapabilities = $derived([...snapshot.capabilities].sort((left, right) => families.indexOf(left.family) - families.indexOf(right.family)))
+  let matrixRangeTitle = $derived(t(`capabilityUsage_${analytics?.range.id ?? range}` as MessageKey))
+  let topProvider = $derived(analytics?.providers[0] ?? null)
+  let matrixMaximum = $derived(Math.max(1, ...(analytics?.capabilityMatrix.map((entry) => entry.finishedJobs) ?? [0])))
+  let outcomeMaximum = $derived(Math.max(1, ...(analytics?.daily.map((entry) => entry.finishedJobs) ?? [0])))
+  let capabilityDailyMaximum = $derived(Math.max(1, ...(analytics?.daily.map((entry) => Object.values(entry.capabilityFamilies).reduce((sum, value) => sum + value, 0)) ?? [0])))
+  let lineMaximum = $derived(Math.max(1, ...(analytics?.daily.map((entry) => entry.cumulativeEstimatedOutputTokens) ?? [0])))
+  $effect(() => {
+    const profile = selectedProfile
+    const currentRange = range
+    const currentActivity = activityKey
+    void loadAnalytics(profile, currentRange, currentActivity)
   })
 
-  onDestroy(() => {
-    window.clearInterval(nowTimer)
-  })
-
-  function profileState(provider: DashboardProvider) {
-    return provider.profiles.find((entry) => entry.profileId === profile?.slug)
+  async function loadAnalytics(profile: string, selectedRange: DashboardAnalyticsRange, _activity: string) {
+    const sequence = ++requestSequence
+    loading = true
+    matrixDetail = null
+    loadError = ''
+    try {
+      const result = await actions.getAnalytics(profile, selectedRange)
+      if (sequence !== requestSequence) return
+      analytics = result
+    } catch (error) {
+      if (sequence !== requestSequence) return
+      loadError = error instanceof Error ? error.message : t('analyticsUnavailable')
+    } finally {
+      if (sequence === requestSequence) loading = false
+    }
   }
 
-  function readinessStatus(provider: DashboardProvider) {
-    const readiness = readinessJobs[provider.id]
-    return readiness?.status ?? ''
+  function providerName(providerId: string) {
+    return snapshot.providers.find((provider) => provider.id === providerId)?.label ?? providerId
   }
 
-  function jobsHref(jobId?: string) {
-    const url = new URL('/dashboard/jobs/', location.origin)
-    if (selectedProfile) url.searchParams.set('profile', selectedProfile)
-    if (jobId) url.searchParams.set('job', jobId)
-    return `${url.pathname}${url.search}`
+  function capabilityName(capabilityId: string) {
+    const capability = snapshot.capabilities.find((entry) => entry.id === capabilityId)
+    return capability ? capabilityText(language, capability).title : capabilityId
   }
 
+  function formatPercent(value: number | null) {
+    if (value === null) return '—'
+    return new Intl.NumberFormat(language, { style: 'percent', maximumFractionDigits: 0 }).format(value)
+  }
+
+  function formatDay(day: string) {
+    return new Intl.DateTimeFormat(language, { month: 'short', day: 'numeric', timeZone: 'UTC' })
+      .format(new Date(`${day}T00:00:00.000Z`))
+  }
+
+  function formatCoverage(value: string | null) {
+    return value ? new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeZone: 'UTC' }).format(new Date(value)) : '—'
+  }
+
+  function lineX(index: number) {
+    const count = analytics?.daily.length ?? 0
+    return count <= 1 ? lineChart.left : lineChart.left + (index / (count - 1)) * (lineChart.right - lineChart.left)
+  }
+
+  function lineY(value: number) {
+    return lineChart.bottom - (value / lineMaximum) * (lineChart.bottom - lineChart.top)
+  }
+
+  function linePath() {
+    return analytics?.daily.map((point, index) => `${index === 0 ? 'M' : 'L'} ${lineX(index).toFixed(1)} ${lineY(point.cumulativeEstimatedOutputTokens).toFixed(1)}`).join(' ') ?? ''
+  }
+
+  function areaPath() {
+    if (!analytics?.daily.length) return ''
+    return `${linePath()} L ${lineX(analytics.daily.length - 1).toFixed(1)} ${lineChart.bottom} L ${lineX(0).toFixed(1)} ${lineChart.bottom} Z`
+  }
+
+  function matrixCell(provider: string, capabilityId: string): DashboardAnalyticsCapabilityMatrixCell | undefined {
+    return analytics?.capabilityMatrix.find((entry) => entry.provider === provider && entry.capabilityId === capabilityId)
+  }
+
+  function supportsCapability(provider: string, capabilityId: string) {
+    return snapshot.capabilities.find((capability) => capability.id === capabilityId)?.providers.some((route) => route.provider === provider) ?? false
+  }
+
+  function capabilityTitle(provider: string, capabilityId: string) {
+    const cell = matrixCell(provider, capabilityId)
+    const label = `${providerName(provider)} · ${capabilityName(capabilityId)}`
+    if (cell?.finishedJobs) return `${label} · ${formatNumber(cell.finishedJobs, language)} ${t('routedRequirements')}. ${t('matrixCellOutcomes', { succeeded: cell.succeededJobs, failed: cell.failedJobs, canceled: cell.canceledJobs })}`
+    return `${label} · ${t(supportsCapability(provider, capabilityId) ? 'supportedUnused' : 'unsupportedCapability')}`
+  }
+
+  async function showMatrixDetail(event: Event, provider: string, capabilityId: string) {
+    const cell = (event.currentTarget as HTMLButtonElement).getBoundingClientRect()
+    matrixDetail = {
+      provider, capabilityId,
+      x: Math.max(12, Math.min(cell.left + cell.width / 2 - 140, window.innerWidth - 292)),
+      y: cell.bottom + 8,
+    }
+    await tick()
+    if (matrixDetail?.provider !== provider || matrixDetail?.capabilityId !== capabilityId) return
+    const tooltip = document.getElementById('capability-demand-tooltip')!.getBoundingClientRect()
+    if (tooltip.bottom > window.innerHeight - 12) matrixDetail.y = Math.max(12, cell.top - tooltip.height - 8)
+  }
+
+  function hideMatrixDetail(event: PointerEvent) {
+    if (document.activeElement !== event.currentTarget) matrixDetail = null
+  }
+
+  function heatLevel(count: number) {
+    return Math.max(1, Math.min(5, Math.ceil(count / matrixMaximum * 5)))
+  }
+
+  function familyColor(family: string) {
+    return `family-${Math.max(0, families.indexOf(family))}`
+  }
 </script>
 
-<section class="page" data-testid="overview-view">
-  <div class="overview-grid">
-    <section class="content-panel">
-      <header class="panel-title">
-        <div><h2>{t('providerReadiness')}</h2><p>{profile?.slug}</p></div>
-        <div class="panel-title-actions">
-          {#if readinessBusy}<span class="mono-label" aria-live="polite" data-testid="overview-readiness-status">{t('checkingProviderReadiness')}</span>{/if}
-          <span
-            class="badge neutral hover-tooltip tooltip-below tooltip-right"
-            aria-label={`${formatNumber(authenticatedProviders.length, language)}/${formatNumber(enabledProviders.length, language)} · ${t('providerReadinessSummaryHelp')}`}
-            data-testid="overview-readiness-summary"
-          >{formatNumber(authenticatedProviders.length, language)}/{formatNumber(enabledProviders.length, language)} {t('signedIn')}<span class="hover-tooltip-content" aria-hidden="true">{formatNumber(authenticatedProviders.length, language)}/{formatNumber(enabledProviders.length, language)} · {t('providerReadinessSummaryHelp')}</span></span>
-          <span class="hover-tooltip tooltip-below tooltip-right">
-            <button
-              class="icon-button"
-              type="button"
-              disabled={readinessBusy || enabledProviders.length === 0}
-              aria-label={t(readinessBusy ? 'checkingProviderReadiness' : 'refreshProviderReadiness')}
-              aria-busy={readinessBusy}
-              data-testid="overview-readiness-refresh"
-              onclick={() => profile?.slug && onrefreshreadiness(profile.slug)}
-            ><RefreshCw size={16} /></button>
-            <span class="hover-tooltip-content" aria-hidden="true">{t(readinessBusy ? 'checkingProviderReadiness' : 'refreshProviderReadiness')}</span>
-          </span>
+<svelte:window onscroll={() => matrixDetail = null} />
+
+{#snippet chartTitle(title: string, help: string)}
+  <div class="analytics-chart-title">
+    <h2>{title}</h2>
+    <button class="icon-button subtle help-trigger hover-tooltip tooltip-below tooltip-right" type="button" aria-label={help}>
+      <CircleHelp size={14} aria-hidden="true" />
+      <span class="hover-tooltip-content" role="tooltip" aria-hidden="true">{help}</span>
+    </button>
+  </div>
+{/snippet}
+
+<section class="page analytics-page" data-testid="overview-view">
+  <header class="analytics-header">
+    <h1>{t('analyticsTitle')}</h1>
+    <div class="analytics-range" aria-label={t('selectedRange')}>
+      {#each ranges as option}
+        <button type="button" class:active={range === option.id} aria-pressed={range === option.id} data-testid={`analytics-range-${option.id}`} onclick={() => range = option.id}>{t(option.key)}</button>
+      {/each}
+    </div>
+  </header>
+
+  {#if loading && !analytics}
+    <div class="analytics-state" data-testid="analytics-loading"><Activity size={22} />{t('analyticsLoading')}</div>
+  {:else if loadError && !analytics}
+    <div class="analytics-state error" role="alert"><strong>{t('analyticsUnavailable')}</strong><span>{loadError}</span><button class="button" type="button" onclick={() => loadAnalytics(selectedProfile, range, activityKey)}><RefreshCw size={15} />{t('retryAnalytics')}</button></div>
+  {:else if analytics}
+    <div class="analytics-two-column">
+      <figure class="analytics-panel chart-panel" data-testid="analytics-cumulative-chart">
+        <header class="analytics-panel-header">{@render chartTitle(t('cumulativeSavings'), `${t('cumulativeSavingsHelp')} ${t('measurementCoverage')}: ${formatCoverage(analytics.measurementCoverage.firstMeasuredAt)}–${formatCoverage(analytics.measurementCoverage.lastMeasuredAt)}. ${t('utcDays')}`)}<span class="token-quantity"><strong>{analytics.daily.length ? formatNumber(analytics.daily.at(-1)?.cumulativeEstimatedOutputTokens ?? 0, language) : '—'}</strong><TokenUnit {language} size={20} /></span></header>
+        <p class="analytics-unit-note">{t('estimatedTokenUnit')}</p>
+        {#if analytics.daily.some((entry) => entry.cumulativeEstimatedOutputTokens > 0)}
+          <svg class="analytics-line-chart" viewBox="0 0 740 238" role="img" aria-label={t('cumulativeSavings')}>
+            <defs><linearGradient id="analytics-line-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="var(--chart-primary)" stop-opacity=".28"/><stop offset="1" stop-color="var(--chart-primary)" stop-opacity="0"/></linearGradient></defs>
+            {#each [0, .25, .5, .75, 1] as tick}
+              <line x1={lineChart.left} x2={lineChart.right} y1={lineChart.bottom - tick * (lineChart.bottom - lineChart.top)} y2={lineChart.bottom - tick * (lineChart.bottom - lineChart.top)} class="chart-grid-line" />
+              <text x="45" y={lineChart.bottom - tick * (lineChart.bottom - lineChart.top) + 4} text-anchor="end">{formatNumber(Math.round(lineMaximum * tick), language)}</text>
+            {/each}
+            <path d={areaPath()} class="chart-area" /><path d={linePath()} class="chart-line" />
+            {#each analytics.daily as point, index}
+              {#if analytics.daily.length <= 45 || index === 0 || index === analytics.daily.length - 1 || index % Math.ceil(analytics.daily.length / 24) === 0}
+                <circle cx={lineX(index)} cy={lineY(point.cumulativeEstimatedOutputTokens)} r="3.2"><title>{formatDay(point.day)} · +{formatNumber(point.estimatedOutputTokens, language)} tokens · {formatNumber(point.cumulativeEstimatedOutputTokens, language)} tokens</title></circle>
+              {/if}
+            {/each}
+            <text x={lineChart.left} y="230">{formatDay(analytics.range.fromDay)}</text><text x={lineChart.right} y="230" text-anchor="end">{formatDay(analytics.range.toDay)}</text>
+          </svg>
+        {:else}<div class="analytics-empty chart-empty">{t('noMeasuredSavings')}</div>{/if}
+        <figcaption><span><strong class="token-quantity">+{formatNumber(analytics.totals.estimatedOutputTokens, language)}<TokenUnit {language} /></strong> {t('addedInRange')}</span></figcaption>
+      </figure>
+
+      <figure class="analytics-panel chart-panel" data-testid="analytics-outcomes-chart">
+        <header class="analytics-panel-header">{@render chartTitle(t('dailyOutcomes'), t('dailyOutcomesHelp'))}</header>
+        <p class="analytics-unit-note">{t('jobsCountUnit')}</p>
+        <div class="stacked-day-chart" style={`grid-template-columns:repeat(${analytics.daily.length}, minmax(2px, 1fr))`}>
+          {#each analytics.daily as point}
+            <div class="stacked-day-column" title={`${formatDay(point.day)} · ${point.succeededJobs} ${t('succeeded')} · ${point.failedJobs} ${t('failed')} · ${point.canceledJobs} ${t('canceled')}`}><span class="outcome-succeeded" style={`height:${point.succeededJobs / outcomeMaximum * 100}%`}></span><span class="outcome-failed" style={`height:${point.failedJobs / outcomeMaximum * 100}%`}></span><span class="outcome-canceled" style={`height:${point.canceledJobs / outcomeMaximum * 100}%`}></span></div>
+          {/each}
         </div>
-      </header>
-      <div class="row-list">
-        {#each snapshot.providers as provider (provider.id)}
-          {@const state = profileState(provider)}
-          {@const readiness = readinessJobs[provider.id]}
-          {@const checkedAt = state?.observation?.checkedAt}
-          <div class="data-row" data-testid={`overview-provider-${provider.id}`}>
-            <span class="provider-glyph">{provider.label.slice(0, 1)}</span>
-            <span class="data-row-main"><span class="provider-name-line"><strong>{provider.label}</strong><ProviderModeBadges {provider} {state} {t} /></span><ProviderAccessIndicators providerId={provider.id} providerLabel={provider.label} subscriptionSupport={provider.subscriptionSupport} observation={state?.observation} {t} /></span>
-            <span class="overview-status-meta">
-              {#if readiness && readiness.status !== 'succeeded'}<span class={`job-state ${readinessStatus(provider)} hover-tooltip`} aria-label={stateLabel(language, readiness.status)}><span class="hover-tooltip-content" aria-hidden="true">{stateLabel(language, readiness.status)}</span></span>{/if}
-              <time datetime={checkedAt ?? undefined}>{formatAge(checkedAt, language, t('neverChecked'), now)}</time>
-            </span>
-            <span class="hover-tooltip tooltip-right">
-              <button
-                class="icon-button"
-                type="button"
-                disabled={!state?.enabled || readinessBusy}
-                aria-label={`${t('checkNow')}: ${provider.label}`}
-                aria-busy={readiness?.status === 'queued' || readiness?.status === 'running' || readiness?.status === 'waiting_for_user'}
-                onclick={() => profile?.slug && onrefreshproviderreadiness(profile.slug, provider.id)}
-                data-testid={`overview-provider-readiness-${provider.id}`}
-              ><RefreshCw size={15} /></button>
-              <span class="hover-tooltip-content" aria-hidden="true">{t('checkNow')}: {provider.label}</span>
-            </span>
+        <div class="chart-date-axis"><span>{formatDay(analytics.range.fromDay)}</span><span>{formatDay(analytics.range.toDay)}</span></div>
+        <figcaption class="chart-legend"><span><i class="outcome-succeeded"></i>{t('succeeded')} · {formatNumber(analytics.totals.succeededJobs, language)}</span><span><i class="outcome-failed"></i>{t('failed')} · {formatNumber(analytics.totals.failedJobs, language)}</span><span><i class="outcome-canceled"></i>{t('canceled')} · {formatNumber(analytics.totals.canceledJobs, language)}</span></figcaption>
+      </figure>
+    </div>
+
+    <div class="analytics-kpis" data-testid="analytics-kpis">
+      <MetricCard icon="provider" label={t('mostUsedProvider')} value={topProvider ? providerName(topProvider.provider) : '—'} detail={topProvider ? `${formatPercent(topProvider.share)} · ${formatNumber(topProvider.finishedJobs, language)} ${t('completedJobs')}` : t('noUsageYet')} />
+      <MetricCard label={t('completedJobs')} value={formatNumber(analytics.totals.finishedJobs, language)} detail={`${t('selectedRange')} · ${formatDay(analytics.range.fromDay)}–${formatDay(analytics.range.toDay)}`} />
+      <MetricCard icon="success" label={t('successRate')} value={formatPercent(analytics.totals.successRate)} detail={`${formatNumber(analytics.totals.succeededJobs, language)} ${t('succeeded')} · ${formatNumber(analytics.totals.failedJobs, language)} ${t('failed')}`} />
+      <MetricCard icon="capability" label={t('capabilityBreadth')} value={`${formatNumber(analytics.totals.capabilitiesUsed, language)}/${formatNumber(analytics.totals.catalogCapabilities, language)}`} detail={t('capabilityBreadthValue', { used: formatNumber(analytics.totals.capabilitiesUsed, language), total: formatNumber(analytics.totals.catalogCapabilities, language) })} />
+    </div>
+
+    <section class="analytics-panel capability-matrix-panel" data-testid="capability-usage-matrix">
+      <header class="analytics-panel-header">{@render chartTitle(matrixRangeTitle, t('capabilityUsageMatrixHelp'))}</header>
+      <div class="capability-heatmap-body">
+        <div class="capability-matrix-scroll" onscroll={() => matrixDetail = null}>
+          <div class="capability-matrix" style={`--capability-count:${matrixCapabilities.length}`}>
+            <div class="capability-matrix-corner">{t('provider')}</div>
+            {#each matrixCapabilities as capability}<div class="capability-matrix-heading" class:chinese={language === 'zh-CN'}><span>{capabilityName(capability.id)}</span></div>{/each}
+            {#each snapshot.providers as provider}
+              <div class="capability-matrix-provider">{provider.label}</div>
+              {#each matrixCapabilities as capability}
+                {@const cell = matrixCell(provider.id, capability.id)}
+                {@const supported = supportsCapability(provider.id, capability.id)}
+                {@const active = matrixDetail?.provider === provider.id && matrixDetail?.capabilityId === capability.id}
+                <button type="button" class:used={Boolean(cell?.finishedJobs)} class:absent={!cell?.finishedJobs && !supported} class:inspected={active} class="capability-matrix-cell" style={`--cell-fill:var(--demand-${heatLevel(cell?.finishedJobs ?? 0)})`} aria-label={capabilityTitle(provider.id, capability.id)} aria-describedby={active ? 'capability-demand-tooltip' : undefined}
+                  onpointerenter={(event) => showMatrixDetail(event, provider.id, capability.id)} onpointerleave={hideMatrixDetail}
+                  onfocus={(event) => showMatrixDetail(event, provider.id, capability.id)} onblur={() => matrixDetail = null}
+                  onclick={(event) => showMatrixDetail(event, provider.id, capability.id)} onkeydown={(event) => { if (event.key === 'Escape') matrixDetail = null }}></button>
+              {/each}
+            {/each}
           </div>
-        {/each}
+        </div>
+        {#if matrixDetail}
+          {@const cell = matrixCell(matrixDetail.provider, matrixDetail.capabilityId)}
+          <div class="capability-demand-tooltip" id="capability-demand-tooltip" role="tooltip" style={`left:${matrixDetail.x}px;top:${matrixDetail.y}px`}>
+            <strong>{providerName(matrixDetail.provider)} · {capabilityName(matrixDetail.capabilityId)}</strong>
+            <span class="demand-tooltip-count">{formatNumber(cell?.finishedJobs ?? 0, language)} <span>{t('routedRequirements')}</span></span>
+            {#if cell?.finishedJobs}<span>{t('matrixCellOutcomes', { succeeded: cell.succeededJobs, failed: cell.failedJobs, canceled: cell.canceledJobs })}</span>
+            {:else}<span>{t(supportsCapability(matrixDetail.provider, matrixDetail.capabilityId) ? 'supportedUnused' : 'unsupportedCapability')}</span>{/if}
+          </div>
+        {/if}
+      </div>
+      <div class="matrix-legend">
+        <span class="matrix-intensity-scale">{t('matrixLess')}{#each [1, 2, 3, 4, 5] as level}<i class="matrix-key" style={`background:var(--demand-${level})`} aria-hidden="true"></i>{/each}{t('matrixMore')}</span>
+        <span><i class="matrix-key empty" aria-hidden="true"></i>{t('matrixZeroLegend')}</span>
+        <span><i class="matrix-key absent" aria-hidden="true"></i>{t('matrixAbsentLegend')}</span>
       </div>
     </section>
 
-    <section class="content-panel">
-      <header class="panel-title"><div><h2>{t('recentJobs')}</h2><p data-testid="overview-recent-jobs-summary">{t('showingLatest')} {formatNumber(recentJobs.length, language)} {t('recentConversations')}</p></div><a class="text-button" href={jobsHref()} data-dashboard-section="jobs">{t('moreChats')}</a></header>
-      <div class="row-list">
-        {#each recentJobs as job (job.jobId)}
-          <a class="data-row" href={jobsHref(job.jobId)} data-dashboard-section="jobs" data-testid={`overview-job-${job.jobId}`}>
-            <span class={`job-state ${job.status}`}></span>
-            <span class="data-row-main"><strong>{formatChatTitle(job.chatTitle, job.titlePrompt, t('untitledChat'))}</strong><small>{job.provider ?? '—'} · {job.profileSlug ?? '—'}</small></span>
-            <span class="mono-label">{stateLabel(language, job.status)}</span>
-            <time datetime={job.updatedAt}>{formatAge(job.updatedAt, language, t('neverChecked'), now)}</time>
-            <ArrowUpRight size={15} />
-          </a>
-        {:else}
-          <div class="empty-state"><Clock3 size={22} /><strong>{t('noJobs')}</strong><p>{t('noJobsBody')}</p></div>
-        {/each}
+    <div class="analytics-two-column analytics-bottom-grid">
+      <figure class="analytics-panel chart-panel" data-testid="capability-mix-chart">
+        <header class="analytics-panel-header">{@render chartTitle(t('capabilityMix'), t('capabilityMixHelp'))}</header>
+        {#if analytics.capabilityFamilies.length}
+          <div class="stacked-day-chart capability-day-chart" style={`grid-template-columns:repeat(${analytics.daily.length}, minmax(2px, 1fr))`}>
+            {#each analytics.daily as point}
+              {@const total = Object.values(point.capabilityFamilies).reduce((sum, value) => sum + value, 0)}
+              <div class="stacked-day-column" title={`${formatDay(point.day)} · ${formatNumber(total, language)} ${t('routedRequirements')}`}>{#each families as family}<span class={familyColor(family)} style={`height:${(point.capabilityFamilies[family] ?? 0) / capabilityDailyMaximum * 100}%`}></span>{/each}</div>
+            {/each}
+          </div>
+          <div class="chart-date-axis"><span>{formatDay(analytics.range.fromDay)}</span><span>{formatDay(analytics.range.toDay)}</span></div>
+          <figcaption class="capability-family-legend">{#each analytics.capabilityFamilies as family}<span><i class={familyColor(family.family)}></i>{capabilityFamilyLabel(language, family.family)} · {formatNumber(family.finishedJobs, language)}</span>{/each}</figcaption>
+        {:else}<div class="analytics-empty chart-empty">{t('noCapabilityUsage')}</div>{/if}
+      </figure>
+
+      <div class="analytics-panel analytics-breakdowns">
+        <section data-testid="top-capabilities">
+          <header>{@render chartTitle(t('topCapabilities'), t('topCapabilitiesHelp'))}</header>
+          <div class="top-capability-list">
+            {#each analytics.capabilities.slice(0, 6) as capability}
+              <div><span><strong>{capabilityName(capability.capabilityId)}</strong></span><span class="top-capability-bar"><i style={`width:${analytics.capabilities[0]?.finishedJobs ? capability.finishedJobs / analytics.capabilities[0].finishedJobs * 100 : 0}%`}></i></span><strong>{formatNumber(capability.finishedJobs, language)}</strong></div>
+            {:else}<div class="analytics-empty">{t('noCapabilityUsage')}</div>{/each}
+          </div>
+        </section>
+        <section data-testid="execution-mode-mix">
+          <header><h2>{t('executionMix')}</h2></header>
+          <div class="execution-mode-bar">{#each analytics.executionModes as mode}<span class:browser={mode.mode === 'browser'} class:direct={mode.mode === 'direct'} class:unknown={mode.mode === 'unknown'} style={`width:${mode.share * 100}%`} title={`${mode.mode} · ${formatPercent(mode.share)}`}></span>{/each}</div>
+          <div class="execution-mode-legend">{#each analytics.executionModes as mode}<span><i class:browser={mode.mode === 'browser'} class:direct={mode.mode === 'direct'} class:unknown={mode.mode === 'unknown'}></i>{mode.mode === 'browser' ? t('browserMode') : mode.mode === 'direct' ? t('directMode') : t('unknownMode')} · {formatNumber(mode.finishedJobs, language)} · {formatPercent(mode.share)}</span>{/each}</div>
+        </section>
       </div>
-    </section>
-  </div>
+    </div>
+  {/if}
 </section>

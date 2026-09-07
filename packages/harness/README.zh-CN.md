@@ -1,4 +1,6 @@
-# Tokenless Web Agent Harness
+# Tokenless Harness
+
+Tokenless 的 Web Harness 运行时：执行 Agent 任务、管理工具续轮，并通过 Tokenless API 访问网页大模型。这是三种用法中的主流运行方式；自带 Harness 的调用方也可以选择 API 接入或按需调用 Skill。[查看三种用法](../../README.zh-CN.md#三种使用方式)。
 
 这个 private workspace package 负责 Tokenless agent adapter、Harness context persistence 与 V1 Skill preparation slice。它独立于 provider DOM、Playwright、profile 和 provider database internals。
 
@@ -35,24 +37,20 @@ Provider transport 位于该 package 之外：Harness Markdown 与其他非媒�
 
 ### AI sidecars
 
-Front Door 与 Exit Door 是围绕 Harness loop 的 sidecar。它们不会向 provider execution 添加 phase：Front Door 在 `WebAgentHarness.start` 前准备 metadata 与具体 provider route，Exit Door 在 Harness run 完成后审查 terminal result。
+Front Door 是围绕 Harness loop 的 sidecar。它不会向 provider execution 添加 phase：它在 `WebAgentHarness.start` 前准备 metadata 与具体 provider route。
 
-Sidecar 依赖很小的 `HarnessAiEngine` contract。第一个 adapter 是由 Gemini Nano 支持的 browser-side Chrome Prompt API implementation；以后 local 与 remote engine 可以实现同一 contract，而无需改变 Front Door 或 Exit Door。
+Sidecar 依赖很小的 `HarnessAiEngine` contract。第一个 adapter 是由 Gemini Nano 支持的 browser-side Chrome Prompt API implementation；以后 local 与 remote engine 可以实现同一 contract，而无需改变 Front Door。
 
 ```ts
 import {
-  createHarnessExitDoorSidecar,
   createHarnessFrontDoorSidecar,
 } from 'tokenless-web-agent-harness'
 
 const frontDoor = createHarnessFrontDoorSidecar(geminiNanoEngine)
-const exitDoor = createHarnessExitDoorSidecar(geminiNanoEngine)
 const prepared = await frontDoor.prepare({ taskPrompt, providers, browserBinding })
 const run = await harness.start({ ...spec, provider: prepared.route.providerId })
 // Daemon 存活期间，通过正常 Harness interface 读取 run。
-const postprocessed = run.final
-  ? await exitDoor.finalize({ taskPrompt, output: run.final.output, artifacts: run.final.artifacts, browserBinding })
-  : undefined
+const result = run.final
 ```
 
 正常 CLI 通过 authenticated daemon HTTP 到达同一个 module：

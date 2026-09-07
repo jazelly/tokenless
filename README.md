@@ -1,76 +1,120 @@
 <p align="center">
-  <img src="assets/tokenless-wordmark.png" alt="Tokenless" width="560">
+  <img src="assets/tokenless-wordmark.png" alt="Tokenless" width="360">
+</p>
+
+<h1 align="center">Web Harness</h1>
+
+<p align="center"><strong>Put your existing web LLM accounts to work for your agents.</strong></p>
+
+<p align="center">
+  <a href="#start-in-three-commands">Quick start</a> · <a href="#what-is-a-web-harness">What is Web Harness?</a> · <a href="#providers">Providers</a> · <a href="docs/capability-matrix.md">Capabilities</a> · <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a>
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/tokenless"><img src="https://img.shields.io/npm/v/tokenless?logo=npm&amp;label=version" alt="npm version"></a>
-  <a href="https://www.npmjs.com/package/tokenless"><img src="https://img.shields.io/npm/dm/tokenless?logo=npm&amp;label=downloads" alt="npm monthly downloads"></a>
+  <img src="assets/dashboard-web-harness.png" alt="Tokenless API Dashboard showing usage trends, job outcomes, and capability demand by provider" width="1600">
 </p>
 
-<p align="center">
-  <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a>
-</p>
+<p align="center"><sub>Local Dashboard captured on 2026-09-06. Values are local job records and output-token estimates, not benchmarks or billing savings.</sub></p>
 
-<p align="center">
-  <strong>Use the AI providers you already have—through the browser, without separate provider API keys.</strong><br>
-  Tokenless gives agents one local interface for visible AI workflows while reducing agent-side token use.
-</p>
+## Three ways to use Tokenless
 
-<p align="center">
-  <a href="#start-in-three-commands">Quick start</a> · <a href="COMMANDS.md">CLI</a> · <a href="docs/capability-matrix.md">Capabilities</a> · <a href="PRIVACY.md">Privacy</a>
-</p>
+### 1. Tokenless Harness + API · Main workflow
 
-<p align="center">
-  <img src="assets/deepseek-browser-workflow.png" alt="Tokenless workflow from an agent request through the DeepSeek browser and back" width="1600">
-</p>
+Give Tokenless Harness a task; it manages execution through Tokenless API and returns the result.
 
-<p align="center"><sub>Real DeepSeek headful browser UI from a local run; the workflow card is an illustration, not a benchmark.</sub></p>
+![Bring a task → Tokenless Web Harness runs the web workflow → results return to your agent or app; follow activity in Dashboard](assets/web-harness-workflow-en.png)
 
-## Agent → browser → agent
+<details>
+<summary>2. Your own Harness + Tokenless API</summary>
 
-The local OpenAI-compatible `POST /v1/chat/completions` route can send `tokenless/deepseek` through the visible DeepSeek website. If the harness does not know how to declare a mode, set the persisted `apiProxy.executionMode` to `browser` in the selected Tokenless config:
+Keep your Harness’s agent loop, tools, and sessions; connect its model interface to Tokenless API.
 
-```json
-{
-  "apiProxy": {
-    "executionMode": "browser"
-  }
-}
-```
+![Choose your own Harness → connect Tokenless API to your web LLM accounts → replies return to your Harness](assets/bring-your-harness-en.png)
 
-The request can omit `tokenless.execution_mode`: `agent request → Tokenless daemon → headed DeepSeek page → response back to agent`. An explicit request mode still wins. [Watch the 7-second browser-mode demo](assets/tokenless-deepseek-browser-demo.mp4).
+[API setup and compatibility limits](docs/api-proxy-integration.md) · [Harness integration](docs/harness-integrations.md)
 
-## 13 providers. One local interface.
+</details>
 
-Five providers are supported today; eight more are experimental. Only verified workflows are advertised.
+<details>
+<summary>3. Your own Harness + Tokenless skill</summary>
+
+Add the Tokenless skill to your Harness; invoke it for selected tasks and bring the results back into your usual workflow.
+
+![Keep your workflow → call the Tokenless skill on demand for a selected task → continue in your own Harness](assets/tokenless-skill-workflow-en.png)
+
+`tokenless setup` installs the skill into supported local agent skill directories. [Setup](COMMANDS.md#tokenless-setup) · [Skill instructions](skills/tokenless/SKILL.md)
+
+</details>
+
+<sub>AI-generated use-case illustrations. Available capabilities depend on the selected provider’s verified support.</sub>
+
+<a id="providers"></a>
+
+## Providers · 43 catalog entries
+
+15 browser providers, plus 28 additional Direct-only providers. Listed from the current registry; available capabilities depend on verification.
+
+### Browser mode
 
 <table>
   <tr>
-    <td align="center" width="20%"><img src="https://cdn.oaistatic.com/assets/favicon-miwirzcw.ico" alt="ChatGPT" width="32" height="32"><br><strong>ChatGPT</strong><br><sub>Supported</sub></td>
-    <td align="center" width="20%"><img src="https://claude.ai/favicon.ico" alt="Claude" width="32" height="32"><br><strong>Claude</strong><br><sub>Supported</sub></td>
-    <td align="center" width="20%"><img src="https://www.gstatic.com/lamda/images/gemini_sparkle_aurora_33f86dc0c0257da337c63.svg" alt="Gemini" width="32" height="32"><br><strong>Gemini</strong><br><sub>Supported</sub></td>
-    <td align="center" width="20%"><img src="https://grok.com/images/favicon.svg" alt="Grok" width="32" height="32"><br><strong>Grok</strong><br><sub>Supported</sub></td>
-    <td align="center" width="20%"><img src="https://assets.alicdn.com/g/qwenweb/qwen-chat-fe/0.2.83/favicon.png" alt="Qwen" width="32" height="32"><br><strong>Qwen / 千问</strong><br><sub>Experimental</sub></td>
+    <td align="center" width="20%"><a href="https://chatgpt.com/"><img src="assets/providers/chatgpt.ico" alt="ChatGPT" width="32" height="32"><br><strong>ChatGPT</strong></a><br><sub>Supported</sub></td>
+    <td align="center" width="20%"><a href="https://claude.ai/new"><img src="assets/providers/claude.ico" alt="Claude" width="32" height="32"><br><strong>Claude</strong></a><br><sub>Supported</sub></td>
+    <td align="center" width="20%"><a href="https://gemini.google.com/app"><img src="assets/providers/gemini.svg" alt="Gemini" width="32" height="32"><br><strong>Gemini</strong></a><br><sub>Supported</sub></td>
+    <td align="center" width="20%"><a href="https://grok.com/"><img src="assets/providers/grok.svg" alt="Grok" width="32" height="32"><br><strong>Grok</strong></a><br><sub>Supported</sub></td>
+    <td align="center" width="20%"><a href="https://chat.qwen.ai/"><img src="assets/providers/qwen.png" alt="Qwen / 千问" width="32" height="32"><br><strong>Qwen / 千问</strong></a><br><sub>Experimental</sub></td>
   </tr>
   <tr>
-    <td align="center" width="20%"><img src="https://cdn.simpleicons.org/deepseek/4D6BFE" alt="DeepSeek" width="32" height="32"><br><strong>DeepSeek</strong><br><sub>Experimental</sub></td>
-    <td align="center" width="20%"><img src="https://cdn.simpleicons.org/perplexity/20808D" alt="Perplexity" width="32" height="32"><br><strong>Perplexity</strong><br><sub>Experimental</sub></td>
-    <td align="center" width="20%"><img src="https://z-cdn.chatglm.cn/z-ai/static/logo.svg" alt="Z.ai" width="32" height="32"><br><strong>Z.ai / GLM</strong><br><sub>Experimental</sub></td>
-    <td align="center" width="20%"><img src="https://lf-flow-web-cdn.doubao.com/obj/flow-doubao/favicon/new-doubao/128x128.png" alt="Doubao" width="32" height="32"><br><strong>Doubao / 豆包</strong><br><sub>Experimental</sub></td>
-    <td align="center" width="20%"><img src="https://www.kimi.com/favicon-light.ico" alt="Kimi" width="32" height="32"><br><strong>Kimi</strong><br><sub>Experimental</sub></td>
+    <td align="center" width="20%"><a href="https://chat.deepseek.com/"><img src="assets/providers/deepseek.svg" alt="DeepSeek" width="32" height="32"><br><strong>DeepSeek</strong></a><br><sub>Experimental</sub></td>
+    <td align="center" width="20%"><a href="https://www.perplexity.ai/"><img src="assets/providers/perplexity.svg" alt="Perplexity" width="32" height="32"><br><strong>Perplexity</strong></a><br><sub>Experimental</sub></td>
+    <td align="center" width="20%"><a href="https://chat.z.ai/"><img src="assets/providers/zai.svg" alt="Z.ai / GLM" width="32" height="32"><br><strong>Z.ai / GLM</strong></a><br><sub>Experimental</sub></td>
+    <td align="center" width="20%"><a href="https://www.doubao.com/chat/"><img src="assets/providers/doubao.png" alt="Doubao / 豆包" width="32" height="32"><br><strong>Doubao / 豆包</strong></a><br><sub>Experimental</sub></td>
+    <td align="center" width="20%"><a href="https://www.kimi.ai/"><img src="assets/providers/kimi.ico" alt="Kimi" width="32" height="32"><br><strong>Kimi</strong></a><br><sub>Experimental</sub></td>
   </tr>
   <tr>
-    <td align="center" width="20%"><img src="https://sf-flow-web-cdn.ciciai.com/obj/ocean-flow-web-sg/dola_web/favicon-dola.png" alt="Dola" width="32" height="32"><br><strong>Dola</strong><br><sub>Experimental</sub></td>
-    <td align="center" width="20%"><img src="https://arena.ai/favicon.ico" alt="Arena" width="32" height="32"><br><strong>Arena</strong><br><sub>Supported</sub></td>
-    <td align="center" width="20%"><img src="https://meta.ai/favicon.ico" alt="Meta AI" width="32" height="32"><br><strong>Meta AI</strong><br><sub>Experimental</sub></td>
+    <td align="center" width="20%"><a href="https://www.dola.com/chat"><img src="assets/providers/dola.png" alt="Dola" width="32" height="32"><br><strong>Dola</strong></a><br><sub>Experimental</sub></td>
+    <td align="center" width="20%"><a href="https://arena.ai/text/direct"><img src="assets/providers/arena.ico" alt="Arena" width="32" height="32"><br><strong>Arena</strong></a><br><sub>Supported</sub></td>
+    <td align="center" width="20%"><a href="https://meta.ai/"><img src="assets/providers/meta.ico" alt="Meta AI" width="32" height="32"><br><strong>Meta AI</strong></a><br><sub>Experimental</sub></td>
+    <td align="center" width="20%"><a href="https://copilot.microsoft.com/"><img src="assets/providers/microsoft-copilot.ico" alt="Microsoft Copilot" width="32" height="32"><br><strong>Microsoft Copilot</strong></a><br><sub>Awaiting verification</sub></td>
+    <td align="center" width="20%"><a href="https://github.com/copilot"><img src="assets/providers/github-copilot.svg" alt="GitHub Copilot" width="32" height="32"><br><strong>GitHub Copilot</strong></a><br><sub>Experimental</sub></td>
   </tr>
 </table>
 
-See the [Capability Matrix](docs/capability-matrix.md) for the verified workflows behind each provider.
+Microsoft Copilot is registered but has no verified browser capability route yet. The other browser entries comprise 5 supported and 9 experimental providers.
+
+<details>
+<summary>Direct mode: view all 40 mappings</summary>
+
+G4F also maps these browser providers to Direct entry points: ChatGPT, Claude, Gemini, Grok, Qwen / 千问, DeepSeek, Perplexity, Z.ai / GLM, Arena, Meta AI, Microsoft Copilot, GitHub Copilot.
+
+The following **28 additional entries are Direct-only**. These are experimental mappings; catalog membership does not mean each has passed a real-provider run.
+
+| Provider | ID | Provider | ID |
+| --- | --- | --- | --- |
+| Black Forest Labs | `black-forest-labs` | Blackbox AI | `blackbox` |
+| Cerebras | `cerebras` | Cloudflare AI | `cloudflare` |
+| Cohere | `cohere` | DeepInfra | `deepinfra` |
+| ElevenLabs | `elevenlabs` | Fenay AI | `fenay-ai` |
+| GLHF | `glhf` | Groq | `groq` |
+| Hugging Face | `hugging-face` | MiniMax | `minimax` |
+| NVIDIA | `nvidia` | Ollama | `ollama` |
+| OpenRouter | `openrouter` | Opera Aria | `opera-aria` |
+| Phind AI | `phind` | Pi | `pi` |
+| Pollinations | `pollinations` | Puter | `puter` |
+| Replicate | `replicate` | Sber GigaChat | `gigachat` |
+| Stability AI | `stability-ai` | Teach Anything | `teach-anything` |
+| TheB.AI | `theb-ai` | Together AI | `together` |
+| WhiteRabbitNeo | `whiterabbitneo` | YQCloud | `yqcloud` |
+
+[Direct setup and limits](docs/g4f-direct-provider-service.md).
+
+</details>
+
+[Check verified capabilities for each provider](docs/capability-matrix.md).
 
 ## Start in three commands
 
-Requires Node.js 22.13+. Apple Silicon macOS is the current target; Windows x64 is prerelease. For native mode, use a current Chrome or Brave, enable remote debugging at `chrome://inspect/#remote-debugging` or `brave://inspect/#remote-debugging`, and approve the browser prompt. Setup also offers an [Anti-Detect option](COMMANDS.md#tokenless-setup).
+Requires Node.js 22.13+. Apple Silicon macOS is the current target; Windows x64 is prerelease.
 
 ```bash
 npm install --global tokenless@latest
@@ -80,17 +124,59 @@ tokenless run --provider chatgpt --prompt "Review this proposal."
 
 Setup opens the local dashboard. Reopen it anytime with `tokenless dashboard`.
 
-## What agents get
+<details>
+<summary>Browser preparation and updates</summary>
 
-- Send prompts and read visible responses through real provider websites.
-- Use the local OpenAI- and Anthropic-compatible API proxy, including Chat Completions and Responses routes.
-- Use uploads, citations, and provider controls where the selected provider supports them.
-- Stable provider tabs and continuity for supported tasks.
-- Provider sign-in stays in the selected browser profile; job history and token-savings estimates remain local.
-- An optional [local API proxy](docs/api-proxy-integration.md) for OpenAI- and Anthropic-shaped clients.
-- An experimental [Tokenless Harness Browser Extension](docs/harness-browser-extension.md) candidate for user-approved observation and text input on one selected Chrome tab.
+Setup requires `uv` for the G4F runtime and synchronizes matching skills; upgrades sync them too. Use `tokenless skills sync --json` to refresh skills alone. The macOS menu app is a separate optional install and is not installed on Windows.
 
-## Optional Codex integration
+For native mode, use a current Chrome or Brave, enable remote debugging at `chrome://inspect/#remote-debugging` or `brave://inspect/#remote-debugging`, and approve the browser prompt. Setup also offers an [Anti-Detect option](COMMANDS.md#tokenless-setup).
+
+Already installed? Run `tokenless upgrade --check`, then `tokenless upgrade`. See [Updates](docs/updates.md) for CLI and macOS app updates.
+
+</details>
+
+## What is a Web Harness?
+
+We call **the layer that turns web LLMs into an agent’s working environment** a **Web Harness**. Tokenless lets agents submit tasks through your existing web LLM accounts, use supported website capabilities, and bring results back into your workflow.
+
+| What you want to do | What Tokenless handles |
+| --- | --- |
+| Put web LLMs to work for your agent | Submit prompts, read responses, and continue supported conversations. |
+| Work with your own material | Use attachments, citations, and controls verified for the selected provider. |
+| Connect an app and follow progress | Run tasks through the CLI or local compatible APIs; view history and usage in Dashboard. |
+
+Web workflows need no separate provider API keys; sign-in stays in your selected browser. Tokenless API provides provider access; Tokenless Harness manages agent tasks and tool continuation.
+
+## Optional setup and integrations
+
+<details>
+<summary>Browser mode example: DeepSeek</summary>
+
+Send `tokenless/deepseek` through the visible DeepSeek website using the local OpenAI-compatible interface, then return the response to the caller.
+
+[Watch the 7-second demo](assets/tokenless-deepseek-browser-demo.mp4) · [Configure browser mode](docs/api-proxy-integration.md)
+
+</details>
+
+<details>
+<summary>Local Spark X2.5-4B router engine</summary>
+
+On Apple Silicon, the Dashboard can use the official Spark MLX server for the local Spark X2.5-4B model. Ollama is not required; the V1 integration uses the fixed OpenAI-compatible endpoint below.
+
+```bash
+git clone https://github.com/XHToken/Spark-MLX-LLM.git
+cd Spark-MLX-LLM
+python3 -m venv .venv
+.venv/bin/python -m pip install -e '.[test]'
+.venv/bin/spark-mlx-server --model XHToken/Spark-X2.5-4B --host 127.0.0.1 --port 8080 --allowed-origins http://127.0.0.1:7331
+```
+
+In Dashboard → System → Semantic routing, select `Spark X2.5-4B · local MLX` and save. The health endpoint is `http://127.0.0.1:8080/health`; chat completions use `http://127.0.0.1:8080/v1/chat/completions`.
+
+</details>
+
+<details>
+<summary>Codex integration</summary>
 
 Install the optional Codex integration:
 
@@ -99,6 +185,10 @@ tokenless setup --install-codex
 ```
 
 Restart Codex, open `/hooks`, and trust Tokenless.
+
+</details>
+
+The experimental [Tokenless Harness Browser Extension](docs/harness-browser-extension.md) supports user-approved observation and text input on one selected Chrome tab.
 
 ## Go deeper
 
@@ -110,3 +200,8 @@ Restart Codex, open `/hooks`, and trust Tokenless.
 - [Documentation index](docs/README.md)
 
 Tokenless is in early access: it reduces agent-side token use, but does not eliminate token use or bypass provider account requirements.
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/tokenless"><img src="https://img.shields.io/npm/v/tokenless?logo=npm&amp;label=version" alt="npm version"></a>
+  <a href="https://www.npmjs.com/package/tokenless"><img src="https://img.shields.io/npm/dm/tokenless?logo=npm&amp;label=downloads" alt="npm monthly downloads"></a>
+</p>

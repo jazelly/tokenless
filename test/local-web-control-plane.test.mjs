@@ -18,6 +18,7 @@ const cliEntry = path.resolve('packages/cli/dist/src/tokenless.mjs')
 const dashboardApiDocument = JSON.parse(fs.readFileSync(path.resolve('packages/contracts/tokenless.openapi.json'), 'utf8'))
 const validateDashboardSession = dashboardSchemaValidator('DashboardSession')
 const validateDashboardSnapshot = dashboardSchemaValidator('DashboardSnapshot')
+const validateDashboardAnalytics = dashboardSchemaValidator('DashboardAnalytics')
 const validateDashboardError = dashboardSchemaValidator('ErrorEnvelope')
 const validateProviderReadinessRefresh = dashboardSchemaValidator('ProviderReadinessRefresh')
 
@@ -144,6 +145,14 @@ test('local web control plane opens directly, establishes Dashboard sessions, an
     assert.equal(snapshotBody.config.outputSavings.enabled, true)
     assert.equal(snapshotBody.diagnostics.find((item) => item.id === 'output-savings')?.state, 'ok')
     assertDashboardSchema(validateDashboardSnapshot, snapshotBody)
+    const analyticsResponse = await fetch(`${daemon.origin}/dashboard-api/v1/analytics?range=30d`, { headers: { cookie } })
+    assert.equal(analyticsResponse.status, 200)
+    const analyticsBody = await analyticsResponse.json()
+    assertDashboardSchema(validateDashboardAnalytics, analyticsBody)
+    assert.equal(analyticsBody.schema, 'tokenless.dashboard-analytics.v1')
+    assert.equal(analyticsBody.timeZone, 'UTC')
+    assert.equal(analyticsBody.range.id, '30d')
+    assert.equal(analyticsBody.daily.length, 30)
     assert.equal(snapshotBody.providers.length, 43)
     assert.equal(new Set(snapshotBody.providers.map((provider) => provider.id)).size, 43)
     assert.equal(snapshotBody.providers.some((provider) => provider.id === 'ai-badgr'), false)
@@ -485,7 +494,7 @@ test('local web control plane opens directly, establishes Dashboard sessions, an
         defaultProfile: 'work',
         daemonUrl: daemon.origin,
         outputSavings: { enabled: false },
-        apiProxy: { enabled: true, conversationMode: 'continue-conversation', executionMode: 'browser' },
+        apiProxy: { enabled: true, executionMode: 'browser' },
         g4f: { enabled: true },
         directProvider: { defaultBackend: 'native', providerBackends: { chatgpt: 'native' } },
         router: { enabled: false, engine: 'chrome-prompt-api', providers: [] },
@@ -495,7 +504,7 @@ test('local web control plane opens directly, establishes Dashboard sessions, an
     const fullConfig = JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8'))
     assert.equal(fullConfig.defaultProfile, 'work')
     assert.equal(fullConfig.daemonUrl, daemon.origin)
-    assert.deepEqual(fullConfig.apiProxy, { enabled: true, conversationMode: 'continue-conversation', executionMode: 'browser' })
+    assert.deepEqual(fullConfig.apiProxy, { enabled: true, executionMode: 'browser' })
     assert.deepEqual(fullConfig.g4f, { enabled: true })
     assert.deepEqual(fullConfig.directProvider, { defaultBackend: 'native', providerBackends: { chatgpt: 'native' } })
 

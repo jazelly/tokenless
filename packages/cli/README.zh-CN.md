@@ -1,8 +1,52 @@
-# Tokenless CLI
+# Tokenless API CLI
 
-`tokenless` 目前让 agent 通过本机 CLI 使用你正在运行的 Google Chrome 或 Brave Browser 中可见的 AI 网站。在该 visible-browser mode 中，provider 凭据和浏览器状态保留在本机所选浏览器中。
+Tokenless Web Harness 的 CLI 与本地 API 入口，让你已有的网页大模型账号为 Agent 完成任务。
 
 [English](README.md) · [命令参考](https://github.com/jazelly/tokenless/blob/main/COMMANDS.zh-CN.md) · [Capability Matrix](https://github.com/jazelly/tokenless/blob/main/docs/capability-matrix.zh-CN.md) · [隐私](https://github.com/jazelly/tokenless/blob/main/PRIVACY.zh-CN.md)
+
+## 三种使用方式
+
+| 用法 | 由谁执行任务流程 |
+| --- | --- |
+| Tokenless Harness + API | Tokenless Harness 管理任务，通过 Tokenless API 访问网页大模型。 |
+| 自选 Harness + Tokenless API | 自己的 Harness 保留工具与流程，使用 Tokenless API 作为模型接口。 |
+| 自选 Harness + Tokenless Skill | 在原有工作流中按需调用 Skill，只交出选定任务。 |
+
+[查看 Dashboard 与三种用法图示](https://github.com/jazelly/tokenless/blob/main/README.zh-CN.md#三种使用方式)。
+
+## Provider 清单
+
+当前目录共 43 个 provider：15 个浏览器条目，以及 28 个仅 Direct 模式的条目。
+
+- **已支持的浏览器路由**：ChatGPT、Claude、Gemini、Grok、Arena。
+- **实验性浏览器路由**：Qwen / 千问、DeepSeek、Perplexity、Z.ai / GLM、Doubao / 豆包、Kimi、Dola、Meta AI、GitHub Copilot。
+- **待验证**：Microsoft Copilot。
+
+<details>
+<summary>查看 28 个仅 Direct 模式的 provider</summary>
+
+以下为实验性 G4F 映射；目录登记不等于已通过逐项真实运行验证。另有 12 个浏览器 provider 也注册了 Direct 入口，共 40 个 Direct 映射。
+
+| Provider | ID | Provider | ID |
+| --- | --- | --- | --- |
+| Black Forest Labs | `black-forest-labs` | Blackbox AI | `blackbox` |
+| Cerebras | `cerebras` | Cloudflare AI | `cloudflare` |
+| Cohere | `cohere` | DeepInfra | `deepinfra` |
+| ElevenLabs | `elevenlabs` | Fenay AI | `fenay-ai` |
+| GLHF | `glhf` | Groq | `groq` |
+| Hugging Face | `hugging-face` | MiniMax | `minimax` |
+| NVIDIA | `nvidia` | Ollama | `ollama` |
+| OpenRouter | `openrouter` | Opera Aria | `opera-aria` |
+| Phind AI | `phind` | Pi | `pi` |
+| Pollinations | `pollinations` | Puter | `puter` |
+| Replicate | `replicate` | Sber GigaChat | `gigachat` |
+| Stability AI | `stability-ai` | Teach Anything | `teach-anything` |
+| TheB.AI | `theb-ai` | Together AI | `together` |
+| WhiteRabbitNeo | `whiterabbitneo` | YQCloud | `yqcloud` |
+
+</details>
+
+[完整清单、模式与支持范围](https://github.com/jazelly/tokenless/blob/main/README.zh-CN.md#providers)。
 
 ## 安装
 
@@ -15,6 +59,8 @@ npm install --global tokenless@latest
 tokenless setup
 tokenless doctor --json
 ```
+
+Setup 需要 `uv` 来准备 G4F runtime，并会自动同步配套 skills；升级也会同步。仅刷新 skills 可运行 `tokenless skills sync --json`。Windows 不安装 macOS 菜单栏 App，macOS 的菜单栏 App 为独立可选安装。
 
 在使用 browser 功能前，请在日常使用的 Google Chrome 中打开 `chrome://inspect/#remote-debugging`，或在 Brave 中打开 `brave://inspect/#remote-debugging`，启用 remote debugging，并在浏览器出现提示时确认连接。
 
@@ -109,8 +155,11 @@ tokenless run \
 | Dola | 实验性 | 需要登录 |
 | Arena | 已支持 | 需要登录 |
 | Meta AI | 实验性 | 需要登录 |
+| GitHub Copilot | 实验性 | 需要登录 |
 
 Prompt 提交与 response 读取是共同 baseline。File、citation、model/effort control、continuation 和 Workspace 支持取决于 provider、profile 和 account state。Meta AI 的 chat 与 file upload 已可从选定的登录 profile 实验性路由，并支持 Instant/Thinking 选择；在 CLI 暴露图片 artifact lifecycle 前，image generation 仍不公开。
+
+[GitHub Copilot 控制](../../docs/github-copilot.zh-CN.md)：Ask / Agent、repository / Project、模型权限、文件与 AI credits。
 
 ## Qwen Modes
 
@@ -148,6 +197,10 @@ tokenless profiles status --profile work --provider claude --json
 ```
 
 Tokenless profile 只组织 provider tab 与配置，不创建独立 browser identity。当前已发布的 visible-browser mode 不检查单个 cookie、token、browser storage、Keychain data 或 authentication value；任何 mode 都不会把这些值暴露给 agent。
+
+Managed runtime 会把不同 provider 和稳定的 task identity 保持在独立 tab 中。重新进入相同 project 或 conversation task 会返回原来的 tab；替换它需要通过 local job API 显式设置 `pagePolicy: replace`。
+
+Page Ref 是地址，不是执行锁：Tokenless API 允许并发使用同一 profile 和 Page Ref，conversation 顺序由 Tokenless Harness 控制。操作结束后 provider tab 保持打开，不按空闲时间自动过期。
 
 ## Browser 与本地 Runtime
 

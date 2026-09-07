@@ -83,7 +83,7 @@ Use `provider-controls` to discover exact visible labels before requesting a mod
 tokenless provider-controls --profile "<managed-profile>" --provider chatgpt --json
 ```
 
-Pass only an exact returned label with `--model`, ordered `--model-fallback`, or `--effort`. If a requested control or action is unsupported or unverified, surface the failure; do not guess or silently change providers or modes.
+Pass only an exact returned label with `--model` or `--effort`. If a requested control or action is unsupported or unverified, surface the failure; do not guess or silently change providers or modes.
 
 For work expected to exceed three minutes, keep the daemon job attached and add `--long-running`. Do not use `--no-wait`, do not replace the web task with a local agent run, and do not claim a result before the daemon reports `succeeded`.
 

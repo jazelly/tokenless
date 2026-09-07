@@ -74,7 +74,7 @@ export async function observeDomResponseCompletion(provider: ProviderDomDefiniti
 
 export function validateDomResponsePreparation(provider: ProviderDomDefinition, preparation: unknown) {
   const validated = validateProviderActionPreparation(preparation, {
-    provider: provider.id,
+    provider: provider.descriptor.id,
     action: VISIBLE_ACTIONS.RESPONSE_READ,
     schema: RESPONSE_CURSOR_SCHEMA,
   })
@@ -158,7 +158,7 @@ export async function readDomResponse(
   }, undefined, { timeout: 5000 })
   const completeText = normalizeVisibleText(response.text)
   if (
-    provider.id === 'chatgpt' &&
+    provider.descriptor.id === 'chatgpt' &&
     /^(?:chatgpt said:\s*)?the message you submitted was too long(?:[,.]|\s)/iu.test(completeText)
   ) {
     throw tokenlessError(
@@ -205,7 +205,7 @@ function createResponsePreparation(
   latestAnswerFingerprint: string | null,
 ): ProviderActionPreparation<typeof VISIBLE_ACTIONS.RESPONSE_READ> {
   return Object.freeze({
-    provider: provider.id,
+    provider: provider.descriptor.id,
     action: VISIBLE_ACTIONS.RESPONSE_READ,
     schema: RESPONSE_CURSOR_SCHEMA,
     value: Object.freeze({

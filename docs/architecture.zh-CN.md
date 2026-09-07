@@ -213,6 +213,10 @@ Daemon 绑定 loopback，以 bearer token 保护 machine endpoint，并用 SQLit
 
 Control-plane page 有独立的 reserved page key，不能被 provider job acquire、navigate 或 replace。Job completion、cancellation 与 state query 都经过 daemon 的 SQLite business record。
 
+数据库 schema migration 随 npm 安装包发布，在本地打开数据库时执行。初始接管、版本记录与发布验证见[数据库迁移](database-migrations.zh-CN.md)。
+
+CLI 与 macOS 菜单共用[更新入口](updates.zh-CN.md)，替换对应安装并验证新版 runtime，不重跑 Setup。
+
 ## Browser boundary
 
 - 每个 managed profile 拥有自己的 persistent browser instance 与 user-data directory。
@@ -220,7 +224,7 @@ Control-plane page 有独立的 reserved page key，不能被 provider job acqui
 - Automation 只使用 approved provider origin、visible control 与 visible postcondition。
 - Provider credential、cookie、browser storage 与 session object 留在 managed profile/provider runtime 内。
 - Sign-in、CAPTCHA、account limit、payment、consent 与 confirmation 不由 Harness 或 provider adapter 越权完成。
-- Control-plane page 与 provider page leases 分离，provider job 不得取得或替换它。
+- Control-plane page 与 provider PageRef mappings 分离，provider job 不得取得或替换它。
 
 ## Capability and Workspace strategy
 
@@ -228,11 +232,13 @@ Public capability vocabulary、provider mapping、evidence ladder 与 extension 
 
 Native Project/workspace、file upload、model/effort selection、conversation continuation 与 provider-specific controls 都必须有对应的 real-provider evidence。没有证据的 capability 必须报告为 unavailable 或 unknown，不能靠猜测进入 route table。
 
-Plan、quota、rate-limit、maintenance、region、capability UI、navigation 与 surface-readiness failure 都保持结构化分类，不会被压缩成 authentication。Safe pre-submit provider-scoped failure 可以使用下一条 capability-compatible fallback route。唯一更宽的 completion boundary 是 `tokenless/auto` new-conversation request：submitted provider 用完现有 request deadline 中分配给它的有界份额后，会先被 cancel，再启动下一条尚未尝试的 route；每条 route 最多尝试一次。Ambiguous external state、精确 provider 与 provider-specific continuation 仍是 terminal。
+Plan、quota、rate-limit、maintenance、region、capability UI、navigation 与 surface-readiness failure 都保持结构化分类，不会被压缩成 authentication。Safe pre-submit provider-scoped failure 可以使用下一条 capability-compatible fallback route。Completion timeout 只取消对应 local job，不会向另一个 provider 重发已提交的 prompt。
 
 ## Browser visibility policy
 
-Browser visibility 由 global fallback 与 profile-scoped preference 决定，默认使用 `auto`。Headless job 不能因为 blocker 静默提交替代 request；需要用户处理时，当前 execution 进入 `waiting_for_user`，保留同一个 `jobId`、`taskId` 与 profile identity；`headless` 模式则清晰失败。Chromium sandbox 保持开启，CDP 是 managed browser control boundary。
+Browser visibility 由 global fallback 与 profile-scoped preference 决定，默认使用 `auto`。Managed mode 的 `auto` 复用 resident browser 或启动 headless，native mode 保持 headed；headless browser 遇到 blocker 时明确失败，不自动重启为 headed。
+
+请求的 visibility、runtime 或 proxy 与 active browser 不匹配时会明确失败，不重建浏览器或中断其他任务。Headed browser 的用户 handoff 保留同一个 `jobId`、`taskId` 与 profile identity；Chromium sandbox 保持开启，CDP 是 managed browser control boundary。
 
 ## File handling
 

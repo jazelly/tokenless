@@ -33,7 +33,7 @@ export async function observeProviderSession(
           : 'unknown' as const
 
   return {
-    provider: provider.id,
+    provider: provider.descriptor.id,
     url: sanitizedNavigationOrigin(provider, page.url()),
     authentication,
     access,
@@ -64,7 +64,7 @@ async function detectStructuredBlockers(
   const url = page.url()
   const navigation = provider.navigationPolicy.classify(url)
   const composerVisible = await anyVisible(page, provider.composerSelectors)
-  const domBlockers = await page.evaluate((composerSelectors) => {
+  const domBlockers = await page.evaluate(({ composerSelectors, providerId }) => {
     type RawBlocker = {
       kind: 'challenge' | 'auth' | 'terminal'
       code: string
@@ -119,6 +119,8 @@ async function detectStructuredBlockers(
       '[class*="toast" i]',
     ].join(', '))).filter(isVisibleElement)
     const blockingText = blockingSurfaces
+      // ChatGPT can finish a new Chat response while history access is limited.
+      .filter((element) => !(providerId === 'chatgpt' && /temporarily limited access to your conversations to protect your data/i.test(element.textContent ?? '')))
       .map((element) => [
         element.textContent,
         element.getAttribute('aria-label'),
@@ -219,7 +221,7 @@ async function detectStructuredBlockers(
       raw.push({ kind: 'terminal', code: 'provider_plan_limited', family: 'plan_limit', message: 'The provider is showing a visible plan or quota blocker.', proof: 'visible-plan-limit-text', limitWindow: 'unknown' })
     }
     return raw
-  }, provider.composerSelectors)
+  }, { composerSelectors: provider.composerSelectors, providerId: provider.descriptor.id })
 
   const selectorBlockers: VisibleBlocker[] = []
   for (const selector of provider.loginIndicators) {
@@ -323,7 +325,7 @@ function createBlocker(input: {
     userResolvable,
     retryable: userResolvable || input.family === 'rate_limit',
     visibleProof: input.visibleProof,
-    provider: input.provider.id,
+    provider: input.provider.descriptor.id,
     url: sanitizedNavigationOrigin(input.provider, input.url),
     ...(input.family ? { family: input.family } : {}),
     ...(input.limitWindow === undefined ? {} : { limitWindow: input.limitWindow }),

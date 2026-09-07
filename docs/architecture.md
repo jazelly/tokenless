@@ -228,7 +228,7 @@ The provider-session machine is intentionally separate from the daemon job state
 - The provider-session machine handles one page observation cycle: `wait`, `continue_guest`, `ready(guest|account|unknown)`, `handoff`, or `terminal`.
 - The daemon records business facts with states `queued`, `running`, `waiting_for_user`, `succeeded`, `failed`, `canceled`, and `timed_out`; active execution remains in the daemon process.
 - A provider `handoff` becomes the current execution's `waiting_for_user` state. It does not create a replacement job.
-- A plan, quota, rate-limit, maintenance, region, capability-UI, navigation, or surface-readiness failure remains structurally classified and is not collapsed into authentication. A safe pre-submit provider-scoped failure may consume the next capability-compatible fallback route. The only broader completion boundary is a `tokenless/auto` new-conversation request: it cancels a submitted provider that exhausts its bounded share of the existing request deadline before starting the next untried route, with each route attempted at most once. Ambiguous external state, exact providers, and provider-specific continuation remain terminal.
+- A plan, quota, rate-limit, maintenance, region, capability-UI, navigation, or surface-readiness failure remains structurally classified and is not collapsed into authentication. A safe pre-submit provider-scoped failure may consume the next capability-compatible fallback route. A completion timeout cancels the exact local job without replaying the submitted prompt on another provider.
 
 ## Local control plane
 
@@ -238,9 +238,13 @@ Every bearer-protected Tokenless machine endpoint, except the parallel compatibi
 
 All UI routes enforce the daemon's exact loopback `Host`, a restrictive same-origin CSP, `frame-ancestors 'none'`, `nosniff`, and `Referrer-Policy: no-referrer`. Static assets are bundled in the same npm package and load no remote JavaScript, fonts, analytics, or CDN resources. Purpose-built responses redact control tokens, authentication material, browser storage, raw DOM, legacy source paths, and private file paths.
 
-The dashboard's reserved page key is `tokenless:control-plane:<daemon-home-id>`. It has a separate registry from provider page leases, cannot be selected by provider `pagePolicy: replace`, and is recreated if the user closes it. Closing the tab does not stop the daemon or managed context.
+The dashboard's reserved page key is `tokenless:control-plane:<daemon-home-id>`. It has a separate registry from provider PageRef mappings, cannot be selected by provider `pagePolicy: replace`, and is recreated if the user closes it. Closing the tab does not stop the daemon or managed context.
 
 Job creation, completion, cancellation, and state queries use the shared SQLite business record. Execution belongs to the current daemon process, with no delayed admission or automatic recovery; CLI cancellation is reported as complete only after the authenticated control endpoint confirms `canceled`.
+
+Database schema migrations ship with the npm package and run locally when the database opens. See [Database migrations](database-migrations.md) for initial adoption, versioning, and release verification.
+
+The CLI and macOS menu share the [update entry point](updates.md), which replaces the correct installation and verifies the new runtime without rerunning setup.
 
 Completed and failed job facts remain queryable from SQLite. Active jobs are owned by the current daemon process, and unfinished jobs are marked `job_interrupted` after a daemon restart; state output omits capability tokens and does not expose raw authentication data.
 
@@ -271,9 +275,9 @@ Tokenless stores a global browser visibility fallback and profile-scoped visibil
 
 The persistent config stores the concrete `browser` selected by setup together with `browserExecutablePath`. Managed Chromium and Cloak resolve their catalog-pinned executable under the versioned `$TOKENLESS_HOME/browser/runtimes` tree.
 
-CDP is the only managed browser-control boundary and is not a user-selectable configuration mode. Tokenless detaches from the resident Chromium process when the daemon stops and a later daemon reconnects through Playwright `connectOverCDP`. A launch-signature change—such as visibility, runtime, or proxy—still closes and relaunches the browser because Chromium cannot apply those process-level settings in place.
+CDP is the only managed browser-control boundary and is not a user-selectable configuration mode. Tokenless API detaches from the resident Chromium process when the daemon stops and a later daemon reconnects through Playwright `connectOverCDP`. A request that conflicts with the active browser's visibility, runtime, or proxy fails without rebuilding that browser or interrupting other tasks.
 
-- `auto` starts headless and switches the same managed profile into headed mode only for a user-resolvable blocker, keeping the current execution in `waiting_for_user`.
+- `auto` reuses a resident browser or starts headless for managed mode; native mode remains headed. A blocker in a headless browser fails clearly instead of automatically restarting the profile as headed.
 - `terminal` errors do not trigger a visible window.
 - `headless` never opens a visible window; a user-resolvable blocker fails clearly in that mode.
 - `profiles open` is always headed. `doctor` is read-only. Chromium sandbox stays enabled in both modes.

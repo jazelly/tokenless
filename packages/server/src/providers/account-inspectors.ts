@@ -78,7 +78,7 @@ export async function inspectProviderAccountSession(
     }
     const loginVisible = await anyVisible(page, provider.loginIndicators)
     if (loginVisible) {
-      if (provider.id === 'gemini' && attempt < maximumAttempts) {
+      if (provider.descriptor.id === 'gemini' && attempt < maximumAttempts) {
         await page.waitForTimeout(100)
         continue
       }

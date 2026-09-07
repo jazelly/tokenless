@@ -10,6 +10,7 @@ import { PROVIDER_NAVIGATION_CATALOG } from './provider-navigation-catalog.js'
 import { tokenlessError } from '../browser/errors.js'
 import { persistGeminiImageAsset } from '../browser/image-assets.js'
 import { VISIBLE_ACTIONS } from './contracts.js'
+import { waitForVisibleLocator } from './dom-locators.js'
 import type { Page } from 'playwright-core'
 import type { ProviderExecutionContext } from './execution-context.js'
 import type { VisibleActionResult } from '../browser/actions.js'
@@ -32,9 +33,6 @@ export class GeminiProvider extends BaseProvider<'gemini'> {
       stage: 'supported',
       setupOrder: 2,
       subscriptionSupport: 'supported',
-      protocolCompatibility: Object.freeze({
-        legacyRequests: true,
-      }),
       navigation: PROVIDER_NAVIGATION_CATALOG.gemini,
       controls: Object.freeze({
         chatSurface: false,
@@ -121,6 +119,26 @@ export class GeminiProvider extends BaseProvider<'gemini'> {
       return await readGeminiImageResponse(page, context)
     }
     return super.readResponse(page, context)
+  }
+
+  protected override async prepareResponseCursor(
+    page: Page,
+  ): Promise<ProviderActionPreparation<typeof VISIBLE_ACTIONS.RESPONSE_READ>> {
+    if (isGeminiConversationPage(page.url())) {
+      const history = await waitForVisibleLocator(
+        page,
+        this.definition.answerSelectors,
+        this.definition.interactionTimings.promptControlTimeoutMs,
+      )
+      if (!history) {
+        throw tokenlessError(
+          'response_not_visible',
+          'No provider answer is visibly available to read.',
+          { retryable: true },
+        )
+      }
+    }
+    return await super.prepareResponseCursor(page)
   }
 
   override async prepareAction(page: Page, request: VisibleActionRequest): Promise<ProviderActionPreparation | null> {

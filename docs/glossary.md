@@ -14,11 +14,10 @@ Canonical terms for how Tokenless interacts with AI provider web surfaces. This 
 
 | Term | Definition | Do not use as a synonym |
 |---|---|---|
-| **Harness AI Engine** | A model used internally by Tokenless Harness sidecars for bounded auxiliary inference, such as title generation, task classification, provider routing, result summaries, and labels; it does not execute the Harness task or replace the Tokenless API route. | Harness Task Model, provider route, Tokenless API |
+| **Harness AI Engine** | A model used internally by the Tokenless Harness Front Door for bounded auxiliary inference, such as title generation, task classification, and provider routing; it does not execute the Harness task or replace the Tokenless API route. | Harness Task Model, provider route, Tokenless API |
 | **Harness Task Model** | The provider model that executes the Harness user's task through the Tokenless API and its selected provider route. | Harness AI Engine, sidecar model |
 | **AI Sidecar** | A Harness-owned auxiliary component that uses the Harness AI Engine outside the current in-process provider-execution loop. | Provider adapter, Harness task executor |
 | **Front Door** | The pre-run AI Sidecar that prepares conversation metadata and selects a concrete Tokenless API provider route before a Harness run starts. | Tokenless API router, Harness AI Engine |
-| **Exit Door** | The post-run AI Sidecar that summarizes and labels a terminal Harness result without changing that result. | Harness finalizer, Harness Task Model |
 
 ## Execution modes
 

@@ -1,4 +1,4 @@
-"""Harbor agent for the pinned DeepSeek Harness Terminal-Bench 2.0 lane."""
+"""Harbor agent for the pinned DeepSeek Harness Terminal-Bench 4.0 lane."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import secrets
 import shlex
 import subprocess
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, override
@@ -23,21 +24,24 @@ from harbor.agents.installed.base import (
     with_prompt_template,
 )
 from harbor.environments.base import BaseEnvironment
+from harbor.constants import PACKAGE_CACHE_DIR
 from harbor.models.agent.context import AgentContext
+from harbor.models.task.task import strip_canary
 
 
 DSH_REVISION = "47f943859bef60e4160492346772ded9b24f765a"
-DATASET = "terminal-bench/terminal-bench-2"
-DATASET_REF = "sha256:c6fc2e2382c1dbae99b2d5ecd2f4f4a60c3c01e0d84642d69b4afd92e99d078b"
-TASK_COUNT = 89
+DATASET = "terminal-bench/terminal-bench"
+DATASET_REF = "sha256:39d9f44b40420cde8fdcc087579c0d72a7e14fa3656d603c3f0d22fb35e27732"
+TASK_COUNT = 66
 TASK_MANIFEST_SCHEMA = "tokenless.terminalbench-task-manifest.v1"
 SEMANTIC_MANIFEST_SCHEMA = "tokenless.terminalbench-semantic-manifest.v1"
-INSTRUCTION_DIGEST = "sha256:ff25b9442ef81d016d49300aef76c33f1b289fcd544bb0308b25f85bf343fce9"
-TASK_REF_DIGEST = "sha256:82cddb9ea94d792455d3e32b3c8a60ed73003714ed01785ec3b1ec5c580bccba"
+INSTRUCTION_DIGEST = "sha256:f21c077ed1a0250613280843bedbc33bfd8bcee2907a60cfa68456f7384908b1"
+TASK_REF_DIGEST = "sha256:5ed4031d63f2690291b91c613eb46f0879f0218a9a87a398bd3ae7164037d078"
 CHANNEL_PROTOCOL = "tokenless.terminalbench-channel.v1"
 AUDIT_PROTOCOL = "tokenless.terminalbench-deep-audit.v4"
 PROXY_PORT = 18765
 MAX_BRIDGE_BODY_BYTES = 8 * 1024 * 1024
+FINAL_ONLY_AFTER_SECONDS = 600
 PROVIDER_ID_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 SEMANTIC_TASK_TYPE_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 SEMANTIC_COMPLEXITIES = {"low", "medium", "high"}
@@ -92,6 +96,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         token_estimator_node: str,
         token_estimator_script: str,
         tokenless_home: str,
+        provider: str = "auto",
     ) -> None:
         super().__init__(address, _ScopedBridgeHandler)
         parsed = urlsplit(daemon_url)
@@ -115,6 +120,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         self.control_token = control_token
         self.channel_token = channel_token
         self.expected_profile = profile
+        self.expected_provider = provider
         if PROVIDER_ID_PATTERN.fullmatch(semantic_preference) is None:
             raise ValueError("Terminal-Bench semantic preference is invalid.")
         self.semantic_preference = semantic_preference
@@ -125,8 +131,8 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         self._audit_events: list[dict[str, Any]] = []
         self._parent_completion_ordinal = 0
         self._provider_turn_route_refs: set[str] = set()
+        # The bridge handler holds this for every provider-state request and response.
         self.provider_control_lock = threading.Lock()
-        self._provider_state_lock = threading.Lock()
         self._provider_binding_ref: str | None = None
         self._provider_ref: str | None = None
         self._bootstrap_turn_ref: str | None = None
@@ -143,6 +149,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         self._child_turn_input_text: dict[str, str] = {}
         self._subagent_dispatch_lock = threading.Lock()
         self._subagent_dispatch_state = "available"
+        self._subagent_dispatch_completed_monotonic: float | None = None
 
     def claim_subagent_dispatch(self) -> bool:
         with self._subagent_dispatch_lock:
@@ -156,6 +163,18 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             if self._subagent_dispatch_state != "claimed":
                 raise RuntimeError("subagent dispatch claim is unavailable")
             self._subagent_dispatch_state = "dispatched" if succeeded else "available"
+            self._subagent_dispatch_completed_monotonic = (
+                time.monotonic() if succeeded else None
+            )
+
+    def final_only_parent_completion_due(self) -> bool:
+        with self._subagent_dispatch_lock:
+            completed_at = self._subagent_dispatch_completed_monotonic
+            return (
+                self._subagent_dispatch_state == "dispatched"
+                and completed_at is not None
+                and time.monotonic() - completed_at >= FINAL_ONLY_AFTER_SECONDS
+            )
 
     def record_event(self, value: dict[str, Any]) -> None:
         with self._audit_lock:
@@ -197,6 +216,16 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
                 raise RuntimeError("parent completion audit reference is invalid")
             event["forcedSubagent"] = True
 
+    def mark_parent_completion_final_only(self, sequence: int) -> None:
+        with self._audit_lock:
+            event = self._audit_events[sequence - 1]
+            if (
+                event.get("sequence") != sequence
+                or event.get("type") != "api.completion.request"
+            ):
+                raise RuntimeError("parent completion audit reference is invalid")
+            event["finalOnly"] = True
+
     def record_child_turn_started(self, mode: str) -> None:
         self.record_event({"type": "child.turn.started", "mode": mode})
 
@@ -205,8 +234,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             text = body.decode("utf-8")
         except UnicodeDecodeError as error:
             raise ValueError("provider text attachment is not UTF-8") from error
-        with self._provider_state_lock:
-            self._attachment_text[attachment_ref] = text
+        self._attachment_text[attachment_ref] = text
 
     def record_child_turn_input(
         self,
@@ -214,16 +242,15 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         prompt_text: str,
         attachment_refs: list[str],
     ) -> None:
-        with self._provider_state_lock:
-            attachments = []
-            for attachment_ref in attachment_refs:
-                text = self._attachment_text.pop(attachment_ref, None)
-                if text is None:
-                    raise ValueError("provider turn attachment text is unavailable")
-                attachments.append(text)
-            self._child_turn_input_text[turn_ref] = "\n\n".join(
-                [prompt_text, *attachments]
-            )
+        attachments = []
+        for attachment_ref in attachment_refs:
+            text = self._attachment_text.pop(attachment_ref, None)
+            if text is None:
+                raise ValueError("provider turn attachment text is unavailable")
+            attachments.append(text)
+        self._child_turn_input_text[turn_ref] = "\n\n".join(
+            [prompt_text, *attachments]
+        )
 
     def _token_estimate(
         self,
@@ -350,13 +377,12 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             value = self._json_object(body)
             if (
                 set(value) != {"provider", "profileId"}
-                or value.get("provider") != "auto"
+                or value.get("provider") != self.expected_provider
                 or value.get("profileId") != self.expected_profile
             ):
-                raise ValueError("provider binding is not the expected auto profile")
-            with self._provider_state_lock:
-                if self._provider_binding_ref is not None:
-                    raise ValueError("provider binding was already accepted")
+                raise ValueError("provider binding does not match the selected provider and profile")
+            if self._provider_binding_ref is not None:
+                raise ValueError("provider binding was already accepted")
             return {"kind": "bind"}
 
         request_cancel = PROVIDER_REQUEST_CANCEL_PATH.fullmatch(path)
@@ -367,15 +393,14 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             request_ref = unquote(request_cancel.group(1) or "")
             if not PROVIDER_REQUEST_REF_PATTERN.fullmatch(request_ref):
                 raise ValueError("provider request reference is invalid")
-            with self._provider_state_lock:
-                stage = self._provider_request_stages.get(request_ref)
-                if stage is None:
-                    raise ValueError("provider request reference is unknown")
-                if stage == "bootstrap" and self._continuation_turn_ref is not None:
-                    raise ValueError("provider request cancellation is out of sequence")
-                turn_ref = self._provider_request_turn_refs.get(request_ref)
-                if turn_ref is None or turn_ref != self._turn_ref_for_stage_locked(stage):
-                    raise ValueError("provider request cancellation is out of sequence")
+            stage = self._provider_request_stages.get(request_ref)
+            if stage is None:
+                raise ValueError("provider request reference is unknown")
+            if stage == "bootstrap" and self._continuation_turn_ref is not None:
+                raise ValueError("provider request cancellation is out of sequence")
+            turn_ref = self._provider_request_turn_refs.get(request_ref)
+            if turn_ref is None or turn_ref != self._turn_ref_for_stage(stage):
+                raise ValueError("provider request cancellation is out of sequence")
             return {
                 "kind": "request_cancel",
                 "requestRef": request_ref,
@@ -405,59 +430,58 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         action = binding_route.group(2)
         if not PROVIDER_BINDING_REF_PATTERN.fullmatch(binding_ref):
             raise ValueError("provider binding reference is invalid")
-        with self._provider_state_lock:
-            if self._provider_binding_ref is None or binding_ref != self._provider_binding_ref:
-                raise ValueError("provider binding reference is unknown")
-            provider_ref = self._provider_ref
-            if provider_ref is None:
-                raise ValueError("provider binding provider reference is unavailable")
+        if self._provider_binding_ref is None or binding_ref != self._provider_binding_ref:
+            raise ValueError("provider binding reference is unknown")
+        provider_ref = self._provider_ref
+        if provider_ref is None:
+            raise ValueError("provider binding provider reference is unavailable")
 
-            if action == "capabilities":
-                if method != "GET" or body not in {None, b""}:
-                    raise ValueError("provider capabilities request is invalid")
+        if action == "capabilities":
+            if method != "GET" or body not in {None, b""}:
+                raise ValueError("provider capabilities request is invalid")
+            if self._bootstrap_turn_ref is not None:
+                raise ValueError("provider capabilities request is out of sequence")
+            return {"kind": "capabilities", "bindingRef": binding_ref}
+
+        if action == "attachments":
+            if method != "POST" or body in {None, b""}:
+                raise ValueError("provider attachment request is invalid")
+            if self._bootstrap_turn_ref is None:
+                stage = "bootstrap"
+            elif self._bootstrap_succeeded and (
+                self._continuation_turn_ref is None
+                or self._continuation_succeeded
+            ):
+                stage = "continuation"
+            else:
+                raise ValueError("provider attachment is out of sequence")
+            return {"kind": "attachment", "bindingRef": binding_ref, "stage": stage}
+
+        if action == "turns":
+            if method != "POST":
+                raise ValueError("provider turn start method is invalid")
+            start = self._parse_start_request(body)
+            if start["providerRef"] != provider_ref or start["providerBindingRef"] != binding_ref:
+                raise ValueError("provider turn start identity does not match the binding")
+            request_ref = start["requestRef"]
+            if request_ref in self._provider_request_refs:
+                raise ValueError("provider turn request reference was already used")
+            mode = start["mode"]
+            if mode == "bootstrap":
                 if self._bootstrap_turn_ref is not None:
-                    raise ValueError("provider capabilities request is out of sequence")
-                return {"kind": "capabilities", "bindingRef": binding_ref}
-
-            if action == "attachments":
-                if method != "POST" or body in {None, b""}:
-                    raise ValueError("provider attachment request is invalid")
-                if self._bootstrap_turn_ref is None:
-                    stage = "bootstrap"
-                elif self._bootstrap_succeeded and (
-                    self._continuation_turn_ref is None
-                    or self._continuation_succeeded
-                ):
-                    stage = "continuation"
-                else:
-                    raise ValueError("provider attachment is out of sequence")
-                return {"kind": "attachment", "bindingRef": binding_ref, "stage": stage}
-
-            if action == "turns":
-                if method != "POST":
-                    raise ValueError("provider turn start method is invalid")
-                start = self._parse_start_request(body)
-                if start["providerRef"] != provider_ref or start["providerBindingRef"] != binding_ref:
-                    raise ValueError("provider turn start identity does not match the binding")
-                request_ref = start["requestRef"]
-                if request_ref in self._provider_request_refs:
-                    raise ValueError("provider turn request reference was already used")
-                mode = start["mode"]
-                if mode == "bootstrap":
-                    if self._bootstrap_turn_ref is not None:
-                        raise ValueError("provider bootstrap turn was already started")
-                    if start["semanticPreference"] not in {None, self.semantic_preference}:
-                        raise ValueError("provider bootstrap semantic preference does not match the task")
-                elif (
-                    not self._bootstrap_succeeded
-                    or (
-                        self._continuation_turn_ref is not None
-                        and not self._continuation_succeeded
-                    )
-                    or start["conversationRef"] != self._bootstrap_conversation_ref
-                ):
-                    raise ValueError("provider continuation turn is out of sequence")
-                return {"kind": "start", **start}
+                    raise ValueError("provider bootstrap turn was already started")
+                if start["semanticPreference"] not in {None, self.semantic_preference}:
+                    raise ValueError("provider bootstrap semantic preference does not match the task")
+            elif (
+                not self._bootstrap_succeeded
+                or (
+                    self._continuation_turn_ref is not None
+                    and not self._continuation_succeeded
+                )
+                or start["conversationRef"] != self._bootstrap_conversation_ref
+            ):
+                raise ValueError("provider continuation turn is out of sequence")
+            return {"kind": "start", **start}
 
         raise ValueError("provider turn action is invalid")
 
@@ -469,11 +493,10 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         kind = operation["kind"]
         if kind == "bind":
             binding_ref, provider_ref = self._parse_binding_response(body)
-            with self._provider_state_lock:
-                if self._provider_binding_ref is not None:
-                    raise ValueError("provider binding response was duplicated")
-                self._provider_binding_ref = binding_ref
-                self._provider_ref = provider_ref
+            if self._provider_binding_ref is not None:
+                raise ValueError("provider binding response was duplicated")
+            self._provider_binding_ref = binding_ref
+            self._provider_ref = provider_ref
             return
         if kind == "capabilities":
             self._parse_binding_response(body, expected_binding_ref=operation["bindingRef"], expected_provider_ref=self._provider_ref)
@@ -488,36 +511,35 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
                 expected_binding_ref=operation["providerBindingRef"],
                 expected_conversation_ref=operation.get("conversationRef"),
             )
-            with self._provider_state_lock:
-                if operation["requestRef"] in self._provider_request_refs:
-                    raise ValueError("provider turn request reference was duplicated")
-                turn_ref = turn["turnRef"]
-                if turn_ref in self._provider_turn_refs:
-                    raise ValueError("provider turn reference was duplicated")
-                mode = operation["mode"]
-                if mode == "bootstrap":
-                    if self._bootstrap_turn_ref is not None:
-                        raise ValueError("provider bootstrap response was duplicated")
-                    self._bootstrap_turn_ref = turn_ref
-                    self._bootstrap_conversation_ref = turn["conversationRef"]
-                else:
-                    if (
-                        not self._bootstrap_succeeded
-                        or (
-                            self._continuation_turn_ref is not None
-                            and not self._continuation_succeeded
-                        )
-                        or turn["conversationRef"] != self._bootstrap_conversation_ref
-                    ):
-                        raise ValueError("provider continuation response is out of sequence")
-                    self._continuation_turn_ref = turn_ref
-                    self._continuation_succeeded = False
-                self._provider_request_refs.add(operation["requestRef"])
-                self._provider_request_stages[operation["requestRef"]] = mode
-                self._provider_request_turn_refs[operation["requestRef"]] = turn_ref
-                self._provider_turn_refs[turn_ref] = mode
-                self._provider_turn_request_refs[turn_ref] = operation["requestRef"]
-                self._apply_turn_lifecycle_locked(mode, turn["lifecycle"])
+            if operation["requestRef"] in self._provider_request_refs:
+                raise ValueError("provider turn request reference was duplicated")
+            turn_ref = turn["turnRef"]
+            if turn_ref in self._provider_turn_refs:
+                raise ValueError("provider turn reference was duplicated")
+            mode = operation["mode"]
+            if mode == "bootstrap":
+                if self._bootstrap_turn_ref is not None:
+                    raise ValueError("provider bootstrap response was duplicated")
+                self._bootstrap_turn_ref = turn_ref
+                self._bootstrap_conversation_ref = turn["conversationRef"]
+            else:
+                if (
+                    not self._bootstrap_succeeded
+                    or (
+                        self._continuation_turn_ref is not None
+                        and not self._continuation_succeeded
+                    )
+                    or turn["conversationRef"] != self._bootstrap_conversation_ref
+                ):
+                    raise ValueError("provider continuation response is out of sequence")
+                self._continuation_turn_ref = turn_ref
+                self._continuation_succeeded = False
+            self._provider_request_refs.add(operation["requestRef"])
+            self._provider_request_stages[operation["requestRef"]] = mode
+            self._provider_request_turn_refs[operation["requestRef"]] = turn_ref
+            self._provider_turn_refs[turn_ref] = mode
+            self._provider_turn_request_refs[turn_ref] = operation["requestRef"]
+            self._apply_turn_lifecycle(mode, turn["lifecycle"])
             return {"turnRef": turn["turnRef"]}
         if kind in {"turn_read", "turn_cancel"}:
             stage = operation["stage"]
@@ -530,36 +552,33 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
                 expected_turn_ref=operation["turnRef"],
                 expected_conversation_ref=expected_conversation_ref,
             )
-            with self._provider_state_lock:
-                if self._provider_turn_refs.get(operation["turnRef"]) != stage:
-                    raise ValueError("provider turn response reference changed")
-                self._apply_turn_lifecycle_locked(stage, turn["lifecycle"])
+            if self._provider_turn_refs.get(operation["turnRef"]) != stage:
+                raise ValueError("provider turn response reference changed")
+            self._apply_turn_lifecycle(stage, turn["lifecycle"])
             return {"turnRef": turn["turnRef"]}
         if kind == "request_cancel":
             turn = self._parse_request_cancellation_response(body)
             if turn["turnRef"] != operation["turnRef"] or turn["conversationRef"] != self._conversation_ref_for_stage(operation["stage"]):
                 raise ValueError("provider request cancellation identity changed")
-            with self._provider_state_lock:
-                if self._provider_request_stages.get(operation["requestRef"]) != operation["stage"]:
-                    raise ValueError("provider request cancellation reference changed")
-                self._apply_turn_lifecycle_locked(operation["stage"], "cancelled")
+            if self._provider_request_stages.get(operation["requestRef"]) != operation["stage"]:
+                raise ValueError("provider request cancellation reference changed")
+            self._apply_turn_lifecycle(operation["stage"], "cancelled")
             return
         raise ValueError("provider turn operation is invalid")
 
     def _tracked_turn_operation(self, kind: str, turn_ref: str) -> dict[str, Any]:
         if not PROVIDER_TURN_REF_PATTERN.fullmatch(turn_ref):
             raise ValueError("provider turn reference is invalid")
-        with self._provider_state_lock:
-            stage = self._provider_turn_refs.get(turn_ref)
-            if stage is None:
-                raise ValueError("provider turn reference is unknown")
-            if kind == "turn_cancel" and stage == "bootstrap" and self._continuation_turn_ref is not None:
-                raise ValueError("provider turn cancellation is out of sequence")
-            if turn_ref != self._turn_ref_for_stage_locked(stage):
-                raise ValueError("provider turn operation is out of sequence")
-            request_ref = self._provider_turn_request_refs.get(turn_ref)
-            if request_ref is None:
-                raise ValueError("provider turn request reference is unavailable")
+        stage = self._provider_turn_refs.get(turn_ref)
+        if stage is None:
+            raise ValueError("provider turn reference is unknown")
+        if kind == "turn_cancel" and stage == "bootstrap" and self._continuation_turn_ref is not None:
+            raise ValueError("provider turn cancellation is out of sequence")
+        if turn_ref != self._turn_ref_for_stage(stage):
+            raise ValueError("provider turn operation is out of sequence")
+        request_ref = self._provider_turn_request_refs.get(turn_ref)
+        if request_ref is None:
+            raise ValueError("provider turn request reference is unavailable")
         return {
             "kind": kind,
             "stage": stage,
@@ -584,23 +603,31 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         if cls._json_object(body):
             raise ValueError("provider cancellation body must be empty")
 
-    def decorate_parent_completion_body(self, body: bytes | None) -> bytes:
+    def decorate_parent_completion_body(
+        self, body: bytes | None, audit_sequence: int | None = None
+    ) -> bytes:
         value = self._json_object(body)
-        if value.get("model") != "tokenless/auto":
-            raise ValueError("DSH parent completion must use tokenless/auto")
+        if value.get("model") != f"tokenless/{self.expected_provider}":
+            raise ValueError("DSH parent completion must use the selected Tokenless API model")
         tokenless = value.get("tokenless")
         if tokenless is None:
             tokenless = {}
         if not isinstance(tokenless, dict):
             raise ValueError("DSH parent tokenless options are invalid")
         tokenless = dict(tokenless)
-        tokenless["semantic_preference"] = self.semantic_preference
+        if self.expected_provider == "auto":
+            tokenless["semantic_preference"] = self.semantic_preference
         value["tokenless"] = tokenless
+        if self.final_only_parent_completion_due():
+            value["tool_choice"] = "none"
+            if audit_sequence is not None:
+                self.mark_parent_completion_final_only(audit_sequence)
         return json.dumps(value, separators=(",", ":")).encode("utf-8")
 
     def decorate_bootstrap_body(self, body: bytes | None) -> bytes:
         value = self._json_object(body)
-        value["semanticPreference"] = self.semantic_preference
+        if self.expected_provider == "auto":
+            value["semanticPreference"] = self.semantic_preference
         return json.dumps(value, separators=(",", ":")).encode("utf-8")
 
     @staticmethod
@@ -786,7 +813,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             "conversationRef": turn["conversationRef"],
         }
 
-    def _apply_turn_lifecycle_locked(self, stage: str, lifecycle: str) -> None:
+    def _apply_turn_lifecycle(self, stage: str, lifecycle: str) -> None:
         if lifecycle not in TURN_LIFECYCLES:
             raise ValueError("provider turn lifecycle is invalid")
         if lifecycle not in {"succeeded", "failed", "cancelled"}:
@@ -798,7 +825,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         else:
             raise ValueError("provider turn stage is invalid")
 
-    def _turn_ref_for_stage_locked(self, stage: str) -> str:
+    def _turn_ref_for_stage(self, stage: str) -> str:
         if stage == "bootstrap":
             turn_ref = self._bootstrap_turn_ref
         elif stage == "continuation":
@@ -810,8 +837,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         return turn_ref
 
     def _conversation_ref_for_stage(self, stage: str) -> str:
-        with self._provider_state_lock:
-            conversation_ref = self._bootstrap_conversation_ref
+        conversation_ref = self._bootstrap_conversation_ref
         if conversation_ref is None:
             raise ValueError("provider conversation reference is unavailable")
         return conversation_ref
@@ -990,14 +1016,11 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
                     )
                 )
                 or (
-                    any(
-                        key in attempt
-                        for key in {
-                            "visibleProof",
-                            "limitWindow",
-                            "retryAfterSeconds",
-                        }
-                    )
+                    "visibleProof" in attempt
+                    and attempt.get("reason") not in {"rate_limit", "capacity", "auth", "captcha", "unreachable"}
+                )
+                or (
+                    any(key in attempt for key in {"limitWindow", "retryAfterSeconds"})
                     and attempt.get("reason") not in {"rate_limit", "capacity", "captcha", "unreachable"}
                 )
                 or attempt.get("reason") == "captcha"
@@ -1092,8 +1115,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             )
             return
         turn_ref = unquote(path.rsplit("/", 1)[-1])
-        with self._provider_state_lock:
-            input_text = self._child_turn_input_text.pop(turn_ref, None)
+        input_text = self._child_turn_input_text.pop(turn_ref, None)
         if input_text is None:
             self.record_event(
                 {"type": "provider.routing.invalid", "reason": "child_token_input"}
@@ -1248,7 +1270,9 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
         if path in ALLOWED_COMPLETION_PATHS and self.command == "POST":
             parent_event_sequence, parent_ordinal = self.server.record_parent_completion_request()  # type: ignore[attr-defined]
             try:
-                body = self.server.decorate_parent_completion_body(body)  # type: ignore[attr-defined]
+                body = self.server.decorate_parent_completion_body(  # type: ignore[attr-defined]
+                    body, parent_event_sequence
+                )
                 request_value = json.loads(body)
                 tools = request_value.get("tools") if isinstance(request_value, dict) else None
                 has_subagent = isinstance(tools, list) and any(
@@ -1486,8 +1510,12 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
             self.semantic_manifest, self._manifest
         )
         if "provider" in kwargs:
-            raise ValueError("Terminal-Bench DeepSeek Harness agent does not accept a fixed provider; use tokenless/auto.")
+            raise ValueError("Select the provider through the Harbor model_name, not a provider kwarg.")
         super().__init__(*args, **kwargs)
+        model = self.model_name or "tokenless/auto"
+        if not model.startswith("tokenless/") or PROVIDER_ID_PATTERN.fullmatch(model[10:]) is None:
+            raise ValueError("Terminal-Bench model_name must be tokenless/auto or tokenless/<provider>.")
+        self.provider = model[10:]
 
         for label, file_path in (
             ("runtime_archive", self.runtime_archive),
@@ -1645,13 +1673,27 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
         return result, manifest_digest
 
     def _validate_instruction(self, instruction: str) -> dict[str, Any]:
-        digest = "sha256:" + hashlib.sha256(instruction.encode("utf-8")).hexdigest()
-        if digest not in self._manifest.values():
-            raise ValueError("The Harbor instruction is not one of the pinned Terminal-Bench 2.0 task instructions.")
+        task = json.loads((self.logs_dir.parent / "config.json").read_text())["task"]
+        name = task["name"].removeprefix("terminal-bench/")
+        task_refs = json.loads(self.task_manifest.read_text())["taskRefs"]
+        if (
+            name not in self._manifest
+            or task["name"] != f"terminal-bench/{name}"
+            or task.get("ref") != task_refs[name]
+        ):
+            raise ValueError("The Harbor task is not in the pinned Terminal-Bench 4.0 dataset.")
+        instruction_path = (
+            PACKAGE_CACHE_DIR / "terminal-bench" / name
+            / task_refs[name].removeprefix("sha256:") / "instruction.md"
+        )
+        raw_instruction = instruction_path.read_text(encoding="utf-8")
+        digest = "sha256:" + hashlib.sha256(raw_instruction.encode("utf-8")).hexdigest()
+        if digest != self._manifest[name] or instruction != strip_canary(raw_instruction):
+            raise ValueError("The Harbor instruction is not one of the pinned Terminal-Bench 4.0 task instructions.")
         semantic = self._semantic_manifest.get(digest)
         if semantic is None:
             raise ValueError("The Harbor instruction has no semantic preference in the pinned manifest.")
-        if semantic["truncated"] != (len(instruction) > 4_000):
+        if semantic["truncated"] != (len(raw_instruction) > 4_000):
             raise ValueError("The semantic manifest truncation observation does not match the official instruction.")
         return semantic
 
@@ -1721,7 +1763,7 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
         await self._upload_agent_owned_file(
             environment,
             self.task_manifest,
-            "/installed-agent/terminal-bench-2-manifest.json",
+            "/installed-agent/terminal-bench-4-manifest.json",
         )
         await self._upload_agent_owned_file(
             environment,
@@ -1743,7 +1785,7 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
                 }
             },
         }
-        model = "tokenless/auto"
+        model = f"tokenless/{self.provider}"
         patch = "\n".join(
             [
                 "- id: system-prompt",
@@ -1751,7 +1793,7 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
                 "    persona: >-",
                 "      You are a coding agent powered by the {{model}} model. Your working directory is {{cwd}}. Start each user task with exactly one read tool call to inspect the most relevant workspace file without changing it. Then call subagent exactly once with a self-contained request to inspect the current workspace with its tools and return concrete task-relevant analysis. Wait for that result and use it only as input. Then use your own tools to complete the requested workspace changes and verify the observable result. Batch independent permitted changes into one edit or terminal command and verify them together. When a task has a finite set of allowed changes and a local verifier, use one terminal script to search the allowed candidates, run the verifier, and keep a passing workspace state; do not alternate one candidate edit and one verifier call across model turns. Before the first candidate, the script itself must set one monotonic deadline and one total verifier counter. It must increment that counter for every verifier execution, including any final verification, stop cleanly at the deadline or at 64 total executions, track the best candidate using a numeric verifier-derived result, and preserve that best candidate. Never enumerate a power set, never use a loop whose upper bound is the full candidate count, and never launch a second search. If the bounded search does not pass, perform one final verification only when that same counter and deadline still permit it, then continue with the preserved best candidate. Keep any temporary search machinery outside protected workspace files and apply only task-permitted workspace changes. Never stop at analysis, instructions for the user, or a claim of success without executing the task. Do not delegate more than once.",
                 "      For a Git recovery task, use .git/HEAD for the required first read instead of guessing a project manifest. If the subagent fails or its evidence is incomplete, continue with your own tools. A clean working tree, branch list, or stash list does not prove lost Git work is absent: inspect reflogs and candidate commits before concluding. Once a candidate commit is identified, your next response must be a tool call to bash, not a final response: use bash to merge or cherry-pick it into master and verify the resulting files and Git state. If the cherry-pick conflicts, the recovered candidate is the --theirs side and current master is --ours. The next response must call bash to run git checkout --theirs for every unmerged path, stage those paths, run GIT_EDITOR=true git cherry-pick --continue rather than git commit, and verify git status --short is empty. Never use --ours for a lost-change recovery conflict. Reading a conflicted file does not resolve it, and a final response before bash has completed these steps is invalid.",
-                "      When task mutations are constrained by a machine-readable allowlist or mapping, first copy and preserve the original, parse that allowlist, construct every candidate exclusively from its permitted transformations, validate the entire candidate against the original and allowlist before any metric or verifier, and never use model-inferred equivalents. Use only validated task-permitted candidates as the best and final candidate.",
+                "      When task mutations are constrained by a machine-readable allowlist or mapping, first copy and preserve the original, parse that allowlist, construct every candidate exclusively from its permitted transformations, validate the entire candidate against the original and allowlist before any metric or verifier, and never use model-inferred equivalents. If every allowlist or mapping entry is a single whitespace token, validation must also preserve the original whitespace-token count and compare positions: unchanged tokens must be exactly identical, and each changed token must belong to the parsed family of the original token. Reject any violation before the metric or verifier and never retain that candidate as the best or final candidate. Use only validated task-permitted candidates as the best and final candidate.",
                 "      The final verification must run the complete task-provided verifier or test suite within the same deadline and counter, not merely a proxy metric. If it exposes a constraint violation, restore or correct from a validated candidate within the remaining budget; never launch a second search.",
                 "- id: bash-sandbox",
                 "  config:",
@@ -1785,7 +1827,7 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
                 "        nodeExecutable: node",
                 "        cliScript: /installed-agent/runtime/node_modules/tokenless/dist/src/tokenless.mjs",
                 "        tokenlessHome: /tmp/tokenless-harness-home",
-                "        provider: auto",
+                f"        provider: {self.provider}",
                 f"        profile: {json.dumps(self.profile)}",
                 "        timeoutMs: 600000",
                 "        disposeGraceMs: 3000",
@@ -1840,6 +1882,7 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
             str(self.token_estimator_node),
             str(self.token_estimator_script),
             self.tokenless_home,
+            self.provider,
         )
         bridge_thread = threading.Thread(
             target=bridge.serve_forever,
@@ -1980,8 +2023,8 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
             "protocol": CHANNEL_PROTOCOL,
             "auditProtocol": AUDIT_PROTOCOL,
             "dshRevision": DSH_REVISION,
-            "model": "tokenless/auto",
-            "routingMode": "auto",
+            "model": f"tokenless/{self.provider}",
+            "routingMode": "auto" if self.provider == "auto" else "fixed",
             "semanticManifestDigest": self.semantic_manifest_digest,
             "semanticPreference": getattr(self, "current_semantic_preference", None),
             "taskScopedBridge": True,

@@ -1,20 +1,13 @@
 <script lang="ts">
+  import TokenUnit from '../components/TokenUnit.svelte'
   import { onMount, tick, untrack } from 'svelte'
   import {
-    Calculator,
+    CircleHelp,
     Clipboard,
-    Code2,
-    Database,
-    Globe2,
-    Moon,
     PauseCircle,
     Plus,
     RefreshCw,
-    Router,
     Save,
-    Server,
-    ShieldCheck,
-    SlidersHorizontal,
     Trash2,
   } from '@lucide/svelte'
   import PageHeader from '../components/PageHeader.svelte'
@@ -79,7 +72,7 @@
     browserExecutablePath: '',
     daemonUrl: untrack(() => snapshot.config.daemonUrl ?? ''),
     defaultProfile: initialDefaultProfile,
-    apiProxy: { enabled: false, conversationMode: 'new-conversation', executionMode: 'direct' },
+    apiProxy: { enabled: false, executionMode: 'direct' },
     g4f: untrack(() => ({ ...snapshot.config.g4f })),
     directProvider: untrack(() => ({
       defaultBackend: snapshot.config.directProvider.defaultBackend,
@@ -353,95 +346,100 @@
   }
 </script>
 
+{#snippet helpTooltip(message: string)}
+  <button class="icon-button subtle help-trigger hover-tooltip" type="button" aria-label={message}>
+    <CircleHelp size={14} aria-hidden="true" />
+    <span class="hover-tooltip-content" role="tooltip" aria-hidden="true">{message}</span>
+  </button>
+{/snippet}
+
 <section class="page" data-testid="system-view">
   <PageHeader title={t('system')} description={t('systemLede')}>
     {#snippet actions()}
-      <button class="button secondary icon-label" type="button" onclick={copyDiagnostics}><Clipboard size={15} />{t('copyDiagnostics')}</button>
+      <button class="icon-button subtle" type="button" aria-label={t('copyDiagnostics')} title={t('copyDiagnostics')} onclick={copyDiagnostics}><Clipboard size={15} aria-hidden="true" /></button>
     {/snippet}
   </PageHeader>
 
   <form class="system-grid" onsubmit={saveGlobal} data-testid="config-form">
     <section class="settings-section system-card">
-      <div class="settings-section-title"><div><h2>{t('appearance')}</h2><p>{t('appearanceHelp')}</p></div><Moon size={17} /></div>
-      <div class="form-stack"><label class="field"><span>{t('language')}</span><select name="language" bind:value={global.language} data-testid="config-language"><option value="en">English</option><option value="zh-CN">简体中文</option></select><small>{t('languageHelp')}</small></label></div>
+      <div class="settings-section-title"><div><h2>{t('appearance')}</h2></div>{@render helpTooltip(t('appearanceHelp'))}</div>
+      <div class="form-stack"><div class="field"><div class="field-label-row"><label for="config-language">{t('language')}</label>{@render helpTooltip(t('languageHelp'))}</div><select id="config-language" name="language" bind:value={global.language} data-testid="config-language"><option value="en">English</option><option value="zh-CN">简体中文</option></select></div></div>
     </section>
 
     <section class="settings-section system-card">
-      <div class="settings-section-title"><div><h2>{t('runtime')}</h2><p>{t('runtimeConfigHelp')}</p></div><ShieldCheck size={17} /></div>
+      <div class="settings-section-title"><div><h2>{t('runtime')}</h2></div>{@render helpTooltip(`${t('runtimeConfigHelp')} ${t('nativeChromeConnectionHelp')}`)}</div>
       <div class="form-stack">
-        <label class="field"><span>{t('profileBrowser')}</span><select name="browser" bind:value={global.browser} data-testid="config-browser"><option value="chrome">{t('googleChrome')}</option><option value="brave">{t('braveBrowser')}</option></select></label>
-        <label class="field"><span>{t('browserExecutablePath')} <small>{t('optional')}</small></span><input name="browserExecutablePath" bind:value={global.browserExecutablePath} placeholder={t('browserExecutablePathPlaceholder')} autocomplete="off" spellcheck="false" data-testid="config-browser-executable-path" /><small>{snapshot.config.browserExecutablePathConfigured ? t('browserExecutablePathConfigured') : t('browserExecutablePathHelp')}</small></label>
-        <div class="field read-only-field"><span>{t('defaultVisibility')}</span><strong data-testid="config-browser-visibility">headed</strong><small>{t('readOnly')}</small></div>
-        <p class="form-note">{global.browser}://inspect/#remote-debugging · {t('nativeChromeConnectionHelp')}</p>
+        <div class="field"><div class="field-label-row"><label for="config-browser">{t('profileBrowser')}</label></div><select id="config-browser" name="browser" bind:value={global.browser} data-testid="config-browser"><option value="chrome">{t('googleChrome')}</option><option value="brave">{t('braveBrowser')}</option></select></div>
+        <div class="field"><div class="field-label-row"><label for="config-browser-executable-path">{t('browserExecutablePath')} <small>{t('optional')}</small></label>{@render helpTooltip(snapshot.config.browserExecutablePathConfigured ? t('browserExecutablePathConfigured') : t('browserExecutablePathHelp'))}</div><input id="config-browser-executable-path" name="browserExecutablePath" bind:value={global.browserExecutablePath} placeholder={t('browserExecutablePathPlaceholder')} autocomplete="off" spellcheck="false" data-testid="config-browser-executable-path" /></div>
+        <div class="field read-only-field"><div class="field-label-row"><span>{t('defaultVisibility')}</span>{@render helpTooltip(t('readOnly'))}</div><strong data-testid="config-browser-visibility">headed</strong></div>
       </div>
     </section>
 
     <section class="settings-section system-card">
-      <div class="settings-section-title"><div><h2>{t('configurationMetadata')}</h2><p>{t('configurationMetadataHelp')}</p></div><Database size={17} /></div>
+      <div class="settings-section-title"><div><h2>{t('configurationMetadata')}</h2></div>{@render helpTooltip(t('configurationMetadataHelp'))}</div>
       <div class="settings-list config-metadata-list">
         <div class="settings-row"><span>{t('protocol')}</span><strong data-testid="config-protocol">{configDocument?.protocol ?? 'tokenless.config.v1'}</strong></div>
         <div class="settings-row"><span>{t('updatedAt')}</span><strong data-testid="config-updated-at">{configDocument?.updatedAt ?? snapshot.config.updatedAt ?? t('notAvailable')}</strong></div>
         <div class="settings-row"><span>{t('defaultProfile')}</span><strong data-testid="config-default-profile">{global.defaultProfile || t('none')}</strong></div>
         <div class="settings-row"><span>{t('configPath')}</span><strong class="mono-label" data-testid="config-path">{configDocument?.configPath ?? t('loading')}</strong></div>
       </div>
-      <label class="field config-default-profile"><span>{t('defaultProfile')}</span><select bind:value={global.defaultProfile} data-testid="config-default-profile-control"><option value="">{t('none')}</option>{#each snapshot.profiles as profile (profile.slug)}<option value={profile.slug}>{profile.slug}</option>{/each}</select></label>
+      <div class="field config-default-profile"><div class="field-label-row"><label for="config-default-profile-control">{t('defaultProfile')}</label></div><select id="config-default-profile-control" bind:value={global.defaultProfile} data-testid="config-default-profile-control"><option value="">{t('none')}</option>{#each snapshot.profiles as profile (profile.slug)}<option value={profile.slug}>{profile.slug}</option>{/each}</select></div>
     </section>
 
     <section class="settings-section system-card">
-      <div class="settings-section-title"><div><h2>{t('connection')}</h2><p>{t('connectionHelp')}</p></div><Server size={17} /></div>
+      <div class="settings-section-title"><div><h2>{t('connection')}</h2></div>{@render helpTooltip(t('connectionHelp'))}</div>
       <div class="form-stack">
-        <label class="field"><span>{t('daemonUrl')}</span><input bind:value={global.daemonUrl} placeholder="http://127.0.0.1:8787" autocomplete="off" spellcheck="false" data-testid="config-daemon-url" /><small>{t('daemonUrlHelp')}</small></label>
-        <div class="switch-field"><span><strong>{t('apiProxy')}</strong><small>{t('apiProxyHelp')}</small></span><label class="switch"><input type="checkbox" bind:checked={global.apiProxy.enabled} data-testid="config-api-proxy-enabled" /><span></span></label></div>
-        <label class="field"><span>{t('conversationMode')}</span><select bind:value={global.apiProxy.conversationMode} data-testid="config-api-proxy-conversation-mode"><option value="new-conversation">new-conversation</option><option value="continue-conversation">continue-conversation</option></select></label>
-        <label class="field"><span>{t('executionMode')}</span><select bind:value={global.apiProxy.executionMode} data-testid="config-api-proxy-execution-mode"><option value="direct">direct</option><option value="browser">browser</option></select></label>
+        <div class="field"><div class="field-label-row"><label for="config-daemon-url">{t('daemonUrl')}</label>{@render helpTooltip(t('daemonUrlHelp'))}</div><input id="config-daemon-url" bind:value={global.daemonUrl} placeholder="http://127.0.0.1:8787" autocomplete="off" spellcheck="false" data-testid="config-daemon-url" /></div>
+        <div class="switch-field"><span><span class="switch-heading"><strong>{t('apiProxy')}</strong>{@render helpTooltip(t('apiProxyHelp'))}</span></span><label class="switch"><input type="checkbox" bind:checked={global.apiProxy.enabled} data-testid="config-api-proxy-enabled" /><span></span></label></div>
+        <div class="field"><div class="field-label-row"><label for="config-api-proxy-execution-mode">{t('executionMode')}</label></div><select id="config-api-proxy-execution-mode" bind:value={global.apiProxy.executionMode} data-testid="config-api-proxy-execution-mode"><option value="direct">direct</option><option value="browser">browser</option></select></div>
       </div>
     </section>
 
     <section class="settings-section system-card">
-      <div class="settings-section-title"><div><h2>{t('advanced')}</h2><p>{t('advancedConfigHelp')}</p></div><SlidersHorizontal size={17} /></div>
+      <div class="settings-section-title"><div><h2>{t('advanced')}</h2></div>{@render helpTooltip(t('advancedConfigHelp'))}</div>
       <div class="form-stack">
-        <div class="switch-field"><span><strong>{t('g4f')}</strong><small>{t('g4fHelp')}</small></span><label class="switch"><input type="checkbox" bind:checked={global.g4f.enabled} data-testid="config-g4f-enabled" /><span></span></label></div>
-        <label class="field"><span>{t('defaultBackend')}</span><select bind:value={global.directProvider.defaultBackend} data-testid="config-direct-default-backend"><option value="native">native</option><option value="g4f">g4f</option></select></label>
-        <div class="field"><span>{t('providerBackends')}</span><small>{t('providerBackendsHelp')}</small></div>
+        <div class="switch-field"><span><span class="switch-heading"><strong>{t('g4f')}</strong>{@render helpTooltip(t('g4fHelp'))}</span></span><label class="switch"><input type="checkbox" bind:checked={global.g4f.enabled} data-testid="config-g4f-enabled" /><span></span></label></div>
+        <div class="field"><div class="field-label-row"><label for="config-direct-default-backend">{t('defaultBackend')}</label></div><select id="config-direct-default-backend" bind:value={global.directProvider.defaultBackend} data-testid="config-direct-default-backend"><option value="native">native</option><option value="g4f">g4f</option></select></div>
+        <div class="field"><div class="field-label-row"><span>{t('providerBackends')}</span>{@render helpTooltip(t('providerBackendsHelp'))}</div></div>
         <div class="config-entry-list" data-testid="config-provider-backends">
           {#each Object.entries(global.directProvider.providerBackends) as [providerId, backend] (providerId)}
-            <div class="config-entry-row"><strong>{providerId}</strong><select value={backend} onchange={(event) => global.directProvider.providerBackends[providerId] = (event.currentTarget as HTMLSelectElement).value as 'native' | 'g4f'}><option value="native">native</option><option value="g4f">g4f</option></select><button class="icon-button" type="button" aria-label={t('remove')} onclick={() => removeDirectProvider(providerId)}><Trash2 size={14} /></button></div>
+            <div class="config-entry-row"><strong>{providerId}</strong><select value={backend} onchange={(event) => global.directProvider.providerBackends[providerId] = (event.currentTarget as HTMLSelectElement).value as 'native' | 'g4f'}><option value="native">native</option><option value="g4f">g4f</option></select><button class="icon-button" type="button" aria-label={t('remove')} title={t('remove')} onclick={() => removeDirectProvider(providerId)}><Trash2 size={14} aria-hidden="true" /></button></div>
           {/each}
-          <div class="config-entry-add"><input bind:value={directProviderId} placeholder="provider-id" data-testid="config-provider-backend-id" /><button class="button secondary icon-label" type="button" onclick={addDirectProvider}><Plus size={14} />{t('add')}</button></div>
+          <div class="config-entry-add"><input bind:value={directProviderId} placeholder="provider-id" data-testid="config-provider-backend-id" /><button class="icon-button subtle" type="button" aria-label={t('add')} title={t('add')} onclick={addDirectProvider}><Plus size={15} aria-hidden="true" /></button></div>
         </div>
       </div>
     </section>
 
     <section class="settings-section system-card system-card-wide">
-      <div class="settings-section-title"><div><h2>{t('semanticRouting')}</h2><p>{t('routingLede')}</p></div><Router size={17} /></div>
+      <div class="settings-section-title"><div><h2>{t('semanticRouting')}</h2></div>{@render helpTooltip(t('routingLede'))}</div>
       <div class="form-stack">
-        <div class="switch-field"><span><strong>{t('experimentalRouter')}</strong><small>{t('routerEnableHelp')}</small></span><label class="switch"><input type="checkbox" bind:checked={global.router.enabled} data-testid="config-router-enabled" /><span></span></label></div>
-        <label class="field"><span>{t('routerEngine')}</span><select bind:value={global.router.engine} data-testid="config-router-engine"><option value="chrome-prompt-api">chrome-prompt-api</option></select></label>
-        <div class="field"><span>{t('routerProviders')}</span><small>{t('routerProvidersHelp')}</small></div>
+        <div class="switch-field"><span><span class="switch-heading"><strong>{t('experimentalRouter')}</strong>{@render helpTooltip(t('routerEnableHelp'))}</span></span><label class="switch"><input type="checkbox" bind:checked={global.router.enabled} data-testid="config-router-enabled" /><span></span></label></div>
+        <div class="field"><div class="field-label-row"><label for="config-router-engine">{t('routerEngine')}</label></div><select id="config-router-engine" bind:value={global.router.engine} data-testid="config-router-engine"><option value="chrome-prompt-api">{t('chromePromptApiEngine')}</option><option value="spark-x2.5-4b-mlx">{t('sparkX25MlxEngine')}</option></select></div>
+        <div class="field"><div class="field-label-row"><span>{t('routerProviders')}</span>{@render helpTooltip(t('routerProvidersHelp'))}</div></div>
         <div class="config-entry-list" data-testid="config-router-providers">
           {#each global.router.providers as provider, index (provider.id)}
-            <div class="config-router-row"><input value={provider.id} readonly aria-label={`${t('provider')} ${index + 1}`} /><input bind:value={provider.suitableTasks} placeholder={t('providerSuitableTasksPlaceholder')} /><button class="icon-button" type="button" aria-label={t('remove')} onclick={() => removeRouterProvider(index)}><Trash2 size={14} /></button></div>
+            <div class="config-router-row"><input value={provider.id} readonly aria-label={`${t('provider')} ${index + 1}`} /><input bind:value={provider.suitableTasks} placeholder={t('providerSuitableTasksPlaceholder')} /><button class="icon-button" type="button" aria-label={t('remove')} title={t('remove')} onclick={() => removeRouterProvider(index)}><Trash2 size={14} aria-hidden="true" /></button></div>
           {/each}
-          <div class="config-entry-add"><input bind:value={routerProviderId} placeholder="provider-id" data-testid="config-router-provider-id" /><button class="button secondary icon-label" type="button" onclick={addRouterProvider}><Plus size={14} />{t('add')}</button></div>
+          <div class="config-entry-add"><input bind:value={routerProviderId} placeholder="provider-id" data-testid="config-router-provider-id" /><button class="icon-button subtle" type="button" aria-label={t('add')} title={t('add')} onclick={addRouterProvider}><Plus size={15} aria-hidden="true" /></button></div>
         </div>
       </div>
     </section>
 
-    <div class="system-actions"><button class="button secondary icon-label" type="button" disabled={busy} onclick={quiesceRuntime}><PauseCircle size={15} />{t('quiesce')}</button><button class="button primary" type="submit" disabled={busy} data-testid="config-save"><Save size={15} />{#if busy}<span class="spinner mini"></span>{/if}{t('save')}</button></div>
+    <div class="system-actions"><button class="icon-button subtle" type="button" disabled={busy} aria-label={t('quiesce')} title={t('quiesce')} onclick={quiesceRuntime}><PauseCircle size={16} aria-hidden="true" /></button><button class="button primary" type="submit" disabled={busy} data-testid="config-save"><Save size={15} aria-hidden="true" />{#if busy}<span class="spinner mini"></span>{/if}{t('save')}</button></div>
     {#if formError}<div bind:this={errorElement} class="inline-feedback error system-form-error" role="alert" tabindex="-1" data-testid="config-error"><span>{formError}</span></div>{/if}
   </form>
 
   <section class="settings-section system-card system-card-wide profiles-config-card" data-testid="profiles-config-card">
-    <div class="settings-section-title"><div><h2>{t('profileConfiguration')}</h2><p>{t('profileConfigurationHelp')}</p></div><Globe2 size={17} /></div>
+    <div class="settings-section-title"><div><h2>{t('profileConfiguration')}</h2></div>{@render helpTooltip(t('profileConfigurationHelp'))}</div>
     {#each Object.values(profileDrafts) as draft (draft.slug)}
       <section class="profile-config-block" data-testid={`profile-config-${draft.slug}`}>
         <header><div><h3>{draft.slug}</h3><small>{draft.roleLabel || t('none')}</small></div><button class="button secondary icon-label" type="button" disabled={busy} onclick={() => saveProfile(draft)}><Save size={14} />{t('save')}</button></header>
         <div class="profile-config-grid">
-          <label class="field"><span>{t('role')}</span><input bind:value={draft.roleLabel} data-testid={`profile-role-${draft.slug}`} /></label>
+          <div class="field"><div class="field-label-row"><label for={`profile-role-${draft.slug}`}>{t('role')}</label></div><input id={`profile-role-${draft.slug}`} bind:value={draft.roleLabel} data-testid={`profile-role-${draft.slug}`} /></div>
           <div class="field"><span>{t('enabledProviders')}</span><div class="config-check-grid">{#each snapshot.providers as provider (provider.id)}<label><input type="checkbox" checked={profileProviderEnabled(draft, provider.id)} onchange={(event) => toggleProvider(draft, provider.id, event)} />{provider.label}</label>{/each}</div></div>
           <div class="field"><span>{t('executionMode')}</span><div class="config-mode-list">{#each snapshot.providers as provider (provider.id)}<div><strong>{provider.id}</strong>{#each provider.executionModes as mode (mode)}<label><input type="checkbox" checked={profileModeEnabled(draft, provider.id, mode)} onchange={(event) => toggleProviderMode(draft, provider.id, mode, event)} />{mode}</label>{/each}</div>{/each}</div></div>
-          <div class="field"><span>{t('proxySettings')}</span><div class="switch-field compact"><span>{t('enabled')}</span><label class="switch"><input type="checkbox" bind:checked={draft.proxyEnabled} data-testid={`profile-proxy-enabled-${draft.slug}`} /><span></span></label></div>{#if draft.proxyEnabled}<input bind:value={draft.proxyServer} placeholder="http://127.0.0.1:8080" data-testid={`profile-proxy-server-${draft.slug}`} /><input bind:value={draft.proxyBypass} placeholder={t('proxyBypass')} data-testid={`profile-proxy-bypass-${draft.slug}`} />{/if}<small>{t('proxyRestartNote')}</small></div>
-          <div class="field read-only-field"><span>{t('browserVisibility')}</span><strong>headed</strong><small>{t('readOnly')}</small></div>
+          <div class="field"><div class="field-label-row"><span>{t('proxySettings')}</span>{@render helpTooltip(t('proxyRestartNote'))}</div><div class="switch-field compact"><span>{t('enabled')}</span><label class="switch"><input type="checkbox" bind:checked={draft.proxyEnabled} data-testid={`profile-proxy-enabled-${draft.slug}`} /><span></span></label></div>{#if draft.proxyEnabled}<input bind:value={draft.proxyServer} placeholder="http://127.0.0.1:8080" data-testid={`profile-proxy-server-${draft.slug}`} /><input bind:value={draft.proxyBypass} placeholder={t('proxyBypass')} data-testid={`profile-proxy-bypass-${draft.slug}`} />{/if}</div>
+          <div class="field read-only-field"><div class="field-label-row"><span>{t('browserVisibility')}</span>{@render helpTooltip(t('readOnly'))}</div><strong>headed</strong></div>
           <div class="field read-only-field"><span>{t('runtimeBinding')}</span><strong>{draft.runtimeBinding?.runtimeId ?? t('notConfigured')}</strong><small>{draft.runtimeBinding?.browserId ?? t('notAvailable')}</small></div>
         </div>
       </section>
@@ -449,16 +447,15 @@
   </section>
 
   <section class="settings-section system-card output-savings-card" data-testid="output-savings-card">
-    <div class="settings-section-title"><div><h2>{t('outputSavings')}</h2><p>{t('outputSavingsLede')}</p></div><Calculator size={17} /></div>
-    <p class="output-savings-lede"><strong>{t(snapshot.outputSavings.enabled ? 'savingsEnabled' : 'savingsDisabled')}</strong> {t('outputSavingsLede')}</p>
-    <div class="output-savings-metrics"><div><small>{t('estimatedTokensSaved')}</small><strong>{formatNumber(snapshot.outputSavings.summary.estimatedOutputTokens, language)}</strong></div><div><small>{t('measuredResponses')}</small><strong>{formatNumber(snapshot.outputSavings.summary.responseCount, language)}</strong></div><div><small>{t('tokenizerRuntime')}</small><strong>{snapshot.outputSavings.runtime.installed ? stateLabel(language, snapshot.outputSavings.runtime.state) : t('tokenizerNotInstalled')}</strong></div><div><small>{snapshot.outputSavings.runtime.installed ? t('runtimeSize') : t('downloadRequired')}</small><strong>{formatMegabytes(snapshot.outputSavings.runtime.installed ? snapshot.outputSavings.runtime.installedBytes : snapshot.outputSavings.runtime.downloadBytes)}</strong></div></div>
-    <p class="output-savings-help">{t('lazyTokenizerDownload')}</p>
+    <div class="settings-section-title"><div><h2>{t('outputSavings')}</h2></div>{@render helpTooltip(`${t('outputSavingsLede')} ${t('lazyTokenizerDownload')}`)}</div>
+    <p class="output-savings-lede"><strong>{t(snapshot.outputSavings.enabled ? 'savingsEnabled' : 'savingsDisabled')}</strong></p>
+    <div class="output-savings-metrics"><div><small>{t('estimatedTokensSaved')}</small><strong class="token-quantity">{formatNumber(snapshot.outputSavings.summary.estimatedOutputTokens, language)}<TokenUnit {language} /></strong></div><div><small>{t('measuredResponses')}</small><strong>{formatNumber(snapshot.outputSavings.summary.responseCount, language)}</strong></div><div><small>{t('tokenizerRuntime')}</small><strong>{snapshot.outputSavings.runtime.installed ? stateLabel(language, snapshot.outputSavings.runtime.state) : t('tokenizerNotInstalled')}</strong></div><div><small>{snapshot.outputSavings.runtime.installed ? t('runtimeSize') : t('downloadRequired')}</small><strong>{formatMegabytes(snapshot.outputSavings.runtime.installed ? snapshot.outputSavings.runtime.installedBytes : snapshot.outputSavings.runtime.downloadBytes)}</strong></div></div>
     <div class="output-savings-actions">{#if snapshot.outputSavings.enabled}{#if snapshot.outputSavings.runtime.state !== 'ready'}<button class="button primary" type="button" disabled={busy} onclick={enableOutputSavings} data-testid="output-savings-install">{t('prepareTokenizerNow')}</button>{/if}<button class="button secondary" type="button" disabled={busy} onclick={disableOutputSavings} data-testid="output-savings-disable">{t('disableOutputSavings')}</button>{:else}<button class="button primary" type="button" disabled={busy} onclick={enableOutputSavings} data-testid="output-savings-enable">{t('enableOutputSavings')}</button>{/if}<button class="button secondary" type="button" disabled={busy || snapshot.outputSavings.summary.responseCount === 0} onclick={clearOutputSavings}>{t('clearSavingsHistory')}</button>{#if snapshot.outputSavings.runtime.installed}<button class="button danger" type="button" disabled={busy} onclick={uninstallOutputSavings}>{t('uninstallTokenizer')}</button>{/if}</div>
   </section>
 
   <section class="settings-section system-card json-config-card" data-testid="config-json-card">
-    <div class="settings-section-title"><div><h2>{t('jsonView')}</h2><p>{t('jsonViewHelp')}</p></div><Code2 size={17} /></div>
-    <div class="json-view-actions"><button class="button secondary" type="button" onclick={toggleJsonView} data-testid="config-json-toggle">{showJson ? t('structuredView') : t('showJson')}</button><button class="button secondary icon-label" type="button" disabled={documentLoading} onclick={refreshConfigDocument} data-testid="config-json-refresh"><RefreshCw size={14} />{t('refresh')}</button></div>
+    <div class="settings-section-title"><div><h2>{t('jsonView')}</h2></div>{@render helpTooltip(t('jsonViewHelp'))}</div>
+    <div class="json-view-actions"><button class="button secondary" type="button" onclick={toggleJsonView} data-testid="config-json-toggle">{showJson ? t('structuredView') : t('showJson')}</button><button class="icon-button subtle" type="button" aria-label={t('refresh')} title={t('refresh')} disabled={documentLoading} onclick={refreshConfigDocument} data-testid="config-json-refresh"><RefreshCw size={15} aria-hidden="true" /></button></div>
     {#if showJson}{#if documentError}<div class="inline-feedback error" role="alert">{documentError}</div>{:else if documentLoading && !configDocument}<p class="form-note">{t('loading')}</p>{:else}<pre class="config-json" data-testid="config-json-view">{JSON.stringify(configDocument, null, 2)}</pre>{/if}{/if}
   </section>
 

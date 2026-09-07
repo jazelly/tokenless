@@ -1,0 +1,7 @@
+{
+  "schema": "tokenless.tau3-revision.v1",
+  "benchmark": "tau3-bench",
+  "benchmarkRepository": "https://github.com/sierra-research/tau2-bench.git",
+  "benchmarkRelease": "v1.0.1",
+  "benchmarkCommit": "fc0055dc4e0a316c3f83133267fbd6faaa770992"
+}
