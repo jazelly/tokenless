@@ -1,142 +1,70 @@
 ---
 name: tokenless-install
-description: Install, upgrade, repair, and verify Tokenless API CLI, agent skills, browser/runtime dependencies, and the optional macOS menu app. Use for requested installation, upgrades, setup, browser sign-in handoff, or installation health checks.
+description: Install, set up, upgrade, synchronize skills, and repair Tokenless API CLI or its optional macOS app. Use for requested maintenance, installation health checks, or browser sign-in handoff.
 ---
 
 # Tokenless API installation and maintenance
 
-Match the requested task: install prepares software, setup changes user choices, and upgrade replaces software while preserving those choices. An audit or version check does not authorize running setup or an upgrade. Report results and user actions in the user's preferred language.
+Install prepares software; setup changes user choices; upgrade replaces software while preserving those choices. Match the requested scope and report in the user's language; a check-only request stays read-only.
 
-## Platform and installation channel
+## Select the installation channel
 
-Identify the OS, architecture, and installation channel from the host and executable location before choosing commands. When Node is available:
+Identify the OS, architecture, and executable location before choosing commands.
 
-```bash
-node -p "process.platform + '-' + process.arch"
-```
+| Installation | Route |
+| --- | --- |
+| Windows x64 (prerelease) | npm CLI in PowerShell or a terminal; no macOS menu app. |
+| Apple Silicon macOS, npm CLI | npm CLI; the menu app is a separate optional install. |
+| Apple Silicon macOS 13+, standalone app | Bundled Node, CLI, and daemon; use the app's own update action or embedded CLI. Global npm does not update this app. |
+| Source-linked CLI | Refresh the selected checkout and preserve its development link; do not replace it with a published npm package. |
 
-| Platform / installation | Required path | macOS menu app |
-| --- | --- | --- |
-| Windows x64 (prerelease) | npm CLI, local daemon, and selected browser/runtime dependencies | Do not install, build, update, or require it. |
-| Apple Silicon macOS, npm CLI | npm CLI, local daemon, and selected browser/runtime dependencies | Separate, optional installation; npm install/setup does not install it. |
-| Apple Silicon macOS 13+, standalone app | App bundle with embedded Node, CLI, daemon, and Node dependencies | Update the entire app through its own runtime. |
+The standalone app needs no global Node/npm, but excludes browsers and the G4F Python environment. For a requested app install, use the matching release ZIP and SHA-256 checksum; a requested source build uses `npm run install:macos-menu`. Verify the menu and daemon afterward. Do not infer support for other platforms from browser artifacts alone.
 
-Do not infer release support for another platform from a browser artifact alone. Report an unsupported platform instead of substituting a macOS archive. Windows commands run in PowerShell or a normal terminal; do not use Bash installers, Swift, LaunchServices, Keychain steps, or `~/Applications/Tokenless.app` there.
+## Choose the workflow
 
-The standalone macOS app does not require global Node or npm to run. Its base bundle excludes browser binaries and the G4F Python environment. For an explicitly requested app install, use the matching versioned release ZIP and SHA-256 checksum. For an explicitly requested source build on Apple Silicon macOS, the repository command is `npm run install:macos-menu`; it builds, installs to `~/Applications/Tokenless.app`, and launches the app. Verify the menu and daemon afterward. System security approval remains user-controlled.
+| Request | Commands |
+| --- | --- |
+| Fresh npm CLI | Check Node.js 22.13+ and npm, then `npm install --global tokenless@latest` and `tokenless --version`; continue to setup, or run skill sync for a software-only install. |
+| Interactive setup | `tokenless setup` |
+| Setup with known browser/profile choices | `tokenless setup --browser <chrome|brave|cloak> --profile <slug> --defaults --json` |
+| Check for updates | `tokenless upgrade --check --json` |
+| Authorized upgrade | `tokenless upgrade --yes --json` through the selected installation channel. |
+| Sync skills only | `tokenless skills sync --json` |
+| Diagnose installation | `tokenless doctor --json` |
 
-## Fresh CLI installation and setup
+Use the installed `tokenless` command, never `npx tokenless`. Install missing prerequisites within the authorized installation scope or report what is missing.
 
-1. Check Node.js 22.13+ and npm:
+## Setup and browser handoff
 
-   ```bash
-   node --version
-   npm --version
-   ```
+Check `uv --version` before setup: setup enables G4F and prepares its pinned Python runtime. It also synchronizes skills, saves browser/profile choices, reconciles the daemon, and checks enabled providers; it can open provider review tabs. Use it for onboarding or configuration changes, not routine software maintenance.
 
-2. Install the CLI only when installation is requested:
+- Native Chrome/Brave is user-installed and headed-only; setup does not download either browser or copy its profile. Enable remote debugging at `chrome://inspect/#remote-debugging` or `brave://inspect/#remote-debugging` and let the user approve the connection. Supply `--browser-executable-path <absolute-path>` when discovery needs help.
+- CloakBrowser downloads only for selected Anti-Detect setup (`--browser cloak` or `--anti-detect`). Optional Codex hooks require `--install-codex`; `--codex-home <dir>` requires that flag. The user trusts hooks in Codex `/hooks`.
+- Reuse the selected logical profile. `--provider-whitelist <list>` controls enabled providers; `--no-open` suppresses the dashboard, not provider checks. The old `--fresh` and profile-import workflow no longer apply.
 
-   ```bash
-   npm install --global tokenless@latest
-   tokenless --version
-   tokenless skills sync --json
-   ```
+For a selected provider's sign-in follow-up, run `tokenless profiles open --profile <slug> --provider <id>`. State what completed and the visible action needed; let the user handle sign-in, CAPTCHA, permission, and Keychain prompts. Afterward run `tokenless profiles status --profile <slug> --provider <id> --json` and doctor for the same selection. Keep session secrets in the browser and out of diagnostics or reports.
 
-   Invoke the installed `tokenless` command, never `npx tokenless`. npm installation alone does not configure profiles, install the menu app, or download browsers.
+## Upgrade and source refresh
 
-3. For requested onboarding, check `uv --version`: current setup enables G4F and uses `uv sync` to prepare its pinned Python environment and provider dependencies. If a prerequisite is missing, install it within the authorized installation scope or report the exact missing prerequisite; do not claim setup completed.
+An upgrade may restart the daemon and interrupt active tasks. `--yes` supplies non-interactive confirmation; `--json` alone does not. Do not ask again when the user already authorized the update.
 
-4. Use `tokenless setup` for interactive user choices. When the browser/profile choices are already known and non-interactive setup is requested, use the current flags, for example:
+Upgrade preserves configuration, profiles, and provider choices, synchronizes matching skills, and verifies the activated runtime. It does not run setup or doctor. `up_to_date` still synchronizes skills but does not restart the daemon. For an explicitly supplied local package, add `--package <absolute-path>`: `.tgz` for npm, release ZIP for the embedded app.
 
-   ```bash
-   tokenless setup --browser chrome --profile <slug> --defaults --json
-   ```
+For source refresh, follow the checkout's instructions, preserve uncommitted work, and compare the selected branch with upstream before claiming it is current. Refresh dependencies when needed. Rebuild with `npm run build` when runtime code or bundled skills changed, then run `npm run sync:skill`; the sync script requires a built CLI. Verify the linked executable resolves to that checkout. Refresh the menu app or activate the daemon only when included in the request, and verify each separately.
 
-   Replace `<slug>` with the selected logical profile. Preserve an existing selection; do not invent another profile during maintenance. `--provider-whitelist <list>` selects enabled providers. `--no-open` suppresses the dashboard opening, not provider checks. Do not use the removed `--fresh` or browser-profile import workflow.
+## Skill synchronization
 
-5. Run `tokenless doctor --json` separately after installation/setup. Report CLI installation, runtime health, setup `status`, and provider readiness separately. `action_required`, missing browser/profile, or sign-in work means onboarding is still incomplete even if software installation succeeded.
+Both skills (`tokenless` and `tokenless-install`) ship with the npm package and macOS app. Install/setup/upgrade use one local synchronizer to replace their complete directories under `~/.agents/skills` and existing supported agent roots, respecting configured roots. Other skills and agent instructions remain intact.
 
-Setup synchronizes both bundled agent skills, prepares the selected browser, saves configuration, prepares G4F, reconciles the daemon, and checks enabled providers when the browser resolves. It can open provider review tabs. Do not run it just to check versions, refresh skills, or upgrade software.
+Skill-only sync restores the installed package's version without network access, setup, or daemon startup. Source sync uses the checkout's `skills/`; pulling Git alone does not refresh global copies. Reload agent sessions that already loaded old instructions. Other package users receive changes through release automation, not local sync.
 
-Native mode uses user-installed Chrome or Brave and connects to the running browser; it does not copy/import a browser profile or download Chrome/Brave. Enable remote debugging at `chrome://inspect/#remote-debugging` or `brave://inspect/#remote-debugging` and let the user approve the connection prompt. Use `--browser-executable-path <absolute-path>` when discovery needs an explicit installed path. Native mode is headed-only.
+## Verify and repair
 
-Download CloakBrowser only for a selected Anti-Detect setup (`--browser cloak` or `--anti-detect`). Optional Codex guidance/hooks require `--install-codex`; `--codex-home <dir>` requires that flag. Ordinary setup does not install hooks, and users must trust installed hooks in Codex `/hooks` themselves.
+Run doctor after installation/setup and when health verification is requested. Doctor checks complete skill contents against the package; it is read-only and does not refresh provider observations.
 
-## Upgrade
+- Require `ok: true` and inspect the returned status/proof before reporting success. Report software installation separately from onboarding: `action_required` or pending sign-in means onboarding is incomplete. A healthy stopped daemon is not running, and cached provider observations do not prove current usability.
+- For failures, report the failed check or phase and its error code, then repair that boundary. Use skill sync for stale skills, the configured executable path for a missing browser, and setup for missing profiles or requested choice changes.
+- For a runtime provisioning repair, `tokenless install --browser <selected-browser> --json` saves runtime preferences, enables/prepares G4F, syncs skills, and reconciles the daemon; it does not update the CLI or sign in. Use it only when those effects are needed.
+- Preserve user state. Do not reset profiles, delete databases, or rewrite schemas to pass a health check. A failed upgrade may have partially applied; do not claim rollback or downgrade against a migrated database. Resolve the reported failure before retrying.
 
-Check the selected installation without changing it:
-
-```bash
-tokenless upgrade --check --json
-```
-
-For an authorized update, explain that the daemon restarts and active tasks may be interrupted, then use the non-interactive form:
-
-```bash
-tokenless upgrade --yes --json
-```
-
-`--json` alone does not confirm an update; it fails with `upgrade_confirmation_required`. Do not request confirmation again when the user has already authorized the update. A check-only request remains read-only.
-
-- Global npm CLI: acquire the exact checked package version, verify the global installation, stop the verified daemon, replace the package, and activate the new runtime.
-- Embedded macOS CLI / menu app: use the app's update action or embedded runtime to replace the whole bundle. Upgrading global npm does not update the app, and the app does not run a global npm upgrade.
-- Source checkout / linked development CLI: update and rebuild the selected checkout within the requested scope. Do not bypass the updater's global-install identity checks.
-
-Upgrade prepares dependencies only when already enabled, applies bundled database migrations, starts the new daemon, and verifies running version, database version, and an authenticated local API request. It does not rerun setup, change browser/provider choices, replace profiles, or run doctor. It synchronizes both skills from the installed package, including when the software is already up to date. Run `tokenless doctor --json` separately when installation health verification is requested.
-
-For npm results, inspect `ok`, `status`, and the returned `phases`; an update includes `runtimeInstall` activation proof. For macOS results, inspect `ok`, `status`, and `runtime` when updated. `up_to_date` is successful without replacement or runtime activation, but still includes skill synchronization proof (`phases.skills` for npm, `skills` for macOS). Updated runtime proof includes `skills.ok: true`. Do not require a `doctor` upgrade phase.
-
-When an update fails, report the first failed phase or returned error code. Earlier phases may have taken effect; do not claim rollback, automatically retry, or downgrade against a migrated database. An explicitly supplied local package uses `--package <absolute-path>` with `--yes --json`: `.tgz` for npm, matching release ZIP for the embedded macOS app.
-
-## Source checkout refresh
-
-For an explicitly selected source checkout, preserve the development link and use the repository's instructions and scripts. Inspect its worktree and remotes, fetch, and compare the selected branch with its upstream before claiming it is synchronized. Preserve uncommitted work; fast-forward only when the checkout is clean and the histories permit it.
-
-Read the repository's Node.js requirement, then run `npm ci` and `npm run build` in that checkout. The current build creates the development launcher and links the CLI globally. Run `npm run sync:skill` when refreshing the bundled skills. Do not replace a source-linked CLI with a published npm package.
-
-On Apple Silicon macOS, run `npm run install:macos-menu` only when refreshing the menu app is also requested. Verify the linked CLI resolves to the selected checkout, its version is correct, and the worktree and upstream still agree. When runtime activation is requested, verify the daemon's executable belongs to that checkout; verify the installed menu app separately when it was refreshed.
-
-A source refresh preserves configuration, profiles, and provider choices. Run setup only for requested configuration changes. If the daemon rejects persisted state, report the exact failure and use the repository's supported migration path within an authorized repair; do not delete the home or database or manually rewrite its schema to make startup pass.
-
-## Skill distribution and synchronization
-
-The npm package and macOS app bundle include `tokenless` and `tokenless-install` under the CLI's `dist/skills`. Install/setup and upgrade use the same local synchronizer; no global npm or separate skills CLI is needed to sync the embedded app's skills.
-
-- Fresh npm install: run `tokenless skills sync --json` after npm; setup also syncs when onboarding continues.
-- Upgrade: run the installed channel's `tokenless upgrade --yes --json`; the new package supplies its matching skills. `upgrade --check` never writes skill files.
-- Skill-only repair or a newly installed agent: run `tokenless skills sync --json`. It restores the installed version, not an unreleased GitHub branch.
-- Source checkout: after pulling changes and building the CLI, run `npm run sync:skill`. It uses the repository's `skills/` source and the same synchronizer. Pulling Git alone does not refresh global copies.
-
-The canonical copy lives in `~/.agents/skills`. Existing Codex, Claude Code, Cursor, Copilot, Gemini CLI, Hermes, OpenCode, Pi, Windsurf, and legacy `.agent` roots receive complete copies, including `agents/openai.yaml` and supporting resources. Configured Codex/Claude/OpenCode roots are respected. Only the two product-owned skill directories are replaced; unrelated skills and agent instructions stay intact.
-
-Doctor compares every skill file against the installed package. Reload or start a new agent session after sync if it has already loaded the old instructions. To distribute a skill change to other package users, include it in a release through repository release automation; local edits or local sync do not publish it.
-
-## Doctor and targeted repair
-
-Start with `tokenless doctor --json` and repair only the reported boundary:
-
-- Missing CLI or a CLI too old to expose `upgrade`: install `tokenless@latest` globally for the npm channel, then inspect that installed CLI's help. Do not replace an app runtime with npm.
-- Missing/stale skills: run `tokenless skills sync --json`, then doctor. This copies the installed package's complete skills without setup, network access, daemon restart, or browser changes.
-- Browser missing: resolve the selected user-installed browser or its configured executable path; do not silently switch browsers or download a replacement.
-- Missing profile or requested preference changes: use the setup workflow with the user's selected choices. Never reset/delete profiles or import browser data as an installation repair.
-- Runtime provisioning failure: `tokenless install --browser <selected-browser> --json` is the low-level provisioning command. It writes runtime preferences, enables/prepares G4F, refreshes skills, and reconciles the daemon; use it only for a requested repair requiring those effects. It does not upgrade the CLI or configure provider sign-in.
-- Unknown or contradictory output: report the failed check and stop guessing. An unchanged-version upgrade synchronizes skills but does not reactivate the daemon; do not repeat it as a generic runtime repair.
-
-Doctor is read-only and does not open/close browser windows or refresh provider observations. A stopped daemon can be healthy (`ok: true`, `running: false`); do not label that an installation failure or claim it is running. Provider observations may be stale, and doctor success alone does not prove a provider is currently signed in or usable.
-
-## Browser handoff and verification
-
-For the selected provider's sign-in or permission follow-up:
-
-```bash
-tokenless profiles open --profile <slug> --provider <id>
-```
-
-Tell the user what completed, the exact visible action needed, and what will be verified afterward. Pause for user-only sign-in, CAPTCHA, plan/permission UI, Keychain, or provider confirmation. After the user finishes, verify the same profile/provider:
-
-```bash
-tokenless profiles status --profile <slug> --provider <id> --json
-tokenless doctor --json
-```
-
-Keep authentication in the selected browser. Installation work does not authorize inspecting, importing, exporting, printing, or transmitting cookies, browser storage, passwords, hidden headers, or other session secrets. Preserve browser profiles, resident browsers, and sandboxing. Summaries must omit authentication data and unrelated account content.
+For additional flags and update result details, consult the [command reference](https://github.com/jazelly/tokenless/blob/main/COMMANDS.md) and [update guide](https://github.com/jazelly/tokenless/blob/main/docs/updates.md).
