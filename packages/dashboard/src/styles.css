@@ -658,7 +658,7 @@ pre { max-width: 100%; max-height: 260px; overflow: auto; margin: 0; padding: 12
   .rail { display: none; }
   .top-header { height: calc(58px + env(safe-area-inset-top)); gap: 4px; padding: env(safe-area-inset-top) 8px 0; }
   .top-header-control { gap: 6px; padding: 0 6px; }
-  .top-header-secondary, .top-header-settings { display: none; }
+  .top-header-secondary { display: none; }
   .top-header-jobs, .top-header-actions { gap: 0; padding-left: 4px; }
   .mobile-nav { position: fixed; z-index: 30; inset: auto 0 0; display: grid; height: calc(68px + env(safe-area-inset-bottom)); grid-template-columns: repeat(6, 1fr); padding: 5px 5px max(5px, env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: rgb(255 255 255 / 96%); backdrop-filter: blur(12px); }
   .mobile-nav a { display: flex; min-width: 0; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted); text-decoration: none; }

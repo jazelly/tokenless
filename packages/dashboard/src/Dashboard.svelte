@@ -106,7 +106,7 @@
       </div>
     </aside>
 
-    <TopHeader {snapshot} {selectedProfile} {language} {t} onselect={onselect} />
+    <TopHeader {snapshot} {selectedProfile} {language} {busy} {actions} {t} onselect={onselect} />
 
     {#if offline}<div class="offline-banner" role="status">{t('offlineShort')}</div>{/if}
 

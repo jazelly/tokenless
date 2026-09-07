@@ -1,21 +1,26 @@
 <script lang="ts">
-  import { Activity, CircleCheck, Hand, Play, Settings } from '@lucide/svelte'
+  import { Activity, CircleCheck, Hand, Play } from '@lucide/svelte'
   import TokenIcon from './TokenIcon.svelte'
   import ProfileSwitcher from './ProfileSwitcher.svelte'
+  import QuickSettings from './QuickSettings.svelte'
   import { formatNumber } from '../formatting.js'
   import { stateLabel, type MessageKey } from '../i18n/index.js'
-  import type { DashboardSnapshot, Language } from '../types.js'
+  import type { DashboardActions, DashboardSnapshot, Language } from '../types.js'
 
   let {
     snapshot,
     selectedProfile,
     language,
+    busy,
+    actions,
     t,
     onselect,
   }: {
     snapshot: DashboardSnapshot
     selectedProfile: string
     language: Language
+    busy: boolean
+    actions: DashboardActions
     t: (key: MessageKey) => string
     onselect: (slug: string) => void
   } = $props()
@@ -36,6 +41,15 @@
       ? t('tokenizerPreparesOnFirstResponse')
       : `${t('estimatedTokensSaved')}: ${savingsValue} tokens · ${t('measuredResponses')}: ${formatNumber(snapshot.outputSavings.summary.responseCount, language)}`)
   let jobsHelp = $derived(`${t('runtime')}: ${runtimeLabel} · ${formatNumber(snapshot.runtime.activeJobCount, language)} ${t('activeUnit')} · ${t('waitingJobs')}: ${formatNumber(waitingJobs, language)} · ${t('finishedJobs')}: ${formatNumber(finishedJobs, language)}`)
+
+  async function changeLanguage(next: Language) {
+    await actions.updateConfig({ language: next })
+  }
+
+  async function toggleOutputSavings() {
+    if (snapshot.outputSavings.enabled) await actions.disableOutputSavings()
+    else await actions.enableOutputSavings()
+  }
 </script>
 
 <header class="top-header" data-testid="top-header">
@@ -81,9 +95,13 @@
       {onselect}
     />
 
-    <a class="top-header-control top-header-settings hover-tooltip tooltip-below tooltip-right" href={`/dashboard/system/?profile=${encodeURIComponent(selectedProfile)}`} aria-label={`${t('system')} · ${t('version')} ${snapshot.daemon.version}`} data-dashboard-section="system">
-      <Settings size={16} aria-hidden="true" />
-      <span class="hover-tooltip-content" role="tooltip" aria-hidden="true">{t('system')} · <span translate="no">v{snapshot.daemon.version}</span></span>
-    </a>
+    <QuickSettings
+      {language}
+      outputSavingsEnabled={snapshot.outputSavings.enabled}
+      {busy}
+      {t}
+      onlanguage={changeLanguage}
+      ontoggleoutputsavings={toggleOutputSavings}
+    />
   </div>
 </header>
