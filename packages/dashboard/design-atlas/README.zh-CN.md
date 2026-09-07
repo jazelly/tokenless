@@ -54,3 +54,5 @@ npm run design:build
 - 能力需求使用**次数**，不使用 token 图标。每个已结束任务的每种不同能力计 1 次，包括失败和取消；同一任务在一个类别中可以计多次。中性空格表示已接入但无需求记录，虚线方格表示无需求记录且未接入。绿色深浅不表示成功率，方格代表 Provider 与具体能力的组合，不是日期。显示目录中的全部 Provider 和能力，包括未使用项；滚动时保持行列标题可见。标题跟随所选时间范围，统计口径放在帮助提示中。
 
 数据用色参考 [Carbon 对类别色、连续色阶和状态色的区分](https://carbondesignsystem.com/data-visualization/color-palettes/)；类别色值来自 [D3 schemeTableau10](https://d3js.org/d3-scale-chromatic/categorical)，数量色值来自 [D3 schemeGreens[5] / ColorBrewer](https://d3js.org/d3-scale-chromatic/sequential)。
+
+矩阵行列使用本地 Provider 图标和逐项 Lucide 能力图标；悬停、聚焦或点按显示名称。两种语言的时间标题都使用阿拉伯数字。图标来源记录在 [SOURCES.md](../../../assets/providers/SOURCES.md)。

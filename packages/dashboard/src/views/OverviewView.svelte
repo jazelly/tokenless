@@ -1,6 +1,8 @@
 <script lang="ts">
   import { tick } from 'svelte'
   import { Activity, CircleHelp, RefreshCw } from '@lucide/svelte'
+  import ProviderIcon from '../components/ProviderIcon.svelte'
+  import CapabilityIcon from '../components/CapabilityIcon.svelte'
   import TokenUnit from '../components/TokenUnit.svelte'
   import MetricCard from '../components/MetricCard.svelte'
   import { capabilityFamilyLabel, capabilityText, type MessageKey } from '../i18n/index.js'
@@ -45,6 +47,7 @@
   let loading = $state(true)
   let loadError = $state('')
   let matrixDetail = $state<{ provider: string; capabilityId: string; x: number; y: number } | null>(null)
+  let matrixTarget: HTMLButtonElement | null = null
   let requestSequence = 0
   let activityKey = $derived(`${snapshot.jobs[0]?.updatedAt ?? ''}:${snapshot.outputSavings.summary.lastMeasuredAt ?? ''}`)
   let matrixCapabilities = $derived([...snapshot.capabilities].sort((left, right) => families.indexOf(left.family) - families.indexOf(right.family)))
@@ -134,8 +137,9 @@
     return `${label} · ${t(supportsCapability(provider, capabilityId) ? 'supportedUnused' : 'unsupportedCapability')}`
   }
 
-  async function showMatrixDetail(event: Event, provider: string, capabilityId: string) {
-    const cell = (event.currentTarget as HTMLButtonElement).getBoundingClientRect()
+  async function showMatrixDetail(button: HTMLButtonElement, provider: string, capabilityId: string) {
+    const cell = button.getBoundingClientRect()
+    matrixTarget = button
     matrixDetail = {
       provider, capabilityId,
       x: Math.max(12, Math.min(cell.left + cell.width / 2 - 140, window.innerWidth - 292)),
@@ -144,11 +148,18 @@
     await tick()
     if (matrixDetail?.provider !== provider || matrixDetail?.capabilityId !== capabilityId) return
     const tooltip = document.getElementById('capability-demand-tooltip')!.getBoundingClientRect()
+    matrixDetail.x = Math.max(12, Math.min(cell.left + cell.width / 2 - tooltip.width / 2, window.innerWidth - tooltip.width - 12))
     if (tooltip.bottom > window.innerHeight - 12) matrixDetail.y = Math.max(12, cell.top - tooltip.height - 8)
   }
 
+  function scrollMatrix() {
+    if (matrixDetail && matrixTarget && document.activeElement === matrixTarget) {
+      void showMatrixDetail(matrixTarget, matrixDetail.provider, matrixDetail.capabilityId)
+    } else matrixDetail = null
+  }
+
   function hideMatrixDetail(event: PointerEvent) {
-    if (document.activeElement !== event.currentTarget) matrixDetail = null
+    if (matrixTarget === event.currentTarget && document.activeElement !== event.currentTarget) matrixDetail = null
   }
 
   function heatLevel(count: number) {
@@ -160,7 +171,20 @@
   }
 </script>
 
-<svelte:window onscroll={() => matrixDetail = null} />
+<svelte:window onscroll={scrollMatrix} />
+
+{#snippet matrixAxisIcon(kind: 'provider' | 'capability', id: string, label: string)}
+  {@const provider = kind === 'provider' ? id : ''}
+  {@const capabilityId = kind === 'capability' ? id : ''}
+  {@const active = matrixDetail?.provider === provider && matrixDetail?.capabilityId === capabilityId}
+  <button type="button" class="matrix-axis-icon" aria-label={label} aria-describedby={active ? 'capability-demand-tooltip' : undefined}
+    data-matrix-provider={provider || undefined} data-matrix-capability={capabilityId || undefined}
+    onpointerenter={(event) => showMatrixDetail(event.currentTarget, provider, capabilityId)} onpointerleave={hideMatrixDetail}
+    onfocus={(event) => showMatrixDetail(event.currentTarget, provider, capabilityId)} onblur={() => matrixDetail = null}
+    onclick={(event) => showMatrixDetail(event.currentTarget, provider, capabilityId)} onkeydown={(event) => { if (event.key === 'Escape') matrixDetail = null }}>
+    {#if kind === 'provider'}<ProviderIcon provider={id} />{:else}<CapabilityIcon capability={id} />{/if}
+  </button>
+{/snippet}
 
 {#snippet chartTitle(title: string, help: string)}
   <div class="analytics-chart-title">
@@ -233,31 +257,33 @@
     <section class="analytics-panel capability-matrix-panel" data-testid="capability-usage-matrix">
       <header class="analytics-panel-header">{@render chartTitle(matrixRangeTitle, t('capabilityUsageMatrixHelp'))}</header>
       <div class="capability-heatmap-body">
-        <div class="capability-matrix-scroll" onscroll={() => matrixDetail = null}>
+        <div class="capability-matrix-scroll" onscroll={scrollMatrix}>
           <div class="capability-matrix" style={`--capability-count:${matrixCapabilities.length}`}>
-            <div class="capability-matrix-corner">{t('provider')}</div>
-            {#each matrixCapabilities as capability}<div class="capability-matrix-heading" class:chinese={language === 'zh-CN'}><span>{capabilityName(capability.id)}</span></div>{/each}
+            <div class="capability-matrix-corner" aria-hidden="true"></div>
+            {#each matrixCapabilities as capability}<div class="capability-matrix-heading">{@render matrixAxisIcon('capability', capability.id, capabilityName(capability.id))}</div>{/each}
             {#each snapshot.providers as provider}
-              <div class="capability-matrix-provider">{provider.label}</div>
+              <div class="capability-matrix-provider">{@render matrixAxisIcon('provider', provider.id, provider.label)}</div>
               {#each matrixCapabilities as capability}
                 {@const cell = matrixCell(provider.id, capability.id)}
                 {@const supported = supportsCapability(provider.id, capability.id)}
                 {@const active = matrixDetail?.provider === provider.id && matrixDetail?.capabilityId === capability.id}
                 <button type="button" class:used={Boolean(cell?.finishedJobs)} class:absent={!cell?.finishedJobs && !supported} class:inspected={active} class="capability-matrix-cell" style={`--cell-fill:var(--demand-${heatLevel(cell?.finishedJobs ?? 0)})`} aria-label={capabilityTitle(provider.id, capability.id)} aria-describedby={active ? 'capability-demand-tooltip' : undefined}
-                  onpointerenter={(event) => showMatrixDetail(event, provider.id, capability.id)} onpointerleave={hideMatrixDetail}
-                  onfocus={(event) => showMatrixDetail(event, provider.id, capability.id)} onblur={() => matrixDetail = null}
-                  onclick={(event) => showMatrixDetail(event, provider.id, capability.id)} onkeydown={(event) => { if (event.key === 'Escape') matrixDetail = null }}></button>
+                  onpointerenter={(event) => showMatrixDetail(event.currentTarget, provider.id, capability.id)} onpointerleave={hideMatrixDetail}
+                  onfocus={(event) => showMatrixDetail(event.currentTarget, provider.id, capability.id)} onblur={() => matrixDetail = null}
+                  onclick={(event) => showMatrixDetail(event.currentTarget, provider.id, capability.id)} onkeydown={(event) => { if (event.key === 'Escape') matrixDetail = null }}></button>
               {/each}
             {/each}
           </div>
         </div>
         {#if matrixDetail}
           {@const cell = matrixCell(matrixDetail.provider, matrixDetail.capabilityId)}
-          <div class="capability-demand-tooltip" id="capability-demand-tooltip" role="tooltip" style={`left:${matrixDetail.x}px;top:${matrixDetail.y}px`}>
-            <strong>{providerName(matrixDetail.provider)} · {capabilityName(matrixDetail.capabilityId)}</strong>
+          <div class="capability-demand-tooltip" class:label-only={!matrixDetail.provider || !matrixDetail.capabilityId} id="capability-demand-tooltip" role="tooltip" style={`left:${matrixDetail.x}px;top:${matrixDetail.y}px`}>
+            <strong>{[matrixDetail.provider ? providerName(matrixDetail.provider) : '', matrixDetail.capabilityId ? capabilityName(matrixDetail.capabilityId) : ''].filter(Boolean).join(' · ')}</strong>
+            {#if matrixDetail.provider && matrixDetail.capabilityId}
             <span class="demand-tooltip-count">{formatNumber(cell?.finishedJobs ?? 0, language)} <span>{t('routedRequirements')}</span></span>
             {#if cell?.finishedJobs}<span>{t('matrixCellOutcomes', { succeeded: cell.succeededJobs, failed: cell.failedJobs, canceled: cell.canceledJobs })}</span>
             {:else}<span>{t(supportsCapability(matrixDetail.provider, matrixDetail.capabilityId) ? 'supportedUnused' : 'unsupportedCapability')}</span>{/if}
+            {/if}
           </div>
         {/if}
       </div>

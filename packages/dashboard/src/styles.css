@@ -145,24 +145,25 @@ main#main:focus { outline: none; }
 .chart-empty { flex: 1; min-height: 240px; }
 .capability-heatmap-body { margin: 18px; }
 .capability-matrix-scroll { max-height: 540px; overflow: auto; padding-bottom: 6px; }
-.capability-matrix { display: grid; width: max-content; grid-template-columns: 144px repeat(var(--capability-count), 24px); gap: 4px 2px; align-items: center; padding: 0 4px 4px 0; }
-.capability-matrix-corner, .capability-matrix-heading, .capability-matrix-provider { font-size: 11px; line-height: 1.4; background: var(--surface); }
-.capability-matrix-corner { position: sticky; top: 0; left: 0; z-index: 3; align-self: stretch; display: flex; align-items: end; padding-bottom: 10px; color: var(--muted); }
-.capability-matrix-heading { position: sticky; top: 0; z-index: 2; height: 154px; display: flex; justify-content: center; align-items: end; padding-bottom: 10px; color: var(--muted); }
-.capability-matrix-heading > span { writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; }
-.capability-matrix-heading.chinese > span { transform: none; }
-.capability-matrix-provider { position: sticky; left: 0; z-index: 1; align-self: stretch; display: flex; align-items: center; padding-right: 8px; font-weight: 500; }
+.capability-matrix { display: grid; width: max-content; grid-template-columns: 28px repeat(var(--capability-count), 24px); gap: 4px 2px; align-items: center; padding: 0 4px 4px 0; }
+.capability-matrix-corner, .capability-matrix-heading, .capability-matrix-provider { background: var(--surface); }
+.capability-matrix-corner { position: sticky; top: 0; left: 0; z-index: 3; align-self: stretch; }
+.capability-matrix-heading { position: sticky; top: 0; z-index: 2; height: 28px; display: grid; place-items: center; }
+.capability-matrix-provider { position: sticky; left: 0; z-index: 1; align-self: stretch; display: grid; place-items: center; }
+.matrix-axis-icon { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--muted); cursor: help; }
+.matrix-axis-icon:hover, .matrix-axis-icon:focus-visible { color: var(--ink); background: var(--surface-muted); }
+.matrix-axis-icon:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
 .capability-matrix-cell { width: 20px; height: 20px; justify-self: center; padding: 0; border: 1px solid var(--line-soft); border-radius: 3px; background: var(--demand-empty); cursor: pointer; }
 .capability-matrix-cell.used { background: var(--cell-fill); border-color: color-mix(in srgb, var(--cell-fill) 80%, var(--ink)); }
 .capability-matrix-cell.absent { border-style: dashed; border-color: var(--stone-300); background: transparent; }
 .capability-matrix-cell:hover, .capability-matrix-cell.inspected { outline: 2px solid var(--muted); outline-offset: 1px; }
 .capability-matrix-cell:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
 .capability-demand-tooltip { position: fixed; z-index: 60; display: flex; flex-direction: column; gap: 8px; width: 280px; max-width: calc(100vw - 24px); padding: 14px; border-radius: 8px; background: var(--ink); color: var(--surface); box-shadow: var(--shadow); pointer-events: none; font-size: 12px; line-height: 1.5; }
+.capability-demand-tooltip.label-only { width: max-content; max-width: min(280px, calc(100vw - 24px)); padding: 7px 10px; }
 .demand-tooltip-count { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
 .demand-tooltip-count > span { font-size: 12px; font-weight: 400; }
 @media (max-width: 760px) {
   .capability-heatmap-body { margin: 16px 12px; }
-  .capability-matrix { grid-template-columns: 120px repeat(var(--capability-count), 24px); }
 }
 
 .capability-day-chart { height: 200px; }

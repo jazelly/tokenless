@@ -1,6 +1,6 @@
 # Provider icon sources
 
-Static copies used by the README provider list, retrieved on 2026-09-06. Provider names and artwork belong to their respective owners.
+Static copies used by the README provider list and Dashboard. The original set was retrieved on 2026-09-06. Provider names and artwork belong to their respective owners.
 
 | Provider | Local file | Source |
 | --- | --- | --- |
@@ -19,3 +19,43 @@ Static copies used by the README provider list, retrieved on 2026-09-06. Provide
 | Meta AI | [meta.ico](meta.ico) | [Original asset](https://meta.ai/favicon.ico) |
 | Microsoft Copilot | [microsoft-copilot.ico](microsoft-copilot.ico) | [Original asset](https://copilot.microsoft.com/favicon.ico) |
 | GitHub Copilot | [github-copilot.svg](github-copilot.svg) | [Original asset](https://cdn.simpleicons.org/githubcopilot) |
+
+## Dashboard matrix additions
+
+The following SVGs come from [Lobe Icons 1.95.0](https://github.com/lobehub/lobe-icons), under its [MIT license](https://github.com/lobehub/lobe-icons/blob/master/LICENSE). They are bundled locally with the Dashboard.
+
+| Provider ID | Source asset |
+| --- | --- |
+| black-forest-labs | [Lobe Icons: flux](https://unpkg.com/@lobehub/icons-static-svg@1.95.0/icons/flux.svg) |
+| cerebras | [Lobe Icons: cerebras-color](https://unpkg.com/@lobehub/icons-static-svg@1.95.0/icons/cerebras-color.svg) |
+| cloudflare | [Lobe Icons: cloudflare-color](https://unpkg.com/@lobehub/icons-static-svg@1.95.0/icons/cloudflare-color.svg) |
+| cohere | [Lobe Icons: cohere-color](https://unpkg.com/@lobehub/icons-static-svg@1.95.0/icons/cohere-color.svg) |
+| deepinfra | [Lobe Icons: deepinfra-color](https://unpkg.com/@lobehub/icons-static-svg@1.95.0/icons/deepinfra-color.svg) |
+| elevenlabs | [Lobe Icons: elevenlabs](https://unpkg.com/@lobehub/icons-static-svg@1.95.0/icons/elevenlabs.svg) |
+| groq | [Lobe Icons: groq](https://unpkg.com/@lobehub/icons-static-svg@1.95.0/icons/groq.svg) |
+| hugging-face | [Lobe Icons: huggingface-color](https://unpkg.com/@lobehub/icons-static-svg@1.95.0/icons/huggingface-color.svg) |
+| minimax | [Lobe Icons: minimax-color](https://unpkg.com/@lobehub/icons-static-svg@1.95.0/icons/minimax-color.svg) |
+| nvidia | [Lobe Icons: nvidia-color](https://unpkg.com/@lobehub/icons-static-svg@1.95.0/icons/nvidia-color.svg) |
+| ollama | [Lobe Icons: ollama](https://unpkg.com/@lobehub/icons-static-svg@1.95.0/icons/ollama.svg) |
+| openrouter | [Lobe Icons: openrouter](https://unpkg.com/@lobehub/icons-static-svg@1.95.0/icons/openrouter.svg) |
+| phind | [Lobe Icons: phind](https://unpkg.com/@lobehub/icons-static-svg@1.95.0/icons/phind.svg) |
+| pi | [Lobe Icons: pi](https://unpkg.com/@lobehub/icons-static-svg@1.95.0/icons/pi.svg) |
+| pollinations | [Lobe Icons: pollinations](https://unpkg.com/@lobehub/icons-static-svg@1.95.0/icons/pollinations.svg) |
+| replicate | [Lobe Icons: replicate](https://unpkg.com/@lobehub/icons-static-svg@1.95.0/icons/replicate.svg) |
+| stability-ai | [Lobe Icons: stability-color](https://unpkg.com/@lobehub/icons-static-svg@1.95.0/icons/stability-color.svg) |
+| together | [Lobe Icons: together-color](https://unpkg.com/@lobehub/icons-static-svg@1.95.0/icons/together-color.svg) |
+| blackbox | [Original asset](https://www.blackbox.ai/favicon.ico) |
+| opera-aria | [Original asset](https://www.opera.com/favicon.ico) |
+| puter | [Original asset](https://puter.com/favicon.ico) |
+| teach-anything | [Original asset](https://www.teach-anything.com/favicon.ico) |
+| yqcloud | [Original asset](https://chat9.yqcloud.top/favicon.ico) |
+
+## Custom identifiers
+
+These original Dashboard glyphs identify providers whose brand assets were unavailable during this update; they are not official logos.
+
+- `fenay-ai.svg`: Angular F mark.
+- `glhf.svg`: Game controller for GLHF.
+- `gigachat.svg`: G conversation mark.
+- `theb-ai.svg`: B honeycomb mark.
+- `whiterabbitneo.svg`: Rabbit silhouette.
