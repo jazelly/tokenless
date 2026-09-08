@@ -56,6 +56,7 @@ SAFE_METADATA_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._:/+\-]{0,159}$")
 SAFE_REASON_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,95}$")
 PROVIDER_JOB_IDS_HEADER = "X-Tokenless-Route-Job-Ids"
 PROVIDER_JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+PROVIDER_MODEL_SLUG_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$")
 AUDIT_TIMESTAMP_PATTERN = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$"
 )
@@ -351,6 +352,48 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         return result
 
     @classmethod
+    def _provider_response_model_observation(
+        cls, value: Any
+    ) -> dict[str, Any] | None:
+        if not isinstance(value, dict):
+            return None
+        status = value.get("status")
+        source = value.get("source")
+        observed_at = value.get("observedAt")
+        provider_model_id = value.get("providerModelId")
+        reason = value.get("reason")
+        if (
+            source != "assistant-message-dom"
+            or not isinstance(observed_at, str)
+            or AUDIT_TIMESTAMP_PATTERN.fullmatch(observed_at) is None
+            or reason not in {None, "assistant_message_model_not_exposed"}
+        ):
+            return None
+        if (
+            status == "observed"
+            and isinstance(provider_model_id, str)
+            and PROVIDER_MODEL_SLUG_PATTERN.fullmatch(provider_model_id) is not None
+            and source == "assistant-message-dom"
+            and observed_at is not None
+        ):
+            return {
+                "providerModelId": provider_model_id,
+                "status": "observed",
+                "source": source,
+                "observedAt": observed_at,
+                "reason": None,
+            }
+        if status != "unknown" or provider_model_id is not None:
+            return None
+        return {
+            "providerModelId": None,
+            "status": "unknown",
+            "source": source,
+            "observedAt": observed_at,
+            "reason": reason,
+        }
+
+    @classmethod
     def _empty_provider_execution_metadata(cls, reason: str) -> dict[str, Any]:
         return {
             "model": {
@@ -472,9 +515,28 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             return []
         job_provider = cls._safe_metadata(result_json.get("provider"))
         observations: list[dict[str, Any]] = []
+        pending_submission: dict[str, Any] | None = None
         for response in responses[:64]:
-            if not isinstance(response, dict) or response.get("action") != "prompt.submit":
+            if not isinstance(response, dict):
                 continue
+            action = response.get("action")
+            if action == "response.read":
+                if pending_submission is None:
+                    continue
+                current_submission = pending_submission
+                pending_submission = None
+                result = response.get("result")
+                current_submission["responseModel"] = (
+                    cls._provider_response_model_observation(
+                        result.get("modelObservation")
+                        if isinstance(result, dict)
+                        else None
+                    )
+                )
+                continue
+            if action != "prompt.submit":
+                continue
+            pending_submission = None
             result = response.get("result")
             if not isinstance(result, dict):
                 continue
@@ -494,8 +556,10 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
                     "action": "prompt.submit",
                     "metadata": action_metadata,
                     "submissionObservation": candidate["submissionObservation"],
+                    "responseModel": None,
                 }
             )
+            pending_submission = observations[-1]
         return observations
 
     def _read_provider_job(self, job_id: str) -> dict[str, Any] | None:

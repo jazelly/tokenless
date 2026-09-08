@@ -101,7 +101,12 @@ export async function readDomResponse(
       { retryable: true, details: { visibleProof: 'no-visible-answer', ...await observations } },
     )
   }
-  const response = await answer.evaluate((element) => {
+  const response = await answer.evaluate((element, providerId) => {
+    // Read identity from the same assistant node as the returned text, never an earlier turn.
+    const rawModel = providerId === 'chatgpt'
+      ? (element.matches('[data-message-model-slug]') ? element : element.querySelector('[data-message-model-slug]'))?.getAttribute('data-message-model-slug')
+      : null
+    const providerModelId = rawModel && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(rawModel) ? rawModel : null
     const text = (() => {
       if (!(element instanceof HTMLElement)) return ''
       const clone = element.cloneNode(true) as HTMLElement
@@ -151,11 +156,11 @@ export async function readDomResponse(
       }
       const ancestors: ResponseDecisionElement[] = []
       for (let parent = element.parentElement; parent && ancestors.length < 3; parent = parent.parentElement) ancestors.push(describe(parent))
-      return { text, selected: { ...describe(element), ancestors } }
+      return { text, providerModelId, selected: { ...describe(element), ancestors } }
     } catch {
-      return { text, selected: null }
+      return { text, providerModelId, selected: null }
     }
-  }, undefined, { timeout: 5000 })
+  }, provider.descriptor.id, { timeout: 5000 })
   const completeText = normalizeVisibleText(response.text)
   if (
     provider.descriptor.id === 'chatgpt' &&
@@ -182,6 +187,15 @@ export async function readDomResponse(
   return {
     text,
     citations,
+    ...(provider.descriptor.id === 'chatgpt' ? {
+      modelObservation: {
+        providerModelId: response.providerModelId,
+        status: response.providerModelId ? 'observed' as const : 'unknown' as const,
+        source: 'assistant-message-dom' as const,
+        observedAt: new Date().toISOString(),
+        reason: response.providerModelId ? null : 'assistant_message_model_not_exposed' as const,
+      },
+    } : {}),
     visibleProof: 'visible-answer-read',
     decisionDiagnostics: { selected: response.selected, ...await observations },
   }

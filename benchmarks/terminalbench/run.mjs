@@ -24,6 +24,7 @@ const ORACLE_OBSERVATION_EXECUTION_PATH = 'Harbor -> Oracle agent'
 const START_SNAPSHOT_FILE = 'start-snapshot.json'
 const PRIVATE_EVIDENCE_PATTERN = /(?:^|\/)(?:\.env(?:\.|$)|.*(?:cookie|credential|secret|authorization|session-values|raw-provider).*|provider-turn(?:\/|$))/iu
 const SAFE_METADATA_VALUE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 ._:/+\-]{0,159}$/u
+const PROVIDER_MODEL_SLUG_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u
 const SOURCE_EVIDENCE_FILES = [
   'benchmarks/terminalbench/run.mjs',
   'benchmarks/terminalbench/observation.schema.json',
@@ -1076,6 +1077,19 @@ function projectProviderSubmission(value) {
       model: { ...value.submissionObservation.model },
       effort: { ...value.submissionObservation.effort },
     },
+    responseModel: projectProviderResponseModel(value.responseModel),
+  }
+}
+
+function projectProviderResponseModel(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  if (!validateProviderResponseModel(value)) return null
+  return {
+    providerModelId: typeof value.providerModelId === 'string' ? value.providerModelId : null,
+    status: value.status === 'observed' ? 'observed' : 'unknown',
+    source: value.source,
+    observedAt: value.observedAt,
+    reason: typeof value.reason === 'string' ? value.reason : null,
   }
 }
 
@@ -1152,16 +1166,33 @@ function submissionCoverageComplete(step) {
 }
 
 function providerSubmissionLabel(record, field) {
+  if (field === 'model'
+    && record?.responseModel?.status === 'observed'
+    && typeof record.responseModel.providerModelId === 'string'
+    && isExactProviderLabel(record.responseModel.providerModelId)) {
+    return record.responseModel.providerModelId
+  }
   const choice = record?.submissionObservation?.[field === 'effort' ? 'effort' : 'model']
   return typeof choice?.observedLabel === 'string' ? choice.observedLabel : null
 }
 
 function providerSubmissionReasons(record, field) {
+  if (field === 'model'
+    && record?.responseModel?.status === 'observed'
+    && typeof record.responseModel.providerModelId === 'string'
+    && isExactProviderLabel(record.responseModel.providerModelId)) {
+    return []
+  }
   const choice = record?.submissionObservation?.[field === 'effort' ? 'effort' : 'model']
   if (typeof choice?.observedLabel === 'string') {
     return isExactProviderLabel(choice.observedLabel)
       ? []
       : [field === 'model' ? 'model_alias_unresolved' : 'reasoning_effort_alias_unresolved']
+  }
+  if (field === 'model'
+    && record?.responseModel?.status === 'unknown'
+    && typeof record.responseModel.reason === 'string') {
+    return [record.responseModel.reason]
   }
   const rawReason = typeof choice?.reason === 'string' ? choice.reason : null
   if (rawReason !== null) return [rawReason]
@@ -2767,14 +2798,35 @@ function validateProviderSubmissionObservations(value) {
     && value.length <= 128
     && value.every((submission) => (
       submission && typeof submission === 'object' && !Array.isArray(submission)
-      && sameStringSet(Object.keys(submission), ['jobId', 'provider', 'action', 'metadata', 'submissionObservation'])
+      && sameStringSet(Object.keys(submission), ['jobId', 'provider', 'action', 'metadata', 'submissionObservation', 'responseModel'])
       && typeof submission.jobId === 'string'
       && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(submission.jobId)
       && (submission.provider === null || validateSafeMetadataNullable(submission.provider))
       && submission.action === 'prompt.submit'
       && validateProviderActionMetadata(submission.metadata)
       && validateProviderSubmissionObservation(submission.submissionObservation)
+      && validateProviderResponseModel(submission.responseModel)
     ))
+}
+
+function validateProviderResponseModel(value) {
+  if (value === null) return true
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || !sameStringSet(Object.keys(value), ['providerModelId', 'status', 'source', 'observedAt', 'reason'])
+    || !['observed', 'unknown'].includes(value.status)
+    || (value.providerModelId !== null
+      && (typeof value.providerModelId !== 'string' || !PROVIDER_MODEL_SLUG_PATTERN.test(value.providerModelId)))
+    || value.source !== 'assistant-message-dom'
+    || !isAuditTimestamp(value.observedAt)
+    || (value.reason !== null && value.reason !== 'assistant_message_model_not_exposed')
+  ) return false
+  if (value.status === 'observed') {
+    return value.providerModelId !== null
+      && value.source === 'assistant-message-dom'
+      && value.observedAt !== null
+      && value.reason === null
+  }
+  return value.providerModelId === null
 }
 
 function validateProviderActionMetadata(value) {

@@ -568,6 +568,13 @@ export type ResponseReadResult = {
   artifacts?: readonly VisibleResponseArtifact[]
   agentRun?: VisibleAgentRun
   usage?: GitHubCopilotMessageUsage
+  modelObservation?: {
+    providerModelId: string | null
+    status: 'observed' | 'unknown'
+    source: 'assistant-message-dom'
+    observedAt: string
+    reason: 'assistant_message_model_not_exposed' | null
+  }
   visibleProof: string
   decisionDiagnostics: ResponseDecisionDiagnostics
   outputSavings?: import('../output-savings/index.js').OutputSavingsResult

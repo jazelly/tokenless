@@ -989,13 +989,26 @@
     "providerSubmission": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["jobId", "provider", "action", "metadata", "submissionObservation"],
+      "required": ["jobId", "provider", "action", "metadata", "submissionObservation", "responseModel"],
       "properties": {
         "jobId": {"type": "string", "minLength": 1},
         "provider": {"$ref": "#/definitions/nullableString"},
         "action": {"const": "prompt.submit"},
         "metadata": {"$ref": "#/definitions/providerActionMetadata"},
-        "submissionObservation": {"$ref": "#/definitions/submissionObservation"}
+        "submissionObservation": {"$ref": "#/definitions/submissionObservation"},
+        "responseModel": {"$ref": "#/definitions/providerResponseModel"}
+      }
+    },
+    "providerResponseModel": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["providerModelId", "status", "source", "observedAt", "reason"],
+      "properties": {
+        "providerModelId": {"type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"},
+        "status": {"enum": ["observed", "unknown"]},
+        "source": {"const": "assistant-message-dom"},
+        "observedAt": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"},
+        "reason": {"enum": ["assistant_message_model_not_exposed", null]}
       }
     },
     "providerActionMetadata": {

@@ -1,6 +1,6 @@
 import { firstVisibleLocator, waitForVisibleLocator } from '../dom-locators.js'
 import { PROVIDER_CAPABILITIES } from '../provider-identity.js'
-import { CHATGPT_CHAT_EFFORTS, ensureChatGptChat } from './chatgpt-chat.js'
+import { CHATGPT_CHAT_EFFORTS, CHATGPT_MODEL_CHOICES, CHATGPT_POWER_SLIDER, ensureChatGptChat, readChatGptEffort } from './chatgpt-chat.js'
 import { tokenlessError } from '../../browser/errors.js'
 import type { Locator, Page } from 'playwright-core'
 import type { ProviderActionCapability } from '../capability-set.js'
@@ -133,15 +133,15 @@ async function inspectChoices(
   const choices = provider.descriptor.id === 'chatgpt'
     ? kind === 'effort'
       ? CHATGPT_CHAT_EFFORTS.map((label) => ({ label, selected: false, enabled: true }))
-      : await page.locator('[role="menu"] [data-active="true"] [role="menuitemradio"]').filter({ visible: true }).evaluateAll((elements) => elements.map((element) => ({
+      : await page.locator(CHATGPT_MODEL_CHOICES).filter({ visible: true }).evaluateAll((elements) => elements.map((element) => ({
           label: (element.textContent ?? '').trim(),
           selected: element.getAttribute('aria-checked') === 'true',
           enabled: element.getAttribute('aria-disabled') !== 'true',
         })))
     : await collectVisibleChoices(page, provider, trigger)
   if (provider.descriptor.id === 'chatgpt' && kind === 'effort') {
-    const value = Number(await page.locator('[role="menu"] [role="slider"]').getAttribute('aria-valuenow'))
-    choices.forEach((choice, index) => { choice.selected = index === value })
+    const value = await readChatGptEffort(page)
+    choices.forEach((choice) => { choice.selected = choice.label === value.label })
   }
   if (!keepOpen) await dismissChoiceSurface(page, trigger)
   return {
@@ -153,7 +153,7 @@ async function inspectChoices(
 async function openNestedChoiceSurface(page: Page, provider: ProviderDomDefinition, kind: ChoiceKind) {
   if (provider.descriptor.id === 'chatgpt' && kind === 'model') {
     await page.getByRole('menuitem', { name: 'Select model', exact: true }).click({ timeout: 5000 })
-    await page.locator('[role="menu"] [data-active="true"] [role="menuitemradio"]').first().waitFor({ state: 'visible', timeout: 5000 })
+    await page.locator(CHATGPT_MODEL_CHOICES).first().waitFor({ state: 'visible', timeout: 5000 })
     return
   }
   if (provider.descriptor.id !== 'claude' || kind !== 'model') return
@@ -196,6 +196,7 @@ async function selectChoice(
   if (!inspection.supported) return inspection
   const choice = inspection.choices.find((candidate) => candidate.label === label && candidate.enabled)
   if (!choice) {
+    if (provider.descriptor.id === 'chatgpt') await page.keyboard.press('Escape')
     if (provider.descriptor.id === 'github-copilot') {
       await page.keyboard.press('Escape')
       const locked = inspection.choices.find((candidate) => candidate.label === label)
@@ -211,11 +212,11 @@ async function selectChoice(
   }
   if (provider.descriptor.id === 'chatgpt' && kind === 'effort') {
     const index = CHATGPT_CHAT_EFFORTS.findIndex((effort) => effort === label)
-    const slider = page.locator('[role="menu"] [role="slider"]')
-    const current = Number(await slider.getAttribute('aria-valuenow'))
+    const slider = page.locator(CHATGPT_POWER_SLIDER)
+    const current = (await readChatGptEffort(page)).index
     await slider.focus()
     for (let step = 0; step < Math.abs(index - current); step += 1) await slider.press(index > current ? 'ArrowRight' : 'ArrowLeft')
-    const selected = Number(await slider.getAttribute('aria-valuenow')) === index
+    const selected = (await readChatGptEffort(page)).label === label
     await page.keyboard.press('Escape')
     return { supported: true, selectedLabel: selected ? label : '', visibleProof: selected ? 'chatgpt-power-slider-selected' : 'selected-label-not-visible' }
   }
@@ -266,7 +267,7 @@ async function exactVisibleChoiceLocator(
     ? page.locator('[role="dialog"]').filter({ visible: true }).last()
     : page
   const candidates = surface.locator(provider.descriptor.id === 'chatgpt'
-    ? '[role="menu"] [data-active="true"] [role="menuitemradio"]'
+    ? CHATGPT_MODEL_CHOICES
     : selectors.join(',')).filter({ visible: true })
   const count = Math.min(await candidates.count(), 80)
   for (let index = 0; index < count; index += 1) {
