@@ -4794,7 +4794,7 @@ async function configCommand(args: CliArgs) {
       args.clearBrowserExecutablePath === true ||
       args.language !== undefined
     ) {
-      throw usageError('profile_config_scope_invalid', '--profile can scope only provider membership and headed browser visibility.')
+      throw usageError('profile_config_scope_invalid', '--profile can scope only provider membership, profile color, and headed browser visibility.')
     }
     const resolved = await resolveControlProfile({
       homeDir,
@@ -4816,6 +4816,9 @@ async function configCommand(args: CliArgs) {
       profile: profile.slug,
       config: {
         ...existing,
+        profileColor: args.profileColor === undefined
+          ? existing.profileColor
+          : String(args.profileColor),
         enabledProviders: args.providerWhitelist === undefined
           ? existing.enabledProviders
           : parseProviderList(args.providerWhitelist),
@@ -4840,6 +4843,7 @@ async function configCommand(args: CliArgs) {
     args.browserExecutablePath !== undefined ||
     args.clearBrowserExecutablePath === true ||
     args.browserVisibility !== undefined ||
+    args.profileColor !== undefined ||
     args.daemonUrl !== undefined ||
     args.language !== undefined
   ) {
@@ -4856,6 +4860,9 @@ async function configCommand(args: CliArgs) {
     }
     if (args.providerWhitelist !== undefined) {
       throw usageError('profile_config_scope_required', '--provider-whitelist requires --profile <slug>.')
+    }
+    if (args.profileColor !== undefined) {
+      throw usageError('profile_config_scope_required', '--profile-color requires --profile <slug>.')
     }
     const browserVisibility = args.browserVisibility === undefined ? undefined : requiredBrowserVisibility(args.browserVisibility)
     if (browserVisibility !== undefined && browserVisibility !== 'headed') {
@@ -5460,7 +5467,7 @@ function createCommandContracts(): CommandContract[] {
     { command: 'install', usage: ['tokenless install [--browser <browser>|--browsers <list>] [--repair-browser] --json'], options: ['home', 'json', 'browser', 'browsers', 'repairBrowser', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'upgrade', usage: ['tokenless upgrade [--check | --yes] [--package <local-archive>] [--json] [--home <dir>] [--daemon-url <url>]'], options: ['check', 'yes', 'package', 'json', 'home', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'doctor', usage: ['tokenless doctor --json'], options: ['home', 'json', 'browser', 'daemonUrl'] },
-    { command: 'config', usage: ['tokenless config [--language <en|zh-CN>] [--browser <chrome|brave>] [--browser-executable-path <absolute-path>|--clear-browser-executable-path] [--daemon-url <url>] --json', 'tokenless config --profile <slug> [--provider-whitelist <list>] [--browser-visibility headed] --json'], options: ['home', 'json', 'profile', 'language', 'providerWhitelist', 'browser', 'browserExecutablePath', 'clearBrowserExecutablePath', 'browserVisibility', 'daemonUrl'] },
+    { command: 'config', usage: ['tokenless config [--language <en|zh-CN>] [--browser <chrome|brave>] [--browser-executable-path <absolute-path>|--clear-browser-executable-path] [--daemon-url <url>] --json', "tokenless config --profile <slug> [--profile-color '#RRGGBB'] [--provider-whitelist <list>] [--browser-visibility headed] --json"], options: ['home', 'json', 'profile', 'profileColor', 'language', 'providerWhitelist', 'browser', 'browserExecutablePath', 'clearBrowserExecutablePath', 'browserVisibility', 'daemonUrl'] },
     { command: 'dashboard', usage: ['tokenless dashboard [--profile <slug>] [--job-id <id>] [--semantic-manifest-output <absolute-path>] [--no-open] [--json]'], options: ['home', 'json', 'profile', 'jobId', 'semanticManifestOutput', 'noOpen', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'menubar', subcommand: 'status', usage: ['tokenless menubar status --json'], options: ['home', 'json', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'prompt', usage: ['tokenless --prompt <text> [--context <text>] [--file <path>]'], options: ['json', 'prompt', 'promptFile', 'context', 'contextFile', 'turnContextFile', 'projectRoot', 'files', 'output'] },
@@ -5519,6 +5526,7 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '-p': 'provider',
     '--profile': 'profile',
     '-P': 'profile',
+    '--profile-color': 'profileColor',
     '--preferred-providers': 'providerWhitelist',
     '--provider-whitelist': 'providerWhitelist',
     '--action': 'action',
@@ -6910,7 +6918,7 @@ function usage(args: CliArgs) {
       description: t('helpAdvancedOtherDescription'),
       commands: [
         'tokenless config --language <en|zh-CN> --browser chrome --json',
-        `tokenless config --profile <slug> --provider-whitelist ${supportedVisibleProviderIds().join(',')} --browser-visibility headed --json`,
+        `tokenless config --profile <slug> --profile-color '#0B57D0' --provider-whitelist ${supportedVisibleProviderIds().join(',')} --browser-visibility headed --json`,
         'tokenless dashboard [--profile <slug>] [--no-open] --json',
         'tokenless agents status codex --json',
         'tokenless agents inspect codex --chat-id <codex-thread-id> --json',
@@ -7092,6 +7100,7 @@ function optionUsageLabel(option: string) {
     clearProxy: '--clear-proxy',
     clearBrowserExecutablePath: '--clear-browser-executable-path',
     profile: '-P, --profile <slug>',
+    profileColor: "--profile-color '#RRGGBB'",
     projectInstructions: '--project-instructions <text>',
     projectInstructionsFile: '--project-instructions-file <path>',
     projectName: '--project-name <name>',

@@ -112,6 +112,14 @@ export class BrowserRuntimeController {
     })
   }
 
+  async closeProfile(profileId: string): Promise<BrowserRuntimeStatus> {
+    return await this.enqueue(async () => {
+      const runner = await this.ensureRunningInLane()
+      await runner.service.closeProfile(profileId)
+      return this.status()
+    })
+  }
+
   async quiesce(): Promise<BrowserRuntimeStatus> {
     this.quiesceRequested = true
     return await this.enqueue(async () => {

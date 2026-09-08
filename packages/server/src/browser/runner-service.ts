@@ -186,6 +186,7 @@ export class ManagedPlaywrightRunnerService {
           ])
           return profiles.map((profile) => ({
             ...profile,
+            profileColor: config.profiles[profile.slug]?.profileColor,
             proxy: config.profiles[profile.slug]?.proxy ?? null,
           }))
         },
@@ -239,6 +240,17 @@ export class ManagedPlaywrightRunnerService {
 
   activeProfileCount() {
     return this.contextManager.activeProfileIds().length
+  }
+
+  async closeProfile(profileId: string) {
+    const profile = (await this.profileRegistry.listProfiles()).find((candidate) => candidate.slug === profileId)
+    if (!profile) throw tokenlessError('profile_not_found', `Managed profile '${profileId}' is not registered.`)
+    try {
+      await this.contextManager.ensureContext(profile, 'auto', true)
+    } catch (error) {
+      if ((error as { code?: unknown }).code !== 'browser_endpoint_unavailable') throw error
+    }
+    await this.contextManager.closeProfile(profileId)
   }
 
   async openProfile(profileId: string, browserVisibility: BrowserVisibility): Promise<ManagedProfileOpenResult> {

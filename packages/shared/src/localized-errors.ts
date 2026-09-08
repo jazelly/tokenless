@@ -214,6 +214,7 @@ export const ERROR_SUMMARIES_ZH = {
   profile_clear_target_required: '--profile 与 --all 必须且只能选择一个。',
   profile_config_scope_invalid: 'Profile config scope 无效。',
   profile_config_scope_required: '请指定 profile config scope。',
+  profile_color_invalid: 'Profile color 必须使用 #RRGGBB 格式。',
   profile_delete_confirmation_required: '移除 profile 前需要 --confirm-delete。',
   profile_managed_browser_required: '该 profile 需要 managed browser。',
   profile_not_configured: '找不到该 profile 的配置。',

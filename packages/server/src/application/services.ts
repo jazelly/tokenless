@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import {
   configPath,
+  normalizeManagedProfileColor,
   readTokenlessConfig,
   upsertTokenlessProfileConfig,
   writeTokenlessConfig,
@@ -500,13 +501,30 @@ export class TokenlessApplicationServices {
   }
 
   async updateControlProfileConfig(slug: string, input: ManagedProfileConfig) {
-    await this.profiles.resolveProfile(slug)
+    const profile = await this.profiles.resolveProfile(slug)
+    const current = profileConfig(await this.readConfig(), profile.slug)
+    const requestedProfileColor = input.profileColor === undefined
+      ? current.profileColor
+      : normalizeManagedProfileColor(input.profileColor)
+    if (input.profileColor !== undefined && !requestedProfileColor) {
+      throw applicationError('profile_color_invalid', 'Profile color must use #RRGGBB form.')
+    }
+    if (requestedProfileColor !== undefined && !profile.runtimeBinding) {
+      throw applicationError(
+        'profile_managed_browser_required',
+        'Profile colors require a managed Chromium profile with its own browser identity.',
+      )
+    }
+    if (requestedProfileColor !== current.profileColor) {
+      this.assertProfilesHaveNoPendingJobs([profile])
+      await this.runtimeController?.closeProfile(profile.slug)
+    }
     const config = await upsertTokenlessProfileConfig({
       homeDir: this.store.homeDir,
-      slug,
+      slug: profile.slug,
       profile: input,
     })
-    return { config, profile: config.profiles[slug] }
+    return { config, profile: config.profiles[profile.slug] }
   }
 
   async updateControlConfig(input: Record<string, unknown>) {

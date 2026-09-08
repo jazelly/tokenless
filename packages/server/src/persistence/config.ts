@@ -104,6 +104,7 @@ export type RouterProviderRule = {
 
 export type ManagedProfileConfig = {
   runtimeBinding?: BrowserRuntimeBinding
+  profileColor?: string
   roleLabel: string
   enabledProviders: string[]
   providerModes: Record<string, ProviderExecutionMode[]>
@@ -577,8 +578,13 @@ function normalizeProfiles(value: unknown): Record<string, ManagedProfileConfig>
     if (candidate.runtimeBinding !== undefined && !runtimeBinding) {
       throw configError('tokenless_config_invalid', `Invalid runtime binding for profile '${profileId}'.`)
     }
+    const profileColor = normalizeManagedProfileColor(candidate.profileColor)
+    if (candidate.profileColor !== undefined && !profileColor) {
+      throw configError('profile_color_invalid', `Invalid profile color for '${profileId}'; expected #RRGGBB.`)
+    }
     profiles[profileId] = {
       ...(runtimeBinding ? { runtimeBinding } : {}),
+      ...(profileColor ? { profileColor } : {}),
       roleLabel: normalizeRoleLabel(candidate.roleLabel),
       enabledProviders: normalizeProviderList(candidate.enabledProviders),
       providerModes: normalizeProviderModes(candidate.providerModes),
@@ -587,6 +593,13 @@ function normalizeProfiles(value: unknown): Record<string, ManagedProfileConfig>
     }
   }
   return profiles
+}
+
+export function normalizeManagedProfileColor(value: unknown) {
+  if (typeof value !== 'string') return undefined
+  const normalized = value.trim().toUpperCase()
+  const withHash = normalized.startsWith('#') ? normalized : `#${normalized}`
+  return /^#[0-9A-F]{6}$/u.test(withHash) ? withHash : undefined
 }
 
 function normalizeProfileProxy(value: unknown, profileId: string) {
