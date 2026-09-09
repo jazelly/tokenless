@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite'
+import { applyRateLimitAttempts } from './migrations/0002-rate-limit-attempts.js'
 
 import {
   applyInitialMigration,
@@ -7,6 +8,7 @@ import {
 
 const MIGRATIONS = [
   { version: INITIAL_MIGRATION_VERSION, apply: applyInitialMigration },
+  { version: 2, apply: applyRateLimitAttempts },
 ] as const
 
 export const CURRENT_DATABASE_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version

@@ -1,6 +1,5 @@
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import type { DashboardRateLimitRule } from 'tokenless-internal-shared/dashboard'
 
 const CATALOG_SCHEMA = 'tokenless.provider-rate-limit-catalog.v1'
 const PROJECTION_SCHEMA = 'tokenless.provider-capacity-projection.v1'
@@ -63,7 +62,6 @@ export type ProviderRateLimitCatalog = {
   }
   sources: Readonly<Record<string, JsonRecord>>
   providers: Readonly<Record<string, CatalogProvider>>
-  proposedPolicies: Array<Omit<DashboardRateLimitRule, 'providerLabel'>>
 }
 
 export type ProviderRateLimitHistoryEvent = {
@@ -84,7 +82,8 @@ export type ProviderCapacityInput = {
 
 export type ProviderRuleCapacityProjection = {
   ruleId: string
-  knowledge: 'official_exact' | 'non_numeric'
+  knowledge: 'official_exact' | 'non_numeric' | 'internal'
+  eligibleAt?: string | null
   action: string
   windowSeconds: number | null
   publishedAllowance: number | null

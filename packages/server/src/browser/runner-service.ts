@@ -809,6 +809,8 @@ export class ManagedPlaywrightRunnerService {
             )
           : null
         const actionStartedAt = this.now()
+        const admission = await this.daemonClient.admitProviderAction({ jobId: job.job_id, actionIndex, signal })
+        if (admission?.decision === 'defer') await failOrFallback(providerCapacityFailure(admission))
         const response = await (async (): Promise<VisibleActionResponse> => {
           try {
             return await provider.executeAction(page, action, providerContext)

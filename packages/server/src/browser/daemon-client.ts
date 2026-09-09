@@ -22,6 +22,7 @@ export type ManagedDaemonClient = {
     subscriptionLabel?: string | null | undefined
   }): Promise<ProviderCapacityProjection>
   recordProviderSubmission(options: JobOptions): Promise<DaemonJob>
+  admitProviderAction(options: JobOptions & { actionIndex: number }): Promise<ProviderCapacityProjection | null>
   markJobWaitingForUser(options: JobOptions & { blocker: unknown }): Promise<DaemonJob>
   markJobRunning(options: JobOptions): Promise<DaemonJob>
   fallbackJob(options: JobOptions & {

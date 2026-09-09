@@ -2656,53 +2656,5 @@
         }
       ]
     }
-  },
-  "proposedPolicies": [
-    {
-      "id": "chatgpt.internal.messages.3600s",
-      "provider": "chatgpt",
-      "requestType": "message",
-      "actions": [
-        "prompt.submit"
-      ],
-      "plans": [
-        "*"
-      ],
-      "models": [
-        "*"
-      ],
-      "modes": [],
-      "scope": "pending",
-      "windowKind": "rolling",
-      "windowSeconds": 3600,
-      "allowanceKind": "internal",
-      "count": 20,
-      "unit": "message",
-      "enforcement": "pending",
-      "sources": []
-    },
-    {
-      "id": "chatgpt.internal.messages.600s",
-      "provider": "chatgpt",
-      "requestType": "message",
-      "actions": [
-        "prompt.submit"
-      ],
-      "plans": [
-        "*"
-      ],
-      "models": [
-        "*"
-      ],
-      "modes": [],
-      "scope": "pending",
-      "windowKind": "rolling",
-      "windowSeconds": 600,
-      "allowanceKind": "internal",
-      "count": 10,
-      "unit": "message",
-      "enforcement": "pending",
-      "sources": []
-    }
-  ]
+  }
 }

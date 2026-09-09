@@ -139,7 +139,17 @@ export type DashboardTabGcStatus = {
   profiles: Array<{ profileId: string; workPages: number; idlePages: number; busyPages: number; totalPages?: number | null; untrackedPages?: number | null; status?: string; errorCode?: string | null }>
 }
 
+export type ConfiguredRateLimitRule = {
+  id: string
+  provider: string
+  requestType: 'submission' | 'message' | 'image' | 'file'
+  scope: 'provider' | 'profile'
+  windowSeconds: number
+  maxRequests: number
+}
+
 export type DashboardConfig = {
+  rateLimits: ConfiguredRateLimitRule[]
   updatedAt: string | null
   profiles: { [slug: string]: DashboardProfileConfig }
   browser: DashboardBrowserSelection
@@ -159,6 +169,7 @@ export type DashboardConfig = {
 
 /** The authenticated, fresh-on-request representation of config.json. */
 export type DashboardConfigDocument = {
+  rateLimits: ConfiguredRateLimitRule[]
   protocol: string
   updatedAt: string | null
   defaultProfile: string | null
@@ -178,6 +189,7 @@ export type DashboardConfigDocument = {
 }
 
 export type DashboardConfigUpdate = {
+  rateLimits?: ConfiguredRateLimitRule[]
   defaultProfile?: string | null
   browser?: DashboardBrowserSelection
   browserExecutablePath?: string | null
@@ -552,7 +564,8 @@ export type DashboardRateLimitRule = {
   allowanceDetails?: Record<string, unknown>
   count: number | null
   unit: string
-  enforcement: 'preflight' | 'non_numeric' | 'pending' | 'unknown'
+  enforcement: 'preflight' | 'non_numeric' | 'enforced' | 'unknown'
+  usage?: Array<{ profileId: string | null; used: number; remaining: number; eligibleAt: string | null }>
   sources: Array<{ title: string; url: string; retrievedAt: string }>
 }
 

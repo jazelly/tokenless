@@ -4,17 +4,30 @@ Last reviewed: 2026-08-02
 
 ## Scope
 
-Tokenless maintains its best current knowledge of consumer Web provider limits in [`packages/server/catalog/provider-rate-limits.v1.json`](../packages/server/catalog/provider-rate-limits.v1.json). The catalog does not describe provider API limits, does not correlate one external account across browser profiles, and does not claim to reproduce private provider enforcement.
+Tokenless API maintains its best current knowledge of consumer Web provider limits in [`packages/server/catalog/provider-rate-limits.v1.json`](../packages/server/catalog/provider-rate-limits.v1.json). The catalog does not describe provider API limits, does not correlate one external account across browser profiles, and does not claim to reproduce private provider enforcement.
 
-One managed browser profile is one independent provider-capacity scope. Reaching a real provider limit remains an expected recoverable condition.
+Official capacity estimates are profile-scoped. Internal rules explicitly choose all local profiles or each profile; they do not infer external account identity.
 
 ## Dashboard rule table
 
 Open **Rate limits** in the Tokenless API Dashboard to filter the catalog by provider, request type, and execution state. Each row shows the plan/model scope, allowance, window, counted actions, and dated sources; missing message, image-generation, and file-upload coverage stays explicit.
 
-The table reads the same server catalog as capacity preflight. `proposedPolicies` holds reviewable internal values only: the ChatGPT 20-message/hour and 10-message/10-minute windows are **not enforced**, and their counting/profile scope is pending. Enforced internal behavior must be configured through persisted `config.json`, not activated by editing these proposals.
+Internal rules have one source of truth: persisted `config.json` → capacity projection and atomic admission → Router and Dashboard. The Dashboard displays current usage, remaining capacity, and the next eligible time using the same calculation as admission. Official source dates remain unchanged; internal settings are not claims about provider quotas.
 
-Current usage and reset times are not connected to this first table. Existing source dates are preserved; this UI change does not reverify provider quotas.
+Use **Add internal rule** or **Edit rule** in the Dashboard. Choose provider, request type, scope, window in seconds, and maximum attempts, then save. The existing `PATCH /dashboard-api/v1/config` also accepts the complete `rateLimits` array; saved changes apply to the next check without rebuilding or resetting usage.
+
+```json
+{
+  "rateLimits": [
+    { "id": "chatgpt.hour", "provider": "chatgpt", "requestType": "submission", "scope": "provider", "windowSeconds": 3600, "maxRequests": 20 },
+    { "id": "chatgpt.ten-minutes", "provider": "chatgpt", "requestType": "submission", "scope": "provider", "windowSeconds": 600, "maxRequests": 10 }
+  ]
+}
+```
+
+Every matching rule must allow the operation. `submission` counts text and image prompt attempts; `message` and `image` select one type, and `file` counts upload actions (one batch is one action). `provider` shares usage across local profiles and models; `profile` counts each profile separately. These controls cover Tokenless API browser execution, not direct mode, manual website usage, or every underlying HTTP request.
+
+Internal rules use exact rolling windows `(now - window, now]`, with no extra percentage reduction or burst allowance. Immediately before submission or upload, a SQLite transaction checks capacity and records one attempt together. Failed attempts retain their count; rejected admissions do not consume quota. Rule edits and process restarts preserve usage.
 
 ## Current Runtime Knowledge
 
@@ -37,7 +50,7 @@ The catalog links every fact to an official source. Its current primary sources 
 
 The runtime resolves the currently observed profile subscription label to a canonical catalog plan. Exact visible labels take precedence; `signed_in_free` may select the provider's Free family; an indistinguishable paid or unknown plan remains `unknown` and never inherits the provider's highest allowance.
 
-For an exact rule, Tokenless:
+For an official exact rule, Tokenless API:
 
 1. reads immutable `provider_submitted_at` facts from the existing SQLite `jobs` table;
 2. derives prompt and attachment units from each structured job request;
@@ -46,7 +59,7 @@ For an exact rule, Tokenless:
 5. applies GCRA cadence with a bounded 5% burst, clamped to 2–8 units; and
 6. returns `admit` or an explainable `defer` without creating a delayed job.
 
-For every non-numeric or unmatched rule, Tokenless returns `unknown` and allows execution. This preserves uncertainty without manufacturing quotas.
+Non-numeric or unmatched official rules return `unknown`; configured internal rules still apply. This preserves uncertainty without manufacturing quotas.
 
 Before provider mutation, a known capacity deferral first consumes an already-filtered automatic provider fallback plan in the current execution. If no in-scope fallback remains, the request fails clearly; it is not delayed or requeued. A visible rate or plan blocker before submission remains a current-execution failure. Proven or ambiguous post-submission work is never replayed on another provider or profile.
 
@@ -54,13 +67,13 @@ The configured provider list is a filter only. Its order does not alter capabili
 
 ## Stored Facts and Diagnostics
 
-Rate-limit state stays in the existing `jobs` table:
+Official estimates use the existing `jobs` table:
 
 - `provider_submitted_at` is nullable, immutable, and written immediately after visible prompt submission succeeds;
 - `provider`, `profile_id`, and `request_json` retain the dimensions needed to reconstruct local usage; and
 - `(provider, profile_id, provider_submitted_at)` supports bounded history queries.
 
-No separate rate-limit ledger table exists.
+Internal admission attempts are stored in `provider_rate_limit_attempts`, including provider, profile, action index, request type, and timestamp. Existing submissions within the active window are included until they expire and are never counted twice with admission records.
 
 Inspect the next prompt projection with:
 
@@ -73,6 +86,8 @@ The output includes the matched plan, match confidence, catalog revision, applic
 ## Validation Boundary
 
 Rate-limit acceptance is algorithmic. The focused integration test uses the built CLI, built daemon, real HTTP boundary, profiles from `config.json`, and real SQLite history with controlled timestamps. It verifies subscription matching, exact and non-numeric knowledge, model-pool isolation, sliding windows, remaining capacity, burst cadence, deferral time, and the CLI diagnostic.
+
+The configured-rule integration test additionally exercises persisted edits, admission cohorts, both internal windows, restart retention, image-specific limits, and the actual Runner fallback path with both providers blocked locally before browser acquisition.
 
 It deliberately does not spam provider websites to discover or exhaust quotas. Real provider blockers remain normal runtime evidence, not a release test load generator.
 

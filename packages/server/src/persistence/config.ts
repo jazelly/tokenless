@@ -1,4 +1,6 @@
 import fs from 'node:fs/promises'
+import type { ConfiguredRateLimitRule } from 'tokenless-internal-shared/dashboard'
+import { validateConfiguredRateLimits } from '../providers/configured-rate-limits.js'
 import os from 'node:os'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -24,6 +26,7 @@ type JsonRecord = Record<string, unknown>
 const configMutationLanes = new Map<string, Promise<void>>()
 
 export type TokenlessConfig = {
+  rateLimits: ConfiguredRateLimitRule[]
   protocol: typeof TOKENLESS_CONFIG_SCHEMA_ID
   updatedAt: string | null
   defaultProfile: string | null
@@ -221,6 +224,7 @@ async function readTokenlessConfigUnlocked(homeDir: string) {
     ? normalizeConfigBrowserExecutablePath(payload.browserExecutablePath)
     : null
   const config: TokenlessConfig = {
+    rateLimits: validateConfiguredRateLimits(payload.rateLimits ?? []),
     protocol: TOKENLESS_CONFIG_SCHEMA_ID,
     updatedAt: typeof payload.updatedAt === 'string' ? payload.updatedAt : null,
     defaultProfile: normalizeDefaultProfile(payload.defaultProfile, payload.profiles),
@@ -250,6 +254,7 @@ export async function writeTokenlessConfig({
   daemonUrl,
   language,
   browserTabGc,
+  rateLimits,
   outputSavings,
   apiProxy,
   g4f,
@@ -265,6 +270,7 @@ export async function writeTokenlessConfig({
   daemonUrl?: unknown
   language?: unknown
   browserTabGc?: unknown
+  rateLimits?: unknown
   outputSavings?: unknown
   apiProxy?: unknown
   g4f?: unknown
@@ -288,6 +294,7 @@ export async function writeTokenlessConfig({
       current.profiles[slug] ? { ...current.profiles[slug], ...profile } : profile,
     ]))
     const config: TokenlessConfig = {
+      rateLimits: rateLimits === undefined ? current.rateLimits : validateConfiguredRateLimits(rateLimits),
       protocol: TOKENLESS_CONFIG_SCHEMA_ID,
       updatedAt: new Date().toISOString(),
       defaultProfile: defaultProfile === undefined
@@ -422,6 +429,7 @@ async function withConfigWriteDirectory<T>(homeDir: string, operation: () => Pro
 
 function emptyTokenlessConfig(): TokenlessConfig {
   return {
+    rateLimits: [],
     protocol: TOKENLESS_CONFIG_SCHEMA_ID,
     updatedAt: null,
     defaultProfile: null,

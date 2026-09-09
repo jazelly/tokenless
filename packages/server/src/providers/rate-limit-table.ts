@@ -1,8 +1,9 @@
 import type { DashboardRateLimitRule, DashboardRateLimits } from 'tokenless-internal-shared/dashboard'
 import { providerRateLimitCatalog } from './rate-limit-policy.js'
+import type { JobStore } from '../jobs/store.js'
 
 // A read-only view of the same catalog used by capacity preflight.
-export function providerRateLimitTable(providers: readonly { id: string; label: string }[]): DashboardRateLimits {
+export function providerRateLimitTable(providers: readonly { id: string; label: string }[], configured: ReturnType<JobStore['configuredRateLimitUsage']>): DashboardRateLimits {
   const catalog = providerRateLimitCatalog()
   const labels = new Map(providers.map((provider) => [provider.id, provider.label]))
   for (const [id, provider] of Object.entries(catalog.providers)) labels.set(id, provider.label)
@@ -37,9 +38,14 @@ export function providerRateLimitTable(providers: readonly { id: string; label: 
       })
     }
   }
-  // Proposed policies are visible but never consumed by the execution policy.
-  for (const policy of catalog.proposedPolicies) {
-    rules.unshift({ ...policy, providerLabel: labels.get(policy.provider) ?? policy.provider })
+  for (const { rule, usage } of configured) {
+    rules.unshift({
+      id: rule.id, provider: rule.provider, providerLabel: labels.get(rule.provider) ?? rule.provider,
+      requestType: rule.requestType === 'submission' ? 'shared' : rule.requestType,
+      actions: [rule.requestType === 'file' ? 'file.upload' : 'prompt.submit'], plans: ['*'], models: ['*'], modes: [],
+      scope: rule.scope, windowKind: 'rolling', windowSeconds: rule.windowSeconds,
+      allowanceKind: 'internal', count: rule.maxRequests, unit: 'request', enforcement: 'enforced', sources: [], usage,
+    })
   }
   return { revision: catalog.revision, reviewedAt: catalog.reviewedAt, reviewAfter: catalog.reviewAfter, rules }
 }

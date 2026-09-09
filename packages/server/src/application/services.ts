@@ -156,7 +156,7 @@ export class TokenlessApplicationServices {
       config: publicConfig(config),
       setup,
       outputSavings,
-      rateLimits: providerRateLimitTable(providers),
+      rateLimits: providerRateLimitTable(providers, this.store.configuredRateLimitUsage(config.rateLimits, profiles.map((profile) => profile.slug))),
       profiles: profiles.map((profile) => publicProfile(
         profile,
         profileData.defaultProfile,
@@ -642,6 +642,7 @@ export class TokenlessApplicationServices {
       'daemonUrl',
       'language',
       'browserTabGc',
+      'rateLimits',
       'outputSavings',
       'apiProxy',
       'g4f',
@@ -701,6 +702,7 @@ export class TokenlessApplicationServices {
       daemonUrl: input.daemonUrl,
       language,
       browserTabGc: input.browserTabGc,
+      rateLimits: input.rateLimits,
       outputSavings: input.outputSavings,
       apiProxy: input.apiProxy,
       g4f: input.g4f,
@@ -1138,6 +1140,7 @@ export class TokenlessApplicationServices {
 
 function publicConfig(config: TokenlessConfig) {
   return {
+    rateLimits: config.rateLimits,
     updatedAt: config.updatedAt,
     profiles: config.profiles,
     browser: config.browser,

@@ -128,7 +128,7 @@
       {:else if section === 'capabilities'}
         <CapabilitiesView {snapshot} {selectedProfile} {language} {t} onselect={onselect} />
       {:else if section === 'rate-limits'}
-        <RateLimitsView {snapshot} {language} {t} />
+        <RateLimitsView {snapshot} {language} {t} {actions} />
       {:else if section === 'jobs'}
         <JobsView {snapshot} {language} {t} {busy} {actions} />
       {:else}
