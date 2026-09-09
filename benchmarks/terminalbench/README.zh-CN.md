@@ -86,9 +86,9 @@ Observation 分别记录官方 verifier 成绩、routing outcome 和记录完整
 
 明确要求单 provider 测评时，可以在直接运行 Harbor 的 config 中把 `agents[0].model_name` 设为 `tokenless/<provider>`（例如 `tokenless/chatgpt`）。Adapter 会将 parent 和 child 都绑定到该 provider，并记录 `routingMode: fixed`；semantic preference 只用于 auto run。运行前须在选定的持久化 profile 中选择并验证网页模型、thinking effort 和 Chat/Work 入口。这类直接运行保留原始 Harbor results 与 adapter audits；canonical `wiring`/`sweep`/`full` reports 仍用于 auto-route 测评。
 
-明确配置 ChatGPT CLI run 时，`--chat-surface chat`、`--model <visible-label>` 和 `--effort <visible-label>` 用于选择请求的控制状态。这些只是配置输入，不能证明 benchmark 提交时实际使用的状态。报告记录实际观察到的选择，并保留 `Latest` 等别名，不会将别名推断成某个 GPT 版本。
+明确配置 ChatGPT CLI run 时，`--chat-surface chat`、`--model <visible-label>` 和 `--effort <visible-label>` 用于选择请求的控制状态。这些只是配置输入，不能证明 benchmark 提交时实际使用的状态。报告记录实际观察到的选择，并保留原始模型标签，包括 `Latest` 等别名。
 
-如果可获取，每个成功的 ChatGPT `response.read` 还会从 assistant message DOM 记录 `responseModel`（`source: assistant-message-dom`），并与提交前的控制项观察并列保存。缺失的响应身份会明确记录；collector 不会把 `Latest` 推断成某个具体 GPT 版本。
+如果可获取，每个成功的 ChatGPT `response.read` 还会从 assistant message DOM 记录 `responseModel`（`source: assistant-message-dom`），并与提交前的控制项观察并列保存。缺失的响应身份会明确记录。模型汇总使用实际选中的模型标签，不使用回复 slug 替代；当前用户确认的 `Latest = GPT-6` 映射显示为 `GPT-6 / Latest`。collector 分别保留原始标签、thinking 档位和回复 slug。
 
 `deepIntegration` 报告 host 观察到的 parent completion request、child bootstrap/continuation start、terminal provider routing、完整有序 chain，以及 `successfulDshParents`、`failedDshParents`、`unsettledParentCompletionRequests`。成功 route 会在完整 response body relay 后成为 terminal evidence；失败 upstream response 会在 relay 前记录，因此 client disconnect 不会抹掉它的 routing 与 token estimate。`providerRouting.scopes.parent.providers` 和 `providerRouting.scopes.child.providers` 将 parent 与 child 分开计数：`routed`、`attempted`、`submitted`、`rateLimited`、`fallbackOut`、`completed`、`failed`、`preferenceRequested`、`preferenceHonored`，以及估算 input/output/total tokens。`fallbackOut` 表示 source provider 被放弃并转向 fallback，同时计为 `failed=1`；`rate_limit` attempt 的 `rateLimited` 只计入该 source provider。最终 provider counters 只描述它自身的 terminal outcome。`sweep` gate 还要求每个 trial 都有一个成功的 DSH parent completion 和一个 terminal parent route；`wiring` 与 `full` 会保留这些 outcome 字段用于诊断，但不会把 verifier reward 为 `0` 误报成 Harbor infrastructure error。
 

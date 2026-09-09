@@ -41,38 +41,40 @@ const SOURCE_EVIDENCE_FILES = [
 ]
 const [command = 'help', ...argv] = process.argv.slice(2)
 
-try {
-  if (command === 'inspect') {
-    const manifest = await validateTaskManifest()
-    output({
-      ok: true,
-      ...revision,
-      taskManifest: {
-        path: manifest.path,
-        datasetRef: manifest.datasetRef,
-        instructionDigest: manifest.instructionDigest,
-        taskRefDigest: manifest.taskRefDigest,
-        taskCount: manifest.taskCount,
-      },
-    })
-  } else if (command === 'prepare') {
-    output({ ok: true, prepared: await prepare(argv) })
-  } else if (command === 'oracle') {
-    output({ ok: true, run: await runOracle(argv) })
-  } else if (command === 'observe') {
-    output({ ok: true, observation: await observeExistingJob(argv) })
-  } else if (command === 'wiring' || command === 'sweep' || command === 'full') {
-    output({ ok: true, run: await runDeepSeekLane(command, argv) })
-  } else if (command === 'help' || command === '--help' || command === '-h') {
-    process.stdout.write(helpText())
-  } else {
-    throw new Error(`Unknown Terminal-Bench command: ${command}`)
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  try {
+    if (command === 'inspect') {
+      const manifest = await validateTaskManifest()
+      output({
+        ok: true,
+        ...revision,
+        taskManifest: {
+          path: manifest.path,
+          datasetRef: manifest.datasetRef,
+          instructionDigest: manifest.instructionDigest,
+          taskRefDigest: manifest.taskRefDigest,
+          taskCount: manifest.taskCount,
+        },
+      })
+    } else if (command === 'prepare') {
+      output({ ok: true, prepared: await prepare(argv) })
+    } else if (command === 'oracle') {
+      output({ ok: true, run: await runOracle(argv) })
+    } else if (command === 'observe') {
+      output({ ok: true, observation: await observeExistingJob(argv) })
+    } else if (command === 'wiring' || command === 'sweep' || command === 'full') {
+      output({ ok: true, run: await runDeepSeekLane(command, argv) })
+    } else if (command === 'help' || command === '--help' || command === '-h') {
+      process.stdout.write(helpText())
+    } else {
+      throw new Error(`Unknown Terminal-Bench command: ${command}`)
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (argv.includes('--json')) output({ ok: false, error: { message } })
+    else process.stderr.write(`Error: ${message}\n`)
+    process.exitCode = 1
   }
-} catch (error) {
-  const message = error instanceof Error ? error.message : String(error)
-  if (argv.includes('--json')) output({ ok: false, error: { message } })
-  else process.stderr.write(`Error: ${message}\n`)
-  process.exitCode = 1
 }
 
 async function prepare(args) {
@@ -1121,6 +1123,8 @@ function buildComparabilityEvidence({ kind, deepTrials, trace }) {
   const everyEffortObserved = completeCoverage && records.length > 0 && records.every((record) => isExactProviderLabel(providerSubmissionLabel(record, 'effort')))
   const modelStatus = everyModelObserved && new Set(exactModels).size === 1 ? 'known' : 'unknown'
   const effortStatus = everyEffortObserved && new Set(exactEfforts).size === 1 ? 'known' : 'unknown'
+  if (new Set(exactModels).size > 1) modelReasons.push('multiple_models_observed')
+  if (new Set(exactEfforts).size > 1) effortReasons.push('multiple_reasoning_efforts_observed')
   if (submittedSteps.length === 0) {
     modelReasons.push('no_submitted_provider_interactions')
     effortReasons.push('no_submitted_provider_interactions')
@@ -1165,35 +1169,22 @@ function submissionCoverageComplete(step) {
   }) && evidence.submissions.every((entry) => evidence.jobIds.includes(entry.jobId))
 }
 
-function providerSubmissionLabel(record, field) {
-  if (field === 'model'
-    && record?.responseModel?.status === 'observed'
-    && typeof record.responseModel.providerModelId === 'string'
-    && isExactProviderLabel(record.responseModel.providerModelId)) {
-    return record.responseModel.providerModelId
-  }
+export function providerSubmissionLabel(record, field) {
   const choice = record?.submissionObservation?.[field === 'effort' ? 'effort' : 'model']
-  return typeof choice?.observedLabel === 'string' ? choice.observedLabel : null
+  const label = typeof choice?.observedLabel === 'string' ? choice.observedLabel : null
+  // Current user-confirmed ChatGPT mapping; retain the original label and DOM slug in the evidence.
+  if (field === 'model' && record?.provider === 'chatgpt' && label === 'Latest') return 'GPT-6 / Latest'
+  return label
 }
 
 function providerSubmissionReasons(record, field) {
-  if (field === 'model'
-    && record?.responseModel?.status === 'observed'
-    && typeof record.responseModel.providerModelId === 'string'
-    && isExactProviderLabel(record.responseModel.providerModelId)) {
-    return []
-  }
-  const choice = record?.submissionObservation?.[field === 'effort' ? 'effort' : 'model']
-  if (typeof choice?.observedLabel === 'string') {
-    return isExactProviderLabel(choice.observedLabel)
+  const label = providerSubmissionLabel(record, field)
+  if (label !== null) {
+    return isExactProviderLabel(label)
       ? []
       : [field === 'model' ? 'model_alias_unresolved' : 'reasoning_effort_alias_unresolved']
   }
-  if (field === 'model'
-    && record?.responseModel?.status === 'unknown'
-    && typeof record.responseModel.reason === 'string') {
-    return [record.responseModel.reason]
-  }
+  const choice = record?.submissionObservation?.[field === 'effort' ? 'effort' : 'model']
   const rawReason = typeof choice?.reason === 'string' ? choice.reason : null
   if (rawReason !== null) return [rawReason]
   return [field === 'model' ? 'model_not_observed' : 'effort_not_observed']
