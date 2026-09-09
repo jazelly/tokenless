@@ -38,6 +38,7 @@ export function createPreviewSnapshot(language: Language): DashboardSnapshot {
   })))
   return {
     schema: 'tokenless.dashboard-snapshot.v1', generatedAt: date, revision: 'design-preview',
+    rateLimits: { revision: date.slice(0, 10), reviewedAt: date.slice(0, 10), reviewAfter: date.slice(0, 10), rules: [] },
     daemon: { version: '0.6.0', origin: 'http://localhost:6007', uptimeMs: 3600000, pid: 0 },
     runtime: { status: 'running', activeProfileCount: 4, activeJobCount: 1, pid: 0 },
     config: {

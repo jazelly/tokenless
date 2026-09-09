@@ -383,7 +383,7 @@ function isDashboardPagePath(pathname: string) {
     || pathname === '/dashboard/'
     || pathname === '/dashboard/setup'
     || pathname === '/dashboard/setup/'
-    || /^\/dashboard\/(?:overview|profiles|providers|capabilities|jobs|system)\/?$/.test(pathname)
+    || /^\/dashboard\/(?:overview|profiles|providers|capabilities|rate-limits|jobs|system)\/?$/.test(pathname)
 }
 
 const DASHBOARD_SHELL_MESSAGES = {

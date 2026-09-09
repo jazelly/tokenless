@@ -1,8 +1,9 @@
 <script lang="ts">
   import markUrl from '../../../assets/tokenless-mark.png'
-  import { Blocks, LayoutDashboard, MessageSquareText, PanelsTopLeft, Settings, UsersRound } from '@lucide/svelte'
+  import { Blocks, Gauge, LayoutDashboard, MessageSquareText, PanelsTopLeft, Settings, UsersRound } from '@lucide/svelte'
   import TopHeader from './components/TopHeader.svelte'
   import CapabilitiesView from './views/CapabilitiesView.svelte'
+  import RateLimitsView from './views/RateLimitsView.svelte'
   import JobsView from './views/JobsView.svelte'
   import OverviewView from './views/OverviewView.svelte'
   import ProfilesView from './views/ProfilesView.svelte'
@@ -42,6 +43,7 @@
     { id: 'profiles' as const, label: t('profiles'), icon: UsersRound },
     { id: 'providers' as const, label: t('providers'), icon: PanelsTopLeft },
     { id: 'capabilities' as const, label: t('capabilities'), icon: Blocks },
+    { id: 'rate-limits' as const, label: t('rateLimits'), icon: Gauge },
     { id: 'jobs' as const, label: t('jobs'), icon: MessageSquareText },
     { id: 'system' as const, label: t('system'), icon: Settings },
   ])
@@ -125,6 +127,8 @@
         <ProvidersView {snapshot} {selectedProfile} {language} {t} {busy} {actions} onselect={onselect} />
       {:else if section === 'capabilities'}
         <CapabilitiesView {snapshot} {selectedProfile} {language} {t} onselect={onselect} />
+      {:else if section === 'rate-limits'}
+        <RateLimitsView {snapshot} {language} {t} />
       {:else if section === 'jobs'}
         <JobsView {snapshot} {language} {t} {busy} {actions} />
       {:else}

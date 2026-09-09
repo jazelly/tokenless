@@ -5,6 +5,7 @@ type JsonRecord = Record<string, any>
 type Language = TokenlessLanguage
 
 const enMessages = {
+    rateLimits: 'Rate limits',
     overview: 'Overview', profiles: 'Profiles', providers: 'Providers', capabilities: 'Capabilities', routing: 'Routing', jobs: 'Chat history', system: 'System',
     localDashboard: 'Local Dashboard', operationalSummary: 'Operational summary', overviewLede: 'The exact daemon, browser, provider, and job state on this machine.',
     daemon: 'Daemon', browser: 'Browser runtime', activeProfiles: 'Active profiles', waitingJobs: 'Waiting jobs', finishedJobs: 'Finished jobs', idle: 'Idle', healthy: 'Healthy',
@@ -70,6 +71,7 @@ const enMessages = {
 } as const
 
 const zhMessages: Record<keyof typeof enMessages, string> = {
+    rateLimits: '限流规则',
     overview: '概览', profiles: 'Profile', providers: 'Provider', capabilities: '能力', routing: '路由', jobs: '对话历史', system: '系统',
     localDashboard: '本地 Dashboard', operationalSummary: '运行概览', overviewLede: '查看这台机器上 daemon、浏览器、provider 和任务的真实状态。',
     daemon: 'Daemon', browser: '浏览器运行时', activeProfiles: '活跃 profile', waitingJobs: '等待任务', finishedJobs: '已结束任务', idle: '空闲', healthy: '健康',

@@ -15,7 +15,7 @@
     DashboardSnapshot,
   } from './types.js'
 
-  const sections = new Set<Section>(['overview', 'profiles', 'providers', 'capabilities', 'jobs', 'system'])
+  const sections = new Set<Section>(['overview', 'profiles', 'providers', 'capabilities', 'rate-limits', 'jobs', 'system'])
   const initialLanguage: Language = normalizeTokenlessLanguage(document.documentElement.lang) ?? DEFAULT_TOKENLESS_LANGUAGE
 
   function parseSection(pathname: string, hash = ''): Section {
@@ -265,7 +265,7 @@
   }
 
   function isDashboardPath(pathname: string) {
-    return pathname === '/dashboard' || pathname === '/dashboard/' || /^\/dashboard\/(?:overview|profiles|providers|capabilities|jobs|system)\/?$/.test(pathname)
+    return pathname === '/dashboard' || pathname === '/dashboard/' || /^\/dashboard\/(?:overview|profiles|providers|capabilities|rate-limits|jobs|system)\/?$/.test(pathname)
   }
 </script>
 

@@ -4,9 +4,17 @@
 
 ## 范围
 
-Tokenless 在 [`packages/cli/catalog/provider-rate-limits.v1.json`](../packages/cli/catalog/provider-rate-limits.v1.json) 中维护目前对 consumer Web provider 限额的最佳认知。该 catalog 不描述 provider API 限额，不会跨浏览器 profile 关联同一个外部账户，也不声称能够复现 provider 的私有执行策略。
+Tokenless 在 [`packages/server/catalog/provider-rate-limits.v1.json`](../packages/server/catalog/provider-rate-limits.v1.json) 中维护目前对 consumer Web provider 限额的最佳认知。该 catalog 不描述 provider API 限额，不会跨浏览器 profile 关联同一个外部账户，也不声称能够复现 provider 的私有执行策略。
 
 一个 managed browser profile 是一个独立的 provider capacity scope。触及真实 provider 限额仍属于可恢复的预期状态。
+
+## Dashboard 规则表
+
+在 Tokenless API Dashboard 打开**限流规则**，按 provider、请求类型和执行状态筛选目录。每行显示套餐与模型范围、额度、窗口、计数操作和带日期的来源；消息、图片生成及文件上传的缺失规则会明确标为未知。
+
+本表与 capacity 预检读取同一份 server catalog。`proposedPolicies` 只保存可审阅的内部数值：ChatGPT 的每小时 20 条、每十分钟 10 条**尚未执行**，计数口径及 profile 范围仍待确认。后续内部执行规则必须通过持久化 `config.json` 配置，不能通过编辑这些提案直接生效。
+
+第一版尚未接入当前用量及恢复时间。现有来源日期保持原样；本次 UI 修改没有重新核实 provider 额度。
 
 ## 当前 Runtime 知识
 

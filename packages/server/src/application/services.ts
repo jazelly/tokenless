@@ -9,6 +9,7 @@ import {
   type TokenlessConfig,
 } from '../persistence/config.js'
 import { tokenlessPackageVersion } from '../platform-package.js'
+import { providerRateLimitTable } from '../providers/rate-limit-table.js'
 import { BrowserRuntimeManager } from '../browser/runtime/manager.js'
 import { normalizeBrowserSelection } from '../browser/runtime/types.js'
 import { normalizeBrowserVisibility } from '../browser-visibility.js'
@@ -155,6 +156,7 @@ export class TokenlessApplicationServices {
       config: publicConfig(config),
       setup,
       outputSavings,
+      rateLimits: providerRateLimitTable(providers),
       profiles: profiles.map((profile) => publicProfile(
         profile,
         profileData.defaultProfile,

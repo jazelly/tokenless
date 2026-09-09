@@ -536,6 +536,33 @@ export type DashboardDaemonStatus = {
   pid: number
 }
 
+export type DashboardRateLimitRule = {
+  id: string
+  provider: string
+  providerLabel: string
+  requestType: 'message' | 'image' | 'file' | 'shared'
+  actions: string[]
+  plans: string[]
+  models: string[]
+  modes: string[]
+  scope: string
+  windowKind: string
+  windowSeconds: number | null
+  allowanceKind: string
+  allowanceDetails?: Record<string, unknown>
+  count: number | null
+  unit: string
+  enforcement: 'preflight' | 'non_numeric' | 'pending' | 'unknown'
+  sources: Array<{ title: string; url: string; retrievedAt: string }>
+}
+
+export type DashboardRateLimits = {
+  revision: string
+  reviewedAt: string
+  reviewAfter: string
+  rules: DashboardRateLimitRule[]
+}
+
 export type DashboardSnapshot = {
   schema: 'tokenless.dashboard-snapshot.v1'
   generatedAt: string
@@ -548,6 +575,7 @@ export type DashboardSnapshot = {
   profiles: DashboardProfile[]
   providers: DashboardProvider[]
   capabilities: DashboardCapability[]
+  rateLimits: DashboardRateLimits
   jobs: DashboardJobSummary[]
   diagnostics: DashboardDiagnostic[]
 }

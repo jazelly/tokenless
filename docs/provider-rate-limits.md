@@ -4,9 +4,17 @@ Last reviewed: 2026-08-02
 
 ## Scope
 
-Tokenless maintains its best current knowledge of consumer Web provider limits in [`packages/cli/catalog/provider-rate-limits.v1.json`](../packages/cli/catalog/provider-rate-limits.v1.json). The catalog does not describe provider API limits, does not correlate one external account across browser profiles, and does not claim to reproduce private provider enforcement.
+Tokenless maintains its best current knowledge of consumer Web provider limits in [`packages/server/catalog/provider-rate-limits.v1.json`](../packages/server/catalog/provider-rate-limits.v1.json). The catalog does not describe provider API limits, does not correlate one external account across browser profiles, and does not claim to reproduce private provider enforcement.
 
 One managed browser profile is one independent provider-capacity scope. Reaching a real provider limit remains an expected recoverable condition.
+
+## Dashboard rule table
+
+Open **Rate limits** in the Tokenless API Dashboard to filter the catalog by provider, request type, and execution state. Each row shows the plan/model scope, allowance, window, counted actions, and dated sources; missing message, image-generation, and file-upload coverage stays explicit.
+
+The table reads the same server catalog as capacity preflight. `proposedPolicies` holds reviewable internal values only: the ChatGPT 20-message/hour and 10-message/10-minute windows are **not enforced**, and their counting/profile scope is pending. Enforced internal behavior must be configured through persisted `config.json`, not activated by editing these proposals.
+
+Current usage and reset times are not connected to this first table. Existing source dates are preserved; this UI change does not reverify provider quotas.
 
 ## Current Runtime Knowledge
 

@@ -91,7 +91,7 @@ export type {
 
 export type Language = DashboardLanguage
 
-export type Section = 'overview' | 'profiles' | 'providers' | 'capabilities' | 'routing' | 'jobs' | 'system'
+export type Section = 'overview' | 'profiles' | 'providers' | 'capabilities' | 'routing' | 'rate-limits' | 'jobs' | 'system'
 
 export type ReadinessJobState = {
   jobId?: string
