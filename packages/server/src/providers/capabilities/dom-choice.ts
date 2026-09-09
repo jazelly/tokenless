@@ -1,6 +1,6 @@
 import { firstVisibleLocator, waitForVisibleLocator } from '../dom-locators.js'
 import { PROVIDER_CAPABILITIES } from '../provider-identity.js'
-import { CHATGPT_CHAT_EFFORTS, CHATGPT_MODEL_CHOICES, CHATGPT_POWER_SLIDER, ensureChatGptChat, readChatGptEffort } from './chatgpt-chat.js'
+import { inspectChatGptEfforts, CHATGPT_MODEL_CHOICES, CHATGPT_POWER_SLIDER, ensureChatGptChat, readChatGptEffort } from './chatgpt-chat.js'
 import { tokenlessError } from '../../browser/errors.js'
 import type { Locator, Page } from 'playwright-core'
 import type { ProviderActionCapability } from '../capability-set.js'
@@ -132,17 +132,13 @@ async function inspectChoices(
   await openNestedChoiceSurface(page, provider, kind)
   const choices = provider.descriptor.id === 'chatgpt'
     ? kind === 'effort'
-      ? CHATGPT_CHAT_EFFORTS.map((label) => ({ label, selected: false, enabled: true }))
+      ? await inspectChatGptEfforts(page)
       : await page.locator(CHATGPT_MODEL_CHOICES).filter({ visible: true }).evaluateAll((elements) => elements.map((element) => ({
           label: (element.textContent ?? '').trim(),
           selected: element.getAttribute('aria-checked') === 'true',
           enabled: element.getAttribute('aria-disabled') !== 'true',
         })))
     : await collectVisibleChoices(page, provider, trigger)
-  if (provider.descriptor.id === 'chatgpt' && kind === 'effort') {
-    const value = await readChatGptEffort(page)
-    choices.forEach((choice) => { choice.selected = choice.label === value.label })
-  }
   if (!keepOpen) await dismissChoiceSurface(page, trigger)
   return {
     supported: true as const,
@@ -211,7 +207,7 @@ async function selectChoice(
     }
   }
   if (provider.descriptor.id === 'chatgpt' && kind === 'effort') {
-    const index = CHATGPT_CHAT_EFFORTS.findIndex((effort) => effort === label)
+    const index = (await readChatGptEffort(page)).minimum + inspection.choices.findIndex((effort) => effort.label === label)
     const slider = page.locator(CHATGPT_POWER_SLIDER)
     const current = (await readChatGptEffort(page)).index
     await slider.focus()
