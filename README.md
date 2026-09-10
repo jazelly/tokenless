@@ -50,9 +50,9 @@ Add the Tokenless skill to your Harness; invoke it for selected tasks and bring 
 
 <a id="providers"></a>
 
-## Providers · 43 catalog entries
+## Providers · 44 catalog entries
 
-15 browser providers, plus 28 additional Direct-only providers. Listed from the current registry; available capabilities depend on verification.
+16 browser providers, plus 28 additional Direct-only providers. Listed from the current registry; available capabilities depend on verification.
 
 ### Browser mode
 
@@ -78,9 +78,12 @@ Add the Tokenless skill to your Harness; invoke it for selected tasks and bring 
     <td align="center" width="20%"><a href="https://copilot.microsoft.com/"><img src="assets/providers/microsoft-copilot.ico" alt="Microsoft Copilot" width="32" height="32"><br><strong>Microsoft Copilot</strong></a><br><sub>Awaiting verification</sub></td>
     <td align="center" width="20%"><a href="https://github.com/copilot"><img src="assets/providers/github-copilot.svg" alt="GitHub Copilot" width="32" height="32"><br><strong>GitHub Copilot</strong></a><br><sub>Experimental</sub></td>
   </tr>
+  <tr>
+    <td align="center" width="20%"><a href="https://monica.im/home/chat"><img src="assets/providers/monica.png" alt="Monica" width="32" height="32"><br><strong>Monica</strong></a><br><sub>Experimental</sub></td>
+  </tr>
 </table>
 
-Microsoft Copilot is registered but has no verified browser capability route yet. The other browser entries comprise 5 supported and 9 experimental providers.
+Microsoft Copilot is registered but has no verified browser capability route yet. The other browser entries comprise 5 supported and 10 experimental providers.
 
 <details>
 <summary>Direct mode: view all 40 mappings</summary>

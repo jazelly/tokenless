@@ -19,6 +19,7 @@ export type ProviderNavigationCatalogId =
   | 'meta'
   | 'microsoft-copilot'
   | 'github-copilot'
+  | 'monica'
 
 function pages(...patterns: ProviderPagePattern[]) {
   return Object.freeze(patterns.map((pattern) => Object.freeze(pattern)))
@@ -229,6 +230,16 @@ export const PROVIDER_NAVIGATION_CATALOG = Object.freeze({
       { kind: 'entry', urlPattern: 'https://github.com/copilot' },
       { kind: 'conversation', urlPattern: 'https://github.com/copilot/c/:conversationId' },
       { kind: 'conversation', urlPattern: 'https://github.com/:owner/:repo/tasks/:conversationId' },
+    ),
+    trustedSignInOrigins: [],
+  }),
+  monica: navigation({
+    entryUrl: 'https://monica.im/home/chat',
+    homeUrl: 'https://monica.im/home/chat',
+    origins: ['https://monica.im'],
+    pagePatterns: pages(
+      { kind: 'entry', urlPattern: 'https://monica.im/home/chat' },
+      { kind: 'conversation', urlPattern: 'https://monica.im/home/chat/:agent/:botUid' },
     ),
     trustedSignInOrigins: [],
   }),

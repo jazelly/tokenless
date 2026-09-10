@@ -11,6 +11,7 @@ import { GrokProvider } from './grok-provider.js'
 import { KimiProvider } from './kimi-provider.js'
 import { MetaProvider } from './meta-provider.js'
 import { MicrosoftCopilotProvider } from './microsoft-copilot-provider.js'
+import { MonicaProvider } from './monica-provider.js'
 import { PerplexityProvider } from './perplexity-provider.js'
 import { QwenProvider } from './qwen-provider.js'
 import { ZaiProvider } from './zai-provider.js'
@@ -198,6 +199,7 @@ export const providerInstances = Object.freeze([
   new MetaProvider(),
   new MicrosoftCopilotProvider(),
   new GitHubCopilotProvider(),
+  new MonicaProvider(),
   ...createDirectOnlyG4fProviders(100),
 ] satisfies readonly ProviderInstance[])
 

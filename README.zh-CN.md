@@ -50,9 +50,9 @@
 
 <a id="providers"></a>
 
-## Providers · 43 个目录条目
+## Providers · 44 个目录条目
 
-15 个浏览器 provider，另有 28 个仅 Direct 模式的 provider。以下按当前注册目录列出，具体可用能力以验证状态为准。
+16 个浏览器 provider，另有 28 个仅 Direct 模式的 provider。以下按当前注册目录列出，具体可用能力以验证状态为准。
 
 ### 浏览器模式
 
@@ -78,9 +78,12 @@
     <td align="center" width="20%"><a href="https://copilot.microsoft.com/"><img src="assets/providers/microsoft-copilot.ico" alt="Microsoft Copilot" width="32" height="32"><br><strong>Microsoft Copilot</strong></a><br><sub>待验证</sub></td>
     <td align="center" width="20%"><a href="https://github.com/copilot"><img src="assets/providers/github-copilot.svg" alt="GitHub Copilot" width="32" height="32"><br><strong>GitHub Copilot</strong></a><br><sub>实验性</sub></td>
   </tr>
+  <tr>
+    <td align="center" width="20%"><a href="https://monica.im/home/chat"><img src="assets/providers/monica.png" alt="Monica" width="32" height="32"><br><strong>Monica</strong></a><br><sub>实验性</sub></td>
+  </tr>
 </table>
 
-Microsoft Copilot 已注册，目前尚无已验证的浏览器能力路由。其余条目按浏览器路由标注为 5 家已支持、9 家实验性。
+Microsoft Copilot 已注册，目前尚无已验证的浏览器能力路由。其余条目按浏览器路由标注为 5 家已支持、10 家实验性。
 
 <details>
 <summary>Direct 模式：查看全部 40 个映射</summary>

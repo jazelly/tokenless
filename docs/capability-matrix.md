@@ -49,24 +49,24 @@ Implications are expanded before provider selection. One provider must satisfy t
 
 This table summarizes checked-in routes. The CLI output is the authoritative current list.
 
-| Canonical capability | ChatGPT | Claude | Gemini | Grok | Qwen | DeepSeek | Perplexity | Z.ai | Doubao | Kimi | Dola | Arena | Meta AI |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `conversation.chat` | Supported | Supported | Supported | Supported | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | Supported | Experimental |
-| `conversation.continue` | — | — | — | — | — | — | — | — | — | — | — | Supported | — |
-| `model.compare` | — | — | — | — | — | — | — | — | — | — | — | Supported | — |
-| `agent.execute` | — | — | — | — | — | — | — | — | — | — | — | — | — |
-| `file.upload` (transport) | Supported | Supported | Experimental | Supported | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental |
-| `document.input` | Supported | Supported | Experimental | Supported | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | — | Experimental |
-| `image.input` | — | — | — | — | — | — | — | — | — | — | — | Experimental | — |
-| `audio.input` | — | — | — | — | — | — | — | — | — | — | — | — | — |
-| `video.input` | — | — | — | — | — | — | — | — | — | — | — | — | — |
-| `image.generation` | Experimental | — | Experimental | Experimental | — | — | — | — | Experimental | — | — | Experimental | Experimental |
-| `image.edit` | — | — | — | — | — | — | — | — | — | — | — | Experimental | — |
-| `artifact.download` | Experimental | — | Experimental | Experimental | — | — | — | — | Experimental | — | — | Experimental | Experimental |
-| `website.generation` | — | — | — | — | — | — | — | — | — | — | — | — | — |
-| `video.generation` | — | — | — | — | — | — | — | — | — | — | — | Experimental | — |
-| `search.web` | — | — | — | — | — | — | — | — | — | Experimental | — | Experimental | — |
-| `response.citations` | — | — | — | — | — | — | — | — | — | Experimental | — | Experimental | — |
+| Canonical capability | ChatGPT | Claude | Gemini | Grok | Qwen | DeepSeek | Perplexity | Z.ai | Doubao | Kimi | Dola | Arena | Meta AI | Monica |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `conversation.chat` | Supported | Supported | Supported | Supported | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | Supported | Experimental | Experimental |
+| `conversation.continue` | — | — | — | — | — | — | — | — | — | — | — | Supported | — | — |
+| `model.compare` | — | — | — | — | — | — | — | — | — | — | — | Supported | — | — |
+| `agent.execute` | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
+| `file.upload` (transport) | Supported | Supported | Experimental | Supported | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | — |
+| `document.input` | Supported | Supported | Experimental | Supported | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | — | Experimental | — |
+| `image.input` | — | — | — | — | — | — | — | — | — | — | — | Experimental | — | — |
+| `audio.input` | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
+| `video.input` | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
+| `image.generation` | Experimental | — | Experimental | Experimental | — | — | — | — | Experimental | — | — | Experimental | Experimental | — |
+| `image.edit` | — | — | — | — | — | — | — | — | — | — | — | Experimental | — | — |
+| `artifact.download` | Experimental | — | Experimental | Experimental | — | — | — | — | Experimental | — | — | Experimental | Experimental | — |
+| `website.generation` | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
+| `video.generation` | — | — | — | — | — | — | — | — | — | — | — | Experimental | — | — |
+| `search.web` | — | — | — | — | — | — | — | — | — | Experimental | — | Experimental | — | — |
+| `response.citations` | — | — | — | — | — | — | — | — | — | Experimental | — | Experimental | — | — |
 
 `—` means no route is advertised. It does not necessarily mean the provider product lacks the feature; the implementation or real-provider evidence may still be incomplete.
 
