@@ -1435,17 +1435,29 @@ export function normalizeAnthropicRequest(body: unknown): NormalizedRequest {
     throw badRequest(`messages must contain at most ${MAX_MESSAGES} entries`, 'messages')
   }
   const messages: OpenAiProtocolMessage[] = []
+  const systemParts: string[] = []
   if (record.system !== undefined) {
-    messages.push({ role: 'system', content: anthropicContentText(record.system) })
+    systemParts.push(anthropicContentText(record.system))
   }
+  const conversation: OpenAiProtocolMessage[] = []
   for (const entry of rawMessages) {
     const message = plainRecord(entry)
     const role = message.role
+    if (role === 'system') {
+      // Anthropic clients such as Claude Code may place system-role messages
+      // inside `messages`; fold them into the leading system message.
+      systemParts.push(anthropicContentText(message.content))
+      continue
+    }
     if (role !== 'user' && role !== 'assistant') {
       throw badRequest(`unsupported message role: ${String(role)}`, 'messages')
     }
-    messages.push({ role, content: anthropicContentText(message.content) })
+    conversation.push({ role, content: anthropicContentText(message.content) })
   }
+  if (systemParts.length > 0) {
+    messages.push({ role: 'system', content: systemParts.join('\n\n') })
+  }
+  messages.push(...conversation)
   rejectUnsupportedAnthropicToolFields(record)
   const options = normalizeTokenlessOptions(record.tokenless, model.auto)
   return {
@@ -1484,7 +1496,7 @@ function normalizeResponseFormat(value: unknown) {
 }
 
 function rejectUnsupportedAnthropicToolFields(record: Record<string, unknown>) {
-  for (const field of ['tools', 'tool_choice', 'functions', 'function_call', 'response_format']) {
+  for (const field of ['functions', 'function_call', 'response_format']) {
     if (record[field] !== undefined) {
       throw new ApiProxyError(
         400,
@@ -1494,6 +1506,8 @@ function rejectUnsupportedAnthropicToolFields(record: Record<string, unknown>) {
       )
     }
   }
+  // `tools` and `tool_choice` are ignored like sampling parameters: real
+  // Anthropic clients (Claude Code) always send them; tool use stays unadvertised.
 }
 
 function normalizeToolCatalog(value: unknown) {

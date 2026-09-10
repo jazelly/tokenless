@@ -329,7 +329,7 @@ Responses V1 intentionally excludes Conversations, background mode, WebSockets, 
 }
 ```
 
-Roles in `messages`: `user`, `assistant` only. The system prompt goes in the top-level `system` field, as in the real API.
+Roles in `messages`: `user`, `assistant`, and `system`. A `system`-role message is folded into the leading system prompt; the top-level `system` field remains the canonical place for it, as in the real API. Anthropic `tools` and `tool_choice` are accepted and ignored; Anthropic tool use stays unadvertised.
 
 ### Content blocks
 
@@ -538,7 +538,7 @@ The status is the signal to branch on. Read `code` for the specific cause and tr
 | --- | --- | --- | --- |
 | 400 | `invalid_request_error` | Malformed body, tool catalog, tool choice, response format/schema, arguments, or unpaired history | No — fix the request |
 | 400 | `invalid_json` | Body is empty or not JSON | No |
-| 400 | `unsupported_parameter` | Legacy `functions` / `function_call`, or Anthropic tools/structured output | No |
+| 400 | `unsupported_parameter` | Legacy `functions` / `function_call`, or Anthropic structured output | No |
 | 400 | `auto_execution_mode_unsupported` / `auto_dialect_unsupported` | Auto was asked to use direct/provider-local/Anthropic state | No — use the documented OpenAI browser scope |
 | 401 | `control_auth_missing` | No bearer token | No |
 | 403 | `control_auth_rejected` | Wrong bearer token | No |

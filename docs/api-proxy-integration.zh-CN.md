@@ -329,7 +329,7 @@ Responses V1 明确不包括 Conversations、background、WebSocket、hosted too
 }
 ```
 
-`messages` 中的 role 只支持 `user` 与 `assistant`。system prompt 放在顶层 `system` 字段，与真实 API 一致。
+`messages` 中的 role 支持 `user`、`assistant` 与 `system`。`system` 角色的消息会被并入前置 system prompt；顶层 `system` 字段仍是它规范的位置，与真实 API 一致。Anthropic 的 `tools` 和 `tool_choice` 会被接受并忽略；Anthropic tool use 仍不对外声明。
 
 ### Content blocks
 
@@ -538,7 +538,7 @@ Anthropic：
 | --- | --- | --- | --- |
 | 400 | `invalid_request_error` | 请求体、tool catalog、tool choice、response format/schema、arguments 或历史配对错误 | 否 —— 修正请求 |
 | 400 | `invalid_json` | 请求体为空或不是 JSON | 否 |
-| 400 | `unsupported_parameter` | 旧版 `functions` / `function_call`，或 Anthropic tools/structured output | 否 |
+| 400 | `unsupported_parameter` | 旧版 `functions` / `function_call`，或 Anthropic structured output | 否 |
 | 400 | `auto_execution_mode_unsupported` / `auto_dialect_unsupported` | Auto 被要求使用 direct/provider-local/Anthropic state | 否 —— 使用已文档化的 OpenAI browser scope |
 | 401 | `control_auth_missing` | 缺少 bearer token | 否 |
 | 403 | `control_auth_rejected` | bearer token 错误 | 否 |

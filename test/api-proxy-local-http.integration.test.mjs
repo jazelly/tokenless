@@ -21,6 +21,7 @@ const ROUTES = [
   ['POST', '/v1/openai/responses'],
   ['POST', '/v1/responses'],
   ['POST', '/v1/anthropic/messages'],
+  ['POST', '/v1/anthropic/v1/messages'],
 ]
 
 test('image generation is authenticated and the unified direct path remains gated', async () => {
