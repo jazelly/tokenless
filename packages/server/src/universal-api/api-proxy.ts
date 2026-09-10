@@ -1095,6 +1095,10 @@ function normalizeOpenAiResponsesRequest(
   rejectUnsupportedResponsesFields(body)
   const model = providerFromModel(body.model)
   const currentInput = normalizeResponsesInput(body.input)
+  const instructions = typeof body.instructions === 'string' ? body.instructions.trim() : ''
+  if (instructions.length > 0) {
+    currentInput.unshift({ role: 'system', content: instructions })
+  }
   const priorInput = previous?.transcript.map((item, index) => normalizeResponsesInputItem(item, index)) ?? []
   const transcript = [...priorInput, ...currentInput]
   if (transcript.length > MAX_MESSAGES) {
@@ -1162,6 +1166,7 @@ function rejectUnsupportedResponsesFields(body: Record<string, unknown>) {
   const supported = new Set([
     'model',
     'input',
+    'instructions',
     'tools',
     'tool_choice',
     'parallel_tool_calls',
@@ -1169,6 +1174,13 @@ function rejectUnsupportedResponsesFields(body: Record<string, unknown>) {
     'stream',
     'previous_response_id',
     'tokenless',
+    // Codex CLI sends these on every request; they are ignored like sampling
+    // parameters so the Responses route stays usable from a real client.
+    'reasoning',
+    'store',
+    'include',
+    'prompt_cache_key',
+    'client_metadata',
   ])
   const field = Object.keys(body).find((key) => !supported.has(key))
   if (field) {
@@ -1176,6 +1188,9 @@ function rejectUnsupportedResponsesFields(body: Record<string, unknown>) {
   }
   if (body.stream !== undefined && typeof body.stream !== 'boolean') {
     throw badRequest('stream must be a boolean', 'stream')
+  }
+  if (body.instructions !== undefined && typeof body.instructions !== 'string') {
+    throw badRequest('instructions must be a string', 'instructions')
   }
 }
 
@@ -1323,12 +1338,14 @@ function responsesItemsToMessages(items: readonly Record<string, unknown>[]) {
 function normalizeResponsesTools(value: unknown): Record<string, unknown>[] {
   if (value === undefined) return []
   if (!Array.isArray(value) || value.length === 0) throw badRequest('tools must be a non-empty array', 'tools')
-  return value.map((entry, index) => {
+  return value.flatMap((entry, index) => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw badRequest(`tools[${index}] must be an object`, 'tools')
     const tool = entry as Record<string, unknown>
+    // Codex CLI also sends namespace and built-in tool types (multi_agent_v1,
+    // web_search) that this proxy cannot emulate; keep only function tools.
+    if (tool.type !== 'function') return []
     requireResponsesKeys(tool, ['type', 'name', 'parameters'], ['description', 'strict'], `tools[${index}]`)
-    if (tool.type !== 'function') throw new ApiProxyError(400, 'unsupported_parameter', 'Responses supports only function tools.', 'tools')
-    return { ...tool }
+    return [{ ...tool }]
   })
 }
 

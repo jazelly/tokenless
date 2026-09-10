@@ -295,7 +295,8 @@ Structured JSON number 必须为 finite，并使用 `JSON.stringify(Number(token
 `POST /v1/responses` 与 `/v1/openai/responses` 把当前官方 [function calling](https://developers.openai.com/api/docs/guides/function-calling) 和 [Responses create](https://developers.openai.com/api/reference/resources/responses/methods/create) shape 映射到与 Chat Completions 相同的 Tokenless validation 与 provider turn。
 
 - `input` 接受非空 string 或最多 256 个 text item：user/system/developer/assistant message、Tokenless output `message` item、`function_call` 与 string `function_call_output`。
-- Function tool 为 flat shape：`{type, name, description?, parameters, strict?}`。`tool_choice` 支持 `auto`、`none`、`required` 或 `{type:"function",name}`。
+- Function tool 为 flat shape：`{type, name, description?, parameters, strict?}`。`tool_choice` 支持 `auto`、`none`、`required` 或 `{type:"function",name}`。非 function 的 tool 条目（例如 Codex CLI 的 `namespace` 与 `web_search` tool）会被忽略。
+- `instructions`（Codex CLI）会被作为前置 system message 处理。Codex 报告的其他字段（`reasoning`、`store`、`include`、`prompt_cache_key`、`client_metadata`）会被接受并忽略。
 - `text.format` 支持 `text`、`json_object` 或 flat `json_schema`，schema subset 与上文相同。
 - Tokenless 在 provider submission 前校验所有 declared name、strict argument、唯一 `call_id` 与完整 call/output 配对。它不会执行调用方 tool。
 

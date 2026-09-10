@@ -295,7 +295,8 @@ Structured JSON numbers must be finite and use the unique spelling returned by `
 `POST /v1/responses` and `/v1/openai/responses` map the current official [function-calling](https://developers.openai.com/api/docs/guides/function-calling) and [Responses create](https://developers.openai.com/api/reference/resources/responses/methods/create) shapes onto the same Tokenless validation and provider turn as Chat Completions.
 
 - `input` accepts a non-empty string or up to 256 text items: user/system/developer/assistant messages, Tokenless output `message` items, `function_call`, and string `function_call_output`.
-- Function tools are flat: `{type, name, description?, parameters, strict?}`. `tool_choice` is `auto`, `none`, `required`, or `{type:"function",name}`.
+- Function tools are flat: `{type, name, description?, parameters, strict?}`. `tool_choice` is `auto`, `none`, `required`, or `{type:"function",name}`. Non-function tool entries (for example Codex CLI's `namespace` and `web_search` tools) are ignored.
+- `instructions` (Codex CLI) is honored as the leading system message. Codex-reported extra fields (`reasoning`, `store`, `include`, `prompt_cache_key`, `client_metadata`) are accepted and ignored.
 - `text.format` accepts `text`, `json_object`, or flat `json_schema` with the same published schema subset above.
 - Tokenless validates every declared name, strict argument, unique `call_id`, and complete call/output pairing before provider submission. It never executes caller tools.
 
