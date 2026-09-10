@@ -500,6 +500,7 @@ const PROVIDER_TASK_CAPABILITY_ROUTES = Object.freeze([
   route('github-copilot', TASK_CAPABILITIES.RESPONSE_CITATIONS, 'experimental', 'visible-response-citations', ['conversation-workflow']),
   route('github-copilot', TASK_CAPABILITIES.FILE_UPLOAD, 'experimental', 'visible-file-attachment', ['harness-attachment-roundtrip']),
   route('github-copilot', TASK_CAPABILITIES.DOCUMENT_INPUT, 'experimental', 'visible-document-attachment', ['harness-attachment-roundtrip']),
+  route('monica', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['conversation-workflow']),
   route('meta', TASK_CAPABILITIES.FILE_UPLOAD, 'experimental', 'visible-file-attachment', ['file-selection']),
   route('meta', TASK_CAPABILITIES.DOCUMENT_INPUT, 'experimental', 'visible-document-attachment', ['file-selection']),
   route('meta', TASK_CAPABILITIES.IMAGE_GENERATION, 'experimental', 'meta-image-generation', ['meta-image']),

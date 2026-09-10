@@ -34,7 +34,9 @@ const MONICA_SESSION_HYDRATION_TIMEOUT_MS = 10_000
  *   overridden below to focus the composer and press Enter.
  * - Assistant answers render into `.__markdown` elements (a global, stable
  *   class); the hashed `markdown--*` companion class changes across builds.
- * - While generating, a `.stop-btn-wrapper` element is visible.
+ * - While generating, a `.stop-btn-wrapper` element is visible and disappears
+ *   once the reply completes. A persistent `geist-loading` spinner elsewhere in
+ *   the UI must NOT be used as a busy signal.
  * - Conversation URLs are `https://monica.im/home/chat/<agent>/<botUid>` with a
  *   `convId` query parameter carrying the conversation id.
  */
@@ -93,7 +95,6 @@ export class MonicaProvider extends BaseProvider<'monica'> {
       ]),
       busySelectors: Object.freeze([
         '[class*="stop-btn-wrapper"]',
-        '[class*="geist-loading"]',
       ]),
       choiceAvailability: DEFAULT_CHOICE_AVAILABILITY,
       capabilities: providerCapabilities({}),
