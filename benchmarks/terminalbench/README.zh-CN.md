@@ -6,6 +6,8 @@
 
 当前数据集为 `terminal-bench/terminal-bench@4.0.0`，通过内容摘要固定。每次只运行一道题，结束后停下来汇报，再由用户决定下一题；不创建定时任务。
 
+启动阶段的具名工具选择要求单次调用；后续轮次保留 DSH 原生的多工具调用能力。
+
 首题为 `terminal-bench/session-window-debug`（2 CPU、4 GiB 内存、无需 GPU）。官方 agent 时限为 28,800 秒，verifier 在独立官方环境中执行。通过标准仍要求官方 reward `1` 和原有深度集成证据；基础设施失败或不完整调用链不算通过。
 
 ## 固定基线
@@ -32,6 +34,8 @@ runner 不修改官方 task instruction、timeout、resources、environment 或 
 | 证据 | 必须区分的事实 |
 | --- | --- |
 | Provider 提交 | 请求的模型/effort 与提交页面实际观察到的标签、观察时间、页面类型、未知原因 |
+| Capability | 实际 provider job 所选路由的 `capabilityRequirements`；`null` 表示无法取得 |
+| Profile | 每个实际 provider job 的 `profileId`；选定的 benchmark profile 同时用于 parent 和 child 请求 |
 | 模型身份 | `Latest` 等可见别名与 provider 实际公开的具体模型身份 |
 | 工具执行 | 模型提出调用与实际观察到的执行结果；调用关联、状态、结果摘要、真正测量的耗时边界，以及明确的子任务响应解析状态 |
 | 失败 | 对应的本地 job ID、终态、是否已提交、有界错误代码和分类 |

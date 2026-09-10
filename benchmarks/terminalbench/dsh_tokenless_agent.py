@@ -617,6 +617,8 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
                 "reason": reason or "provider_job_metadata_unavailable",
                 "errorCode": None,
                 "errorClassification": None,
+                "capabilityRequirements": None,
+                "profileId": None,
             }
         error = job.get("error_json")
         error = error if isinstance(error, dict) else {}
@@ -635,6 +637,14 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         if status == "failed" and (error_code is None or classification is None):
             reason = "provider_job_error_metadata_unavailable"
         provider = cls._safe_metadata(job.get("provider"))
+        request = job.get("request_json")
+        route = request.get("capabilityRoute") if isinstance(request, dict) else None
+        requirements = route.get("requirements") if isinstance(route, dict) else None
+        if not (
+            isinstance(requirements, list)
+            and all(isinstance(value, str) and re.fullmatch(r"[a-z][a-z0-9_.-]{0,95}", value) for value in requirements)
+        ):
+            requirements = None
         submitted_at = job.get("provider_submitted_at")
         provider_submitted = (
             bool(submitted_at)
@@ -657,6 +667,8 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             "reason": reason,
             "errorCode": error_code,
             "errorClassification": classification,
+            "capabilityRequirements": requirements,
+            "profileId": cls._safe_metadata(job.get("profile_id")),
         }
 
     def _provider_execution_metadata(
@@ -1798,6 +1810,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         if not isinstance(tokenless, dict):
             raise ValueError("DSH parent tokenless options are invalid")
         tokenless = dict(tokenless)
+        tokenless["profile"] = self.expected_profile
         if self.expected_provider == "auto":
             tokenless["semantic_preference"] = self.semantic_preference
         tokenless["submission_evidence"] = "benchmark"
@@ -2700,7 +2713,6 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
                     for tool in tools
                 )
                 if isinstance(request_value, dict) and has_subagent:
-                    request_value["parallel_tool_calls"] = False
                     if parent_ordinal == 1:
                         if not has_read:
                             raise ValueError("DSH parent read-only inspection tool is unavailable")

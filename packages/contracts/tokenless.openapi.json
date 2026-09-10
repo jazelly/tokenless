@@ -4982,6 +4982,11 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "profile": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
+            "description": "Managed profile for this request; omitted requests use the configured default."
+          },
           "execution_mode": {
             "enum": [
               "browser",

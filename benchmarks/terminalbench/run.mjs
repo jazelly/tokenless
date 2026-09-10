@@ -153,8 +153,11 @@ async function createRuntimeArchive({ cacheDir, dshCheckout, dshArtifacts, vendo
     'set -euo pipefail',
     'rm -rf /tmp/tokenless-runtime',
     'mkdir -p /tmp/tokenless-runtime/bin',
-    'apt-get update >/dev/null',
-    'DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends cmake >/dev/null',
+    // CMake comes from the pinned image's base distribution; its expired
+    // Bullseye security feed is unrelated to this build dependency.
+    'echo "deb http://deb.debian.org/debian bullseye main" > /tmp/runtime-build.list',
+    'apt-get -o Dir::Etc::sourcelist=/tmp/runtime-build.list -o Dir::Etc::sourceparts=- update >/dev/null',
+    'DEBIAN_FRONTEND=noninteractive apt-get -o Dir::Etc::sourcelist=/tmp/runtime-build.list -o Dir::Etc::sourceparts=- install -y --no-install-recommends cmake >/dev/null',
     'npm install --prefix /tmp/tokenless-runtime --no-audit --no-fund --package-lock=false "$@"',
     'helper=$(find /tmp/tokenless-runtime/node_modules/node-pty -type f -name spawn-helper -print -quit)',
     'test -n "$helper"',
@@ -2769,7 +2772,10 @@ function validateProviderJobs(value) {
     && value.length <= 2
     && value.every((job) => (
       job && typeof job === 'object' && !Array.isArray(job)
-      && sameStringSet(Object.keys(job), ['jobId', 'availability', 'status', 'provider', 'providerSubmitted', 'submissionCount', 'reason', 'errorCode', 'errorClassification'])
+      && sameStringSet(Object.keys(job), ['jobId', 'availability', 'status', 'provider', 'providerSubmitted', 'submissionCount', 'reason', 'errorCode', 'errorClassification', 'capabilityRequirements', 'profileId'])
+      && (job.profileId === null || typeof job.profileId === 'string' && /^[a-z0-9][a-z0-9._-]{0,63}$/u.test(job.profileId))
+      && (job.capabilityRequirements === null || Array.isArray(job.capabilityRequirements)
+        && job.capabilityRequirements.every((value) => typeof value === 'string' && /^[a-z][a-z0-9_.-]{0,95}$/u.test(value)))
       && typeof job.jobId === 'string'
       && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(job.jobId)
       && ['observed', 'unknown'].includes(job.availability)

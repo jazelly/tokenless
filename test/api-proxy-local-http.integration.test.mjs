@@ -934,6 +934,27 @@ test('api proxy rejects a model that does not name a provider explicitly', async
   })
 })
 
+test('api proxy routes an explicit profile without changing the default', async () => {
+  await withDaemon(async (daemon) => {
+    const { ManagedProfileRegistry } = await import(profileRegistryModule)
+    const registry = new ManagedProfileRegistry(daemon.homeDir)
+    await registry.addProfile({ slug: 'default-profile', setDefault: true })
+    await registry.addProfile({ slug: 'selected-profile', setDefault: false })
+    const { writeTokenlessConfig } = await import(runtimeModule)
+    await writeTokenlessConfig({ homeDir: daemon.homeDir, apiProxy: { enabled: true, executionMode: 'browser' } })
+    const pending = call(daemon, 'POST', '/v1/chat/completions', {
+      model: 'tokenless/chatgpt',
+      messages: [{ role: 'user', content: 'Profile routing acceptance.' }],
+      tokenless: { profile: 'selected-profile' },
+    })
+    const job = await waitForQueuedApiProxyJob(daemon, 'api-proxy:')
+    assert.equal(job.profile_id, 'selected-profile')
+    assert.equal((await registry.resolveProfile()).slug, 'default-profile')
+    daemon.store.cancelJob(job.job_id, 'profile routing boundary verified')
+    assert.equal((await pending).status, 502)
+  })
+})
+
 test('api proxy accepts streaming function tools and complete tool history before profile readiness', async () => {
   await withDaemon(async (daemon) => {
     await enableApiProxy(daemon.homeDir)

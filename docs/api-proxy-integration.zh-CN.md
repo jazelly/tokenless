@@ -165,6 +165,8 @@ Job 中已经保存的真实可见 rate-limit observation 会在后续 execution
 
 对于 private provider-turn continuation，`tokenless/auto` 会保留 settled provider conversation 与 exact mapping 作为 primary target。只有精确的 portable action sequence `file.upload` → `prompt.input` → `prompt.submit` → `response.read` 可以携带从 provider-home target 开始的当前 eligible auto alternatives；`conversation.continue` route 与 nonportable action 不会获得 fallback alternative。精确 provider binding 始终 pinned 且没有 fallback。
 
+设置 `tokenless.profile` 可为本次请求选择已配置的 managed profile；省略时使用配置中的默认 profile。
+
 OpenAI 的 `tokenless/auto` 请求可以带一个 advisory 的 `tokenless.semantic_preference` provider id：
 
 ```json

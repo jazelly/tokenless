@@ -725,12 +725,9 @@ function recoverSingleJsonObjectCandidate(source: string, nonce: string) {
 
 function correlatedSerializationKind(source: string, nonce: string, message: string): OpenAiToolProtocolResult['kind'] | null {
   if (message.includes('duplicate key')) return null
-  const prefix = `{"protocol":"${OPENAI_TOOL_PROTOCOL}","nonce":${JSON.stringify(nonce)},"kind":"`
-  if (!source.startsWith(prefix)) return null
-  const remainder = source.slice(prefix.length)
-  if (remainder.startsWith('final"')) return 'final'
-  if (remainder.startsWith('tool_calls"')) return 'tool_calls'
-  return null
+  const header = /^\{[ \t\r\n]*"protocol"[ \t\r\n]*:[ \t\r\n]*"([^"\\]*)"[ \t\r\n]*,[ \t\r\n]*"nonce"[ \t\r\n]*:[ \t\r\n]*"([^"\\]*)"[ \t\r\n]*,[ \t\r\n]*"kind"[ \t\r\n]*:[ \t\r\n]*"(final|tool_calls)"/u.exec(source)
+  if (!header || header[1] !== OPENAI_TOOL_PROTOCOL || header[2] !== nonce) return null
+  return header[3] as OpenAiToolProtocolResult['kind']
 }
 
 function fail(message: string): never {

@@ -6,6 +6,8 @@ This lane measures the `DeepSeek Harness + Tokenless API + Tokenless Harness ada
 
 The active dataset is `terminal-bench/terminal-bench@4.0.0`, pinned by content digest. Run one task at a time and stop to report its result before starting another. No scheduled automation is part of this workflow.
 
+Named startup tool choices require one call; subsequent turns preserve DSH's native support for multiple tool calls.
+
 The initial task is `terminal-bench/session-window-debug` (2 CPUs, 4 GiB memory, no GPU). Its official agent limit is 28,800 seconds; its verifier runs in a separate official environment. A passing task requires official reward `1` and the existing deep integration evidence; an infrastructure failure or incomplete chain is not a pass.
 
 ## Fixed baseline
@@ -32,6 +34,8 @@ Every run keeps three independent conclusions: the official verifier outcome, re
 | Evidence | Required distinction |
 | --- | --- |
 | Provider submission | Requested model/effort versus observed labels on the submitting page, observation time, surface, and unknown reasons |
+| Capability | `capabilityRequirements` from the actual provider job's selected route; `null` means unavailable |
+| Profile | `profileId` from each actual provider job; the selected benchmark profile applies to both parent and child requests |
 | Model identity | A visible alias such as `Latest` versus an exposed concrete model identity |
 | Tool execution | Model proposal versus observed execution result; call correlation, status, result digest, timing boundary, and explicit child response parsing status |
 | Failures | Exact local job ID, terminal status, submission state, bounded error code and classification |
