@@ -1244,9 +1244,12 @@ function normalizeResponsesInputItem(value: unknown, index: number): Record<stri
     }
   }
   if (item.type === 'function_call_output') {
-    requireResponsesKeys(item, ['type', 'call_id', 'output'], [], `input[${index}]`)
+    requireResponsesKeys(item, ['type', 'call_id', 'output'], ['id', 'status'], `input[${index}]`)
     if (typeof item.call_id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(item.call_id)) {
       throw badRequest(`input[${index}].call_id is invalid`, 'input')
+    }
+    if (item.id !== undefined && (typeof item.id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(item.id))) {
+      throw badRequest(`input[${index}].id is invalid`, 'input')
     }
     if (typeof item.output !== 'string') throw badRequest(`input[${index}].output must be a string`, 'input')
     return { type: 'function_call_output', call_id: item.call_id, output: item.output }
