@@ -916,10 +916,17 @@ test('dashboard sessions are invalidated when the real daemon restarts', async (
 
 test('tab GC settings persist through the local control API and reject invalid intervals', async () => {
   await withDaemon(async ({ daemon, homeDir }) => {
+    const configPath = path.join(homeDir, 'config.json')
+    const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'))
+    existing.browserTabGc.maxTabsPerProfile = 8
+    fs.writeFileSync(configPath, JSON.stringify(existing))
     const session = await fetch(`${daemon.origin}/dashboard-api/v1/session`)
     const cookie = session.headers.get('set-cookie').split(';')[0]
     const { csrf } = await session.json()
-    const browserTabGc = { idleTimeoutSeconds: 180, sweepIntervalSeconds: 20, maxTabsPerProfile: 10 }
+    const loaded = await fetch(`${daemon.origin}/dashboard-api/v1/config-document`, { headers: { cookie } })
+    assert.equal(loaded.status, 200)
+    assert.deepEqual((await loaded.json()).browserTabGc, { idleTimeoutSeconds: 120, sweepIntervalSeconds: 15 })
+    const browserTabGc = { idleTimeoutSeconds: 180, sweepIntervalSeconds: 20 }
     const patch = (value) => fetch(`${daemon.origin}/dashboard-api/v1/config`, {
       method: 'PATCH',
       headers: { cookie, origin: daemon.origin, 'x-tokenless-csrf': csrf, 'content-type': 'application/json' },

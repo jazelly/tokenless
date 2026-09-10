@@ -1,5 +1,4 @@
 export const ERROR_SUMMARIES_ZH = {
-  browser_tab_capacity_reached: '工作标签页已满，全部正在使用或保留中；请等到有空闲页面再开始新对话。',
   browser_page_busy: '页面正在使用或保留中，不能替换。',
   browser_page_unavailable: '工作标签页不可用，已保留。',
   github_copilot_control_unsupported: '这些控制仅适用于 GitHub Copilot。',

@@ -23,8 +23,7 @@ export async function verifyTabGcLifecycle({ packageRoot = path.resolve('package
   try {
     const context = await manager.ensureContext(target.profile, target.config.browserVisibility)
     const baseline = context.browserContext.pages()
-    const count = target.config.browserTabGc.maxTabsPerProfile
-    assert.ok(count >= 3, 'GC acceptance needs capacity for three work tabs')
+    const count = 9
     const prefix = `page:tab-gc:${randomUUID()}`
     const userPage = await context.acquireProviderPage({
       provider: 'chatgpt', pageRef: `${prefix}:user`, purpose: 'user',
@@ -37,14 +36,12 @@ export async function verifyTabGcLifecycle({ packageRoot = path.resolve('package
       return use
     }
     const initial = await Promise.all(Array.from({ length: count }, (_, i) => acquire(`${prefix}:${i}`)))
-    await assert.rejects(acquire(`${prefix}:full`), { code: 'browser_tab_capacity_reached' })
     assert.equal(initial.some((use) => use.page.isClosed()), false)
     initial[0].release(true)
     const replacement = await acquire(`${prefix}:replacement`)
-    assert.equal(initial[0].page.isClosed(), true)
+    assert.equal(initial[0].page.isClosed(), false, 'new work must not evict an unexpired idle page')
     assert.equal(initial[1].page.isClosed(), false)
-    assert.equal(manager.tabGcStatus().capacity, 1)
-    log({ check: 'capacity and busy protection', passed: true, profile: target.profile.slug, visibility: context.effectiveBrowserVisibility, workTabs: count })
+    log({ check: 'more than eight active tabs without eviction', passed: true, profile: target.profile.slug, visibility: context.effectiveBrowserVisibility, workTabs: count + 1 })
 
     const busy = initial[1]
     const reset = initial[2]

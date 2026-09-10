@@ -49,13 +49,11 @@ export type ConfigBrowser = 'chrome' | 'brave'
 export type BrowserTabGcConfig = {
   idleTimeoutSeconds: number
   sweepIntervalSeconds: number
-  maxTabsPerProfile: number
 }
 
 export const DEFAULT_BROWSER_TAB_GC: Readonly<BrowserTabGcConfig> = Object.freeze({
   idleTimeoutSeconds: 120,
   sweepIntervalSeconds: 15,
-  maxTabsPerProfile: 8,
 })
 
 export function validateBrowserTabGc(value: unknown): BrowserTabGcConfig {
@@ -67,7 +65,7 @@ export function validateBrowserTabGc(value: unknown): BrowserTabGcConfig {
       throw configError('tokenless_config_invalid', `browserTabGc.${key} must be a positive integer.`)
     }
   }
-  return { idleTimeoutSeconds: Number(value.idleTimeoutSeconds), sweepIntervalSeconds: Number(value.sweepIntervalSeconds), maxTabsPerProfile: Number(value.maxTabsPerProfile) }
+  return { idleTimeoutSeconds: Number(value.idleTimeoutSeconds), sweepIntervalSeconds: Number(value.sweepIntervalSeconds) }
 }
 
 export type OutputSavingsConfig = {
@@ -234,7 +232,12 @@ async function readTokenlessConfigUnlocked(homeDir: string) {
     browserVisibility: 'headed',
     daemonUrl: normalizeDaemonUrl(payload.daemonUrl),
     language: normalizeTokenlessLanguage(payload.language) ?? 'en',
-    browserTabGc: payload.browserTabGc === undefined ? { ...DEFAULT_BROWSER_TAB_GC } : validateBrowserTabGc(payload.browserTabGc),
+    browserTabGc: payload.browserTabGc === undefined ? { ...DEFAULT_BROWSER_TAB_GC } : validateBrowserTabGc(
+      // Existing config files contain the removed tab cap; it no longer controls allocation.
+      isJsonRecord(payload.browserTabGc)
+        ? Object.fromEntries(Object.entries(payload.browserTabGc).filter(([key]) => key !== 'maxTabsPerProfile'))
+        : payload.browserTabGc,
+    ),
     outputSavings: normalizeOutputSavingsConfig(payload.outputSavings),
     apiProxy: normalizeApiProxyConfig(payload.apiProxy),
     g4f: normalizeG4fConfig(payload.g4f),

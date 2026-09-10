@@ -394,11 +394,10 @@
         <div class="form-stack">
         <div class="field"><label for="gc-idle">{t('tabGcIdle')}</label><input id="gc-idle" type="number" min="1" step="1" bind:value={global.browserTabGc.idleTimeoutSeconds} /></div>
         <div class="field"><label for="gc-sweep">{t('tabGcSweep')}</label><input id="gc-sweep" type="number" min="1" step="1" bind:value={global.browserTabGc.sweepIntervalSeconds} /></div>
-        <div class="field"><label for="gc-limit">{t('tabGcLimit')}</label><input id="gc-limit" type="number" min="1" step="1" bind:value={global.browserTabGc.maxTabsPerProfile} /></div>
         </div>
         {#if snapshot.runtime.tabGc}
           {@const gc = snapshot.runtime.tabGc}
-          <p class="form-note" data-testid="tab-gc-counters">{t('tabGcReused')}: {gc.idleReuses} · {t('tabGcExpired')}: {gc.expired} · {t('tabGcCapacity')}: {gc.capacity} · {t('tabGcReopened')}: {gc.reopenedSoon} · {t('tabGcRejected')}: {gc.capacityRejected} · {t('tabGcFailures')}: {gc.closeFailures}</p>
+          <p class="form-note" data-testid="tab-gc-counters">{t('tabGcReused')}: {gc.idleReuses} · {t('tabGcExpired')}: {gc.expired} · {t('tabGcReopened')}: {gc.reopenedSoon} · {t('tabGcFailures')}: {gc.closeFailures}</p>
           {#each gc.profiles as profile (profile.profileId)}
             <div class="settings-row"><span>{profile.profileId} · {profile.status ?? 'attached'}{profile.errorCode ? ` · ${profile.errorCode}` : ''}</span><strong>{t('tabGcObserved')}: {profile.totalPages ?? '—'} · {t('tabGcUntracked')}: {profile.untrackedPages ?? '—'} · {t('tabGcBusy')}: {profile.busyPages} · idle: {profile.idlePages} · {t('tabGcTotal')}: {profile.workPages}</strong></div>
           {/each}

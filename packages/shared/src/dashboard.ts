@@ -126,14 +126,11 @@ export type DashboardTerminalBenchSemanticManifestResult = {
 export type DashboardBrowserTabGc = {
   idleTimeoutSeconds: number
   sweepIntervalSeconds: number
-  maxTabsPerProfile: number
 }
 
 export type DashboardTabGcStatus = {
   idleReuses: number
   expired: number
-  capacity: number
-  capacityRejected: number
   closeFailures: number
   reopenedSoon: number
   profiles: Array<{ profileId: string; workPages: number; idlePages: number; busyPages: number; totalPages?: number | null; untrackedPages?: number | null; status?: string; errorCode?: string | null }>

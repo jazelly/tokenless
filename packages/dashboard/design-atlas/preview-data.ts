@@ -43,7 +43,7 @@ export function createPreviewSnapshot(language: Language): DashboardSnapshot {
     runtime: { status: 'running', activeProfileCount: 4, activeJobCount: 1, pid: 0 },
     config: {
       rateLimits: [],
-      browserTabGc: { idleTimeoutSeconds: 120, sweepIntervalSeconds: 15, maxTabsPerProfile: 8 },
+      browserTabGc: { idleTimeoutSeconds: 120, sweepIntervalSeconds: 15 },
       updatedAt: date,
       profiles: Object.fromEntries(profiles.map(profile => [profile.slug, {
         roleLabel: profile.roleLabel, enabledProviders: profile.enabledProviders, providerModes: profile.providerModes,

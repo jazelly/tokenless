@@ -233,7 +233,7 @@ Tokenless API reclaims owned work tabs after **120 seconds continuously idle**, 
 
 - Active jobs, generation, unsent drafts, uploads, and uncertain page states stay protected. Previously retained work is checked again and can become idle when it is visibly finished. Explicitly opened user tabs remain excluded.
 - Reusing an idle tab resets its timer. After collection, a normal continuation with the same task ID (or Page Ref when no task ID is supplied) reopens its saved provider conversation URL.
-- Configure `browserTabGc` in **System** or the persisted `config.json`: `idleTimeoutSeconds`, `sweepIntervalSeconds`, and `maxTabsPerProfile`. System shows current busy/idle counts and collection counters; counters reset with the daemon.
+- Configure `browserTabGc` in **System** or the persisted `config.json`: `idleTimeoutSeconds` and `sweepIntervalSeconds`. Active work tabs have no count limit. System shows current busy/idle counts and collection counters; counters reset with the daemon.
 
 The collector runs inside the daemon and applies to headed and headless managed contexts. It closes tabs, preserves the resident browser, and does not delete conversation history. Every running registered profile is attached without launching or relaunching a browser. A local target-ID ownership file restores work tabs after daemon restart; older tabs are recovered only when their exact URL matches a persisted task conversation. Page observations restart the idle timer when the answer or user activity changes. System reports actual browser pages, untracked/user pages, and profile connection failures. Unknown pages remain visible in the counts and are preserved.
 
