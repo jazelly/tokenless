@@ -11,6 +11,9 @@
     "build:scripts": "node -e \"require('node:fs').rmSync('dist/scripts',{recursive:true,force:true})\" && tsc -p tsconfig.scripts.json",
     "build:macos-menu": "npm run build --workspace packages/cli && node scripts/build-macos-menu.mjs",
     "install:macos-menu": "npm run build:macos-menu && node scripts/install-macos-menu.mjs",
+    "build:windows-menu": "node scripts/prepare-windows-menu-build.mjs && node packages/cli/scripts/build-package.mjs && node scripts/build-windows-menu.mjs",
+    "install:windows-menu": "npm run build:windows-menu && powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/install-windows-menu.ps1",
+    "verify:windows-menu": "node scripts/verify-windows-menu.mjs",
     "changeset": "changeset",
     "lint": "npm run api:check && npm run lint --workspaces --if-present && tsc -p tsconfig.scripts.json --noEmit",
     "check": "npm run lint && npm test",
@@ -46,7 +49,7 @@
   "engines": {
     "node": ">=22.13.0"
   },
-  "packageManager": "npm@10",
+  "packageManager": "npm@10.9.4",
   "devDependencies": {
     "@changesets/cli": "^2.31.0",
     "@playwright/test": "1.61.1",

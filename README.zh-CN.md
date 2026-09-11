@@ -131,6 +131,8 @@ Native mode 使用当前版本的 Chrome 或 Brave；在 `chrome://inspect/#remo
 
 已经安装？先运行 `tokenless upgrade --check`，再运行 `tokenless upgrade`。CLI 与 macOS App 更新说明见[更新指南](docs/updates.zh-CN.md)。
 
+在 Windows 上开发？[Windows 托盘应用](apps/windows-menu/README.zh-CN.md) 支持左键打开 Dashboard、右键使用原生菜单。
+
 </details>
 
 ## 什么是 Web Harness？

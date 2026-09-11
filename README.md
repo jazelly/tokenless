@@ -131,6 +131,8 @@ For native mode, use a current Chrome or Brave, enable remote debugging at `chro
 
 Already installed? Run `tokenless upgrade --check`, then `tokenless upgrade`. See [Updates](docs/updates.md) for CLI and macOS app updates.
 
+Developing on Windows? The [Windows tray app](apps/windows-menu/README.md) opens Dashboard on left-click and provides a native right-click menu.
+
 </details>
 
 ## What is a Web Harness?
