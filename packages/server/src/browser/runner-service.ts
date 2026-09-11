@@ -102,7 +102,6 @@ export type ManagedPlaywrightJobResult = {
 
 type ManagedPlaywrightExecutionOutcome = {
   result: ManagedPlaywrightJobResult
-  conversationSaved?: boolean
 }
 
 export type ManagedProfileOpenResult = {
@@ -197,12 +196,6 @@ export class ManagedPlaywrightRunnerService {
       supervision: {
         profiles: () => this.profileRegistry.listProfiles(),
         recoverPage: (profile, page) => this.daemonClient.findProviderTaskConversationByUrl(profile.slug, page.url()),
-        observePage: async (providerId, page) => {
-          const provider = getProviderInstanceById(providerId)
-          if (!provider || provider.navigation.classify(page.url()).kind !== 'approved' ||
-            provider.navigation.canonicalTarget(page.url())?.href === provider.navigation.homeTarget().href) return null
-          return await provider.observeTabActivity(page)
-        },
       },
       ...(options.tabGc ? { tabGc: options.tabGc } : {}),
       ...(options.browser ? { browser: options.browser } : {}),
@@ -420,7 +413,6 @@ export class ManagedPlaywrightRunnerService {
     const controller = new AbortController()
     const signal = outerSignal ? AbortSignal.any([outerSignal, controller.signal]) : controller.signal
     let canceled = false
-    let idle = false
     const pageUses: ManagedProviderPage[] = []
     let attachmentRoot: string | undefined
     let providerAttachmentRoot: string | undefined
@@ -490,10 +482,6 @@ export class ManagedPlaywrightRunnerService {
         jobId: job.job_id,
         result,
       })
-      const finalWork = request.actions.map((action) => getVisibleActionLifecycle(action.action))
-        .filter((lifecycle) => lifecycle.mutating || lifecycle.completion === 'reads_response').at(-1)
-      idle = !request.userHandoff && finalWork?.completion === 'reads_response' &&
-        (request.executionMode === 'direct' || execution.conversationSaved === true)
       return { taken: true, jobId: job.job_id, status: 'succeeded' }
     } catch (error) {
       if (error instanceof ProviderFallbackSignal) {
@@ -518,7 +506,7 @@ export class ManagedPlaywrightRunnerService {
       }).catch(() => undefined)
       return { taken: true, jobId: job.job_id, status: 'failed' }
     } finally {
-      for (const page of pageUses) page.release(idle)
+      for (const page of pageUses) page.release()
       clearInterval(cancelTimer)
       controller.abort()
       if (attachmentRoot && this.cleanupAttachmentRoot) {
@@ -625,7 +613,6 @@ export class ManagedPlaywrightRunnerService {
     }
     const requestedBrowserVisibility = request.browserVisibility
     const automaticAuthObservation = isAutomaticAuthObservation(request, requestedBrowserVisibility)
-    let conversationSaved = false
     const operation = async (initialManagedContext: ManagedBrowserContext) => {
       const managedContext = initialManagedContext
       const pageRef = managedPageRef(job, request)
@@ -894,7 +881,6 @@ export class ManagedPlaywrightRunnerService {
               canonicalUrl: conversationUrl,
               signal,
             })
-            conversationSaved = true
           }
         }
       }
@@ -905,7 +891,6 @@ export class ManagedPlaywrightRunnerService {
     }
     const responses = await this.contextManager.runWithProfile(profile, requestedBrowserVisibility, operation)
     return {
-      conversationSaved,
       result: {
         protocol: MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID,
         provider: request.provider,

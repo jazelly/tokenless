@@ -69,7 +69,7 @@ export type ManagedProviderPageRequest = {
 export type ManagedProviderPage = {
   page: Page
   reused: boolean
-  release(idle: boolean): void
+  release(): void
 }
 
 export type PersistentChromeLaunchOptions = NonNullable<Parameters<typeof chromium.launchPersistentContext>[1]>
@@ -93,7 +93,6 @@ export type PersistentContextManagerOptions = {
   supervision?: {
     profiles(): Promise<ManagedBrowserProfile[]>
     recoverPage(profile: ManagedBrowserProfile, page: Page): Promise<{ provider: string; pageRef: string } | null>
-    observePage(provider: string, page: Page): Promise<string | null>
   }
 }
 
@@ -228,7 +227,7 @@ export class PersistentContextManager {
           this.profileCoverage.set(active.profile.slug, { status: 'attached', errorCode: null })
           for (const state of active.providerPages.values()) {
             if (active.closing || this.shuttingDown) return
-            await this.refreshActivity(active, state)
+            await this.refreshActivity(state)
             if (isIdlePage(active, state) && performance.now() - state.idleSince! >= this.tabGc.idleTimeoutSeconds * 1000) {
               await this.collectPage(active, state)
             }
@@ -243,7 +242,7 @@ export class PersistentContextManager {
   }
 
   private async collectPage(active: ActiveContext, state: ProviderPageState) {
-    await this.refreshActivity(active, state)
+    await this.refreshActivity(state)
     if (!isIdlePage(active, state)) return
     if (performance.now() - state.idleSince! < this.tabGc.idleTimeoutSeconds * 1000) return
     state.collecting = true
@@ -263,16 +262,23 @@ export class PersistentContextManager {
     }
   }
 
-  private async refreshActivity(active: ActiveContext, state: ProviderPageState) {
-    if (!this.supervision || state.users > 0 || state.purpose !== 'work' || state.page.isClosed()) return
-    const observation = await this.supervision.observePage(state.provider, state.page).catch(() => null)
-    if (observation === null) {
-      state.held = true
-      state.idleSince = null
-    } else {
-      if (state.idleSince === null || (state.observation !== null && state.observation !== observation)) state.idleSince = performance.now()
-      state.held = false
-    }
+  private async refreshActivity(state: ProviderPageState) {
+    if (state.users > 0 || state.purpose !== 'work' || state.page.isClosed()) return
+    // Task leases determine busy state; static drafts and errors must not pin released work tabs.
+    const observation = await state.page.evaluate(() => {
+      const host = window as unknown as { __tokenlessGcActivity?: number }
+      if (host.__tokenlessGcActivity === undefined) {
+        host.__tokenlessGcActivity = 0
+        for (const event of ['pointerdown', 'keydown', 'input', 'wheel']) {
+          document.addEventListener(event, (event) => {
+            if (event.isTrusted) host.__tokenlessGcActivity = (host.__tokenlessGcActivity ?? 0) + 1
+          }, { capture: true, passive: true })
+        }
+      }
+      return JSON.stringify([location.href, performance.timeOrigin, host.__tokenlessGcActivity])
+    }).catch(() => null)
+    if (state.idleSince === null || (state.observation !== null && observation !== null && state.observation !== observation)) state.idleSince = performance.now()
+    state.held = false
     state.observation = observation
   }
 
@@ -314,7 +320,7 @@ export class PersistentContextManager {
         ? `resident:${targetId}` : recovered.pageRef
       const state = bindProviderPage(active, { provider: recovered.provider, pageRef, page, purpose: persisted?.purpose ?? 'work' })
       state.targetId = targetId
-      state.held = true
+      state.idleSince = performance.now()
       active.ownedPages.add(page)
       changed = true
     }
@@ -331,11 +337,10 @@ export class PersistentContextManager {
     return {
       page: state.page,
       reused,
-      release(idle) {
+      release() {
         if (released) return
         released = true
         state.users -= 1
-        if (!idle) state.held = true
         if (state.users === 0 && !state.held && state.purpose === 'work' && active.ownedPages.has(state.page)) state.idleSince = performance.now()
       },
     }
