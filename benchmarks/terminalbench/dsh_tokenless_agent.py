@@ -3351,6 +3351,16 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
             remote_path="/installed-agent/profile/cordis.patch.yml",
             filename="cordis.patch.yml",
         )
+        # Docker image USER can be non-root even when Harbor's default_user is unset.
+        # DSH writes cordis.yml into this profile during startup.
+        identity = await self.exec_as_agent(environment, "id -u")
+        owner = (identity.stdout or "").strip()
+        if not owner.isdigit():
+            raise RuntimeError("Could not determine the DSH profile owner.")
+        await self.exec_as_root(
+            environment,
+            f"chown -R {owner} /installed-agent/profile",
+        )
 
     @override
     @with_prompt_template

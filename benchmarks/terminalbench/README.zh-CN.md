@@ -90,6 +90,10 @@ Observation 分别记录官方 verifier 成绩、routing outcome 和记录完整
 
 明确要求单 provider 测评时，可以在直接运行 Harbor 的 config 中把 `agents[0].model_name` 设为 `tokenless/<provider>`（例如 `tokenless/chatgpt`）。Adapter 会将 parent 和 child 都绑定到该 provider，并记录 `routingMode: fixed`；semantic preference 只用于 auto run。运行前须在选定的持久化 profile 中选择并验证网页模型、thinking effort 和 Chat/Work 入口。这类直接运行保留原始 Harbor results 与 adapter audits；canonical `wiring`/`sweep`/`full` reports 仍用于 auto-route 测评。
 
+用户明确要求并发子集 benchmark 时，可以并行启动独立的固定 provider Harbor trial，每个 provider 分配不同任务。分别报告启动的 trial 数、实际观察到的 agent/请求重叠数以及每个任务的官方 reward；启动失败不算 provider 尝试。手动修复后的重跑与首轮 `k=1` 结果分开。验证标签回收时，从没有遗留工作页的状态开始，在执行全程记录真实 target 归属和 job 状态，披露采样缺口，并观察最后的闲置窗口，直到只剩维持浏览器驻留的空白页。
+
+安装的 DSH profile 必须归容器中实际执行 agent 的 UID 所有，包括 Harbor 未通过 `default_user` 暴露的镜像非 root `USER`。DSH 启动时会在该目录写入 `cordis.yml`；调整这个安装目录的归属不会改变官方任务用户和工作区权限。
+
 明确配置 ChatGPT CLI run 时，`--chat-surface chat`、`--model <visible-label>` 和 `--effort <visible-label>` 用于选择请求的控制状态。这些只是配置输入，不能证明 benchmark 提交时实际使用的状态。报告记录实际观察到的选择，并保留原始模型标签，包括 `Latest` 等别名。
 
 如果可获取，每个成功的 ChatGPT `response.read` 还会从 assistant message DOM 记录 `responseModel`（`source: assistant-message-dom`），并与提交前的控制项观察并列保存。缺失的响应身份会明确记录。模型汇总使用实际选中的模型标签，不使用回复 slug 替代；当前用户确认的 `Latest = GPT-6` 映射显示为 `GPT-6 / Latest`。collector 分别保留原始标签、thinking 档位和回复 slug。
