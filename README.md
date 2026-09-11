@@ -7,7 +7,11 @@
 <p align="center"><strong>Put your existing web LLM accounts to work for your agents.</strong></p>
 
 <p align="center">
-  <a href="#start-in-three-commands">Quick start</a> · <a href="#what-is-a-web-harness">What is Web Harness?</a> · <a href="#providers">Providers</a> · <a href="docs/capability-matrix.md">Capabilities</a> · <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a>
+  <a href="#start-in-three-commands">Quick start</a> · <a href="#what-is-a-web-harness">What is Web Harness?</a> · <a href="#providers">Providers</a> · <a href="docs/capability-matrix.md">Capabilities</a>
+</p>
+
+<p align="center">
+  <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a>
 </p>
 
 <p align="center">
@@ -18,14 +22,13 @@
 
 ## Three ways to use Tokenless
 
-### 1. Tokenless Harness + API · Main workflow
+### 1. Tokenless Harness + Tokenless API
 
-Give Tokenless Harness a task; it manages execution through Tokenless API and returns the result.
+Tokenless Harness manages tasks and tool calls; Tokenless API connects your web LLM accounts and returns model responses to the Harness.
 
-![Bring a task → Tokenless Web Harness runs the web workflow → results return to your agent or app; follow activity in Dashboard](assets/web-harness-workflow-en.png)
+![Bring a task → Tokenless Harness manages tasks and tools → Tokenless API connects your web LLM accounts → get results; follow activity in Dashboard](assets/web-harness-workflow-en.png)
 
-<details>
-<summary>2. Your own Harness + Tokenless API</summary>
+### 2. Your own Harness + Tokenless API
 
 Keep your Harness’s agent loop, tools, and sessions; connect its model interface to Tokenless API.
 
@@ -33,18 +36,13 @@ Keep your Harness’s agent loop, tools, and sessions; connect its model interfa
 
 [API setup and compatibility limits](docs/api-proxy-integration.md) · [Harness integration](docs/harness-integrations.md)
 
-</details>
-
-<details>
-<summary>3. Your own Harness + Tokenless skill</summary>
+### 3. Your own Harness + Tokenless skill
 
 Add the Tokenless skill to your Harness; invoke it for selected tasks and bring the results back into your usual workflow.
 
 ![Keep your workflow → call the Tokenless skill on demand for a selected task → continue in your own Harness](assets/tokenless-skill-workflow-en.png)
 
 `tokenless setup` installs the skill into supported local agent skill directories. [Setup](COMMANDS.md#tokenless-setup) · [Skill instructions](skills/tokenless/SKILL.md)
-
-</details>
 
 <sub>AI-generated use-case illustrations. Available capabilities depend on the selected provider’s verified support.</sub>
 

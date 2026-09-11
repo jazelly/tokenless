@@ -7,7 +7,11 @@
 <p align="center"><strong>让你已有的网页大模型账号，为 Agent 完成任务。</strong></p>
 
 <p align="center">
-  <a href="#三条命令开始使用">快速开始</a> · <a href="#什么是-web-harness">什么是 Web Harness</a> · <a href="#providers">Providers</a> · <a href="docs/capability-matrix.zh-CN.md">支持的能力</a> · <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a>
+  <a href="#三条命令开始使用">快速开始</a> · <a href="#什么是-web-harness">什么是 Web Harness</a> · <a href="#providers">Providers</a> · <a href="docs/capability-matrix.zh-CN.md">支持的能力</a>
+</p>
+
+<p align="center">
+  <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a>
 </p>
 
 <p align="center">
@@ -18,14 +22,13 @@
 
 ## 三种使用方式
 
-### 1. Tokenless Harness + API · 主流用法
+### 1. Tokenless Harness + Tokenless API
 
-把任务交给 Tokenless Harness；它通过 Tokenless API 执行任务，并返回结果。
+Tokenless Harness 管理任务与工具调用；Tokenless API 接入你的网页大模型账号，将模型回复交回 Harness。
 
-![交给它任务 → Tokenless Web Harness 执行网页工作流 → 结果回到智能体或应用；在仪表盘查看任务与用量](assets/web-harness-workflow-zh-CN.png)
+![交给它任务 → Tokenless Harness 管理任务与工具 → Tokenless API 接入网页大模型账号 → 拿到结果；在仪表盘查看任务与用量](assets/web-harness-workflow-zh-CN.png)
 
-<details>
-<summary>2. 自选 Harness + Tokenless API</summary>
+### 2. 自选 Harness + Tokenless API
 
 保留自己的 Harness、工具和会话，把模型接口接到 Tokenless API；任务流程仍由你的 Harness 管理。
 
@@ -33,18 +36,13 @@
 
 [API 接入与兼容范围](docs/api-proxy-integration.zh-CN.md) · [Harness 集成](docs/harness-integrations.zh-CN.md)
 
-</details>
-
-<details>
-<summary>3. 自选 Harness + Tokenless Skill</summary>
+### 3. 自选 Harness + Tokenless Skill
 
 把 Tokenless Skill 装入自己的 Harness，只在需要时调用，交出选定任务，再带回结果继续原有工作流。
 
 ![沿用自己的工作流 → 按需调用 Tokenless 技能处理选定任务 → 在自己的框架中继续工作](assets/tokenless-skill-workflow-zh-CN.png)
 
 `tokenless setup` 会将 Skill 安装到受支持的本地 Agent 技能目录。[安装说明](COMMANDS.zh-CN.md#tokenless-setup) · [Skill 使用指引](skills/tokenless/SKILL.md)
-
-</details>
 
 <sub>AI 生成的用途示意图；具体能力以所选 provider 的已验证支持为准。</sub>
 
