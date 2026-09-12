@@ -90,6 +90,9 @@ class InMemoryWebAgentHarness implements WebAgentHarness {
 
   async start(input: AgentRunSpec): Promise<AgentRunView> {
     const spec = validateSpec(input)
+    if (spec.provider === 'github-copilot') {
+      throw new HarnessSkillError('harness_github_copilot_native_required', 'GitHub Copilot agent tasks require accessible GitHub repository context. Use tokenless agent delegate --provider github-copilot --copilot-repo owner/repo to execute through its native cloud Agent.')
+    }
     const runId = opaqueRef('run')
     const record: HarnessRunRecord = {
       protocol: HARNESS_RUN_PROTOCOL,

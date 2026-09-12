@@ -8,7 +8,9 @@ import { DoubaoProvider } from './doubao-provider.js'
 import { GeminiProvider } from './gemini-provider.js'
 import { GitHubCopilotProvider } from './github-copilot-provider.js'
 import { GrokProvider } from './grok-provider.js'
+import { HuggingChatProvider } from './hugging-chat-provider.js'
 import { KimiProvider } from './kimi-provider.js'
+import { LovableProvider } from './lovable-provider.js'
 import { MetaProvider } from './meta-provider.js'
 import { MicrosoftCopilotProvider } from './microsoft-copilot-provider.js'
 import { PerplexityProvider } from './perplexity-provider.js'
@@ -198,6 +200,8 @@ export const providerInstances = Object.freeze([
   new MetaProvider(),
   new MicrosoftCopilotProvider(),
   new GitHubCopilotProvider(),
+  new LovableProvider(),
+  new HuggingChatProvider(),
   ...createDirectOnlyG4fProviders(100),
 ] satisfies readonly ProviderInstance[])
 

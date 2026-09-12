@@ -1,7 +1,7 @@
 {
   "schema": "tokenless.provider-rate-limit-catalog.v1",
   "catalogVersion": 1,
-  "revision": "2026-09-05",
+  "revision": "2026-09-12",
   "reviewedAt": "2026-08-31",
   "reviewAfter": "2026-09-30",
   "scope": {
@@ -197,6 +197,10 @@
       "yqcloud": {
         "modelFamily": "*",
         "promptAction": "interactive.usage"
+      },
+      "lovable": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
       }
     }
   },
@@ -375,9 +379,83 @@
       "url": "https://www.kimi.com/",
       "authority": "official",
       "retrievedAt": "2026-08-04"
+    },
+    "lovable-pricing": {
+      "title": "Lovable pricing and credits",
+      "authority": "official",
+      "publisher": "Lovable",
+      "url": "https://lovable.dev/pricing",
+      "retrievedAt": "2026-09-12"
+    },
+    "hugging-chat-web": {
+      "publisher": "Hugging Face",
+      "title": "HuggingChat",
+      "url": "https://huggingface.co/chat/",
+      "authority": "official",
+      "retrievedAt": "2026-09-12"
     }
   },
   "providers": {
+    "hugging-face": {
+      "label": "HuggingChat",
+      "plans": [
+        {
+          "id": "unknown",
+          "family": "unknown",
+          "labels": []
+        }
+      ],
+      "usageDrivers": [],
+      "runtimeSignals": [],
+      "rules": [
+        {
+          "id": "hugging-face.consumer-web.numeric-limits-unknown",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": [
+              "unknown"
+            ],
+            "accessClasses": [
+              "signed_in_free",
+              "signed_in_paid",
+              "signed_in_unknown",
+              "unknown"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
+          },
+          "meter": {
+            "kind": "unknown",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "unknown"
+          },
+          "allowance": {
+            "kind": "unknown"
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "unknown",
+              "sourceIds": [
+                "hugging-chat-web"
+              ]
+            }
+          ],
+          "notes": [
+            "Numeric allowance and reset window have not been verified for the selected HuggingChat account."
+          ]
+        }
+      ]
+    },
     "github-copilot": {
       "label": "GitHub Copilot",
       "plans": [
@@ -443,9 +521,15 @@
     "microsoft-copilot": {
       "label": "Microsoft Copilot",
       "plans": [
-        { "id": "unknown", "family": "unknown", "labels": [] }
+        {
+          "id": "unknown",
+          "family": "unknown",
+          "labels": []
+        }
       ],
-      "usageDrivers": ["selected_mode"],
+      "usageDrivers": [
+        "selected_mode"
+      ],
       "runtimeSignals": [],
       "rules": [
         {
@@ -453,17 +537,40 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["unknown"],
-            "accessClasses": ["signed_in_unknown", "unknown"],
-            "modelFamilies": ["*"],
-            "actions": ["interactive.usage"]
+            "planIds": [
+              "unknown"
+            ],
+            "accessClasses": [
+              "signed_in_unknown",
+              "unknown"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
           },
-          "meter": { "kind": "unknown", "unit": "usage" },
-          "window": { "kind": "unknown" },
-          "allowance": { "kind": "unknown" },
-          "limitBehavior": { "kind": "provider_managed" },
+          "meter": {
+            "kind": "unknown",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "unknown"
+          },
+          "allowance": {
+            "kind": "unknown"
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
           "evidence": [
-            { "kind": "unknown", "sourceIds": ["microsoft-copilot-file-upload"] }
+            {
+              "kind": "unknown",
+              "sourceIds": [
+                "microsoft-copilot-file-upload"
+              ]
+            }
           ],
           "notes": [
             "The file-upload documentation gives per-file and per-conversation limits, not a time-based chat allowance or reset window."
@@ -477,37 +584,53 @@
         {
           "id": "free",
           "family": "free",
-          "labels": ["Free"]
+          "labels": [
+            "Free"
+          ]
         },
         {
           "id": "go",
           "family": "individual_paid",
-          "labels": ["Go"]
+          "labels": [
+            "Go"
+          ]
         },
         {
           "id": "plus",
           "family": "individual_paid",
-          "labels": ["Plus"]
+          "labels": [
+            "Plus"
+          ]
         },
         {
           "id": "pro",
           "family": "individual_paid",
-          "labels": ["Pro"]
+          "labels": [
+            "Pro"
+          ]
         },
         {
           "id": "business",
           "family": "organization_paid",
-          "labels": ["Business", "Team"]
+          "labels": [
+            "Business",
+            "Team"
+          ]
         },
         {
           "id": "enterprise",
           "family": "organization_paid",
-          "labels": ["Enterprise"]
+          "labels": [
+            "Enterprise"
+          ]
         },
         {
           "id": "edu",
           "family": "organization_paid",
-          "labels": ["Edu", "Education"]
+          "labels": [
+            "Edu",
+            "Education"
+          ]
         },
         {
           "id": "unknown",
@@ -525,13 +648,27 @@
       "runtimeSignals": [
         {
           "kind": "reset_time_shown_at_limit",
-          "appliesTo": ["free"],
-          "sourceIds": ["openai-free-tier"]
+          "appliesTo": [
+            "free"
+          ],
+          "sourceIds": [
+            "openai-free-tier"
+          ]
         },
         {
           "kind": "rolling_file_quota_remaining_not_shown",
-          "appliesTo": ["free", "go", "plus", "pro", "business", "enterprise", "edu"],
-          "sourceIds": ["openai-file-uploads"]
+          "appliesTo": [
+            "free",
+            "go",
+            "plus",
+            "pro",
+            "business",
+            "enterprise",
+            "edu"
+          ],
+          "sourceIds": [
+            "openai-file-uploads"
+          ]
         }
       ],
       "rules": [
@@ -540,10 +677,18 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["free"],
-            "accessClasses": ["signed_in_free"],
-            "modelFamilies": ["gpt-5.5-instant"],
-            "actions": ["prompt.submit"]
+            "planIds": [
+              "free"
+            ],
+            "accessClasses": [
+              "signed_in_free"
+            ],
+            "modelFamilies": [
+              "gpt-5.5-instant"
+            ],
+            "actions": [
+              "prompt.submit"
+            ]
           },
           "meter": {
             "kind": "count",
@@ -562,7 +707,9 @@
           "evidence": [
             {
               "kind": "official_dynamic",
-              "sourceIds": ["openai-gpt55-chatgpt"]
+              "sourceIds": [
+                "openai-gpt55-chatgpt"
+              ]
             }
           ],
           "notes": [
@@ -574,10 +721,19 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["go", "plus"],
-            "accessClasses": ["signed_in_paid"],
-            "modelFamilies": ["gpt-5.5-instant"],
-            "actions": ["prompt.submit"]
+            "planIds": [
+              "go",
+              "plus"
+            ],
+            "accessClasses": [
+              "signed_in_paid"
+            ],
+            "modelFamilies": [
+              "gpt-5.5-instant"
+            ],
+            "actions": [
+              "prompt.submit"
+            ]
           },
           "meter": {
             "kind": "count",
@@ -598,7 +754,9 @@
           "evidence": [
             {
               "kind": "official_exact",
-              "sourceIds": ["openai-gpt55-chatgpt"]
+              "sourceIds": [
+                "openai-gpt55-chatgpt"
+              ]
             }
           ],
           "notes": []
@@ -608,11 +766,21 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["go"],
-            "accessClasses": ["signed_in_paid"],
-            "modelFamilies": ["gpt-5.5-thinking"],
-            "modes": ["manual_thinking"],
-            "actions": ["prompt.submit"]
+            "planIds": [
+              "go"
+            ],
+            "accessClasses": [
+              "signed_in_paid"
+            ],
+            "modelFamilies": [
+              "gpt-5.5-thinking"
+            ],
+            "modes": [
+              "manual_thinking"
+            ],
+            "actions": [
+              "prompt.submit"
+            ]
           },
           "meter": {
             "kind": "count",
@@ -632,7 +800,9 @@
           "evidence": [
             {
               "kind": "official_exact",
-              "sourceIds": ["openai-gpt55-chatgpt"]
+              "sourceIds": [
+                "openai-gpt55-chatgpt"
+              ]
             }
           ],
           "notes": [
@@ -644,10 +814,19 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["pro", "business"],
-            "accessClasses": ["signed_in_paid"],
-            "modelFamilies": ["gpt-5-family"],
-            "actions": ["prompt.submit"]
+            "planIds": [
+              "pro",
+              "business"
+            ],
+            "accessClasses": [
+              "signed_in_paid"
+            ],
+            "modelFamilies": [
+              "gpt-5-family"
+            ],
+            "actions": [
+              "prompt.submit"
+            ]
           },
           "meter": {
             "kind": "guardrail",
@@ -665,7 +844,9 @@
           "evidence": [
             {
               "kind": "official_qualitative",
-              "sourceIds": ["openai-gpt55-chatgpt"]
+              "sourceIds": [
+                "openai-gpt55-chatgpt"
+              ]
             }
           ],
           "notes": [
@@ -677,10 +858,27 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["free", "go", "plus", "pro", "business", "enterprise", "edu", "unknown"],
-            "accessClasses": ["signed_in_free", "signed_in_paid", "signed_in_unknown"],
-            "modelFamilies": ["*"],
-            "actions": ["file.upload"]
+            "planIds": [
+              "free",
+              "go",
+              "plus",
+              "pro",
+              "business",
+              "enterprise",
+              "edu",
+              "unknown"
+            ],
+            "accessClasses": [
+              "signed_in_free",
+              "signed_in_paid",
+              "signed_in_unknown"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "file.upload"
+            ]
           },
           "meter": {
             "kind": "count",
@@ -700,7 +898,9 @@
           "evidence": [
             {
               "kind": "official_exact",
-              "sourceIds": ["openai-file-uploads"]
+              "sourceIds": [
+                "openai-file-uploads"
+              ]
             }
           ],
           "notes": [
@@ -714,10 +914,18 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["free"],
-            "accessClasses": ["signed_in_free"],
-            "modelFamilies": ["*"],
-            "actions": ["file.upload"]
+            "planIds": [
+              "free"
+            ],
+            "accessClasses": [
+              "signed_in_free"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "file.upload"
+            ]
           },
           "meter": {
             "kind": "count",
@@ -737,7 +945,9 @@
           "evidence": [
             {
               "kind": "official_exact",
-              "sourceIds": ["openai-file-uploads"]
+              "sourceIds": [
+                "openai-file-uploads"
+              ]
             }
           ],
           "notes": [
@@ -749,10 +959,19 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["unknown"],
-            "accessClasses": ["guest"],
-            "modelFamilies": ["*"],
-            "actions": ["prompt.submit", "file.upload"]
+            "planIds": [
+              "unknown"
+            ],
+            "accessClasses": [
+              "guest"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "prompt.submit",
+              "file.upload"
+            ]
           },
           "meter": {
             "kind": "unknown",
@@ -770,7 +989,9 @@
           "evidence": [
             {
               "kind": "unknown",
-              "sourceIds": ["openai-free-tier"]
+              "sourceIds": [
+                "openai-free-tier"
+              ]
             }
           ],
           "notes": [
@@ -782,10 +1003,21 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["enterprise", "edu", "unknown"],
-            "accessClasses": ["signed_in_paid", "signed_in_unknown"],
-            "modelFamilies": ["*"],
-            "actions": ["prompt.submit"]
+            "planIds": [
+              "enterprise",
+              "edu",
+              "unknown"
+            ],
+            "accessClasses": [
+              "signed_in_paid",
+              "signed_in_unknown"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "prompt.submit"
+            ]
           },
           "meter": {
             "kind": "unknown",
@@ -803,7 +1035,9 @@
           "evidence": [
             {
               "kind": "unknown",
-              "sourceIds": ["openai-gpt55-chatgpt"]
+              "sourceIds": [
+                "openai-gpt55-chatgpt"
+              ]
             }
           ],
           "notes": [
@@ -818,52 +1052,72 @@
         {
           "id": "free",
           "family": "free",
-          "labels": ["Free"]
+          "labels": [
+            "Free"
+          ]
         },
         {
           "id": "pro",
           "family": "individual_paid",
-          "labels": ["Pro"]
+          "labels": [
+            "Pro"
+          ]
         },
         {
           "id": "max_5x",
           "family": "individual_paid",
-          "labels": ["Max 5x"]
+          "labels": [
+            "Max 5x"
+          ]
         },
         {
           "id": "max_20x",
           "family": "individual_paid",
-          "labels": ["Max 20x"]
+          "labels": [
+            "Max 20x"
+          ]
         },
         {
           "id": "max_unknown",
           "family": "individual_paid",
-          "labels": ["Max"]
+          "labels": [
+            "Max"
+          ]
         },
         {
           "id": "team_standard",
           "family": "organization_paid",
-          "labels": ["Team Standard"]
+          "labels": [
+            "Team Standard"
+          ]
         },
         {
           "id": "team_premium",
           "family": "organization_paid",
-          "labels": ["Team Premium"]
+          "labels": [
+            "Team Premium"
+          ]
         },
         {
           "id": "team_unknown",
           "family": "organization_paid",
-          "labels": ["Team"]
+          "labels": [
+            "Team"
+          ]
         },
         {
           "id": "enterprise_seat",
           "family": "organization_paid",
-          "labels": ["Enterprise"]
+          "labels": [
+            "Enterprise"
+          ]
         },
         {
           "id": "enterprise_usage_based",
           "family": "organization_paid",
-          "labels": ["Enterprise Usage-Based"]
+          "labels": [
+            "Enterprise Usage-Based"
+          ]
         },
         {
           "id": "unknown",
@@ -883,14 +1137,31 @@
       ],
       "sharedConsumption": {
         "kind": "shared_across_product_surfaces",
-        "surfaces": ["claude.ai", "claude_code", "claude_desktop"],
-        "sourceIds": ["anthropic-usage"]
+        "surfaces": [
+          "claude.ai",
+          "claude_code",
+          "claude_desktop"
+        ],
+        "sourceIds": [
+          "anthropic-usage"
+        ]
       },
       "runtimeSignals": [
         {
           "kind": "usage_progress_and_reset_visible",
-          "appliesTo": ["pro", "max_5x", "max_20x", "team_standard", "team_premium", "enterprise_seat"],
-          "sourceIds": ["anthropic-pro", "anthropic-max", "anthropic-team"]
+          "appliesTo": [
+            "pro",
+            "max_5x",
+            "max_20x",
+            "team_standard",
+            "team_premium",
+            "enterprise_seat"
+          ],
+          "sourceIds": [
+            "anthropic-pro",
+            "anthropic-max",
+            "anthropic-team"
+          ]
         }
       ],
       "rules": [
@@ -899,10 +1170,18 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["free"],
-            "accessClasses": ["signed_in_free"],
-            "modelFamilies": ["*"],
-            "actions": ["interactive.usage"]
+            "planIds": [
+              "free"
+            ],
+            "accessClasses": [
+              "signed_in_free"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
           },
           "meter": {
             "kind": "compute",
@@ -921,7 +1200,10 @@
           "evidence": [
             {
               "kind": "official_dynamic",
-              "sourceIds": ["anthropic-free", "anthropic-usage"]
+              "sourceIds": [
+                "anthropic-free",
+                "anthropic-usage"
+              ]
             }
           ],
           "notes": [
@@ -933,10 +1215,18 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["pro"],
-            "accessClasses": ["signed_in_paid"],
-            "modelFamilies": ["*"],
-            "actions": ["interactive.usage"]
+            "planIds": [
+              "pro"
+            ],
+            "accessClasses": [
+              "signed_in_paid"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
           },
           "meter": {
             "kind": "compute",
@@ -957,7 +1247,10 @@
           "evidence": [
             {
               "kind": "official_relative",
-              "sourceIds": ["anthropic-pro", "anthropic-credits"]
+              "sourceIds": [
+                "anthropic-pro",
+                "anthropic-credits"
+              ]
             }
           ],
           "notes": [
@@ -970,10 +1263,18 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["pro"],
-            "accessClasses": ["signed_in_paid"],
-            "modelFamilies": ["*"],
-            "actions": ["interactive.usage"]
+            "planIds": [
+              "pro"
+            ],
+            "accessClasses": [
+              "signed_in_paid"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
           },
           "meter": {
             "kind": "compute",
@@ -992,7 +1293,9 @@
           "evidence": [
             {
               "kind": "official_dynamic",
-              "sourceIds": ["anthropic-pro"]
+              "sourceIds": [
+                "anthropic-pro"
+              ]
             }
           ],
           "notes": [
@@ -1004,10 +1307,18 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["max_5x"],
-            "accessClasses": ["signed_in_paid"],
-            "modelFamilies": ["*"],
-            "actions": ["interactive.usage"]
+            "planIds": [
+              "max_5x"
+            ],
+            "accessClasses": [
+              "signed_in_paid"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
           },
           "meter": {
             "kind": "compute",
@@ -1028,7 +1339,10 @@
           "evidence": [
             {
               "kind": "official_relative",
-              "sourceIds": ["anthropic-max", "anthropic-credits"]
+              "sourceIds": [
+                "anthropic-max",
+                "anthropic-credits"
+              ]
             }
           ],
           "notes": []
@@ -1038,10 +1352,18 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["max_unknown"],
-            "accessClasses": ["signed_in_paid"],
-            "modelFamilies": ["*"],
-            "actions": ["interactive.usage"]
+            "planIds": [
+              "max_unknown"
+            ],
+            "accessClasses": [
+              "signed_in_paid"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
           },
           "meter": {
             "kind": "compute",
@@ -1063,7 +1385,10 @@
           "evidence": [
             {
               "kind": "official_relative",
-              "sourceIds": ["anthropic-max", "anthropic-credits"]
+              "sourceIds": [
+                "anthropic-max",
+                "anthropic-credits"
+              ]
             }
           ],
           "notes": [
@@ -1075,10 +1400,18 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["max_20x"],
-            "accessClasses": ["signed_in_paid"],
-            "modelFamilies": ["*"],
-            "actions": ["interactive.usage"]
+            "planIds": [
+              "max_20x"
+            ],
+            "accessClasses": [
+              "signed_in_paid"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
           },
           "meter": {
             "kind": "compute",
@@ -1099,7 +1432,10 @@
           "evidence": [
             {
               "kind": "official_relative",
-              "sourceIds": ["anthropic-max", "anthropic-credits"]
+              "sourceIds": [
+                "anthropic-max",
+                "anthropic-credits"
+              ]
             }
           ],
           "notes": []
@@ -1109,10 +1445,20 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["max_5x", "max_20x", "max_unknown"],
-            "accessClasses": ["signed_in_paid"],
-            "modelFamilies": ["*"],
-            "actions": ["interactive.usage"]
+            "planIds": [
+              "max_5x",
+              "max_20x",
+              "max_unknown"
+            ],
+            "accessClasses": [
+              "signed_in_paid"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
           },
           "meter": {
             "kind": "compute",
@@ -1131,7 +1477,9 @@
           "evidence": [
             {
               "kind": "official_dynamic",
-              "sourceIds": ["anthropic-max"]
+              "sourceIds": [
+                "anthropic-max"
+              ]
             }
           ],
           "notes": []
@@ -1141,10 +1489,20 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["max_5x", "max_20x", "max_unknown"],
-            "accessClasses": ["signed_in_paid"],
-            "modelFamilies": ["claude-sonnet"],
-            "actions": ["interactive.usage"]
+            "planIds": [
+              "max_5x",
+              "max_20x",
+              "max_unknown"
+            ],
+            "accessClasses": [
+              "signed_in_paid"
+            ],
+            "modelFamilies": [
+              "claude-sonnet"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
           },
           "meter": {
             "kind": "compute",
@@ -1163,7 +1521,9 @@
           "evidence": [
             {
               "kind": "official_dynamic",
-              "sourceIds": ["anthropic-max"]
+              "sourceIds": [
+                "anthropic-max"
+              ]
             }
           ],
           "notes": [
@@ -1175,10 +1535,18 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["team_standard"],
-            "accessClasses": ["signed_in_paid"],
-            "modelFamilies": ["*"],
-            "actions": ["interactive.usage"]
+            "planIds": [
+              "team_standard"
+            ],
+            "accessClasses": [
+              "signed_in_paid"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
           },
           "meter": {
             "kind": "compute",
@@ -1199,7 +1567,9 @@
           "evidence": [
             {
               "kind": "official_relative",
-              "sourceIds": ["anthropic-team"]
+              "sourceIds": [
+                "anthropic-team"
+              ]
             }
           ],
           "notes": [
@@ -1211,10 +1581,18 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["team_unknown"],
-            "accessClasses": ["signed_in_paid"],
-            "modelFamilies": ["*"],
-            "actions": ["interactive.usage"]
+            "planIds": [
+              "team_unknown"
+            ],
+            "accessClasses": [
+              "signed_in_paid"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
           },
           "meter": {
             "kind": "compute",
@@ -1236,7 +1614,9 @@
           "evidence": [
             {
               "kind": "official_relative",
-              "sourceIds": ["anthropic-team"]
+              "sourceIds": [
+                "anthropic-team"
+              ]
             }
           ],
           "notes": [
@@ -1248,10 +1628,18 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["team_premium"],
-            "accessClasses": ["signed_in_paid"],
-            "modelFamilies": ["*"],
-            "actions": ["interactive.usage"]
+            "planIds": [
+              "team_premium"
+            ],
+            "accessClasses": [
+              "signed_in_paid"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
           },
           "meter": {
             "kind": "compute",
@@ -1272,7 +1660,9 @@
           "evidence": [
             {
               "kind": "official_relative",
-              "sourceIds": ["anthropic-team"]
+              "sourceIds": [
+                "anthropic-team"
+              ]
             }
           ],
           "notes": [
@@ -1284,10 +1674,20 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["team_standard", "team_premium", "team_unknown"],
-            "accessClasses": ["signed_in_paid"],
-            "modelFamilies": ["*"],
-            "actions": ["interactive.usage"]
+            "planIds": [
+              "team_standard",
+              "team_premium",
+              "team_unknown"
+            ],
+            "accessClasses": [
+              "signed_in_paid"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
           },
           "meter": {
             "kind": "compute",
@@ -1306,7 +1706,9 @@
           "evidence": [
             {
               "kind": "official_dynamic",
-              "sourceIds": ["anthropic-team"]
+              "sourceIds": [
+                "anthropic-team"
+              ]
             }
           ],
           "notes": [
@@ -1318,10 +1720,20 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["enterprise_seat", "unknown"],
-            "accessClasses": ["signed_in_paid", "signed_in_unknown"],
-            "modelFamilies": ["*"],
-            "actions": ["interactive.usage"]
+            "planIds": [
+              "enterprise_seat",
+              "unknown"
+            ],
+            "accessClasses": [
+              "signed_in_paid",
+              "signed_in_unknown"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
           },
           "meter": {
             "kind": "compute",
@@ -1339,7 +1751,9 @@
           "evidence": [
             {
               "kind": "unknown",
-              "sourceIds": ["anthropic-usage"]
+              "sourceIds": [
+                "anthropic-usage"
+              ]
             }
           ],
           "notes": []
@@ -1349,10 +1763,18 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["enterprise_usage_based"],
-            "accessClasses": ["signed_in_paid"],
-            "modelFamilies": ["*"],
-            "actions": ["interactive.usage"]
+            "planIds": [
+              "enterprise_usage_based"
+            ],
+            "accessClasses": [
+              "signed_in_paid"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
           },
           "meter": {
             "kind": "compute",
@@ -1370,7 +1792,9 @@
           "evidence": [
             {
               "kind": "official_qualitative",
-              "sourceIds": ["anthropic-usage"]
+              "sourceIds": [
+                "anthropic-usage"
+              ]
             }
           ],
           "notes": []
@@ -1383,37 +1807,57 @@
         {
           "id": "no_google_ai_plan",
           "family": "free",
-          "labels": ["No Google AI plan", "Standard"]
+          "labels": [
+            "No Google AI plan",
+            "Standard"
+          ]
         },
         {
           "id": "ai_plus",
           "family": "individual_paid",
-          "labels": ["Google AI Plus", "AI Plus"]
+          "labels": [
+            "Google AI Plus",
+            "AI Plus"
+          ]
         },
         {
           "id": "ai_pro",
           "family": "individual_paid",
-          "labels": ["Google AI Pro", "AI Pro"]
+          "labels": [
+            "Google AI Pro",
+            "AI Pro"
+          ]
         },
         {
           "id": "ai_ultra_5x",
           "family": "individual_paid",
-          "labels": ["Google AI Ultra 5x", "AI Ultra 5x"]
+          "labels": [
+            "Google AI Ultra 5x",
+            "AI Ultra 5x"
+          ]
         },
         {
           "id": "ai_ultra_20x",
           "family": "individual_paid",
-          "labels": ["Google AI Ultra 20x", "AI Ultra 20x"]
+          "labels": [
+            "Google AI Ultra 20x",
+            "AI Ultra 20x"
+          ]
         },
         {
           "id": "ai_ultra_unknown",
           "family": "individual_paid",
-          "labels": ["Google AI Ultra", "AI Ultra"]
+          "labels": [
+            "Google AI Ultra",
+            "AI Ultra"
+          ]
         },
         {
           "id": "workspace",
           "family": "organization_paid",
-          "labels": ["Google Workspace"]
+          "labels": [
+            "Google Workspace"
+          ]
         },
         {
           "id": "unknown",
@@ -1431,8 +1875,17 @@
       "runtimeSignals": [
         {
           "kind": "near_limit_and_reset_time_notifications",
-          "appliesTo": ["no_google_ai_plan", "ai_plus", "ai_pro", "ai_ultra_5x", "ai_ultra_20x", "ai_ultra_unknown"],
-          "sourceIds": ["google-gemini-limits"]
+          "appliesTo": [
+            "no_google_ai_plan",
+            "ai_plus",
+            "ai_pro",
+            "ai_ultra_5x",
+            "ai_ultra_20x",
+            "ai_ultra_unknown"
+          ],
+          "sourceIds": [
+            "google-gemini-limits"
+          ]
         }
       ],
       "rules": [
@@ -1441,10 +1894,19 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["no_google_ai_plan"],
-            "accessClasses": ["signed_in_free", "signed_in_unknown"],
-            "modelFamilies": ["*"],
-            "actions": ["interactive.usage"]
+            "planIds": [
+              "no_google_ai_plan"
+            ],
+            "accessClasses": [
+              "signed_in_free",
+              "signed_in_unknown"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
           },
           "meter": {
             "kind": "compute",
@@ -1463,7 +1925,9 @@
           "evidence": [
             {
               "kind": "official_dynamic",
-              "sourceIds": ["google-gemini-limits"]
+              "sourceIds": [
+                "google-gemini-limits"
+              ]
             }
           ],
           "notes": [
@@ -1475,10 +1939,18 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["unknown"],
-            "accessClasses": ["guest"],
-            "modelFamilies": ["*"],
-            "actions": ["interactive.usage"]
+            "planIds": [
+              "unknown"
+            ],
+            "accessClasses": [
+              "guest"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
           },
           "meter": {
             "kind": "compute",
@@ -1496,7 +1968,9 @@
           "evidence": [
             {
               "kind": "unknown",
-              "sourceIds": ["google-gemini-limits"]
+              "sourceIds": [
+                "google-gemini-limits"
+              ]
             }
           ],
           "notes": [
@@ -1508,10 +1982,18 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["ai_plus"],
-            "accessClasses": ["signed_in_paid"],
-            "modelFamilies": ["*"],
-            "actions": ["interactive.usage"]
+            "planIds": [
+              "ai_plus"
+            ],
+            "accessClasses": [
+              "signed_in_paid"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
           },
           "meter": {
             "kind": "compute",
@@ -1533,7 +2015,9 @@
           "evidence": [
             {
               "kind": "official_relative",
-              "sourceIds": ["google-gemini-limits"]
+              "sourceIds": [
+                "google-gemini-limits"
+              ]
             }
           ],
           "notes": []
@@ -1543,10 +2027,18 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["ai_pro"],
-            "accessClasses": ["signed_in_paid"],
-            "modelFamilies": ["*"],
-            "actions": ["interactive.usage"]
+            "planIds": [
+              "ai_pro"
+            ],
+            "accessClasses": [
+              "signed_in_paid"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
           },
           "meter": {
             "kind": "compute",
@@ -1568,7 +2060,9 @@
           "evidence": [
             {
               "kind": "official_relative",
-              "sourceIds": ["google-gemini-limits"]
+              "sourceIds": [
+                "google-gemini-limits"
+              ]
             }
           ],
           "notes": []
@@ -1578,10 +2072,18 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["ai_ultra_5x"],
-            "accessClasses": ["signed_in_paid"],
-            "modelFamilies": ["*"],
-            "actions": ["interactive.usage"]
+            "planIds": [
+              "ai_ultra_5x"
+            ],
+            "accessClasses": [
+              "signed_in_paid"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
           },
           "meter": {
             "kind": "compute",
@@ -1603,7 +2105,9 @@
           "evidence": [
             {
               "kind": "official_relative",
-              "sourceIds": ["google-gemini-limits"]
+              "sourceIds": [
+                "google-gemini-limits"
+              ]
             }
           ],
           "notes": []
@@ -1613,10 +2117,18 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["ai_ultra_20x"],
-            "accessClasses": ["signed_in_paid"],
-            "modelFamilies": ["*"],
-            "actions": ["interactive.usage"]
+            "planIds": [
+              "ai_ultra_20x"
+            ],
+            "accessClasses": [
+              "signed_in_paid"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
           },
           "meter": {
             "kind": "compute",
@@ -1638,7 +2150,9 @@
           "evidence": [
             {
               "kind": "official_relative",
-              "sourceIds": ["google-gemini-limits"]
+              "sourceIds": [
+                "google-gemini-limits"
+              ]
             }
           ],
           "notes": []
@@ -1648,10 +2162,25 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["no_google_ai_plan", "ai_plus", "ai_pro", "ai_ultra_5x", "ai_ultra_20x", "ai_ultra_unknown"],
-            "accessClasses": ["signed_in_free", "signed_in_paid", "signed_in_unknown"],
-            "modelFamilies": ["*"],
-            "actions": ["interactive.usage"]
+            "planIds": [
+              "no_google_ai_plan",
+              "ai_plus",
+              "ai_pro",
+              "ai_ultra_5x",
+              "ai_ultra_20x",
+              "ai_ultra_unknown"
+            ],
+            "accessClasses": [
+              "signed_in_free",
+              "signed_in_paid",
+              "signed_in_unknown"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
           },
           "meter": {
             "kind": "compute",
@@ -1670,7 +2199,9 @@
           "evidence": [
             {
               "kind": "official_dynamic",
-              "sourceIds": ["google-gemini-limits"]
+              "sourceIds": [
+                "google-gemini-limits"
+              ]
             }
           ],
           "notes": [
@@ -1682,10 +2213,21 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["workspace", "ai_ultra_unknown", "unknown"],
-            "accessClasses": ["signed_in_paid", "signed_in_unknown"],
-            "modelFamilies": ["*"],
-            "actions": ["interactive.usage"]
+            "planIds": [
+              "workspace",
+              "ai_ultra_unknown",
+              "unknown"
+            ],
+            "accessClasses": [
+              "signed_in_paid",
+              "signed_in_unknown"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
           },
           "meter": {
             "kind": "compute",
@@ -1703,7 +2245,9 @@
           "evidence": [
             {
               "kind": "unknown",
-              "sourceIds": ["google-gemini-limits"]
+              "sourceIds": [
+                "google-gemini-limits"
+              ]
             }
           ],
           "notes": [
@@ -1718,32 +2262,44 @@
         {
           "id": "free",
           "family": "free",
-          "labels": ["Free"]
+          "labels": [
+            "Free"
+          ]
         },
         {
           "id": "supergrok_lite",
           "family": "individual_paid",
-          "labels": ["SuperGrok Lite"]
+          "labels": [
+            "SuperGrok Lite"
+          ]
         },
         {
           "id": "supergrok",
           "family": "individual_paid",
-          "labels": ["SuperGrok"]
+          "labels": [
+            "SuperGrok"
+          ]
         },
         {
           "id": "supergrok_heavy",
           "family": "individual_paid",
-          "labels": ["SuperGrok Heavy"]
+          "labels": [
+            "SuperGrok Heavy"
+          ]
         },
         {
           "id": "business",
           "family": "organization_paid",
-          "labels": ["Business"]
+          "labels": [
+            "Business"
+          ]
         },
         {
           "id": "enterprise",
           "family": "organization_paid",
-          "labels": ["Enterprise"]
+          "labels": [
+            "Enterprise"
+          ]
         },
         {
           "id": "unknown",
@@ -1759,10 +2315,18 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["supergrok"],
-            "accessClasses": ["signed_in_paid"],
-            "modelFamilies": ["*"],
-            "actions": ["interactive.usage"]
+            "planIds": [
+              "supergrok"
+            ],
+            "accessClasses": [
+              "signed_in_paid"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
           },
           "meter": {
             "kind": "unknown",
@@ -1781,7 +2345,9 @@
           "evidence": [
             {
               "kind": "official_qualitative",
-              "sourceIds": ["xai-pricing"]
+              "sourceIds": [
+                "xai-pricing"
+              ]
             }
           ],
           "notes": [
@@ -1793,10 +2359,26 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["free", "supergrok_lite", "supergrok", "supergrok_heavy", "business", "enterprise", "unknown"],
-            "accessClasses": ["signed_in_free", "signed_in_paid", "signed_in_unknown"],
-            "modelFamilies": ["*"],
-            "actions": ["interactive.usage"]
+            "planIds": [
+              "free",
+              "supergrok_lite",
+              "supergrok",
+              "supergrok_heavy",
+              "business",
+              "enterprise",
+              "unknown"
+            ],
+            "accessClasses": [
+              "signed_in_free",
+              "signed_in_paid",
+              "signed_in_unknown"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
           },
           "meter": {
             "kind": "unknown",
@@ -1814,7 +2396,9 @@
           "evidence": [
             {
               "kind": "unknown",
-              "sourceIds": ["xai-pricing"]
+              "sourceIds": [
+                "xai-pricing"
+              ]
             }
           ],
           "notes": [
@@ -1850,10 +2434,22 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["guest", "signed_in_unknown", "unknown"],
-            "accessClasses": ["guest", "signed_in_unknown", "unknown"],
-            "modelFamilies": ["*"],
-            "actions": ["interactive.usage"]
+            "planIds": [
+              "guest",
+              "signed_in_unknown",
+              "unknown"
+            ],
+            "accessClasses": [
+              "guest",
+              "signed_in_unknown",
+              "unknown"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
           },
           "meter": {
             "kind": "unknown",
@@ -1871,7 +2467,9 @@
           "evidence": [
             {
               "kind": "unknown",
-              "sourceIds": ["qwen-usage-policy"]
+              "sourceIds": [
+                "qwen-usage-policy"
+              ]
             }
           ],
           "notes": [
@@ -1887,7 +2485,9 @@
         {
           "id": "free",
           "family": "free",
-          "labels": ["Free"]
+          "labels": [
+            "Free"
+          ]
         },
         {
           "id": "signed_in_unknown",
@@ -1913,10 +2513,23 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["free", "signed_in_unknown", "unknown"],
-            "accessClasses": ["signed_in_free", "signed_in_unknown", "unknown"],
-            "modelFamilies": ["*"],
-            "actions": ["interactive.usage", "file.upload"]
+            "planIds": [
+              "free",
+              "signed_in_unknown",
+              "unknown"
+            ],
+            "accessClasses": [
+              "signed_in_free",
+              "signed_in_unknown",
+              "unknown"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage",
+              "file.upload"
+            ]
           },
           "meter": {
             "kind": "unknown",
@@ -1934,7 +2547,9 @@
           "evidence": [
             {
               "kind": "unknown",
-              "sourceIds": ["deepseek-user-agreement"]
+              "sourceIds": [
+                "deepseek-user-agreement"
+              ]
             }
           ],
           "notes": [
@@ -1950,32 +2565,47 @@
         {
           "id": "standard",
           "family": "free",
-          "labels": ["Standard", "Free"]
+          "labels": [
+            "Standard",
+            "Free"
+          ]
         },
         {
           "id": "pro",
           "family": "individual_paid",
-          "labels": ["Pro", "Perplexity Pro"]
+          "labels": [
+            "Pro",
+            "Perplexity Pro"
+          ]
         },
         {
           "id": "education_pro",
           "family": "individual_paid",
-          "labels": ["Education Pro"]
+          "labels": [
+            "Education Pro"
+          ]
         },
         {
           "id": "max",
           "family": "individual_paid",
-          "labels": ["Max", "Perplexity Max"]
+          "labels": [
+            "Max",
+            "Perplexity Max"
+          ]
         },
         {
           "id": "enterprise_pro",
           "family": "organization_paid",
-          "labels": ["Enterprise Pro"]
+          "labels": [
+            "Enterprise Pro"
+          ]
         },
         {
           "id": "enterprise_max",
           "family": "organization_paid",
-          "labels": ["Enterprise Max"]
+          "labels": [
+            "Enterprise Max"
+          ]
         },
         {
           "id": "unknown",
@@ -1992,8 +2622,16 @@
       "runtimeSignals": [
         {
           "kind": "advanced_model_access_may_tighten_during_heavy_usage",
-          "appliesTo": ["pro", "education_pro", "max", "enterprise_pro", "enterprise_max"],
-          "sourceIds": ["perplexity-pro"]
+          "appliesTo": [
+            "pro",
+            "education_pro",
+            "max",
+            "enterprise_pro",
+            "enterprise_max"
+          ],
+          "sourceIds": [
+            "perplexity-pro"
+          ]
         }
       ],
       "rules": [
@@ -2002,11 +2640,21 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["standard"],
-            "accessClasses": ["signed_in_free"],
-            "modelFamilies": ["*"],
-            "modes": ["pro_search"],
-            "actions": ["interactive.usage"]
+            "planIds": [
+              "standard"
+            ],
+            "accessClasses": [
+              "signed_in_free"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "modes": [
+              "pro_search"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
           },
           "meter": {
             "kind": "count",
@@ -2026,7 +2674,9 @@
           "evidence": [
             {
               "kind": "official_exact",
-              "sourceIds": ["perplexity-plan-comparison"]
+              "sourceIds": [
+                "perplexity-plan-comparison"
+              ]
             }
           ],
           "notes": [
@@ -2038,10 +2688,18 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["standard"],
-            "accessClasses": ["signed_in_free"],
-            "modelFamilies": ["*"],
-            "actions": ["file.upload"]
+            "planIds": [
+              "standard"
+            ],
+            "accessClasses": [
+              "signed_in_free"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "file.upload"
+            ]
           },
           "meter": {
             "kind": "count",
@@ -2061,7 +2719,9 @@
           "evidence": [
             {
               "kind": "official_exact",
-              "sourceIds": ["perplexity-account-tiers"]
+              "sourceIds": [
+                "perplexity-account-tiers"
+              ]
             }
           ],
           "notes": [
@@ -2073,10 +2733,18 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["enterprise_pro"],
-            "accessClasses": ["signed_in_paid"],
-            "modelFamilies": ["*"],
-            "actions": ["file.upload"]
+            "planIds": [
+              "enterprise_pro"
+            ],
+            "accessClasses": [
+              "signed_in_paid"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "file.upload"
+            ]
           },
           "meter": {
             "kind": "count",
@@ -2096,7 +2764,9 @@
           "evidence": [
             {
               "kind": "official_exact",
-              "sourceIds": ["perplexity-enterprise-file-limits"]
+              "sourceIds": [
+                "perplexity-enterprise-file-limits"
+              ]
             }
           ],
           "notes": [
@@ -2108,10 +2778,18 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["enterprise_max"],
-            "accessClasses": ["signed_in_paid"],
-            "modelFamilies": ["*"],
-            "actions": ["file.upload"]
+            "planIds": [
+              "enterprise_max"
+            ],
+            "accessClasses": [
+              "signed_in_paid"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "file.upload"
+            ]
           },
           "meter": {
             "kind": "count",
@@ -2131,7 +2809,9 @@
           "evidence": [
             {
               "kind": "official_exact",
-              "sourceIds": ["perplexity-enterprise-file-limits"]
+              "sourceIds": [
+                "perplexity-enterprise-file-limits"
+              ]
             }
           ],
           "notes": [
@@ -2143,10 +2823,18 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["enterprise_pro"],
-            "accessClasses": ["signed_in_paid"],
-            "modelFamilies": ["*"],
-            "actions": ["file.upload"]
+            "planIds": [
+              "enterprise_pro"
+            ],
+            "accessClasses": [
+              "signed_in_paid"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "file.upload"
+            ]
           },
           "meter": {
             "kind": "count",
@@ -2165,7 +2853,9 @@
           "evidence": [
             {
               "kind": "official_exact",
-              "sourceIds": ["perplexity-enterprise-file-limits"]
+              "sourceIds": [
+                "perplexity-enterprise-file-limits"
+              ]
             }
           ],
           "notes": []
@@ -2175,10 +2865,18 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["enterprise_max"],
-            "accessClasses": ["signed_in_paid"],
-            "modelFamilies": ["*"],
-            "actions": ["file.upload"]
+            "planIds": [
+              "enterprise_max"
+            ],
+            "accessClasses": [
+              "signed_in_paid"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "file.upload"
+            ]
           },
           "meter": {
             "kind": "count",
@@ -2197,7 +2895,9 @@
           "evidence": [
             {
               "kind": "official_exact",
-              "sourceIds": ["perplexity-enterprise-file-limits"]
+              "sourceIds": [
+                "perplexity-enterprise-file-limits"
+              ]
             }
           ],
           "notes": []
@@ -2207,11 +2907,21 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["enterprise_pro"],
-            "accessClasses": ["signed_in_paid"],
-            "modelFamilies": ["*"],
-            "modes": ["pro_search"],
-            "actions": ["interactive.usage"]
+            "planIds": [
+              "enterprise_pro"
+            ],
+            "accessClasses": [
+              "signed_in_paid"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "modes": [
+              "pro_search"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
           },
           "meter": {
             "kind": "count",
@@ -2231,7 +2941,9 @@
           "evidence": [
             {
               "kind": "official_exact",
-              "sourceIds": ["perplexity-plan-comparison"]
+              "sourceIds": [
+                "perplexity-plan-comparison"
+              ]
             }
           ],
           "notes": []
@@ -2241,11 +2953,21 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["enterprise_max"],
-            "accessClasses": ["signed_in_paid"],
-            "modelFamilies": ["*"],
-            "modes": ["pro_search"],
-            "actions": ["interactive.usage"]
+            "planIds": [
+              "enterprise_max"
+            ],
+            "accessClasses": [
+              "signed_in_paid"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "modes": [
+              "pro_search"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
           },
           "meter": {
             "kind": "count",
@@ -2265,7 +2987,9 @@
           "evidence": [
             {
               "kind": "official_exact",
-              "sourceIds": ["perplexity-plan-comparison"]
+              "sourceIds": [
+                "perplexity-plan-comparison"
+              ]
             }
           ],
           "notes": []
@@ -2275,10 +2999,29 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["standard", "pro", "education_pro", "max", "enterprise_pro", "enterprise_max", "unknown"],
-            "accessClasses": ["guest", "signed_in_free", "signed_in_paid", "signed_in_unknown", "unknown"],
-            "modelFamilies": ["*"],
-            "actions": ["interactive.usage", "file.upload"]
+            "planIds": [
+              "standard",
+              "pro",
+              "education_pro",
+              "max",
+              "enterprise_pro",
+              "enterprise_max",
+              "unknown"
+            ],
+            "accessClasses": [
+              "guest",
+              "signed_in_free",
+              "signed_in_paid",
+              "signed_in_unknown",
+              "unknown"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage",
+              "file.upload"
+            ]
           },
           "meter": {
             "kind": "unknown",
@@ -2296,7 +3039,10 @@
           "evidence": [
             {
               "kind": "official_dynamic",
-              "sourceIds": ["perplexity-plan-comparison", "perplexity-pro"]
+              "sourceIds": [
+                "perplexity-plan-comparison",
+                "perplexity-pro"
+              ]
             }
           ],
           "notes": [
@@ -2337,10 +3083,22 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["guest", "signed_in_unknown", "unknown"],
-            "accessClasses": ["guest", "signed_in_unknown", "unknown"],
-            "modelFamilies": ["*"],
-            "actions": ["interactive.usage"]
+            "planIds": [
+              "guest",
+              "signed_in_unknown",
+              "unknown"
+            ],
+            "accessClasses": [
+              "guest",
+              "signed_in_unknown",
+              "unknown"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
           },
           "meter": {
             "kind": "unknown",
@@ -2358,7 +3116,9 @@
           "evidence": [
             {
               "kind": "unknown",
-              "sourceIds": ["zai-glm52"]
+              "sourceIds": [
+                "zai-glm52"
+              ]
             }
           ],
           "notes": [
@@ -2394,10 +3154,21 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["signed_in_unknown", "unknown"],
-            "accessClasses": ["signed_in_unknown", "unknown"],
-            "modelFamilies": ["*"],
-            "actions": ["interactive.usage", "file.upload"]
+            "planIds": [
+              "signed_in_unknown",
+              "unknown"
+            ],
+            "accessClasses": [
+              "signed_in_unknown",
+              "unknown"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage",
+              "file.upload"
+            ]
           },
           "meter": {
             "kind": "unknown",
@@ -2415,7 +3186,9 @@
           "evidence": [
             {
               "kind": "unknown",
-              "sourceIds": ["kimi-consumer-web"]
+              "sourceIds": [
+                "kimi-consumer-web"
+              ]
             }
           ],
           "notes": [
@@ -2451,10 +3224,20 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["signed_in_unknown", "unknown"],
-            "accessClasses": ["signed_in_unknown", "unknown"],
-            "modelFamilies": ["*"],
-            "actions": ["interactive.usage"]
+            "planIds": [
+              "signed_in_unknown",
+              "unknown"
+            ],
+            "accessClasses": [
+              "signed_in_unknown",
+              "unknown"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
           },
           "meter": {
             "kind": "unknown",
@@ -2472,7 +3255,9 @@
           "evidence": [
             {
               "kind": "unknown",
-              "sourceIds": ["doubao-feature-intro"]
+              "sourceIds": [
+                "doubao-feature-intro"
+              ]
             }
           ],
           "notes": [
@@ -2493,7 +3278,9 @@
         {
           "id": "signed_in_paid",
           "family": "paid",
-          "labels": ["Pro"]
+          "labels": [
+            "Pro"
+          ]
         },
         {
           "id": "unknown",
@@ -2513,10 +3300,23 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["signed_in_unknown", "signed_in_paid", "unknown"],
-            "accessClasses": ["signed_in_unknown", "signed_in_paid", "unknown"],
-            "modelFamilies": ["*"],
-            "actions": ["interactive.usage", "file.upload"]
+            "planIds": [
+              "signed_in_unknown",
+              "signed_in_paid",
+              "unknown"
+            ],
+            "accessClasses": [
+              "signed_in_unknown",
+              "signed_in_paid",
+              "unknown"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage",
+              "file.upload"
+            ]
           },
           "meter": {
             "kind": "unknown",
@@ -2534,7 +3334,9 @@
           "evidence": [
             {
               "kind": "unknown",
-              "sourceIds": ["dola-consumer-web"]
+              "sourceIds": [
+                "dola-consumer-web"
+              ]
             }
           ],
           "notes": [
@@ -2569,10 +3371,20 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["signed_in_unknown", "unknown"],
-            "accessClasses": ["signed_in_unknown", "unknown"],
-            "modelFamilies": ["*"],
-            "actions": ["interactive.usage"]
+            "planIds": [
+              "signed_in_unknown",
+              "unknown"
+            ],
+            "accessClasses": [
+              "signed_in_unknown",
+              "unknown"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
           },
           "meter": {
             "kind": "unknown",
@@ -2590,7 +3402,9 @@
           "evidence": [
             {
               "kind": "unknown",
-              "sourceIds": ["arena-consumer-web"]
+              "sourceIds": [
+                "arena-consumer-web"
+              ]
             }
           ],
           "notes": [
@@ -2625,10 +3439,21 @@
           "status": "active",
           "scope": "provider_profile",
           "appliesTo": {
-            "planIds": ["signed_in_unknown", "unknown"],
-            "accessClasses": ["signed_in_unknown", "unknown"],
-            "modelFamilies": ["*"],
-            "actions": ["interactive.usage", "file.upload"]
+            "planIds": [
+              "signed_in_unknown",
+              "unknown"
+            ],
+            "accessClasses": [
+              "signed_in_unknown",
+              "unknown"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage",
+              "file.upload"
+            ]
           },
           "meter": {
             "kind": "unknown",
@@ -2646,12 +3471,76 @@
           "evidence": [
             {
               "kind": "unknown",
-              "sourceIds": ["meta-consumer-web"]
+              "sourceIds": [
+                "meta-consumer-web"
+              ]
             }
           ],
           "notes": [
             "The observed signed-in consumer Web surface did not publish an exact numeric allowance or reset window.",
             "Runtime visible limits remain authoritative and fail closed."
+          ]
+        }
+      ]
+    },
+    "lovable": {
+      "label": "Lovable",
+      "plans": [
+        {
+          "id": "unknown",
+          "family": "unknown",
+          "labels": []
+        }
+      ],
+      "usageDrivers": [
+        "task_complexity"
+      ],
+      "runtimeSignals": [],
+      "rules": [
+        {
+          "id": "lovable.web.numeric-limits-unknown",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": [
+              "unknown"
+            ],
+            "accessClasses": [
+              "signed_in_free",
+              "signed_in_paid",
+              "signed_in_unknown",
+              "unknown"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
+          },
+          "meter": {
+            "kind": "unknown",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "unknown"
+          },
+          "allowance": {
+            "kind": "unknown"
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "unknown",
+              "sourceIds": [
+                "lovable-pricing"
+              ]
+            }
+          ],
+          "notes": [
+            "Credits depend on the plan and work performed; no fixed per-message allowance is inferred for the selected account."
           ]
         }
       ]

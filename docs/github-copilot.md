@@ -41,7 +41,19 @@ tokenless run --provider github-copilot --copilot-mode agent --workspace-mode na
 
 Agent starts a GitHub cloud session using the displayed repository and branch. The adapter follows the newly created session, waits for completion, and returns its answer, visible tool-step labels, session URL, and observed session AI credits.
 
-This is GitHub's native Agent. `tokenless agent delegate` uses Tokenless Harness and the independently verified Ask-mode Markdown/tool-result workflow.
+Agent delegation requires project context that Copilot can access on GitHub. `tokenless agent run` and `tokenless agent delegate` dispatch GitHub Copilot directly to its native cloud Agent, without the Tokenless Harness tool loop.
+
+```bash
+tokenless agent delegate --provider github-copilot --profile <profile> --copilot-repo owner/repo --prompt "Inspect the repository and explain its test command. Do not modify files." --json
+```
+
+Alternatively, `agent delegate --workspace-root <path>` reads the checkout's GitHub `origin` as a repository candidate. Copilot must select the exact repository in its own picker before submission; a local remote URL alone does not prove access. Both commands wait and return the existing provider job result, including the native Agent session URL and feedback.
+
+The cloud Agent uses the repository and branch shown on GitHub. Local files and unpushed changes are not synchronized. Missing GitHub context or an unavailable repository blocks the Agent task; no repository is created and no Ask tool loop is substituted. Local Harness skills, MCP tools, turn limits, and benchmark tool channels are not supported by this path.
+
+GitHub Copilot is excluded from the Harness attachment route, including automatic routing. Ask text and file requests remain available through `tokenless run`.
+
+The delegation entry point is experimental and pending fresh real-provider acceptance: the September 10 check stopped before submission with `provider_surface_not_ready`. Earlier Ask attachment acceptance does not verify native Agent delegation.
 
 ## Individual actions
 
@@ -65,4 +77,4 @@ Ask advertises text/code and image extensions. Agent accepts PNG, JPEG, GIF, and
 
 Official references: [GitHub.com chat](https://docs.github.com/en/copilot/how-tos/copilot-on-github/chat-with-copilot/chat-in-github), [monitoring AI credits](https://docs.github.com/en/copilot/how-tos/manage-and-track-spending/monitor-ai-usage).
 
-The focused real-provider cases are `github-copilot-controls`, `github-copilot-repository`, `github-copilot-agent`, `github-copilot-agent-image`, `github-copilot-file-inputs`, and `harness-attachment-roundtrip`. They use the built CLI, packaged daemon, and configured persistent profile; the file-content case also checks observed input/output token counters.
+The focused real-provider cases are `github-copilot-controls`, `github-copilot-repository`, `github-copilot-agent`, `github-copilot-agent-image`, and `github-copilot-file-inputs`. They use the built CLI, packaged daemon, and configured persistent profile; the file-content case also checks observed input/output token counters. The earlier `harness-attachment-roundtrip` case is retired for GitHub Copilot and remains historical evidence only.

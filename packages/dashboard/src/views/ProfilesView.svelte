@@ -159,8 +159,8 @@
           >
             <span class="avatar"><UserRound size={17} /></span>
             <span class="profile-list-copy">
-              <strong>{entry.slug}</strong>
-              <small>{entry.roleLabel || '—'}</small>
+              <strong>{entry.roleLabel || entry.slug}</strong>
+              <small>{entry.roleLabel ? entry.slug : '—'}</small>
             </span>
             {#if entry.isDefault}<Star class="default-star" size={13} fill="currentColor" />{:else}<ChevronRight size={15} />{/if}
           </button>
@@ -188,7 +188,7 @@
           <span class="avatar large"><UserRound size={23} /></span>
           <div>
             <div class="title-line">
-              <h2>{profile.slug}</h2>
+              <h2>{profile.roleLabel || profile.slug}</h2>
               {#if profile.isDefault}<span class="badge neutral">{t('default')}</span>{/if}
             </div>
           </div>
