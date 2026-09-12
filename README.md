@@ -79,8 +79,8 @@ Interact with provider websites in your signed-in browser.
     <td align="center" width="20%"><a href="https://github.com/copilot"><img src="assets/providers/github-copilot.svg" alt="GitHub Copilot" width="32" height="32"><br><strong>GitHub Copilot</strong></a><br><sub>Experimental</sub></td>
   </tr>
   <tr>
-    <td align="center" width="20%"><a href="https://lovable.dev/"><strong>Lovable</strong></a><br><sub>Awaiting verification</sub></td>
-    <td align="center" width="20%"><a href="https://huggingface.co/chat/"><strong>HuggingChat</strong></a><br><sub>Awaiting verification</sub></td>
+    <td align="center" width="20%"><a href="https://lovable.dev/"><strong>Lovable</strong></a><br><sub>Experimental</sub></td>
+    <td align="center" width="20%"><a href="https://huggingface.co/chat"><img src="assets/providers/hugging-face.svg" alt="HuggingChat" width="32" height="32"><br><strong>HuggingChat</strong></a><br><sub>Awaiting route</sub></td>
     <td align="center" width="20%"><a href="https://monica.im/home/chat"><img src="assets/providers/monica.png" alt="Monica" width="32" height="32"><br><strong>Monica</strong></a><br><sub>Experimental</sub></td>
   </tr>
 </table>

@@ -1,19 +1,20 @@
 # Provider Capability Census
 
-Last reviewed: 2026-08-31
+Last reviewed: 2026-09-12
 
 ## 2026-09-12 provider inventory audit
 
-The current Tokenless API registry contains **40 store providers**: **18 Browser**, **35 Direct API**, with **13 in both modes**. Direct API counts describe adapter mappings, not 35 individually verified providers.
+The current Tokenless API registry contains **40 store providers**: **18 Browser**, **35 Direct API**, with **13 in both modes**. Browser task routes exist for 16 providers; Microsoft Copilot and HuggingChat are registered but still have no advertised task route. Direct API counts describe adapter mappings, not 35 individually verified providers.
 
 GLHF, TheB.AI, and Fenay AI were removed after their live sites failed to load. Blackbox AI was removed after the selected account reached its enterprise-only access page.
 
 Puter was also removed from the supported catalog after local evaluation.
 
-GPT4Free main was reviewed at [`e5d68e1`](https://github.com/xtekky/gpt4free/tree/e5d68e15499260ec2e5da351dda4352270a15c40) (2026-09-10). Browser-assisted authentication, challenge handling, and in-page HTTP requests do not supply Tokenless API DOM adapters. The following browser-assisted providers have no corresponding Browser mode in this repository:
+GPT4Free main was reviewed at [`e5d68e1`](https://github.com/xtekky/gpt4free/tree/e5d68e15499260ec2e5da351dda4352270a15c40) (2026-09-10). Browser-assisted authentication, challenge handling, and in-page HTTP requests do not supply Tokenless API DOM adapters. The following browser-assisted providers have no corresponding completed Browser task route in this repository:
 
 | Provider | GPT4Free implementation | Current Tokenless API mode |
 | --- | --- | --- |
+| Hugging Face / HuggingChat | [HuggingChat.py](https://github.com/xtekky/gpt4free/blob/e5d68e15499260ec2e5da351dda4352270a15c40/g4f/Provider/needs_auth/hf/HuggingChat.py) | Browser entry without a completed task route; Direct API |
 | Pi | [Pi.py](https://github.com/xtekky/gpt4free/blob/e5d68e15499260ec2e5da351dda4352270a15c40/g4f/Provider/needs_auth/Pi.py) | Direct API |
 | MiniMax / HailuoAI | [HailuoAI.py](https://github.com/xtekky/gpt4free/blob/e5d68e15499260ec2e5da351dda4352270a15c40/g4f/Provider/needs_auth/mini_max/HailuoAI.py) | Direct API |
 | ElevenLabs | [ElevenLabs.py](https://github.com/xtekky/gpt4free/blob/e5d68e15499260ec2e5da351dda4352270a15c40/g4f/Provider/audio/ElevenLabs.py) | Direct API |
@@ -27,7 +28,7 @@ This is a product reconnaissance record, not a Tokenless support declaration. Of
 
 The checked-in runtime catalog and provider routing matrix live in `packages/server/src/providers/task-capabilities.ts`. `tokenless capabilities list --json` exposes that versioned catalog without opening a browser. The current V3 routeable outcomes are:
 
-- `conversation.chat`: ChatGPT, Claude, Gemini, Grok, Arena, and experimental Qwen, DeepSeek, Perplexity, Z.ai, Doubao, Kimi, Dola, and Meta AI;
+- `conversation.chat`: ChatGPT, Claude, Gemini, Grok, Arena, and experimental Qwen, DeepSeek, Perplexity, Z.ai, Doubao, Kimi, Dola, Meta AI, GitHub Copilot, Lovable, and Monica;
 - `image.generation` and `artifact.download`: experimental ChatGPT, Gemini, Grok, Doubao, Arena, and Meta AI;
 - `file.upload` (transport): supported ChatGPT, Claude, and Grok; experimental Gemini, Qwen, DeepSeek, Perplexity, Z.ai, Doubao, Kimi, Dola, and Meta AI, plus image-scoped Arena;
 - `document.input` for Markdown/PDF-style documents: the same evidence-backed generic-document provider set as `file.upload`, excluding Arena's image-only route;
@@ -72,11 +73,12 @@ The product surface is broader than the current Tokenless evidence. The middle c
 | Arena | Signed-in Battle, Direct, and Side-by-Side chat; model selection; file input; Search, Code, Agent, Image, and Video surfaces | Supported Direct chat and independent experimental generated-image routes remain; experimental image-scoped `file.upload` transport plus `image.input` accepts PNG, JPEG, and WebP, but no `document.input` or Markdown route is advertised |
 | Meta AI | Signed-in web chat; Instant and Thinking modes; broad file input; visible image generation; research-progress and assistant-response surfaces | Experimental chat, image, and generic Markdown `file.upload` transport plus `document.input` remain; exact Harness bytes upload, but the combined attachment instruction is silently rejected without a conversation |
 | GitHub Copilot | Signed-in Ask/Agent, repository context, model access, files/images, message tokens, account AI credits, Spaces, and cloud agents | Experimental Ask/Agent controls, repository-as-Project, selectable versus Pro+/Max-locked models, message token counters, and account/session AI credits. Real GPT-5.6 Luna acceptance covers TXT, Markdown, JSON, CSV, TypeScript, PNG, repository reading, cloud Agent tool steps, and the two-turn Harness Markdown workflow without fallback. See [controls and verification](github-copilot.md). Spaces remain unadvertised |
+| Lovable | Signed-in AI app builder with project preview and same-project chat | Experimental Browser `conversation.chat`; packaged CLI/daemon acceptance completed on 2026-09-12 in profile `login-2026-09-05`, including a real project prompt, visible response, preview heading, and working counter button |
 
 Official references:
 
 - [GitHub Copilot web chat](https://docs.github.com/en/copilot/how-tos/copilot-on-github/chat-with-copilot/chat-in-github) and [usage limits](https://docs.github.com/en/copilot/concepts/usage-limits)
-
+- [Lovable](https://lovable.dev/) and [pricing and credits](https://lovable.dev/pricing)
 - [ChatGPT capabilities](https://help.openai.com/en/articles/9260256-chatgpt-capabilities-overview), [Deep Research](https://help.openai.com/en/articles/10500283-deep-research-in-chatgpt), and [Projects](https://help.openai.com/en/articles/10169521-projects-in-chatgpt)
 - [Claude Research](https://support.anthropic.com/en/articles/11088861-using-research-on-claude-ai), [web search](https://support.anthropic.com/en/articles/10684626-enabling-and-using-web-search), [Projects](https://support.anthropic.com/en/articles/9529781-examples-of-projects-you-can-create), and [Artifacts](https://support.anthropic.com/en/articles/9487310-what-are-artifacts-and-how-do-i-use-them)
 - [Gemini Apps capability index](https://support.google.com/gemini) and [Gemini Deep Research](https://support.google.com/gemini/answer/15719111)
@@ -96,7 +98,7 @@ Official references:
 
 | Candidate | Canonical web entry | Officially documented or currently confirmed surface | Recommended evaluation |
 | --- | --- | --- | --- |
-| Lovable | `https://lovable.dev/` | Real signed-in page accepted a minimal counter build and created a project on 2026-09-12 | Requested first addition. Submission observed in ego-browser; terminal build and packaged CLI/daemon acceptance remain pending. No adapter is advertised |
+| Lovable | `https://lovable.dev/` | Real signed-in page accepted a minimal counter build and created a project on 2026-09-12 | Experimental Browser adapter is implemented and routeable for `conversation.chat`; the packaged CLI/daemon gate and preview counter readback passed in `login-2026-09-05`. |
 | Replit | `https://replit.com/` | [Replit Agent](https://replit.com/products/agent) builds apps through chat; the inspected browser requires login | Requested first addition. Manual login is required before inspecting and implementing the real workspace workflow. No adapter is advertised |
 | Mistral Le Chat | `https://chat.mistral.ai/` | Web search and citations, Deep Research, Think mode, Projects and Libraries, files, code interpreter, image generation/editing, Canvas, agents, and MCP connectors | P1. Broad capability match with relatively clear official documentation; useful second adapter for research and artifact semantics |
 | Microsoft Copilot | `https://copilot.microsoft.com/` | Observed on 2026-09-05: chat, Smart/Think deeper/Study and learn/Search modes, Markdown upload, image and Deep Research entries, podcasts, quizzes, connectors, and Projects | The signed-in ego-browser Observer completed two chat turns and read a unique token from an uploaded Markdown file in the same conversation. The configured Tokenless API profile still requires separate CLI/daemon acceptance |

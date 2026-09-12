@@ -1,19 +1,20 @@
 # Provider Capability Census
 
-最近复核：2026-08-31
+最近复核：2026-09-12
 
 ## 2026-09-12 provider 数量审查
 
-当前 Tokenless API registry 共 **40 个 store providers**：**18 个 Browser**、**35 个 Direct API**，其中 **13 个两种模式均有**。Direct API 数量表示接入映射，不表示 35 家均已逐项验证。
+当前 Tokenless API registry 共 **40 个 store providers**：**18 个 Browser**、**35 个 Direct API**，其中 **13 个两种模式均有**。16 个 Browser provider 有任务路由；Microsoft Copilot 和 HuggingChat 已注册，但尚未公布任务路由。Direct API 数量表示接入映射，不表示 35 家均已逐项验证。
 
 GLHF、TheB.AI、Fenay AI 因真实站点无法正常加载而移除；Blackbox AI 因所选账户进入仅 Enterprise 可访问页面而移除。
 
 Puter 也已按本机评估从支持目录移除。
 
-本次检查 GPT4Free main [`e5d68e1`](https://github.com/xtekky/gpt4free/tree/e5d68e15499260ec2e5da351dda4352270a15c40)（2026-09-10）。借助浏览器登录、处理验证或在页面内发 HTTP 请求，不等于提供了 Tokenless API 的网页操作 adapter。以下使用浏览器辅助的 provider 尚无对应 Browser mode：
+本次检查 GPT4Free main [`e5d68e1`](https://github.com/xtekky/gpt4free/tree/e5d68e15499260ec2e5da351dda4352270a15c40)（2026-09-10）。借助浏览器登录、处理验证或在页面内发 HTTP 请求，不等于提供了 Tokenless API 的网页操作 adapter。以下使用浏览器辅助的 provider 尚无已完成的 Browser task route：
 
 | Provider | GPT4Free 实现 | 当前 Tokenless API mode |
 | --- | --- | --- |
+| Hugging Face / HuggingChat | [HuggingChat.py](https://github.com/xtekky/gpt4free/blob/e5d68e15499260ec2e5da351dda4352270a15c40/g4f/Provider/needs_auth/hf/HuggingChat.py) | 已登记 Browser，但尚无已完成 task route；Direct API |
 | Pi | [Pi.py](https://github.com/xtekky/gpt4free/blob/e5d68e15499260ec2e5da351dda4352270a15c40/g4f/Provider/needs_auth/Pi.py) | Direct API |
 | MiniMax / HailuoAI | [HailuoAI.py](https://github.com/xtekky/gpt4free/blob/e5d68e15499260ec2e5da351dda4352270a15c40/g4f/Provider/needs_auth/mini_max/HailuoAI.py) | Direct API |
 | ElevenLabs | [ElevenLabs.py](https://github.com/xtekky/gpt4free/blob/e5d68e15499260ec2e5da351dda4352270a15c40/g4f/Provider/audio/ElevenLabs.py) | Direct API |
@@ -27,7 +28,7 @@ Puter 也已按本机评估从支持目录移除。
 
 提交到仓库的 runtime catalog 与 provider routing matrix 位于 `packages/server/src/providers/task-capabilities.ts`。`tokenless capabilities list --json` 无需打开浏览器即可公开这个带版本的 catalog。当前 V3 可路由 outcome 为：
 
-- `conversation.chat`：ChatGPT、Claude、Gemini、Grok、Arena，以及实验性 Qwen、DeepSeek、Perplexity、Z.ai、Doubao、Kimi、Dola 和 Meta AI；
+- `conversation.chat`：ChatGPT、Claude、Gemini、Grok、Arena，以及实验性 Qwen、DeepSeek、Perplexity、Z.ai、Doubao、Kimi、Dola、Meta AI、GitHub Copilot、Lovable 和 Monica；
 - `image.generation` 与 `artifact.download`：实验性 ChatGPT、Gemini、Grok、Doubao、Arena 和 Meta AI；
 - `file.upload`（transport）：支持的 ChatGPT、Claude 与 Grok；实验性 Gemini、Qwen、DeepSeek、Perplexity、Z.ai、Doubao、Kimi、Dola 与 Meta AI，另有仅限图片的 Arena route；
 - `document.input`（Markdown/PDF 等文档）：与 generic-document `file.upload` 相同的 evidence-backed provider 集合，不包括 Arena 的 image-only route；Harness Markdown 与其他非媒体 attachment 默认使用此 semantic input；
@@ -72,11 +73,12 @@ Product surface 比当前 Tokenless evidence 更广。中间一列结合官方�
 | Arena | 已登录 Battle、Direct 与 Side-by-Side chat；model selection；file input；Search、Code、Agent、Image 与 Video surface | 支持 Direct chat，独立 generated-image route 保持 experimental；实验性 image-scoped `file.upload` transport 与 `image.input` 接受 PNG、JPEG 与 WebP，但没有 `document.input` 或 Markdown route |
 | Meta AI | 已登录 Web chat；Instant 与 Thinking mode；广泛 file input；可见 image generation；research-progress 与 assistant-response surface | 实验性 chat、image 与 generic Markdown `file.upload` transport、`document.input` 保留；精确 Harness bytes 可上传，但组合 attachment instruction 被静默拒绝且不创建 conversation |
 | GitHub Copilot | 已登录的 Ask/Agent、repository context、模型权限、文件／图片、回复 token、账户 AI credits、Spaces 与 cloud agent | 实验性 Ask/Agent 控制、repository 作为 Project、可选与 Pro+/Max 锁定模型区分、回复 token 计数及账户／session AI credits。真实 GPT-5.6 Luna 验收覆盖 TXT、Markdown、JSON、CSV、TypeScript、PNG、仓库读取、云端 Agent 工具步骤及无 fallback 的两轮 Harness Markdown 往返。见[控制与验证](github-copilot.zh-CN.md)。Spaces 仍不公布 |
+| Lovable | 已登录的 AI app builder、项目 preview 与同项目 chat | 实验性 Browser `conversation.chat`；2026-09-12 在 `login-2026-09-05` 完成 packaged CLI/daemon 验收，包括真实项目 prompt、可见回复、preview 标题与可点击计数器 |
 
 官方参考：
 
 - [GitHub Copilot Web chat](https://docs.github.com/en/copilot/how-tos/copilot-on-github/chat-with-copilot/chat-in-github) 与 [usage limits](https://docs.github.com/en/copilot/concepts/usage-limits)
-
+- [Lovable](https://lovable.dev/) 与 [pricing and credits](https://lovable.dev/pricing)
 - [ChatGPT capabilities](https://help.openai.com/en/articles/9260256-chatgpt-capabilities-overview)、[Deep Research](https://help.openai.com/en/articles/10500283-deep-research-in-chatgpt) 与 [Projects](https://help.openai.com/en/articles/10169521-projects-in-chatgpt)
 - [Claude Research](https://support.anthropic.com/en/articles/11088861-using-research-on-claude-ai)、[Web search](https://support.anthropic.com/en/articles/10684626-enabling-and-using-web-search)、[Projects](https://support.anthropic.com/en/articles/9529781-examples-of-projects-you-can-create) 与 [Artifacts](https://support.anthropic.com/en/articles/9487310-what-are-artifacts-and-how-do-i-use-them)
 - [Gemini Apps capability index](https://support.google.com/gemini) 与 [Gemini Deep Research](https://support.google.com/gemini/answer/15719111)
@@ -96,7 +98,7 @@ Product surface 比当前 Tokenless evidence 更广。中间一列结合官方�
 
 | Candidate | Canonical Web 入口 | 官方已记录或当前已确认的 surface | 建议评估 |
 | --- | --- | --- | --- |
-| Lovable | `https://lovable.dev/` | 2026-09-12 已在真实登录页面提交最小计数器建站任务，并创建项目 | 用户指定优先接入。ego-browser 已观察到提交；构建完成与 packaged CLI/daemon 验收仍待完成，尚未公布 adapter |
+| Lovable | `https://lovable.dev/` | 2026-09-12 已在真实登录页面提交最小计数器建站任务，并创建项目 | 实验性 Browser adapter 已实现并为 `conversation.chat` 提供 route；`login-2026-09-05` 的 packaged CLI/daemon gate 与 preview 计数器读回均通过。 |
 | Replit | `https://replit.com/` | [Replit Agent](https://replit.com/products/agent) 支持通过对话构建应用；本次浏览器检查要求登录 | 用户指定优先接入。需手动登录后检查、实现真实 workspace 流程，尚未公布 adapter |
 | Mistral Le Chat | `https://chat.mistral.ai/` | Web search 与 citation、Deep Research、Think mode、Projects 与 Libraries、file、code interpreter、image generation/editing、Canvas、agent 与 MCP connector | P1。Capability 匹配广，官方文档相对清晰；适合作为 research 与 artifact semantics 的第二个 adapter |
 | Microsoft Copilot | `https://copilot.microsoft.com/` | 2026-09-05 已观察到：chat、Smart/Think deeper/Study and learn/Search mode、Markdown upload、image 与 Deep Research 入口、podcast、quiz、connector 和 Projects | 已登录的 ego-browser Observer 在同一会话完成两轮对话，并从上传的 Markdown 读出唯一标记。Tokenless API 配置中的 profile 仍需单独通过 CLI/daemon 验收 |
