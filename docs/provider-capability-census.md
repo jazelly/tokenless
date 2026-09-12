@@ -2,6 +2,24 @@
 
 Last reviewed: 2026-08-31
 
+## 2026-09-12 provider inventory audit
+
+The current Tokenless API registry contains **43 store providers**: **15 Browser**, **40 Direct API**, with **12 in both modes**. Browser task routes exist for 14 providers; Microsoft Copilot is registered but still has no advertised task route. Direct API counts describe adapter mappings, not 40 individually verified providers.
+
+GPT4Free main was reviewed at [`e5d68e1`](https://github.com/xtekky/gpt4free/tree/e5d68e15499260ec2e5da351dda4352270a15c40) (2026-09-10). Browser-assisted authentication, challenge handling, and in-page HTTP requests do not supply Tokenless API DOM adapters. The following browser-assisted providers have no corresponding Browser mode in this repository:
+
+| Provider | GPT4Free implementation | Current Tokenless API mode |
+| --- | --- | --- |
+| Hugging Face / HuggingChat | [HuggingChat.py](https://github.com/xtekky/gpt4free/blob/e5d68e15499260ec2e5da351dda4352270a15c40/g4f/Provider/needs_auth/hf/HuggingChat.py) | Direct API |
+| Pi | [Pi.py](https://github.com/xtekky/gpt4free/blob/e5d68e15499260ec2e5da351dda4352270a15c40/g4f/Provider/needs_auth/Pi.py) | Direct API |
+| MiniMax / HailuoAI | [HailuoAI.py](https://github.com/xtekky/gpt4free/blob/e5d68e15499260ec2e5da351dda4352270a15c40/g4f/Provider/needs_auth/mini_max/HailuoAI.py) | Direct API |
+| ElevenLabs | [ElevenLabs.py](https://github.com/xtekky/gpt4free/blob/e5d68e15499260ec2e5da351dda4352270a15c40/g4f/Provider/audio/ElevenLabs.py) | Direct API |
+| Microsoft Designer | [MicrosoftDesigner.py](https://github.com/xtekky/gpt4free/blob/e5d68e15499260ec2e5da351dda4352270a15c40/g4f/Provider/needs_auth/MicrosoftDesigner.py) | Not registered |
+
+These are candidates, not verified additions. MiniMax Agent is a separate web product from the HailuoAI adapter above.
+
+## Earlier capability evidence
+
 This is a product reconnaissance record, not a Tokenless support declaration. Official provider documentation establishes that a product feature exists. Tokenless advertises a route only after the provider adapter implements the complete visible lifecycle and real-provider browser E2E closes the required evidence. The normative naming, mapping, support, and extension rules live in the [Capability Matrix](capability-matrix.md).
 
 The checked-in runtime catalog and provider routing matrix live in `packages/server/src/providers/task-capabilities.ts`. `tokenless capabilities list --json` exposes that versioned catalog without opening a browser. The current V3 routeable outcomes are:
@@ -75,6 +93,8 @@ Official references:
 
 | Candidate | Canonical web entry | Officially documented or currently confirmed surface | Recommended evaluation |
 | --- | --- | --- | --- |
+| Lovable | `https://lovable.dev/` | Real signed-in page accepted a minimal counter build and created a project on 2026-09-12 | Requested first addition. Submission observed in ego-browser; terminal build and packaged CLI/daemon acceptance remain pending. No adapter is advertised |
+| Replit | `https://replit.com/` | [Replit Agent](https://replit.com/products/agent) builds apps through chat; the inspected browser requires login | Requested first addition. Manual login is required before inspecting and implementing the real workspace workflow. No adapter is advertised |
 | Mistral Le Chat | `https://chat.mistral.ai/` | Web search and citations, Deep Research, Think mode, Projects and Libraries, files, code interpreter, image generation/editing, Canvas, agents, and MCP connectors | P1. Broad capability match with relatively clear official documentation; useful second adapter for research and artifact semantics |
 | Microsoft Copilot | `https://copilot.microsoft.com/` | Observed on 2026-09-05: chat, Smart/Think deeper/Study and learn/Search modes, Markdown upload, image and Deep Research entries, podcasts, quizzes, connectors, and Projects | The signed-in ego-browser Observer completed two chat turns and read a unique token from an uploaded Markdown file in the same conversation. The configured Tokenless API profile still requires separate CLI/daemon acceptance |
 | Tencent Yuanbao | `https://yuanbao.tencent.com/` | Web product, Tencent-enhanced web search, multi-format file reading, reasoning/model surfaces, and the broader Tencent content ecosystem | P2. Valuable Chinese search and file route; advanced artifact and workspace claims need official and live closure |

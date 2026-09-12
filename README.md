@@ -50,7 +50,7 @@ Add the Tokenless skill to your Harness; invoke it for selected tasks and bring 
 
 ## 43 store providers
 
-15 in Browser mode, 40 in Direct API mode; 12 appear in both.
+15 in Browser mode, 40 in Direct API mode; 12 appear in both. [Inventory audit](docs/provider-capability-census.md#2026-09-12-provider-inventory-audit).
 
 ### Browser mode · 15 providers
 

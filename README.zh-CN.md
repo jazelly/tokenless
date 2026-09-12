@@ -50,7 +50,7 @@ Tokenless Harness 管理任务与工具调用；Tokenless API 接入你的网页
 
 ## 43 个 store providers
 
-Browser mode：15 个；Direct API mode：40 个，其中 12 个两种模式均有。
+Browser mode：15 个；Direct API mode：40 个，其中 12 个两种模式均有。 [数量审查](docs/provider-capability-census.zh-CN.md#2026-09-12-provider-数量审查)。
 
 ### Browser mode · 15 个 providers
 
