@@ -297,7 +297,8 @@ Structured JSON numbers must be finite and use the unique spelling returned by `
 `POST /v1/responses` and `/v1/openai/responses` map the current official [function-calling](https://developers.openai.com/api/docs/guides/function-calling) and [Responses create](https://developers.openai.com/api/reference/resources/responses/methods/create) shapes onto the same Tokenless validation and provider turn as Chat Completions.
 
 - `input` accepts a non-empty string or up to 256 text items: user/system/developer/assistant messages, Tokenless output `message` items, `function_call`, and string `function_call_output`.
-- Function tools are flat: `{type, name, description?, parameters, strict?}`. `tool_choice` is `auto`, `none`, `required`, or `{type:"function",name}`.
+- Function tools are flat: `{type, name, description?, parameters, strict?}`. `tool_choice` is `auto`, `none`, `required`, or `{type:"function",name}`. Non-function tool entries (for example Codex CLI's `namespace` and `web_search` tools) are ignored.
+- `instructions` (Codex CLI) is honored as the leading system message. Codex-reported extra fields (`reasoning`, `store`, `include`, `prompt_cache_key`, `client_metadata`) are accepted and ignored.
 - `text.format` accepts `text`, `json_object`, or flat `json_schema` with the same published schema subset above.
 - Tokenless validates every declared name, strict argument, unique `call_id`, and complete call/output pairing before provider submission. It never executes caller tools.
 
@@ -331,7 +332,7 @@ Responses V1 intentionally excludes Conversations, background mode, WebSockets, 
 }
 ```
 
-Roles in `messages`: `user`, `assistant` only. The system prompt goes in the top-level `system` field, as in the real API.
+Roles in `messages`: `user`, `assistant`, and `system`. A `system`-role message is folded into the leading system prompt; the top-level `system` field remains the canonical place for it, as in the real API. Anthropic `tools` and `tool_choice` are accepted and ignored; Anthropic tool use stays unadvertised.
 
 ### Content blocks
 
@@ -540,7 +541,7 @@ The status is the signal to branch on. Read `code` for the specific cause and tr
 | --- | --- | --- | --- |
 | 400 | `invalid_request_error` | Malformed body, tool catalog, tool choice, response format/schema, arguments, or unpaired history | No — fix the request |
 | 400 | `invalid_json` | Body is empty or not JSON | No |
-| 400 | `unsupported_parameter` | Legacy `functions` / `function_call`, or Anthropic tools/structured output | No |
+| 400 | `unsupported_parameter` | Legacy `functions` / `function_call`, or Anthropic structured output | No |
 | 400 | `auto_execution_mode_unsupported` / `auto_dialect_unsupported` | Auto was asked to use direct/provider-local/Anthropic state | No — use the documented OpenAI browser scope |
 | 401 | `control_auth_missing` | No bearer token | No |
 | 403 | `control_auth_rejected` | Wrong bearer token | No |

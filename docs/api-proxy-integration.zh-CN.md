@@ -297,7 +297,8 @@ Structured JSON number 必须为 finite，并使用 `JSON.stringify(Number(token
 `POST /v1/responses` 与 `/v1/openai/responses` 把当前官方 [function calling](https://developers.openai.com/api/docs/guides/function-calling) 和 [Responses create](https://developers.openai.com/api/reference/resources/responses/methods/create) shape 映射到与 Chat Completions 相同的 Tokenless validation 与 provider turn。
 
 - `input` 接受非空 string 或最多 256 个 text item：user/system/developer/assistant message、Tokenless output `message` item、`function_call` 与 string `function_call_output`。
-- Function tool 为 flat shape：`{type, name, description?, parameters, strict?}`。`tool_choice` 支持 `auto`、`none`、`required` 或 `{type:"function",name}`。
+- Function tool 为 flat shape：`{type, name, description?, parameters, strict?}`。`tool_choice` 支持 `auto`、`none`、`required` 或 `{type:"function",name}`。非 function 的 tool 条目（例如 Codex CLI 的 `namespace` 与 `web_search` tool）会被忽略。
+- `instructions`（Codex CLI）会被作为前置 system message 处理。Codex 报告的其他字段（`reasoning`、`store`、`include`、`prompt_cache_key`、`client_metadata`）会被接受并忽略。
 - `text.format` 支持 `text`、`json_object` 或 flat `json_schema`，schema subset 与上文相同。
 - Tokenless 在 provider submission 前校验所有 declared name、strict argument、唯一 `call_id` 与完整 call/output 配对。它不会执行调用方 tool。
 
@@ -331,7 +332,7 @@ Responses V1 明确不包括 Conversations、background、WebSocket、hosted too
 }
 ```
 
-`messages` 中的 role 只支持 `user` 与 `assistant`。system prompt 放在顶层 `system` 字段，与真实 API 一致。
+`messages` 中的 role 支持 `user`、`assistant` 与 `system`。`system` 角色的消息会被并入前置 system prompt；顶层 `system` 字段仍是它规范的位置，与真实 API 一致。Anthropic 的 `tools` 和 `tool_choice` 会被接受并忽略；Anthropic tool use 仍不对外声明。
 
 ### Content blocks
 
@@ -540,7 +541,7 @@ Anthropic：
 | --- | --- | --- | --- |
 | 400 | `invalid_request_error` | 请求体、tool catalog、tool choice、response format/schema、arguments 或历史配对错误 | 否 —— 修正请求 |
 | 400 | `invalid_json` | 请求体为空或不是 JSON | 否 |
-| 400 | `unsupported_parameter` | 旧版 `functions` / `function_call`，或 Anthropic tools/structured output | 否 |
+| 400 | `unsupported_parameter` | 旧版 `functions` / `function_call`，或 Anthropic structured output | 否 |
 | 400 | `auto_execution_mode_unsupported` / `auto_dialect_unsupported` | Auto 被要求使用 direct/provider-local/Anthropic state | 否 —— 使用已文档化的 OpenAI browser scope |
 | 401 | `control_auth_missing` | 缺少 bearer token | 否 |
 | 403 | `control_auth_rejected` | bearer token 错误 | 否 |

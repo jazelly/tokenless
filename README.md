@@ -48,11 +48,11 @@ Add the Tokenless skill to your Harness; invoke it for selected tasks and bring 
 
 <a id="providers"></a>
 
-## 43 store providers
+## 45 store providers
 
-15 in Browser mode, 40 in Direct API mode; 12 appear in both. [Inventory audit](docs/provider-capability-census.md#2026-09-12-provider-inventory-audit).
+18 in Browser mode, 40 in Direct API mode; 13 appear in both. [Inventory audit](docs/provider-capability-census.md#2026-09-12-provider-inventory-audit).
 
-### Browser mode · 15 providers
+### Browser mode · 18 providers
 
 Interact with provider websites in your signed-in browser.
 
@@ -77,6 +77,11 @@ Interact with provider websites in your signed-in browser.
     <td align="center" width="20%"><a href="https://meta.ai/"><img src="assets/providers/meta.ico" alt="Meta AI" width="32" height="32"><br><strong>Meta AI</strong></a><br><sub>Experimental</sub></td>
     <td align="center" width="20%"><a href="https://copilot.microsoft.com/"><img src="assets/providers/microsoft-copilot.ico" alt="Microsoft Copilot" width="32" height="32"><br><strong>Microsoft Copilot</strong></a><br><sub>Awaiting verification</sub></td>
     <td align="center" width="20%"><a href="https://github.com/copilot"><img src="assets/providers/github-copilot.svg" alt="GitHub Copilot" width="32" height="32"><br><strong>GitHub Copilot</strong></a><br><sub>Experimental</sub></td>
+  </tr>
+  <tr>
+    <td align="center" width="20%"><a href="https://lovable.dev/"><strong>Lovable</strong></a><br><sub>Awaiting verification</sub></td>
+    <td align="center" width="20%"><a href="https://huggingface.co/chat/"><strong>HuggingChat</strong></a><br><sub>Awaiting verification</sub></td>
+    <td align="center" width="20%"><a href="https://monica.im/home/chat"><img src="assets/providers/monica.png" alt="Monica" width="32" height="32"><br><strong>Monica</strong></a><br><sub>Experimental</sub></td>
   </tr>
 </table>
 

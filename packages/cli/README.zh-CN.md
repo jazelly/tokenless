@@ -16,7 +16,7 @@ Tokenless Web Harness 的 CLI 与本地 API 入口，让你已有的网页大模
 
 ## Provider 清单
 
-当前目录共 43 个 provider：15 个浏览器条目，以及 28 个仅 Direct 模式的条目。
+当前目录共 45 个 provider：18 个浏览器条目，以及 27 个仅 Direct 模式的条目。
 
 - **已支持的浏览器路由**：ChatGPT、Claude、Gemini、Grok、Arena。
 - **实验性浏览器路由**：Qwen / 千问、DeepSeek、Perplexity、Z.ai / GLM、Doubao / 豆包、Kimi、Dola、Meta AI、GitHub Copilot。

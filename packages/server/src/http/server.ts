@@ -871,6 +871,11 @@ type ApiProxyRoute =
  * OpenAI SDK work with nothing but a `baseURL` override, so OpenAI is the
  * default dialect. The prefixed paths stay authoritative and are the only way
  * to reach Anthropic.
+ *
+ * Standard Anthropic clients append `/v1/messages` to their configured base
+ * URL, so a client pointed at `http://127.0.0.1:7331/v1/anthropic` requests
+ * `/v1/anthropic/v1/messages`. Accept that client-appended alias as well as
+ * the canonical `/v1/anthropic/messages` route.
  */
 function matchApiProxyRoute(method: string, pathname: string): ApiProxyRoute | null {
   if (method === 'POST' && (pathname === '/v1/openai/chat/completions' || pathname === '/v1/chat/completions')) {
@@ -879,7 +884,9 @@ function matchApiProxyRoute(method: string, pathname: string): ApiProxyRoute | n
   if (method === 'POST' && (pathname === '/v1/openai/responses' || pathname === '/v1/responses')) {
     return { kind: 'response' }
   }
-  if (method === 'POST' && pathname === '/v1/anthropic/messages') return { kind: 'completion', dialect: 'anthropic' }
+  if (method === 'POST' && (pathname === '/v1/anthropic/messages' || pathname === '/v1/anthropic/v1/messages')) {
+    return { kind: 'completion', dialect: 'anthropic' }
+  }
   if (method === 'GET' && (pathname === '/v1/openai/models' || pathname === '/v1/models')) return { kind: 'models' }
   return null
 }

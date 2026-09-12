@@ -16,7 +16,7 @@ The CLI and local API entry point for the Tokenless Web Harness. Put your existi
 
 ## Provider catalog
 
-The current catalog contains 43 providers: 15 browser entries and 28 additional Direct-only entries.
+The current catalog contains 45 providers: 18 browser entries and 27 additional Direct-only entries.
 
 - **Supported browser routes**: ChatGPT, Claude, Gemini, Grok, Arena.
 - **Experimental browser routes**: Qwen / 千问, DeepSeek, Perplexity, Z.ai / GLM, Doubao / 豆包, Kimi, Dola, Meta AI, GitHub Copilot.

@@ -1096,6 +1096,10 @@ function normalizeOpenAiResponsesRequest(
   rejectUnsupportedResponsesFields(body)
   const model = providerFromModel(body.model)
   const currentInput = normalizeResponsesInput(body.input)
+  const instructions = typeof body.instructions === 'string' ? body.instructions.trim() : ''
+  if (instructions.length > 0) {
+    currentInput.unshift({ role: 'system', content: instructions })
+  }
   const priorInput = previous?.transcript.map((item, index) => normalizeResponsesInputItem(item, index)) ?? []
   const transcript = [...priorInput, ...currentInput]
   if (transcript.length > MAX_MESSAGES) {
@@ -1163,6 +1167,7 @@ function rejectUnsupportedResponsesFields(body: Record<string, unknown>) {
   const supported = new Set([
     'model',
     'input',
+    'instructions',
     'tools',
     'tool_choice',
     'parallel_tool_calls',
@@ -1170,6 +1175,13 @@ function rejectUnsupportedResponsesFields(body: Record<string, unknown>) {
     'stream',
     'previous_response_id',
     'tokenless',
+    // Codex CLI sends these on every request; they are ignored like sampling
+    // parameters so the Responses route stays usable from a real client.
+    'reasoning',
+    'store',
+    'include',
+    'prompt_cache_key',
+    'client_metadata',
   ])
   const field = Object.keys(body).find((key) => !supported.has(key))
   if (field) {
@@ -1177,6 +1189,9 @@ function rejectUnsupportedResponsesFields(body: Record<string, unknown>) {
   }
   if (body.stream !== undefined && typeof body.stream !== 'boolean') {
     throw badRequest('stream must be a boolean', 'stream')
+  }
+  if (body.instructions !== undefined && typeof body.instructions !== 'string') {
+    throw badRequest('instructions must be a string', 'instructions')
   }
 }
 
@@ -1230,9 +1245,12 @@ function normalizeResponsesInputItem(value: unknown, index: number): Record<stri
     }
   }
   if (item.type === 'function_call_output') {
-    requireResponsesKeys(item, ['type', 'call_id', 'output'], [], `input[${index}]`)
+    requireResponsesKeys(item, ['type', 'call_id', 'output'], ['id', 'status'], `input[${index}]`)
     if (typeof item.call_id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(item.call_id)) {
       throw badRequest(`input[${index}].call_id is invalid`, 'input')
+    }
+    if (item.id !== undefined && (typeof item.id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(item.id))) {
+      throw badRequest(`input[${index}].id is invalid`, 'input')
     }
     if (typeof item.output !== 'string') throw badRequest(`input[${index}].output must be a string`, 'input')
     return { type: 'function_call_output', call_id: item.call_id, output: item.output }
@@ -1324,12 +1342,14 @@ function responsesItemsToMessages(items: readonly Record<string, unknown>[]) {
 function normalizeResponsesTools(value: unknown): Record<string, unknown>[] {
   if (value === undefined) return []
   if (!Array.isArray(value) || value.length === 0) throw badRequest('tools must be a non-empty array', 'tools')
-  return value.map((entry, index) => {
+  return value.flatMap((entry, index) => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw badRequest(`tools[${index}] must be an object`, 'tools')
     const tool = entry as Record<string, unknown>
+    // Codex CLI also sends namespace and built-in tool types (multi_agent_v1,
+    // web_search) that this proxy cannot emulate; keep only function tools.
+    if (tool.type !== 'function') return []
     requireResponsesKeys(tool, ['type', 'name', 'parameters'], ['description', 'strict'], `tools[${index}]`)
-    if (tool.type !== 'function') throw new ApiProxyError(400, 'unsupported_parameter', 'Responses supports only function tools.', 'tools')
-    return { ...tool }
+    return [{ ...tool }]
   })
 }
 
@@ -1436,17 +1456,29 @@ export function normalizeAnthropicRequest(body: unknown): NormalizedRequest {
     throw badRequest(`messages must contain at most ${MAX_MESSAGES} entries`, 'messages')
   }
   const messages: OpenAiProtocolMessage[] = []
+  const systemParts: string[] = []
   if (record.system !== undefined) {
-    messages.push({ role: 'system', content: anthropicContentText(record.system) })
+    systemParts.push(anthropicContentText(record.system))
   }
+  const conversation: OpenAiProtocolMessage[] = []
   for (const entry of rawMessages) {
     const message = plainRecord(entry)
     const role = message.role
+    if (role === 'system') {
+      // Anthropic clients such as Claude Code may place system-role messages
+      // inside `messages`; fold them into the leading system message.
+      systemParts.push(anthropicContentText(message.content))
+      continue
+    }
     if (role !== 'user' && role !== 'assistant') {
       throw badRequest(`unsupported message role: ${String(role)}`, 'messages')
     }
-    messages.push({ role, content: anthropicContentText(message.content) })
+    conversation.push({ role, content: anthropicContentText(message.content) })
   }
+  if (systemParts.length > 0) {
+    messages.push({ role: 'system', content: systemParts.join('\n\n') })
+  }
+  messages.push(...conversation)
   rejectUnsupportedAnthropicToolFields(record)
   const options = normalizeTokenlessOptions(record.tokenless, model.auto)
   return {
@@ -1485,7 +1517,7 @@ function normalizeResponseFormat(value: unknown) {
 }
 
 function rejectUnsupportedAnthropicToolFields(record: Record<string, unknown>) {
-  for (const field of ['tools', 'tool_choice', 'functions', 'function_call', 'response_format']) {
+  for (const field of ['functions', 'function_call', 'response_format']) {
     if (record[field] !== undefined) {
       throw new ApiProxyError(
         400,
@@ -1495,6 +1527,8 @@ function rejectUnsupportedAnthropicToolFields(record: Record<string, unknown>) {
       )
     }
   }
+  // `tools` and `tool_choice` are ignored like sampling parameters: real
+  // Anthropic clients (Claude Code) always send them; tool use stays unadvertised.
 }
 
 function normalizeToolCatalog(value: unknown) {

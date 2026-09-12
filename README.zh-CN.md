@@ -48,11 +48,11 @@ Tokenless Harness 管理任务与工具调用；Tokenless API 接入你的网页
 
 <a id="providers"></a>
 
-## 43 个 store providers
+## 45 个 store providers
 
-Browser mode：15 个；Direct API mode：40 个，其中 12 个两种模式均有。 [数量审查](docs/provider-capability-census.zh-CN.md#2026-09-12-provider-数量审查)。
+Browser mode：18 个；Direct API mode：40 个，其中 13 个两种模式均有。 [数量审查](docs/provider-capability-census.zh-CN.md#2026-09-12-provider-数量审查)。
 
-### Browser mode · 15 个 providers
+### Browser mode · 18 个 providers
 
 在已登录的浏览器中操作 provider 网页。
 
@@ -77,6 +77,11 @@ Browser mode：15 个；Direct API mode：40 个，其中 12 个两种模式均�
     <td align="center" width="20%"><a href="https://meta.ai/"><img src="assets/providers/meta.ico" alt="Meta AI" width="32" height="32"><br><strong>Meta AI</strong></a><br><sub>实验性</sub></td>
     <td align="center" width="20%"><a href="https://copilot.microsoft.com/"><img src="assets/providers/microsoft-copilot.ico" alt="Microsoft Copilot" width="32" height="32"><br><strong>Microsoft Copilot</strong></a><br><sub>待验证</sub></td>
     <td align="center" width="20%"><a href="https://github.com/copilot"><img src="assets/providers/github-copilot.svg" alt="GitHub Copilot" width="32" height="32"><br><strong>GitHub Copilot</strong></a><br><sub>实验性</sub></td>
+  </tr>
+  <tr>
+    <td align="center" width="20%"><a href="https://lovable.dev/"><strong>Lovable</strong></a><br><sub>待验证</sub></td>
+    <td align="center" width="20%"><a href="https://huggingface.co/chat/"><strong>HuggingChat</strong></a><br><sub>待验证</sub></td>
+    <td align="center" width="20%"><a href="https://monica.im/home/chat"><img src="assets/providers/monica.png" alt="Monica" width="32" height="32"><br><strong>Monica</strong></a><br><sub>实验性</sub></td>
   </tr>
 </table>
 

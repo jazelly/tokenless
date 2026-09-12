@@ -201,6 +201,10 @@
       "lovable": {
         "modelFamily": "*",
         "promptAction": "interactive.usage"
+      },
+      "monica": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
       }
     }
   },
@@ -393,6 +397,13 @@
       "url": "https://huggingface.co/chat/",
       "authority": "official",
       "retrievedAt": "2026-09-12"
+    },
+    "monica-consumer-web": {
+      "publisher": "Monica",
+      "title": "Monica",
+      "url": "https://monica.im/",
+      "authority": "official",
+      "retrievedAt": "2026-09-10"
     }
   },
   "providers": {
@@ -3541,6 +3552,75 @@
           ],
           "notes": [
             "Credits depend on the plan and work performed; no fixed per-message allowance is inferred for the selected account."
+          ]
+        }
+      ]
+    },
+    "monica": {
+      "label": "Monica",
+      "plans": [
+        {
+          "id": "signed_in_unknown",
+          "family": "unknown",
+          "labels": []
+        },
+        {
+          "id": "unknown",
+          "family": "unknown",
+          "labels": []
+        }
+      ],
+      "usageDrivers": [
+        "selected_model",
+        "system_capacity"
+      ],
+      "runtimeSignals": [],
+      "rules": [
+        {
+          "id": "monica.consumer-web.numeric-limits-unknown",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": [
+              "signed_in_unknown",
+              "unknown"
+            ],
+            "accessClasses": [
+              "signed_in_unknown",
+              "unknown"
+            ],
+            "modelFamilies": [
+              "*"
+            ],
+            "actions": [
+              "interactive.usage"
+            ]
+          },
+          "meter": {
+            "kind": "unknown",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "unknown"
+          },
+          "allowance": {
+            "kind": "unknown"
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "unknown",
+              "sourceIds": [
+                "monica-consumer-web"
+              ]
+            }
+          ],
+          "notes": [
+            "The official consumer Web surface publishes no exact numeric allowance or reset window in the cited source.",
+            "Observed burst responses return code 11136 (excessive traffic); runtime visible limits remain authoritative and fail closed.",
+            "Premium models consume a separate one-time credit balance while standard chats consume a monthly message quota."
           ]
         }
       ]
