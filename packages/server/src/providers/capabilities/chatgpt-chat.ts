@@ -80,6 +80,8 @@ export async function ensureChatGptChat(page: Page) {
   if (await page.locator('button.__composer-pill[class*="WorkTrigger"]').isVisible().catch(() => false)) {
     throw tokenlessError('chatgpt_work_surface_unsupported', 'This conversation uses ChatGPT Work. Open a new Chat conversation.', { retryable: false })
   }
+  const legacyChatComposer = page.getByRole('textbox', { name: 'Chat with ChatGPT', exact: true })
+  if (await legacyChatComposer.isVisible().catch(() => false)) return
   if (!await page.locator(CHATGPT_CHAT_TRIGGER).waitFor({ state: 'visible', timeout: 5000 }).then(() => true).catch(() => false)) {
     throw tokenlessError('chatgpt_chat_surface_not_visible', 'The ChatGPT Chat composer control is not visible.', { retryable: false })
   }
