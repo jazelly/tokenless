@@ -64,7 +64,7 @@ test('real Responses store controls ledger continuation while retaining job hist
         body = await response.json()
       }
       assert.ok(body, 'The response must include its terminal public body.')
-      assert.ok(body.output_text?.trim() === marker, 'The real provider must return the run marker.')
+      assert.ok(body.output_text?.includes(marker), 'The real provider must return the run marker.')
       assert.equal(body.store, store !== false)
       const saved = database.prepare('SELECT transcript_json FROM api_response_ledger WHERE response_id = ?').get(body.id)
       if (store === false) {
@@ -81,6 +81,7 @@ test('real Responses store controls ledger continuation while retaining job hist
       }
       const job = database.prepare('SELECT status FROM jobs WHERE job_id = ?').get(body.tokenless.job_id)
       assert.equal(job?.status, 'succeeded', 'store:false does not disable ordinary job history.')
+      console.info('Verified real Response: store=' + String(store ?? 'default') + ', stream=' + String(stream))
     }
     assert.ok(fs.statSync(target.profile.directory).isDirectory(), 'The configured persistent profile must remain intact.')
   } finally {

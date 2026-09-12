@@ -33,7 +33,13 @@ export async function resolveTestConfig() {
   assertOutsideRepository(homeDir)
   const config = await readTokenlessConfig(homeDir)
   const registry = new ManagedProfileRegistry(homeDir)
-  const profile = await registry.resolveProfile()
+  const registeredProfile = await registry.resolveProfile()
+  const profileConfig = config.profiles[registeredProfile.slug]
+  const profile = Object.freeze({
+    ...registeredProfile,
+    profileColor: profileConfig.profileColor,
+    proxy: profileConfig.proxy,
+  })
   return Object.freeze({ configPath, homeDir, config, registry, profile })
 }
 
@@ -83,7 +89,7 @@ export async function withConfiguredBrowser(operation, options = {}) {
   const target = await resolveConfiguredBrowserTarget()
   const manager = createConfiguredBrowserContextManager(target)
   try {
-    return await manager.runWithProfile(target.profile, options.visibility ?? 'auto', async (context) => (
+    return await manager.runWithProfile(target.profile, options.visibility ?? target.config.profiles[target.profile.slug].browserVisibility, async (context) => (
       await operation({ context, target })
     ))
   } finally {
