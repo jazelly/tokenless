@@ -48,11 +48,13 @@ Tokenless Harness 管理任务与工具调用；Tokenless API 接入你的网页
 
 <a id="providers"></a>
 
-## Providers · 43 个目录条目
+## 43 个 store providers
 
-15 个浏览器 provider，另有 28 个仅 Direct 模式的 provider。以下按当前注册目录列出，具体可用能力以验证状态为准。
+Browser mode：15 个；Direct API mode：40 个，其中 12 个两种模式均有。
 
-### 浏览器模式
+### Browser mode · 15 个 providers
+
+在已登录的浏览器中操作 provider 网页。
 
 <table>
   <tr>
@@ -78,37 +80,24 @@ Tokenless Harness 管理任务与工具调用；Tokenless API 接入你的网页
   </tr>
 </table>
 
-Microsoft Copilot 已注册，目前尚无已验证的浏览器能力路由。其余条目按浏览器路由标注为 5 家已支持、9 家实验性。
+### Direct API mode · 40 个 providers
 
-<details>
-<summary>Direct 模式：查看全部 40 个映射</summary>
+直接请求 provider 接口，通过 G4F 接入；ChatGPT 和 Perplexity 另有原生后端。部分接入仍为实验性，认证与能力要求因 provider 而异。
 
-通过 G4F 映射，上面这些 provider 也提供 Direct 入口：ChatGPT, Claude, Gemini, Grok, Qwen / 千问, DeepSeek, Perplexity, Z.ai / GLM, Arena, Meta AI, Microsoft Copilot, GitHub Copilot.
-
-另有以下 **28 个仅 Direct 模式的目录条目**；这些条目均为实验性映射，登记不等于已通过逐项真实运行验证。
-
-| Provider | ID | Provider | ID |
+| Provider | Provider | Provider | Provider |
 | --- | --- | --- | --- |
-| Black Forest Labs | `black-forest-labs` | Blackbox AI | `blackbox` |
-| Cerebras | `cerebras` | Cloudflare AI | `cloudflare` |
-| Cohere | `cohere` | DeepInfra | `deepinfra` |
-| ElevenLabs | `elevenlabs` | Fenay AI | `fenay-ai` |
-| GLHF | `glhf` | Groq | `groq` |
-| Hugging Face | `hugging-face` | MiniMax | `minimax` |
-| NVIDIA | `nvidia` | Ollama | `ollama` |
-| OpenRouter | `openrouter` | Opera Aria | `opera-aria` |
-| Phind AI | `phind` | Pi | `pi` |
-| Pollinations | `pollinations` | Puter | `puter` |
-| Replicate | `replicate` | Sber GigaChat | `gigachat` |
-| Stability AI | `stability-ai` | Teach Anything | `teach-anything` |
-| TheB.AI | `theb-ai` | Together AI | `together` |
-| WhiteRabbitNeo | `whiterabbitneo` | YQCloud | `yqcloud` |
+| ChatGPT | Claude | Gemini | Grok |
+| Qwen / 千问 | DeepSeek | Perplexity | Z.ai / GLM |
+| Arena | Meta AI | Microsoft Copilot | GitHub Copilot |
+| Black Forest Labs | Blackbox AI | Cerebras | Cloudflare AI |
+| Cohere | DeepInfra | ElevenLabs | Fenay AI |
+| GLHF | Groq | Hugging Face | MiniMax |
+| NVIDIA | Ollama | OpenRouter | Opera Aria |
+| Phind AI | Pi | Pollinations | Puter |
+| Replicate | Sber GigaChat | Stability AI | Teach Anything |
+| TheB.AI | Together AI | WhiteRabbitNeo | YQCloud |
 
-[Direct 模式接入与限制](docs/g4f-direct-provider-service.zh-CN.md)。
-
-</details>
-
-[查看各 provider 已验证的能力](docs/capability-matrix.zh-CN.md)。
+[Direct API mode 接入与限制](docs/g4f-direct-provider-service.zh-CN.md) · [各 provider 已验证的能力](docs/capability-matrix.zh-CN.md)
 
 ## 三条命令开始使用
 

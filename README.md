@@ -48,11 +48,13 @@ Add the Tokenless skill to your Harness; invoke it for selected tasks and bring 
 
 <a id="providers"></a>
 
-## Providers · 43 catalog entries
+## 43 store providers
 
-15 browser providers, plus 28 additional Direct-only providers. Listed from the current registry; available capabilities depend on verification.
+15 in Browser mode, 40 in Direct API mode; 12 appear in both.
 
-### Browser mode
+### Browser mode · 15 providers
+
+Interact with provider websites in your signed-in browser.
 
 <table>
   <tr>
@@ -78,37 +80,24 @@ Add the Tokenless skill to your Harness; invoke it for selected tasks and bring 
   </tr>
 </table>
 
-Microsoft Copilot is registered but has no verified browser capability route yet. The other browser entries comprise 5 supported and 9 experimental providers.
+### Direct API mode · 40 providers
 
-<details>
-<summary>Direct mode: view all 40 mappings</summary>
+Call provider endpoints through G4F; ChatGPT and Perplexity also have native backends. Some integrations are experimental; authentication and capabilities vary by provider.
 
-G4F also maps these browser providers to Direct entry points: ChatGPT, Claude, Gemini, Grok, Qwen / 千问, DeepSeek, Perplexity, Z.ai / GLM, Arena, Meta AI, Microsoft Copilot, GitHub Copilot.
-
-The following **28 additional entries are Direct-only**. These are experimental mappings; catalog membership does not mean each has passed a real-provider run.
-
-| Provider | ID | Provider | ID |
+| Provider | Provider | Provider | Provider |
 | --- | --- | --- | --- |
-| Black Forest Labs | `black-forest-labs` | Blackbox AI | `blackbox` |
-| Cerebras | `cerebras` | Cloudflare AI | `cloudflare` |
-| Cohere | `cohere` | DeepInfra | `deepinfra` |
-| ElevenLabs | `elevenlabs` | Fenay AI | `fenay-ai` |
-| GLHF | `glhf` | Groq | `groq` |
-| Hugging Face | `hugging-face` | MiniMax | `minimax` |
-| NVIDIA | `nvidia` | Ollama | `ollama` |
-| OpenRouter | `openrouter` | Opera Aria | `opera-aria` |
-| Phind AI | `phind` | Pi | `pi` |
-| Pollinations | `pollinations` | Puter | `puter` |
-| Replicate | `replicate` | Sber GigaChat | `gigachat` |
-| Stability AI | `stability-ai` | Teach Anything | `teach-anything` |
-| TheB.AI | `theb-ai` | Together AI | `together` |
-| WhiteRabbitNeo | `whiterabbitneo` | YQCloud | `yqcloud` |
+| ChatGPT | Claude | Gemini | Grok |
+| Qwen / 千问 | DeepSeek | Perplexity | Z.ai / GLM |
+| Arena | Meta AI | Microsoft Copilot | GitHub Copilot |
+| Black Forest Labs | Blackbox AI | Cerebras | Cloudflare AI |
+| Cohere | DeepInfra | ElevenLabs | Fenay AI |
+| GLHF | Groq | Hugging Face | MiniMax |
+| NVIDIA | Ollama | OpenRouter | Opera Aria |
+| Phind AI | Pi | Pollinations | Puter |
+| Replicate | Sber GigaChat | Stability AI | Teach Anything |
+| TheB.AI | Together AI | WhiteRabbitNeo | YQCloud |
 
-[Direct setup and limits](docs/g4f-direct-provider-service.md).
-
-</details>
-
-[Check verified capabilities for each provider](docs/capability-matrix.md).
+[Direct API mode setup and limits](docs/g4f-direct-provider-service.md) · [Verified provider capabilities](docs/capability-matrix.md)
 
 ## Start in three commands
 
