@@ -182,6 +182,7 @@ export const G4F_PROVIDER_API_URLS: Readonly<Record<G4fMappedProviderId, string>
 
 /** Existing Tokenless identities that already have a browser adapter. */
 export const G4F_BROWSER_PROVIDER_IDS = Object.freeze([
+  'hugging-face',
   'chatgpt',
   'claude',
   'gemini',

@@ -617,6 +617,8 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
                 "reason": reason or "provider_job_metadata_unavailable",
                 "errorCode": None,
                 "errorClassification": None,
+                "capabilityRequirements": None,
+                "profileId": None,
             }
         error = job.get("error_json")
         error = error if isinstance(error, dict) else {}
@@ -635,6 +637,14 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         if status == "failed" and (error_code is None or classification is None):
             reason = "provider_job_error_metadata_unavailable"
         provider = cls._safe_metadata(job.get("provider"))
+        request = job.get("request_json")
+        route = request.get("capabilityRoute") if isinstance(request, dict) else None
+        requirements = route.get("requirements") if isinstance(route, dict) else None
+        if not (
+            isinstance(requirements, list)
+            and all(isinstance(value, str) and re.fullmatch(r"[a-z][a-z0-9_.-]{0,95}", value) for value in requirements)
+        ):
+            requirements = None
         submitted_at = job.get("provider_submitted_at")
         provider_submitted = (
             bool(submitted_at)
@@ -657,6 +667,8 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
             "reason": reason,
             "errorCode": error_code,
             "errorClassification": classification,
+            "capabilityRequirements": requirements,
+            "profileId": cls._safe_metadata(job.get("profile_id")),
         }
 
     def _provider_execution_metadata(
@@ -1798,6 +1810,7 @@ class _ScopedBridgeServer(http.server.ThreadingHTTPServer):
         if not isinstance(tokenless, dict):
             raise ValueError("DSH parent tokenless options are invalid")
         tokenless = dict(tokenless)
+        tokenless["profile"] = self.expected_profile
         if self.expected_provider == "auto":
             tokenless["semantic_preference"] = self.semantic_preference
         tokenless["submission_evidence"] = "benchmark"
@@ -2700,7 +2713,6 @@ class _ScopedBridgeHandler(http.server.BaseHTTPRequestHandler):
                     for tool in tools
                 )
                 if isinstance(request_value, dict) and has_subagent:
-                    request_value["parallel_tool_calls"] = False
                     if parent_ordinal == 1:
                         if not has_read:
                             raise ValueError("DSH parent read-only inspection tool is unavailable")
@@ -3249,6 +3261,11 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
         await self._upload_profile(environment)
         await self._upload_agent_owned_file(
             environment,
+            Path(__file__).with_name("dsh_diagnostic_runner.py"),
+            "/installed-agent/dsh_diagnostic_runner.py",
+        )
+        await self._upload_agent_owned_file(
+            environment,
             self.task_manifest,
             "/installed-agent/terminal-bench-4-manifest.json",
         )
@@ -3278,10 +3295,7 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
                 "- id: system-prompt",
                 "  config:",
                 "    persona: >-",
-                "      You are a coding agent powered by the {{model}} model. Your working directory is {{cwd}}. Start each user task with exactly one read tool call to inspect the most relevant workspace file without changing it. Then call subagent exactly once with a self-contained request to inspect the current workspace with its tools and return concrete task-relevant analysis. Wait for that result and use it only as input. Then use your own tools to complete the requested workspace changes and verify the observable result. Batch independent permitted changes into one edit or terminal command and verify them together. When a task has a finite set of allowed changes and a local verifier, use one terminal script to search the allowed candidates, run the verifier, and keep a passing workspace state; do not alternate one candidate edit and one verifier call across model turns. Before the first candidate, the script itself must set one monotonic deadline and one total verifier counter. It must increment that counter for every verifier execution, including any final verification, stop cleanly at the deadline or at 64 total executions, track the best candidate using a numeric verifier-derived result, and preserve that best candidate. Never enumerate a power set, never use a loop whose upper bound is the full candidate count, and never launch a second search. If the bounded search does not pass, perform one final verification only when that same counter and deadline still permit it, then continue with the preserved best candidate. Keep any temporary search machinery outside protected workspace files and apply only task-permitted workspace changes. Never stop at analysis, instructions for the user, or a claim of success without executing the task. Do not delegate more than once.",
-                "      For a Git recovery task, use .git/HEAD for the required first read instead of guessing a project manifest. If the subagent fails or its evidence is incomplete, continue with your own tools. A clean working tree, branch list, or stash list does not prove lost Git work is absent: inspect reflogs and candidate commits before concluding. Once a candidate commit is identified, your next response must be a tool call to bash, not a final response: use bash to merge or cherry-pick it into master and verify the resulting files and Git state. If the cherry-pick conflicts, the recovered candidate is the --theirs side and current master is --ours. The next response must call bash to run git checkout --theirs for every unmerged path, stage those paths, run GIT_EDITOR=true git cherry-pick --continue rather than git commit, and verify git status --short is empty. Never use --ours for a lost-change recovery conflict. Reading a conflicted file does not resolve it, and a final response before bash has completed these steps is invalid.",
-                "      When task mutations are constrained by a machine-readable allowlist or mapping, first copy and preserve the original, parse that allowlist, construct every candidate exclusively from its permitted transformations, validate the entire candidate against the original and allowlist before any metric or verifier, and never use model-inferred equivalents. If every allowlist or mapping entry is a single whitespace token, validation must also preserve the original whitespace-token count and compare positions: unchanged tokens must be exactly identical, and each changed token must belong to the parsed family of the original token. Reject any violation before the metric or verifier and never retain that candidate as the best or final candidate. Use only validated task-permitted candidates as the best and final candidate.",
-                "      The final verification must run the complete task-provided verifier or test suite within the same deadline and counter, not merely a proxy metric. If it exposes a constraint violation, restore or correct from a validated candidate within the remaining budget; never launch a second search.",
+                "      You are a coding agent powered by {{model}}, working in {{cwd}}. Read the task and inspect the relevant workspace file with read. Then call subagent once for independent read-only analysis. Use its findings as input and continue with your own tools if it fails. Implement the requested changes in the workspace, respecting every task constraint and protected file. Inspect existing interfaces and call sites before changing behavior. Run the task-provided checks, use their failures to correct the implementation, and report any remaining failures accurately. Complete the work with tools; do not substitute a plan or prose answer for implementation. Do not modify tests or verifier code to make checks pass.",
                 "- id: bash-sandbox",
                 "  config:",
                 "    timeoutMs: 120000",
@@ -3339,6 +3353,16 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
             remote_path="/installed-agent/profile/cordis.patch.yml",
             filename="cordis.patch.yml",
         )
+        # Docker image USER can be non-root even when Harbor's default_user is unset.
+        # DSH writes cordis.yml into this profile during startup.
+        identity = await self.exec_as_agent(environment, "id -u")
+        owner = (identity.stdout or "").strip()
+        if not owner.isdigit():
+            raise RuntimeError("Could not determine the DSH profile owner.")
+        await self.exec_as_root(
+            environment,
+            f"chown -R {owner} /installed-agent/profile",
+        )
 
     @override
     @with_prompt_template
@@ -3385,16 +3409,16 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
             )
             dsh_home = "/tmp/dsh-terminalbench-home"
             try:
-                await self.exec_as_agent(
+                result = await self.exec_as_agent(
                     environment,
-                "mkdir -p /tmp/dsh-terminalbench-home/profiles "
+                    "mkdir -p /tmp/dsh-terminalbench-home/profiles "
                     "/tmp/tokenless-harness-home /logs/agent && "
                     "ln -s /installed-agent/profile "
                     "/tmp/dsh-terminalbench-home/profiles/headless && "
                     "export PATH=/installed-agent/runtime/bin:$PATH && "
+                    "python3 /installed-agent/dsh_diagnostic_runner.py "
                     "node /installed-agent/runtime/node_modules/@deepseek-ai/dsh/lib/bin.js "
-                    f"--profile headless {shlex.quote(instruction)} "
-                    ">/dev/null 2>&1",
+                    f"--profile headless {shlex.quote(instruction)}",
                     env={
                         "DSH_HOME": dsh_home,
                         "DSH_PERMISSION_MODE": "danger-full-access",
@@ -3408,7 +3432,12 @@ class DeepSeekHarnessTokenless(BaseInstalledAgent):
                     },
                     cwd=environment.task_env_config.workdir,
                 )
-                dsh_outcome = "succeeded"
+                diagnostic = json.loads(result.stdout)
+                self.logs_dir.mkdir(parents=True, exist_ok=True)
+                (self.logs_dir / "dsh-classification.json").write_text(
+                    json.dumps(diagnostic, sort_keys=True) + "\n", encoding="utf-8"
+                )
+                dsh_outcome = "succeeded" if diagnostic["exitCode"] == 0 else "failed"
             except NonZeroAgentExitCodeError:
                 self._write_dsh_classification(
                     "dsh_nonzero_exit", NonZeroAgentExitCodeError.__name__

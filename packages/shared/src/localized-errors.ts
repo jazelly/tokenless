@@ -1,5 +1,4 @@
 export const ERROR_SUMMARIES_ZH = {
-  browser_tab_capacity_reached: '工作标签页已满，全部正在使用或保留中；请等到有空闲页面再开始新对话。',
   browser_page_busy: '页面正在使用或保留中，不能替换。',
   browser_page_unavailable: '工作标签页不可用，已保留。',
   github_copilot_control_unsupported: '这些控制仅适用于 GitHub Copilot。',
@@ -11,6 +10,9 @@ export const ERROR_SUMMARIES_ZH = {
   github_copilot_agent_mode_required: 'GitHub Copilot agent.execute 需要 --copilot-mode agent。',
   github_copilot_repository_mismatch: '指定 --workspace-mode 时，--copilot-repo 和 --project-name 必须指向同一 repository。',
   github_copilot_repository_required: '启动 GitHub Copilot Agent 前需要选择 repository。',
+  github_copilot_context_required: 'GitHub Copilot Agent 需要可访问的 GitHub repository。请提供 --copilot-repo owner/repo，或带有 GitHub origin 的 --workspace-root；仅本地存在的项目上下文无法在云端 Agent 中执行。',
+  github_copilot_native_agent_options: 'GitHub Copilot 使用原生云端 Agent 执行任务，不能接入本地 Harness skills、MCP tools、turn limits 或 benchmark tool channels。',
+  harness_github_copilot_native_required: 'GitHub Copilot Agent Task 需要可访问的 GitHub repository 上下文。请使用 tokenless agent delegate --provider github-copilot --copilot-repo owner/repo，通过原生云端 Agent 执行。',
   github_copilot_repository_fixed: '已有 Agent session 的 repository 固定；请选择新 session 来更换 repository。',
   github_copilot_repository_unavailable: '当前 GitHub Copilot 模式无法使用这个 repository。',
   github_copilot_mode_unavailable: '未找到 GitHub Copilot 的可见模式选项。',

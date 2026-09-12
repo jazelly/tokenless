@@ -130,6 +130,7 @@ type NormalizedRequest = {
   executionMode: 'browser' | 'direct' | null
   providerBackend: ProviderBackend | null
   authContextId: string | null
+  profile: string | null
   semanticPreference: string | null
   submissionEvidence: 'benchmark' | null
   toolProtocol: {
@@ -320,7 +321,7 @@ export class ApiProxyAdapter {
     if (request.auto) assertAutoRequestScope(config, request)
     else assertProviderSupported(request.provider)
     if (request.toolProtocol) requestPrompt(request)
-    const profile = await this.profiles.resolveProfile()
+    const profile = await this.profiles.resolveProfile(request.profile ?? undefined)
     const enabledProviders = config.profiles[profile.slug]?.enabledProviders ?? []
     if (!request.auto && !enabledProviders.includes(request.provider)) {
       throw new ApiProxyError(
@@ -487,7 +488,7 @@ export class ApiProxyAdapter {
     }
     assertProviderSupported(request.provider)
     if (request.toolProtocol) return null
-    const profile = await this.profiles.resolveProfile()
+    const profile = await this.profiles.resolveProfile(request.profile ?? undefined)
     const enabledProviders = config.profiles[profile.slug]?.enabledProviders ?? []
     if (!enabledProviders.includes(request.provider)) {
       throw new ApiProxyError(
@@ -1599,11 +1600,15 @@ function providerFromModel(value: unknown) {
 function normalizeTokenlessOptions(
   value: unknown,
   allowSemanticPreference = false,
-): Pick<NormalizedRequest, 'executionMode' | 'providerBackend' | 'authContextId' | 'semanticPreference' | 'submissionEvidence'> {
+): Pick<NormalizedRequest, 'executionMode' | 'providerBackend' | 'authContextId' | 'profile' | 'semanticPreference' | 'submissionEvidence'> {
   if (value === undefined) {
-    return { executionMode: null, providerBackend: null, authContextId: null, semanticPreference: null, submissionEvidence: null }
+    return { executionMode: null, providerBackend: null, authContextId: null, profile: null, semanticPreference: null, submissionEvidence: null }
   }
   const options = plainRecord(value)
+  const profile = options.profile
+  if (profile !== undefined && (typeof profile !== 'string' || !/^[a-z0-9][a-z0-9._-]{0,63}$/u.test(profile))) {
+    throw badRequest('tokenless.profile must be a managed profile id.', 'tokenless.profile')
+  }
   const executionMode = options.execution_mode
   if (executionMode !== undefined && executionMode !== 'browser' && executionMode !== 'direct') {
     throw badRequest('tokenless.execution_mode must be browser or direct', 'tokenless.execution_mode')
@@ -1639,6 +1644,7 @@ function normalizeTokenlessOptions(
     executionMode: executionMode ?? null,
     providerBackend: providerBackend ?? null,
     authContextId: authContextId ?? null,
+    profile: profile ?? null,
     semanticPreference: typeof semanticPreference === 'string' ? semanticPreference : null,
     submissionEvidence: submissionEvidence === 'benchmark' ? submissionEvidence : null,
   }

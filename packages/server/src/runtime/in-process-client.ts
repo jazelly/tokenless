@@ -33,6 +33,7 @@ export function createInProcessDaemonClient(store: JobStore): ManagedDaemonClien
     recordProviderSubmission: (options) => inProcessDaemonRequest(options.signal, () => publicView(
       store.recordProviderSubmission(options.jobId),
     )),
+    admitProviderAction: (options) => inProcessDaemonRequest(options.signal, () => store.admitProviderAction(options.jobId, options.actionIndex)),
     markJobWaitingForUser: (options) => inProcessDaemonRequest(options.signal, () => publicView(
       store.markWaitingForUser(options.jobId, options.blocker),
     )),

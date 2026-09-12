@@ -7,7 +7,11 @@
 <p align="center"><strong>Put your existing web LLM accounts to work for your agents.</strong></p>
 
 <p align="center">
-  <a href="#start-in-three-commands">Quick start</a> · <a href="#what-is-a-web-harness">What is Web Harness?</a> · <a href="#providers">Providers</a> · <a href="docs/capability-matrix.md">Capabilities</a> · <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a>
+  <a href="#start-in-three-commands">Quick start</a> · <a href="#what-is-a-web-harness">What is Web Harness?</a> · <a href="#providers">Providers</a> · <a href="docs/capability-matrix.md">Capabilities</a>
+</p>
+
+<p align="center">
+  <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a>
 </p>
 
 <p align="center">
@@ -18,14 +22,13 @@
 
 ## Three ways to use Tokenless
 
-### 1. Tokenless Harness + API · Main workflow
+### 1. Tokenless Harness + Tokenless API
 
-Give Tokenless Harness a task; it manages execution through Tokenless API and returns the result.
+Tokenless Harness manages tasks and tool calls; Tokenless API connects your web LLM accounts and returns model responses to the Harness.
 
-![Bring a task → Tokenless Web Harness runs the web workflow → results return to your agent or app; follow activity in Dashboard](assets/web-harness-workflow-en.png)
+![Bring a task → Tokenless Harness manages tasks and tools → Tokenless API connects your web LLM accounts → get results; follow activity in Dashboard](assets/web-harness-workflow-en.png)
 
-<details>
-<summary>2. Your own Harness + Tokenless API</summary>
+### 2. Your own Harness + Tokenless API
 
 Keep your Harness’s agent loop, tools, and sessions; connect its model interface to Tokenless API.
 
@@ -33,10 +36,7 @@ Keep your Harness’s agent loop, tools, and sessions; connect its model interfa
 
 [API setup and compatibility limits](docs/api-proxy-integration.md) · [Harness integration](docs/harness-integrations.md)
 
-</details>
-
-<details>
-<summary>3. Your own Harness + Tokenless skill</summary>
+### 3. Your own Harness + Tokenless skill
 
 Add the Tokenless skill to your Harness; invoke it for selected tasks and bring the results back into your usual workflow.
 
@@ -44,17 +44,17 @@ Add the Tokenless skill to your Harness; invoke it for selected tasks and bring 
 
 `tokenless setup` installs the skill into supported local agent skill directories. [Setup](COMMANDS.md#tokenless-setup) · [Skill instructions](skills/tokenless/SKILL.md)
 
-</details>
-
 <sub>AI-generated use-case illustrations. Available capabilities depend on the selected provider’s verified support.</sub>
 
 <a id="providers"></a>
 
-## Providers · 44 catalog entries
+## 45 store providers
 
-16 browser providers, plus 28 additional Direct-only providers. Listed from the current registry; available capabilities depend on verification.
+18 in Browser mode, 40 in Direct API mode; 13 appear in both. [Inventory audit](docs/provider-capability-census.md#2026-09-12-provider-inventory-audit).
 
-### Browser mode
+### Browser mode · 18 providers
+
+Interact with provider websites in your signed-in browser.
 
 <table>
   <tr>
@@ -79,41 +79,30 @@ Add the Tokenless skill to your Harness; invoke it for selected tasks and bring 
     <td align="center" width="20%"><a href="https://github.com/copilot"><img src="assets/providers/github-copilot.svg" alt="GitHub Copilot" width="32" height="32"><br><strong>GitHub Copilot</strong></a><br><sub>Experimental</sub></td>
   </tr>
   <tr>
+    <td align="center" width="20%"><a href="https://lovable.dev/"><strong>Lovable</strong></a><br><sub>Awaiting verification</sub></td>
+    <td align="center" width="20%"><a href="https://huggingface.co/chat/"><strong>HuggingChat</strong></a><br><sub>Awaiting verification</sub></td>
     <td align="center" width="20%"><a href="https://monica.im/home/chat"><img src="assets/providers/monica.png" alt="Monica" width="32" height="32"><br><strong>Monica</strong></a><br><sub>Experimental</sub></td>
   </tr>
 </table>
 
-Microsoft Copilot is registered but has no verified browser capability route yet. The other browser entries comprise 5 supported and 10 experimental providers.
+### Direct API mode · 40 providers
 
-<details>
-<summary>Direct mode: view all 40 mappings</summary>
+Call provider endpoints through G4F; ChatGPT and Perplexity also have native backends. Some integrations are experimental; authentication and capabilities vary by provider.
 
-G4F also maps these browser providers to Direct entry points: ChatGPT, Claude, Gemini, Grok, Qwen / 千问, DeepSeek, Perplexity, Z.ai / GLM, Arena, Meta AI, Microsoft Copilot, GitHub Copilot.
-
-The following **28 additional entries are Direct-only**. These are experimental mappings; catalog membership does not mean each has passed a real-provider run.
-
-| Provider | ID | Provider | ID |
+| Provider | Provider | Provider | Provider |
 | --- | --- | --- | --- |
-| Black Forest Labs | `black-forest-labs` | Blackbox AI | `blackbox` |
-| Cerebras | `cerebras` | Cloudflare AI | `cloudflare` |
-| Cohere | `cohere` | DeepInfra | `deepinfra` |
-| ElevenLabs | `elevenlabs` | Fenay AI | `fenay-ai` |
-| GLHF | `glhf` | Groq | `groq` |
-| Hugging Face | `hugging-face` | MiniMax | `minimax` |
-| NVIDIA | `nvidia` | Ollama | `ollama` |
-| OpenRouter | `openrouter` | Opera Aria | `opera-aria` |
-| Phind AI | `phind` | Pi | `pi` |
-| Pollinations | `pollinations` | Puter | `puter` |
-| Replicate | `replicate` | Sber GigaChat | `gigachat` |
-| Stability AI | `stability-ai` | Teach Anything | `teach-anything` |
-| TheB.AI | `theb-ai` | Together AI | `together` |
-| WhiteRabbitNeo | `whiterabbitneo` | YQCloud | `yqcloud` |
+| ChatGPT | Claude | Gemini | Grok |
+| Qwen / 千问 | DeepSeek | Perplexity | Z.ai / GLM |
+| Arena | Meta AI | Microsoft Copilot | GitHub Copilot |
+| Black Forest Labs | Blackbox AI | Cerebras | Cloudflare AI |
+| Cohere | DeepInfra | ElevenLabs | Fenay AI |
+| GLHF | Groq | Hugging Face | MiniMax |
+| NVIDIA | Ollama | OpenRouter | Opera Aria |
+| Phind AI | Pi | Pollinations | Puter |
+| Replicate | Sber GigaChat | Stability AI | Teach Anything |
+| TheB.AI | Together AI | WhiteRabbitNeo | YQCloud |
 
-[Direct setup and limits](docs/g4f-direct-provider-service.md).
-
-</details>
-
-[Check verified capabilities for each provider](docs/capability-matrix.md).
+[Direct API mode setup and limits](docs/g4f-direct-provider-service.md) · [Verified provider capabilities](docs/capability-matrix.md)
 
 ## Start in three commands
 
@@ -135,6 +124,8 @@ Setup requires `uv` for the G4F runtime and synchronizes matching skills; upgrad
 For native mode, use a current Chrome or Brave, enable remote debugging at `chrome://inspect/#remote-debugging` or `brave://inspect/#remote-debugging`, and approve the browser prompt. Setup also offers an [Anti-Detect option](COMMANDS.md#tokenless-setup).
 
 Already installed? Run `tokenless upgrade --check`, then `tokenless upgrade`. See [Updates](docs/updates.md) for CLI and macOS app updates.
+
+Developing on Windows? The [Windows tray app](apps/windows-menu/README.md) opens Dashboard on left-click and provides a native right-click menu.
 
 </details>
 

@@ -11,7 +11,7 @@ import { AgentContextStore } from '../packages/harness/dist/src/agent-context/st
 const initialTables = [
   'api_response_ledger', 'dashboard_daily_capability_metrics', 'dashboard_daily_metrics',
   'harness_context_records', 'jobs', 'output_savings_events', 'provider_projects',
-  'provider_statuses', 'provider_task_conversations',
+  'provider_rate_limit_attempts', 'provider_statuses', 'provider_task_conversations',
 ]
 const entryPoints = {
   api: async (home) => (await JobStore.open(home)).close(),
@@ -19,12 +19,12 @@ const entryPoints = {
   profiles: async (home) => new ManagedProfileRegistry(home).addProfile({ slug: 'migration-check' }),
 }
 
-test('each real database entry point creates initial schema version 1', async () => {
+test('each real database entry point creates current schema version 2', async () => {
   for (const [name, open] of Object.entries(entryPoints)) {
     await withHome(async (home) => {
       await open(home)
       const snapshot = inspect(home)
-      assert.equal(snapshot.version, 1, name)
+      assert.equal(snapshot.version, 2, name)
       assert.deepEqual(snapshot.tables.map((table) => table.name), initialTables, name)
     })
   }
@@ -47,10 +47,13 @@ test('initial migration adopts the unversioned 8b215fd database without changing
     assert.equal(before.version, 0)
 
     await entryPoints.api(home)
-    assert.deepEqual(inspect(home), { ...before, version: 1 })
+    const migrated = inspect(home)
+    assert.equal(migrated.version, 2)
+    assert.deepEqual(migrated.tables.filter((table) => table.name !== 'provider_rate_limit_attempts'), before.tables)
+    assert.deepEqual(migrated.tables.find((table) => table.name === 'provider_rate_limit_attempts').rows, [])
     await entryPoints.harness(home)
     await entryPoints.api(home)
-    assert.deepEqual(inspect(home), { ...before, version: 1 })
+    assert.deepEqual(inspect(home), migrated)
   })
 })
 

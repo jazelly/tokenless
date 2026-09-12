@@ -88,7 +88,7 @@
 
   <div class="top-header-actions">
     <ProfileSwitcher
-      profiles={snapshot.profiles.map((profile) => ({ slug: profile.slug, label: profile.slug, description: profile.roleLabel }))}
+      profiles={snapshot.profiles.map((profile) => ({ slug: profile.slug, label: profile.roleLabel || profile.slug, description: profile.roleLabel ? profile.slug : '' }))}
       value={selectedProfile}
       label={t('selectProfile')}
       countLabel={`${formatNumber(snapshot.profiles.length, language)} ${t('profiles')}`}

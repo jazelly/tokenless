@@ -46,7 +46,7 @@ export class MonicaProvider extends BaseProvider<'monica'> {
       id: 'monica',
       label: 'Monica',
       stage: 'experimental',
-      setupOrder: 15,
+      setupOrder: 17,
       subscriptionSupport: 'supported',
       navigation: PROVIDER_NAVIGATION_CATALOG.monica,
       controls: Object.freeze({

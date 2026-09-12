@@ -789,7 +789,6 @@
         "file-selection",
         "conversation-continuation",
         "conversation-workflow",
-        "harness-attachment-roundtrip",
         "github-copilot-controls",
         "github-copilot-repository",
         "github-copilot-agent",
@@ -825,7 +824,8 @@
         "kimi-deep-research": "provider_specific_capability",
         "kimi-artifacts": "provider_specific_capability",
         "kimi-long-running": "provider_specific_capability",
-        "kimi-agent-swarm": "provider_specific_capability"
+        "kimi-agent-swarm": "provider_specific_capability",
+        "harness-attachment-roundtrip": "native_agent_requires_github_repository_context"
       }
     },
     "arena": {

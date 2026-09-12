@@ -15,6 +15,8 @@ import {
   type ProviderCapacityProjection,
 } from '../providers/rate-limit-policy.js'
 import { taskCapabilityDefinition } from '../providers/task-capabilities.js'
+import { configuredRuleUnits, projectConfiguredRateLimit, rateLimitRequestType, readConfiguredRateLimits, type RateLimitEvent } from '../providers/configured-rate-limits.js'
+import type { ConfiguredRateLimitRule, DashboardInvocationQuery } from 'tokenless-internal-shared/dashboard'
 import {
   controlAuthRejected,
   invalidInput,
@@ -173,6 +175,7 @@ export type ProjectProviderCapacityInput = ProviderCapacitySubscription & {
   provider: string
   profile_id: string
   request_json: unknown
+  action_index?: number
 }
 
 export type ProviderProjectMapping = {
@@ -608,6 +611,53 @@ export class JobStore {
     return this.getJobRecord(jobId)
   }
 
+  invocationHistory(query: DashboardInvocationQuery) {
+    const clauses: string[] = []
+    const params: SQLInputValue[] = []
+    for (const [column, value] of [['profile_id', query.profile], ['provider', query.provider]] as const) {
+      if (!value) continue
+      clauses.push(`${column} = ?`)
+      params.push(normalizeNonempty(value, column))
+    }
+    if (query.status) {
+      assertJobStatus(query.status)
+      clauses.push('status = ?')
+      params.push(query.status)
+    }
+    if (query.fromDay) {
+      clauses.push('updated_at >= ?')
+      params.push(`${dashboardDayInput(query.fromDay, 'fromDay')}T00:00:00.000Z`)
+    }
+    if (query.toDay) {
+      clauses.push('updated_at <= ?')
+      params.push(`${dashboardDayInput(query.toDay, 'toDay')}T23:59:59.999Z`)
+    }
+    if (query.fromDay && query.toDay && query.fromDay > query.toDay) throw invalidInput('fromDay must be on or before toDay')
+    if (query.capability) {
+      if (!taskCapabilityDefinition(query.capability)) throw invalidInput('Unknown capability')
+      clauses.push(`EXISTS (SELECT 1 FROM json_each(CASE
+        WHEN json_type(request_json, '$.context.requirements') = 'array' THEN json_extract(request_json, '$.context.requirements')
+        WHEN json_type(request_json, '$.capabilityRoute.requirements') = 'array' THEN json_extract(request_json, '$.capabilityRoute.requirements')
+        ELSE '[]' END) WHERE value = ?)`)
+      params.push(query.capability)
+    }
+    const offset = query.offset ?? 0
+    if (!Number.isSafeInteger(offset) || offset < 0) throw invalidInput('offset must be a nonnegative integer')
+    const where = clauses.length ? clauses.join(' AND ') : '1 = 1'
+    const jobs = this.all(`SELECT * FROM jobs WHERE ${where} ORDER BY updated_at DESC, job_id DESC LIMIT 51 OFFSET ?`, ...params, offset).map(rowToJob)
+    const failures = this.all(`SELECT
+        COALESCE(json_extract(error_json, '$.code'), '') AS code,
+        MAX(COALESCE(json_extract(error_json, '$.message'), '')) AS message,
+        COUNT(*) AS count
+      FROM jobs WHERE ${where} AND status = 'failed'
+      GROUP BY code ORDER BY count DESC, code ASC LIMIT 3`, ...params)
+    return {
+      jobs: jobs.slice(0, 50),
+      hasMore: jobs.length > 50,
+      failureReasons: failures.map((row) => ({ code: String(row.code), message: String(row.message), count: Number(row.count) })),
+    }
+  }
+
   upsertProviderProject(input: {
     provider: string
     profile_id: string
@@ -807,7 +857,7 @@ export class JobStore {
     const profileId = normalizeProfileId(input.profile_id, 'profile_id')
     const accessClass = normalizeNonempty(input.access_class, 'access_class')
     const now = nowRfc3339()
-    const projection = providerCapacityPolicy.project({
+    const catalogProjection = providerCapacityPolicy.project({
       provider,
       profileId,
       accessClass,
@@ -817,6 +867,15 @@ export class JobStore {
       history: this.providerSubmissionHistory(provider, profileId, now),
       now,
     })
+    const internalRules = readConfiguredRateLimits(this.homeDir).filter((rule) => rule.provider === provider)
+    const internalHistory = this.configuredRateLimitHistory(provider, internalRules, now)
+    const internal = internalRules.map((rule) => projectConfiguredRateLimit(rule, internalHistory, profileId, configuredRuleUnits(rule, input.request_json, input.action_index), now))
+    const blocked = internal.some((rule) => rule.decision === 'defer' && rule.requestedUnits > 0)
+    const projection: ProviderCapacityProjection = {
+      ...catalogProjection,
+      rules: [...catalogProjection.rules, ...internal],
+      ...(blocked ? { decision: 'defer', reason: 'Configured internal rate limit reached.' } : {}),
+    }
     const observedLimit = this.providerObservedRateLimit(provider, profileId, now)
     return observedLimit === null
       ? projection
@@ -874,6 +933,60 @@ export class JobStore {
       jobId,
     )
     return this.getJobRecord(jobId)
+  }
+
+  admitProviderAction(jobId: string, actionIndex: number): ProviderCapacityProjection | null {
+    return this.transaction(() => {
+      const job = this.getJobRecord(jobId)
+      if (job.status !== 'running') throw invalidJobState(jobId, 'running', job.status)
+      const request = job.request_json as { executionMode?: string; actions?: unknown[] }
+      if (request.executionMode !== 'browser') return null
+      if (!Number.isSafeInteger(actionIndex) || actionIndex < 0 || !request.actions?.[actionIndex]) throw invalidInput('Invalid rate-limit action index.')
+      const action = request.actions[actionIndex]
+      const requestType = rateLimitRequestType(request, action)
+      if (requestType === null) return null
+      const projection = this.projectProviderCapacity({
+        provider: job.provider, profile_id: job.profile_id, access_class: 'unknown',
+        request_json: request, action_index: actionIndex,
+      })
+      if (projection.decision === 'defer') return projection
+      this.run(`INSERT INTO provider_rate_limit_attempts (job_id, provider, profile_id, action_index, request_type, attempted_at)
+        VALUES (?, ?, ?, ?, ?, ?)`, jobId, job.provider, job.profile_id, actionIndex, requestType, nowRfc3339())
+      return projection
+    }, true)
+  }
+
+  configuredRateLimitUsage(rules: ConfiguredRateLimitRule[], profileIds: string[]) {
+    const now = nowRfc3339()
+    const histories = new Map<string, RateLimitEvent[]>()
+    return rules.map((rule) => {
+      if (!histories.has(rule.provider)) histories.set(rule.provider, this.configuredRateLimitHistory(rule.provider, rules.filter((r) => r.provider === rule.provider), now))
+      const history = histories.get(rule.provider)!
+      return { rule, usage: (rule.scope === 'provider' ? [null] : profileIds).map((profileId) => {
+        const projection = projectConfiguredRateLimit(rule, history, profileId ?? '', 1, now)
+        return { profileId, used: projection.usedUnits!, remaining: projection.remainingUnits!, eligibleAt: projection.eligibleAt ?? null }
+      }) }
+    })
+  }
+
+  private configuredRateLimitHistory(provider: string, rules: ConfiguredRateLimitRule[], now: string): RateLimitEvent[] {
+    const window = Math.max(0, ...rules.map((rule) => rule.windowSeconds))
+    if (!window) return []
+    const since = new Date(Date.parse(now) - window * 1000).toISOString()
+    const attempts: RateLimitEvent[] = this.all(`SELECT profile_id, request_type, attempted_at FROM provider_rate_limit_attempts
+      WHERE provider = ? AND attempted_at > ? AND attempted_at <= ?`, provider, since, now).map((row) => ({
+      profileId: String(row.profile_id), requestType: String(row.request_type) as RateLimitEvent['requestType'], attemptedAt: String(row.attempted_at),
+    }))
+    // Preserve existing recorded submissions in the current window without counting new attempts twice.
+    for (const row of this.all(`SELECT job_id, profile_id, request_json, provider_submitted_at FROM jobs
+      WHERE provider = ? AND provider_submitted_at > ? AND provider_submitted_at <= ?
+        AND NOT EXISTS (SELECT 1 FROM provider_rate_limit_attempts a WHERE a.job_id = jobs.job_id AND a.provider = jobs.provider)`, provider, since, now)) {
+      const request = parseJson(row.request_json) as { executionMode?: string }
+      if (request.executionMode !== 'browser') continue
+      const requestType = rateLimitRequestType(request, { action: 'prompt.submit' })!
+      attempts.push({ profileId: String(row.profile_id), requestType, attemptedAt: String(row.provider_submitted_at) })
+    }
+    return attempts
   }
 
   markWaitingForUser(jobId: string, blockerJson: unknown) {
@@ -1419,8 +1532,8 @@ export class JobStore {
     }
   }
 
-  private transaction<T>(callback: () => T) {
-    this.exec('BEGIN')
+  private transaction<T>(callback: () => T, immediate = false) {
+    this.exec(immediate ? 'BEGIN IMMEDIATE' : 'BEGIN')
     try {
       const result = callback()
       this.exec('COMMIT')
@@ -1612,7 +1725,7 @@ function dashboardExecutionMode(requestJson: unknown): DashboardDailyMetric['exe
   return dashboardStoredExecutionMode(jsonRecord(requestJson)?.executionMode)
 }
 
-function dashboardJobCapabilities(requestJson: unknown) {
+export function dashboardJobCapabilities(requestJson: unknown) {
   const request = jsonRecord(requestJson)
   const context = jsonRecord(request?.context)
   const route = jsonRecord(request?.capabilityRoute)

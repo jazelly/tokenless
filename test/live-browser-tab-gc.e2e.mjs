@@ -23,39 +23,36 @@ export async function verifyTabGcLifecycle({ packageRoot = path.resolve('package
   try {
     const context = await manager.ensureContext(target.profile, target.config.browserVisibility)
     const baseline = context.browserContext.pages()
-    const count = target.config.browserTabGc.maxTabsPerProfile
-    assert.ok(count >= 3, 'GC acceptance needs capacity for three work tabs')
+    const count = 9
     const prefix = `page:tab-gc:${randomUUID()}`
     const userPage = await context.acquireProviderPage({
       provider: 'chatgpt', pageRef: `${prefix}:user`, purpose: 'user',
       matchesExistingPage: (page) => baseline.includes(page) && page.url() === 'about:blank',
     })
-    userPage.release(true)
+    userPage.release()
     const acquire = async (ref) => {
       const use = await context.acquireProviderPage({ provider: 'chatgpt', pageRef: ref })
       uses.push(use)
       return use
     }
     const initial = await Promise.all(Array.from({ length: count }, (_, i) => acquire(`${prefix}:${i}`)))
-    await assert.rejects(acquire(`${prefix}:full`), { code: 'browser_tab_capacity_reached' })
     assert.equal(initial.some((use) => use.page.isClosed()), false)
-    initial[0].release(true)
+    initial[0].release()
     const replacement = await acquire(`${prefix}:replacement`)
-    assert.equal(initial[0].page.isClosed(), true)
+    assert.equal(initial[0].page.isClosed(), false, 'new work must not evict an unexpired idle page')
     assert.equal(initial[1].page.isClosed(), false)
-    assert.equal(manager.tabGcStatus().capacity, 1)
-    log({ check: 'capacity and busy protection', passed: true, profile: target.profile.slug, visibility: context.effectiveBrowserVisibility, workTabs: count })
+    log({ check: 'more than eight active tabs without eviction', passed: true, profile: target.profile.slug, visibility: context.effectiveBrowserVisibility, workTabs: count + 1 })
 
     const busy = initial[1]
     const reset = initial[2]
-    for (const use of [...initial.slice(2), replacement]) use.release(true)
+    for (const use of [...initial.slice(2), replacement]) use.release()
     const ttl = target.config.browserTabGc.idleTimeoutSeconds * 1000
     const sweep = target.config.browserTabGc.sweepIntervalSeconds * 1000
     await delay(Math.floor(ttl * 0.6))
     assert.equal(reset.page.isClosed(), false)
     const reused = await acquire(`${prefix}:2`)
     assert.equal(reused.page, reset.page)
-    reused.release(true)
+    reused.release()
     log({ check: 'idle page reused before expiry', passed: true })
     await delay(Math.ceil(ttl * 0.4) + sweep + 1000)
     assert.equal(busy.page.isClosed(), false)
@@ -65,16 +62,51 @@ export async function verifyTabGcLifecycle({ packageRoot = path.resolve('package
     assert.equal(userPage.page.isClosed(), false, 'user pages must be preserved')
     log({ check: 'expiry, reset clock, busy and user-page protection', passed: true, status: manager.tabGcStatus() })
 
-    busy.release(true)
+    busy.release()
     const deadline = Date.now() + ttl + sweep + 5000
     while (uses.some((use) => !use.page.isClosed()) && Date.now() < deadline) await delay(1000)
     assert.ok(uses.every((use) => use.page.isClosed()), 'the production collector must release the test work tabs')
     assert.equal(manager.tabGcStatus().profiles[0].workPages, 0)
     log({ check: 'all idle test pages reclaimed', passed: true, status: manager.tabGcStatus() })
   } finally {
-    for (const use of uses) use.release(false)
+    for (const use of uses) use.release()
     await manager.detach()
   }
+}
+
+export async function verifyTabGcReleasedWork({ packageRoot = path.resolve('packages/cli'), nodeExecutable = 'node', log = () => {} } = {}) {
+  const fs = await import('node:fs/promises')
+  const { execFile } = await import('node:child_process')
+  const { promisify } = await import('node:util')
+  const target = await resolveConfiguredBrowserTarget()
+  const prefix = `gc-released-${randomUUID()}`
+  const env = { ...process.env }
+  for (const key of Object.keys(env)) if (key.startsWith('TOKENLESS_AGENT_') || key === 'CODEX_THREAD_ID') delete env[key]
+  const cli = async (args, ref) => {
+    const { stdout } = await promisify(execFile)(nodeExecutable, [
+      path.join(packageRoot, 'dist/src/tokenless.mjs'), ...args, '--home', target.homeDir,
+      '--profile', target.profile.slug, '--provider', 'chatgpt', '--task-id', ref, '--page-ref', ref, '--json',
+    ], { env, timeout: 200000, maxBuffer: 2000000 })
+    const result = JSON.parse(stdout)
+    assert.equal(result.ok, true)
+    log({ check: 'non-response job completed', ref, jobId: result.jobId })
+  }
+  await cli(['profiles', 'status'], `${prefix}:status`)
+  await cli(['provider-action', '--action', 'prompt.input', '--prompt', 'UNSENT GC VERIFICATION DRAFT'], `${prefix}:draft`)
+  const records = JSON.parse(await fs.readFile(path.join(target.profile.directory, 'tokenless-browser-tabs.json'), 'utf8'))
+  const owned = records.filter((entry) => entry.pageRef.startsWith(prefix))
+  assert.equal(owned.length, 2, 'status and draft jobs must create separate real work tabs')
+  const port = (await fs.readFile(path.join(target.profile.directory, 'DevToolsActivePort'), 'utf8')).split('\n')[0]
+  const tabs = async () => (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).filter((tab) => tab.type === 'page')
+  const ttl = target.config.browserTabGc.idleTimeoutSeconds * 1000
+  const sweep = target.config.browserTabGc.sweepIntervalSeconds * 1000
+  const started = Date.now()
+  while ((await tabs()).some((tab) => owned.some((entry) => entry.targetId === tab.id))) {
+    assert.ok(Date.now() - started < ttl + sweep * 2 + 15000, 'status and abandoned draft tabs must expire without reading a response')
+    await delay(1000)
+  }
+  assert.ok((await tabs()).length >= 1, 'the resident browser must keep a page open')
+  log({ check: 'provider homepage and abandoned work draft automatically reclaimed', passed: true, count: owned.length, elapsedMs: Date.now() - started })
 }
 
 export async function verifyTabGcConversation({ packageRoot = path.resolve('packages/cli'), nodeExecutable = 'node', log = () => {} } = {}) {
@@ -224,29 +256,9 @@ export async function verifyTabSupervision({ packageRoot, nodeExecutable, reside
     log({ check: 'daemon restart restored both profiles and preserved targets', passed: true })
     await until(async () => !(await tabs(idle.profile)).some((tab) => tab.id === idle.targetId), ttl + sweep * 2 + 15000,
       'idle conversation in the second profile must be reclaimed after restart')
-    assert.ok((await tabs(draft.profile)).some((tab) => tab.id === draft.targetId), 'an unsent draft must survive the complete idle window')
-    log({ check: 'second profile reclaimed while draft remained protected', passed: true, runtime: await status() })
-    await cli(['provider-action', ...draft.common, '--action', 'prompt.clear'])
-    await until(async () => (await status()).tabGc.profiles.find((profile) => profile.profileId === draft.profile.slug)?.idlePages === 1,
-      sweep * 2 + 10000, 'clearing the draft must start a new idle window')
-    await delay(Math.floor(ttl * 0.6))
-    const { PersistentContextManager } = await import(pathToFileURL(path.join(packageRoot, 'dist/server/src/browser/browser/context-manager.js')).href)
-    const inspector = new PersistentContextManager({ browser: {
-      id: target.runtime.browserId, executablePath: target.runtime.executablePath,
-      runtimeId: target.runtime.runtimeId, launchPolicy: target.runtime.launchPolicy,
-    } })
-    try {
-      const context = await inspector.ensureContext(draft.profile, 'auto', true)
-      const page = context.browserContext.pages().find((page) => page.url() === draft.url)
-      assert.ok(page, 'the known test conversation must still be present before reload')
-      await page.reload({ waitUntil: 'domcontentloaded' })
-    } finally { await inspector.detach() }
-    await delay(Math.ceil(ttl * 0.4) + sweep + 1000)
-    assert.ok((await tabs(draft.profile)).some((tab) => tab.id === draft.targetId), 'reloading the conversation must reset its idle clock')
-    log({ check: 'same-URL reload reset the idle clock', passed: true })
     await until(async () => !(await tabs(draft.profile)).some((tab) => tab.id === draft.targetId), ttl + sweep * 2 + 15000,
-      'previously retained page must become collectible once the draft is cleared')
-    log({ check: 'retained draft page reobserved and reclaimed after becoming idle', passed: true })
+      'an abandoned work-tab draft must be reclaimed after restart')
+    log({ check: 'idle conversations and abandoned work drafts reclaimed after restart', passed: true, runtime: await status() })
     const resumed = await cli(['run', ...idle.common, '--chat-surface', 'chat', '--prompt', 'What verification code appeared earlier in this conversation? Reply only with the code. Do not update saved memory.', '--timeout-ms', '180000'])
     const text = resumed.result?.result?.responses?.find((response) => response.action === 'response.read')?.result?.text
     assert.ok(text?.includes(idle.code))

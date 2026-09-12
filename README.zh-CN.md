@@ -7,7 +7,11 @@
 <p align="center"><strong>让你已有的网页大模型账号，为 Agent 完成任务。</strong></p>
 
 <p align="center">
-  <a href="#三条命令开始使用">快速开始</a> · <a href="#什么是-web-harness">什么是 Web Harness</a> · <a href="#providers">Providers</a> · <a href="docs/capability-matrix.zh-CN.md">支持的能力</a> · <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a>
+  <a href="#三条命令开始使用">快速开始</a> · <a href="#什么是-web-harness">什么是 Web Harness</a> · <a href="#providers">Providers</a> · <a href="docs/capability-matrix.zh-CN.md">支持的能力</a>
+</p>
+
+<p align="center">
+  <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a>
 </p>
 
 <p align="center">
@@ -18,14 +22,13 @@
 
 ## 三种使用方式
 
-### 1. Tokenless Harness + API · 主流用法
+### 1. Tokenless Harness + Tokenless API
 
-把任务交给 Tokenless Harness；它通过 Tokenless API 执行任务，并返回结果。
+Tokenless Harness 管理任务与工具调用；Tokenless API 接入你的网页大模型账号，将模型回复交回 Harness。
 
-![交给它任务 → Tokenless Web Harness 执行网页工作流 → 结果回到智能体或应用；在仪表盘查看任务与用量](assets/web-harness-workflow-zh-CN.png)
+![交给它任务 → Tokenless Harness 管理任务与工具 → Tokenless API 接入网页大模型账号 → 拿到结果；在仪表盘查看任务与用量](assets/web-harness-workflow-zh-CN.png)
 
-<details>
-<summary>2. 自选 Harness + Tokenless API</summary>
+### 2. 自选 Harness + Tokenless API
 
 保留自己的 Harness、工具和会话，把模型接口接到 Tokenless API；任务流程仍由你的 Harness 管理。
 
@@ -33,10 +36,7 @@
 
 [API 接入与兼容范围](docs/api-proxy-integration.zh-CN.md) · [Harness 集成](docs/harness-integrations.zh-CN.md)
 
-</details>
-
-<details>
-<summary>3. 自选 Harness + Tokenless Skill</summary>
+### 3. 自选 Harness + Tokenless Skill
 
 把 Tokenless Skill 装入自己的 Harness，只在需要时调用，交出选定任务，再带回结果继续原有工作流。
 
@@ -44,17 +44,17 @@
 
 `tokenless setup` 会将 Skill 安装到受支持的本地 Agent 技能目录。[安装说明](COMMANDS.zh-CN.md#tokenless-setup) · [Skill 使用指引](skills/tokenless/SKILL.md)
 
-</details>
-
 <sub>AI 生成的用途示意图；具体能力以所选 provider 的已验证支持为准。</sub>
 
 <a id="providers"></a>
 
-## Providers · 44 个目录条目
+## 45 个 store providers
 
-16 个浏览器 provider，另有 28 个仅 Direct 模式的 provider。以下按当前注册目录列出，具体可用能力以验证状态为准。
+Browser mode：18 个；Direct API mode：40 个，其中 13 个两种模式均有。 [数量审查](docs/provider-capability-census.zh-CN.md#2026-09-12-provider-数量审查)。
 
-### 浏览器模式
+### Browser mode · 18 个 providers
+
+在已登录的浏览器中操作 provider 网页。
 
 <table>
   <tr>
@@ -79,41 +79,30 @@
     <td align="center" width="20%"><a href="https://github.com/copilot"><img src="assets/providers/github-copilot.svg" alt="GitHub Copilot" width="32" height="32"><br><strong>GitHub Copilot</strong></a><br><sub>实验性</sub></td>
   </tr>
   <tr>
+    <td align="center" width="20%"><a href="https://lovable.dev/"><strong>Lovable</strong></a><br><sub>待验证</sub></td>
+    <td align="center" width="20%"><a href="https://huggingface.co/chat/"><strong>HuggingChat</strong></a><br><sub>待验证</sub></td>
     <td align="center" width="20%"><a href="https://monica.im/home/chat"><img src="assets/providers/monica.png" alt="Monica" width="32" height="32"><br><strong>Monica</strong></a><br><sub>实验性</sub></td>
   </tr>
 </table>
 
-Microsoft Copilot 已注册，目前尚无已验证的浏览器能力路由。其余条目按浏览器路由标注为 5 家已支持、10 家实验性。
+### Direct API mode · 40 个 providers
 
-<details>
-<summary>Direct 模式：查看全部 40 个映射</summary>
+直接请求 provider 接口，通过 G4F 接入；ChatGPT 和 Perplexity 另有原生后端。部分接入仍为实验性，认证与能力要求因 provider 而异。
 
-通过 G4F 映射，上面这些 provider 也提供 Direct 入口：ChatGPT, Claude, Gemini, Grok, Qwen / 千问, DeepSeek, Perplexity, Z.ai / GLM, Arena, Meta AI, Microsoft Copilot, GitHub Copilot.
-
-另有以下 **28 个仅 Direct 模式的目录条目**；这些条目均为实验性映射，登记不等于已通过逐项真实运行验证。
-
-| Provider | ID | Provider | ID |
+| Provider | Provider | Provider | Provider |
 | --- | --- | --- | --- |
-| Black Forest Labs | `black-forest-labs` | Blackbox AI | `blackbox` |
-| Cerebras | `cerebras` | Cloudflare AI | `cloudflare` |
-| Cohere | `cohere` | DeepInfra | `deepinfra` |
-| ElevenLabs | `elevenlabs` | Fenay AI | `fenay-ai` |
-| GLHF | `glhf` | Groq | `groq` |
-| Hugging Face | `hugging-face` | MiniMax | `minimax` |
-| NVIDIA | `nvidia` | Ollama | `ollama` |
-| OpenRouter | `openrouter` | Opera Aria | `opera-aria` |
-| Phind AI | `phind` | Pi | `pi` |
-| Pollinations | `pollinations` | Puter | `puter` |
-| Replicate | `replicate` | Sber GigaChat | `gigachat` |
-| Stability AI | `stability-ai` | Teach Anything | `teach-anything` |
-| TheB.AI | `theb-ai` | Together AI | `together` |
-| WhiteRabbitNeo | `whiterabbitneo` | YQCloud | `yqcloud` |
+| ChatGPT | Claude | Gemini | Grok |
+| Qwen / 千问 | DeepSeek | Perplexity | Z.ai / GLM |
+| Arena | Meta AI | Microsoft Copilot | GitHub Copilot |
+| Black Forest Labs | Blackbox AI | Cerebras | Cloudflare AI |
+| Cohere | DeepInfra | ElevenLabs | Fenay AI |
+| GLHF | Groq | Hugging Face | MiniMax |
+| NVIDIA | Ollama | OpenRouter | Opera Aria |
+| Phind AI | Pi | Pollinations | Puter |
+| Replicate | Sber GigaChat | Stability AI | Teach Anything |
+| TheB.AI | Together AI | WhiteRabbitNeo | YQCloud |
 
-[Direct 模式接入与限制](docs/g4f-direct-provider-service.zh-CN.md)。
-
-</details>
-
-[查看各 provider 已验证的能力](docs/capability-matrix.zh-CN.md)。
+[Direct API mode 接入与限制](docs/g4f-direct-provider-service.zh-CN.md) · [各 provider 已验证的能力](docs/capability-matrix.zh-CN.md)
 
 ## 三条命令开始使用
 
@@ -135,6 +124,8 @@ Setup 需要 `uv` 来准备 G4F runtime，并会自动同步配套 skills；升�
 Native mode 使用当前版本的 Chrome 或 Brave；在 `chrome://inspect/#remote-debugging` 或 `brave://inspect/#remote-debugging` 启用 remote debugging，并确认浏览器提示。Setup 也提供 [Anti-Detect 选项](COMMANDS.zh-CN.md#tokenless-setup)。
 
 已经安装？先运行 `tokenless upgrade --check`，再运行 `tokenless upgrade`。CLI 与 macOS App 更新说明见[更新指南](docs/updates.zh-CN.md)。
+
+在 Windows 上开发？[Windows 托盘应用](apps/windows-menu/README.zh-CN.md) 支持左键打开 Dashboard、右键使用原生菜单。
 
 </details>
 

@@ -2,6 +2,24 @@
 
 最近复核：2026-08-31
 
+## 2026-09-12 provider 数量审查
+
+当前 Tokenless API registry 共 **43 个 store providers**：**15 个 Browser**、**40 个 Direct API**，其中 **12 个两种模式均有**。14 个 Browser provider 有任务路由；Microsoft Copilot 已注册，但尚未公布任务路由。Direct API 数量表示接入映射，不表示 40 家均已逐项验证。
+
+本次检查 GPT4Free main [`e5d68e1`](https://github.com/xtekky/gpt4free/tree/e5d68e15499260ec2e5da351dda4352270a15c40)（2026-09-10）。借助浏览器登录、处理验证或在页面内发 HTTP 请求，不等于提供了 Tokenless API 的网页操作 adapter。以下使用浏览器辅助的 provider 尚无对应 Browser mode：
+
+| Provider | GPT4Free 实现 | 当前 Tokenless API mode |
+| --- | --- | --- |
+| Hugging Face / HuggingChat | [HuggingChat.py](https://github.com/xtekky/gpt4free/blob/e5d68e15499260ec2e5da351dda4352270a15c40/g4f/Provider/needs_auth/hf/HuggingChat.py) | Direct API |
+| Pi | [Pi.py](https://github.com/xtekky/gpt4free/blob/e5d68e15499260ec2e5da351dda4352270a15c40/g4f/Provider/needs_auth/Pi.py) | Direct API |
+| MiniMax / HailuoAI | [HailuoAI.py](https://github.com/xtekky/gpt4free/blob/e5d68e15499260ec2e5da351dda4352270a15c40/g4f/Provider/needs_auth/mini_max/HailuoAI.py) | Direct API |
+| ElevenLabs | [ElevenLabs.py](https://github.com/xtekky/gpt4free/blob/e5d68e15499260ec2e5da351dda4352270a15c40/g4f/Provider/audio/ElevenLabs.py) | Direct API |
+| Microsoft Designer | [MicrosoftDesigner.py](https://github.com/xtekky/gpt4free/blob/e5d68e15499260ec2e5da351dda4352270a15c40/g4f/Provider/needs_auth/MicrosoftDesigner.py) | 未注册 |
+
+这些是待验证的候选，尚未新增支持。MiniMax Agent 与上表 HailuoAI adapter 对应的网页产品不同。
+
+## 既有能力证据
+
 这是一份产品调研记录，不是 Tokenless support 声明。Provider 官方文档只能证明产品 feature 存在；只有 provider adapter 实现完整可见 lifecycle，且真实 provider browser E2E 闭合必需证据后，Tokenless 才会公布 route。规范的命名、映射、support 与扩展规则位于 [Capability Matrix](capability-matrix.zh-CN.md)。
 
 提交到仓库的 runtime catalog 与 provider routing matrix 位于 `packages/server/src/providers/task-capabilities.ts`。`tokenless capabilities list --json` 无需打开浏览器即可公开这个带版本的 catalog。当前 V3 可路由 outcome 为：
@@ -75,6 +93,8 @@ Product surface 比当前 Tokenless evidence 更广。中间一列结合官方�
 
 | Candidate | Canonical Web 入口 | 官方已记录或当前已确认的 surface | 建议评估 |
 | --- | --- | --- | --- |
+| Lovable | `https://lovable.dev/` | 2026-09-12 已在真实登录页面提交最小计数器建站任务，并创建项目 | 用户指定优先接入。ego-browser 已观察到提交；构建完成与 packaged CLI/daemon 验收仍待完成，尚未公布 adapter |
+| Replit | `https://replit.com/` | [Replit Agent](https://replit.com/products/agent) 支持通过对话构建应用；本次浏览器检查要求登录 | 用户指定优先接入。需手动登录后检查、实现真实 workspace 流程，尚未公布 adapter |
 | Mistral Le Chat | `https://chat.mistral.ai/` | Web search 与 citation、Deep Research、Think mode、Projects 与 Libraries、file、code interpreter、image generation/editing、Canvas、agent 与 MCP connector | P1。Capability 匹配广，官方文档相对清晰；适合作为 research 与 artifact semantics 的第二个 adapter |
 | Microsoft Copilot | `https://copilot.microsoft.com/` | 2026-09-05 已观察到：chat、Smart/Think deeper/Study and learn/Search mode、Markdown upload、image 与 Deep Research 入口、podcast、quiz、connector 和 Projects | 已登录的 ego-browser Observer 在同一会话完成两轮对话，并从上传的 Markdown 读出唯一标记。Tokenless API 配置中的 profile 仍需单独通过 CLI/daemon 验收 |
 | Tencent Yuanbao | `https://yuanbao.tencent.com/` | Web product、腾讯增强 Web search、多格式 file reading、reasoning/model surface 与更广泛的腾讯内容 ecosystem | P2。有价值的中文 search 与 file route；高级 artifact 与 workspace 声明需要官方和真实闭合 |

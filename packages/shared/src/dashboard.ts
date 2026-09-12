@@ -126,20 +126,27 @@ export type DashboardTerminalBenchSemanticManifestResult = {
 export type DashboardBrowserTabGc = {
   idleTimeoutSeconds: number
   sweepIntervalSeconds: number
-  maxTabsPerProfile: number
 }
 
 export type DashboardTabGcStatus = {
   idleReuses: number
   expired: number
-  capacity: number
-  capacityRejected: number
   closeFailures: number
   reopenedSoon: number
   profiles: Array<{ profileId: string; workPages: number; idlePages: number; busyPages: number; totalPages?: number | null; untrackedPages?: number | null; status?: string; errorCode?: string | null }>
 }
 
+export type ConfiguredRateLimitRule = {
+  id: string
+  provider: string
+  requestType: 'submission' | 'message' | 'image' | 'file'
+  scope: 'provider' | 'profile'
+  windowSeconds: number
+  maxRequests: number
+}
+
 export type DashboardConfig = {
+  rateLimits: ConfiguredRateLimitRule[]
   updatedAt: string | null
   profiles: { [slug: string]: DashboardProfileConfig }
   browser: DashboardBrowserSelection
@@ -159,6 +166,7 @@ export type DashboardConfig = {
 
 /** The authenticated, fresh-on-request representation of config.json. */
 export type DashboardConfigDocument = {
+  rateLimits: ConfiguredRateLimitRule[]
   protocol: string
   updatedAt: string | null
   defaultProfile: string | null
@@ -178,6 +186,7 @@ export type DashboardConfigDocument = {
 }
 
 export type DashboardConfigUpdate = {
+  rateLimits?: ConfiguredRateLimitRule[]
   defaultProfile?: string | null
   browser?: DashboardBrowserSelection
   browserExecutablePath?: string | null
@@ -409,6 +418,29 @@ export type DashboardJobDetail = DashboardJobSummary & {
   outputSavingsEvents: DashboardOutputSavingsEvent[]
 }
 
+export type DashboardInvocationQuery = {
+  profile?: string
+  provider?: string
+  capability?: string
+  status?: string
+  fromDay?: string
+  toDay?: string
+  offset?: number
+}
+
+export type DashboardInvocation = DashboardJobSummary & {
+  error: unknown
+  requestedCapabilities: string[]
+  requestedActions: string[]
+  submittedAt: string | null
+}
+
+export type DashboardInvocationHistory = {
+  jobs: DashboardInvocation[]
+  hasMore: boolean
+  failureReasons: Array<{ code: string; message: string; count: number }>
+}
+
 export type DashboardAnalyticsRange = '7d' | '30d' | '90d' | '1y' | 'all'
 
 export type DashboardAnalyticsTotals = {
@@ -536,6 +568,34 @@ export type DashboardDaemonStatus = {
   pid: number
 }
 
+export type DashboardRateLimitRule = {
+  id: string
+  provider: string
+  providerLabel: string
+  requestType: 'message' | 'image' | 'file' | 'shared'
+  actions: string[]
+  plans: string[]
+  models: string[]
+  modes: string[]
+  scope: string
+  windowKind: string
+  windowSeconds: number | null
+  allowanceKind: string
+  allowanceDetails?: Record<string, unknown>
+  count: number | null
+  unit: string
+  enforcement: 'preflight' | 'non_numeric' | 'enforced' | 'unknown'
+  usage?: Array<{ profileId: string | null; used: number; remaining: number; eligibleAt: string | null }>
+  sources: Array<{ title: string; url: string; retrievedAt: string }>
+}
+
+export type DashboardRateLimits = {
+  revision: string
+  reviewedAt: string
+  reviewAfter: string
+  rules: DashboardRateLimitRule[]
+}
+
 export type DashboardSnapshot = {
   schema: 'tokenless.dashboard-snapshot.v1'
   generatedAt: string
@@ -548,6 +608,7 @@ export type DashboardSnapshot = {
   profiles: DashboardProfile[]
   providers: DashboardProvider[]
   capabilities: DashboardCapability[]
+  rateLimits: DashboardRateLimits
   jobs: DashboardJobSummary[]
   diagnostics: DashboardDiagnostic[]
 }

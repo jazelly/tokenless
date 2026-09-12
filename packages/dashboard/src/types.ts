@@ -5,6 +5,8 @@ import type {
   DashboardConfigDocument,
   DashboardConfigUpdate,
   DashboardJobDetail,
+  DashboardInvocationQuery,
+  DashboardInvocationHistory,
   DashboardJobStatus,
   DashboardJobSummary,
   DashboardLanguage,
@@ -48,6 +50,9 @@ export type {
   DashboardDiagnostic,
   DashboardErrorEnvelope,
   DashboardJobDetail,
+  DashboardInvocationQuery,
+  DashboardInvocationHistory,
+  DashboardInvocation,
   DashboardJobOutputSavings,
   DashboardJobStatus,
   DashboardJobSummary,
@@ -91,7 +96,7 @@ export type {
 
 export type Language = DashboardLanguage
 
-export type Section = 'overview' | 'profiles' | 'providers' | 'capabilities' | 'routing' | 'jobs' | 'system'
+export type Section = 'overview' | 'profiles' | 'providers' | 'capabilities' | 'routing' | 'rate-limits' | 'jobs' | 'invocations' | 'system'
 
 export type ReadinessJobState = {
   jobId?: string
@@ -142,6 +147,7 @@ export type HarnessExtensionPairing = {
 }
 
 export type DashboardActions = {
+  getInvocations: (query: DashboardInvocationQuery) => Promise<DashboardInvocationHistory>
   getAnalytics: (profile: string, range: DashboardAnalyticsRange) => Promise<DashboardAnalytics>
   updateConfig: (input: DashboardConfigUpdate, announce?: boolean) => Promise<DashboardConfig>
   getConfigDocument: () => Promise<DashboardConfigDocument>

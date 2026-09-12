@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 import { randomUUID } from 'node:crypto'
+import { execFile } from 'node:child_process'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { createInterface } from 'node:readline/promises'
 import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
 
 import {
   MANAGED_PLAYWRIGHT_JOB_ACTION,
@@ -2791,6 +2793,15 @@ async function daemonCommand(subcommand: string | undefined, args: CliArgs) {
 }
 
 async function agentCommand(subcommand: string | undefined, args: CliArgs) {
+  if (subcommand === 'run' || subcommand === 'delegate') {
+    if (args.provider === 'github-copilot') {
+      await runGitHubCopilotAgent(args)
+      return
+    }
+    if (args.copilotRepo !== undefined || args.model !== undefined || args.effort !== undefined) {
+      throw usageError('github_copilot_control_unsupported', 'Native agent repository, model, and effort options are available only for github-copilot.')
+    }
+  }
   const homeDir = tokenlessHome(args.home)
   if (subcommand === 'delegate' && benchmarkHarnessChannelConfigured()) {
     await runBenchmarkHarnessDelegation({ homeDir, args })
@@ -2851,6 +2862,47 @@ async function agentCommand(subcommand: string | undefined, args: CliArgs) {
     return
   }
   throw usageError('agent_command_invalid', 'Usage: tokenless agent <run|delegate|read|resume|cancel>.')
+}
+
+async function runGitHubCopilotAgent(args: CliArgs) {
+  const repository = args.copilotRepo === undefined
+    ? await githubRepositoryFromWorkspace(args.workspaceRoot)
+    : normalizeCopilotRepository(args.copilotRepo)
+  if (!repository) {
+    throw usageError('github_copilot_context_required', 'GitHub Copilot Agent needs an accessible GitHub repository. Supply --copilot-repo owner/repo or --workspace-root with a GitHub origin; local-only project context cannot run in the cloud Agent.')
+  }
+  if (args.skills.length > 0 || args.mcpConfig !== undefined || args.maxTurns !== undefined || args.adapterStream === true || benchmarkHarnessChannelConfigured()) {
+    throw usageError('github_copilot_native_agent_options', 'GitHub Copilot executes this task in its native cloud Agent. Local Harness skills, MCP tools, turn limits, and benchmark tool channels cannot be attached to it.')
+  }
+  const prompt = await agentTaskPrompt(args)
+  // The remote identifies a candidate. The existing repository.select action
+  // must select it in Copilot before prompt submission can execute.
+  await executeDaemonJob({
+    args: {
+      ...args,
+      executionMode: 'browser',
+      copilotMode: 'agent',
+      copilotRepo: repository,
+      projectName: repository,
+      workspaceMode: 'native',
+      taskId: `copilot-agent:${randomUUID()}`,
+    },
+    action: 'submit_and_read',
+    prompt,
+  })
+}
+
+async function githubRepositoryFromWorkspace(workspaceRoot: unknown): Promise<string | undefined> {
+  if (workspaceRoot === undefined) return undefined
+  const cwd = requiredWorkspaceRoot(workspaceRoot)
+  let remote: string
+  try {
+    remote = (await promisify(execFile)('git', ['remote', 'get-url', 'origin'], { cwd, timeout: 5000 })).stdout.trim()
+  } catch {
+    return undefined
+  }
+  const match = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?\/?$/u.exec(remote)
+  return match?.[1]
 }
 
 /**
@@ -5434,8 +5486,8 @@ function createCommandContracts(): CommandContract[] {
     { command: 'help', usage: ['tokenless help'], options: [] },
     { command: 'version', usage: ['tokenless --version', 'tokenless -V', 'tokenless version'], options: [] },
     { command: 'run', usage: [`tokenless run [--capability <capability>] --provider ${VISIBLE_PROVIDER_USAGE} [--execution-mode browser|direct] --prompt <text> --json`], options: runOptions },
-    { command: 'agent', subcommand: 'run', usage: [`tokenless agent run --provider ${VISIBLE_PROVIDER_USAGE} [--profile <slug>] (--prompt <text>|--prompt-file <path>) [--skill <name>] [--mcp-config <path>] [--max-turns <count>] --json`], options: ['home', 'json', 'profile', 'provider', 'prompt', 'promptFile', 'skills', 'mcpConfig', 'maxTurns', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
-    { command: 'agent', subcommand: 'delegate', usage: [`tokenless agent delegate --provider ${VISIBLE_PROVIDER_USAGE} [--profile <slug>] --workspace-root <dir> (--prompt <text>|--prompt-file <path>|--prompt-stdin) [--skill <name>] [--mcp-config <path>] [--max-turns <count>] --json`], options: ['home', 'json', 'profile', 'provider', 'prompt', 'promptFile', 'promptStdin', 'workspaceRoot', 'adapterStream', 'skills', 'mcpConfig', 'maxTurns', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
+    { command: 'agent', subcommand: 'run', usage: [`tokenless agent run --provider ${VISIBLE_PROVIDER_USAGE} [--profile <slug>] (--prompt <text>|--prompt-file <path>) [--copilot-repo <owner/repo>] [--skill <name>] [--mcp-config <path>] [--max-turns <count>] --json`], options: ['home', 'json', 'profile', 'provider', 'prompt', 'promptFile', 'skills', 'mcpConfig', 'maxTurns', 'copilotRepo', 'model', 'effort', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
+    { command: 'agent', subcommand: 'delegate', usage: [`tokenless agent delegate --provider ${VISIBLE_PROVIDER_USAGE} [--profile <slug>] --workspace-root <dir> (--prompt <text>|--prompt-file <path>|--prompt-stdin) [--copilot-repo <owner/repo>] [--skill <name>] [--mcp-config <path>] [--max-turns <count>] --json`], options: ['home', 'json', 'profile', 'provider', 'prompt', 'promptFile', 'promptStdin', 'workspaceRoot', 'adapterStream', 'skills', 'mcpConfig', 'maxTurns', 'copilotRepo', 'model', 'effort', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
     { command: 'agent', subcommand: 'read', usage: ['tokenless agent read --run-id <run-id> --json'], options: ['home', 'json', 'runId', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
     { command: 'agent', subcommand: 'resume', usage: ['tokenless agent resume --run-id <run-id> (--approve <call-id:digest>|--auth-completed <call-id:digest>|--answer <need-id=json>) --json'], options: ['home', 'json', 'runId', 'approvals', 'authenticationCompleted', 'answers', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },
     { command: 'agent', subcommand: 'cancel', usage: ['tokenless agent cancel --run-id <run-id> --json'], options: ['home', 'json', 'runId', 'daemonUrl', 'daemonStartTimeoutMs', 'timeoutMs'] },

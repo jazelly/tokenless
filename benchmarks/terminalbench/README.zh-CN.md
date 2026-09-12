@@ -6,6 +6,8 @@
 
 当前数据集为 `terminal-bench/terminal-bench@4.0.0`，通过内容摘要固定。每次只运行一道题，结束后停下来汇报，再由用户决定下一题；不创建定时任务。
 
+启动阶段的具名工具选择要求单次调用；后续轮次保留 DSH 原生的多工具调用能力。
+
 首题为 `terminal-bench/session-window-debug`（2 CPU、4 GiB 内存、无需 GPU）。官方 agent 时限为 28,800 秒，verifier 在独立官方环境中执行。通过标准仍要求官方 reward `1` 和原有深度集成证据；基础设施失败或不完整调用链不算通过。
 
 ## 固定基线
@@ -21,7 +23,7 @@
 
 runner 不修改官方 task instruction、timeout、resources、environment 或 verifier。task container 只获得一个随机、仅允许 OpenAI completions 与 private Harness provider turns 的 task-scoped bearer；host daemon admin bearer 和 provider browser session 始终留在 host。
 
-对于这条组合 lane，bridge 会把 DSH parent 的第一次 decision 约束为一个结构性只读的 `read` inspection，再把下一次符合条件的 decision 约束为 DSH 原生 named `subagent` tool。child Tokenless Harness run 会先在官方 task filesystem 内执行且只执行一次只读 workspace search probe，然后执行一次综合只读 inspection batch，并在下一 turn 返回当前最佳的 task-relevant result。DSH parent 必须在最终验证前合并执行彼此独立且合规的改动；如果允许的改动集合有限且存在本地 verifier，则只使用一次 terminal search script，由脚本自身设置单调 deadline 和 verifier counter，将搜索与最终验证合计限制为最多 64 次 execution、最多 120 秒，依据 verifier 数值结果跟踪并保留最佳 candidate，不得枚举 power set 或启动第二次搜索。如果 task mutation 受机器可读的 allowlist 或 mapping 约束，脚本必须保留 original，只从解析出的允许 transformation 构造 candidate，在任何 metric 或 verifier 前针对该来源校验完整 candidate，不得替换为模型推断的等价物；如果每个 allowlist 或 mapping entry 都是单个 whitespace token，校验还必须保持 original 的 whitespace-token 数量并逐位置比较：未变化的 token 必须完全相同，变化的 token 必须属于 original token 的解析 family；任何违反都必须在 metric 或 verifier 前拒绝，且该 candidate 不得保留为最佳或最终 candidate。final verification 必须运行完整的 provided verifier 或 test suite，且只能保留已校验的 task-permitted candidate。benchmark child registry 只暴露 `workspace.read` 与 `workspace.search`，且不提供 MCP server 或可写 tool binding，因此 DSH parent 继续负责 task mutation 与最终验证。这些约束只属于 benchmark adapter；官方 task text 与普通 Tokenless Harness 行为都不改变。
+这条组合 lane 保留首次只读检查和一次原生 `subagent` 调用。parent 使用简短、与具体任务无关的实现提示词，遵守 task 约束，并使用提供的检查验证改动。child 保持只读，parent 负责修改和最终验证。
 
 只有 host 观察到同一 run 内严格有序的 HTTP/process chain 才能证明 deep integration：最初的 parent 只读 inspection completion 与 routing 完成；随后一个 parent completion request 被强制使用原生 named `subagent` tool 并成功完成；child bootstrap turn 及其 terminal provider routing 完成；同一 provider conversation 上可以执行一个或多个 child continuation turn，并分别记录 terminal routing；随后出现更晚的 parent completion/routing，最后 DSH process 返回。continuation boundary 证明 child result 确实回到了 parent flow。工具记录另行区分提出调用与在 parent request 或 child continuation 中观察到结果；观察间隔不会被表述为工具的实际执行耗时。DSH transport boundary 只对 provider response Markdown 做必要规范化，以便严格校验 OpenAI-compatible JSON envelope。
 
@@ -32,6 +34,8 @@ runner 不修改官方 task instruction、timeout、resources、environment 或 
 | 证据 | 必须区分的事实 |
 | --- | --- |
 | Provider 提交 | 请求的模型/effort 与提交页面实际观察到的标签、观察时间、页面类型、未知原因 |
+| Capability | 实际 provider job 所选路由的 `capabilityRequirements`；`null` 表示无法取得 |
+| Profile | 每个实际 provider job 的 `profileId`；选定的 benchmark profile 同时用于 parent 和 child 请求 |
 | 模型身份 | `Latest` 等可见别名与 provider 实际公开的具体模型身份 |
 | 工具执行 | 模型提出调用与实际观察到的执行结果；调用关联、状态、结果摘要、真正测量的耗时边界，以及明确的子任务响应解析状态 |
 | 失败 | 对应的本地 job ID、终态、是否已提交、有界错误代码和分类 |
@@ -86,9 +90,13 @@ Observation 分别记录官方 verifier 成绩、routing outcome 和记录完整
 
 明确要求单 provider 测评时，可以在直接运行 Harbor 的 config 中把 `agents[0].model_name` 设为 `tokenless/<provider>`（例如 `tokenless/chatgpt`）。Adapter 会将 parent 和 child 都绑定到该 provider，并记录 `routingMode: fixed`；semantic preference 只用于 auto run。运行前须在选定的持久化 profile 中选择并验证网页模型、thinking effort 和 Chat/Work 入口。这类直接运行保留原始 Harbor results 与 adapter audits；canonical `wiring`/`sweep`/`full` reports 仍用于 auto-route 测评。
 
-明确配置 ChatGPT CLI run 时，`--chat-surface chat`、`--model <visible-label>` 和 `--effort <visible-label>` 用于选择请求的控制状态。这些只是配置输入，不能证明 benchmark 提交时实际使用的状态。报告记录实际观察到的选择，并保留 `Latest` 等别名，不会将别名推断成某个 GPT 版本。
+用户明确要求并发子集 benchmark 时，可以并行启动独立的固定 provider Harbor trial，每个 provider 分配不同任务。分别报告启动的 trial 数、实际观察到的 agent/请求重叠数以及每个任务的官方 reward；启动失败不算 provider 尝试。手动修复后的重跑与首轮 `k=1` 结果分开。验证标签回收时，从没有遗留工作页的状态开始，在执行全程记录真实 target 归属和 job 状态，披露采样缺口，并观察最后的闲置窗口，直到只剩维持浏览器驻留的空白页。
 
-如果可获取，每个成功的 ChatGPT `response.read` 还会从 assistant message DOM 记录 `responseModel`（`source: assistant-message-dom`），并与提交前的控制项观察并列保存。缺失的响应身份会明确记录；collector 不会把 `Latest` 推断成某个具体 GPT 版本。
+安装的 DSH profile 必须归容器中实际执行 agent 的 UID 所有，包括 Harbor 未通过 `default_user` 暴露的镜像非 root `USER`。DSH 启动时会在该目录写入 `cordis.yml`；调整这个安装目录的归属不会改变官方任务用户和工作区权限。
+
+明确配置 ChatGPT CLI run 时，`--chat-surface chat`、`--model <visible-label>` 和 `--effort <visible-label>` 用于选择请求的控制状态。这些只是配置输入，不能证明 benchmark 提交时实际使用的状态。报告记录实际观察到的选择，并保留原始模型标签，包括 `Latest` 等别名。
+
+如果可获取，每个成功的 ChatGPT `response.read` 还会从 assistant message DOM 记录 `responseModel`（`source: assistant-message-dom`），并与提交前的控制项观察并列保存。缺失的响应身份会明确记录。模型汇总使用实际选中的模型标签，不使用回复 slug 替代；当前用户确认的 `Latest = GPT-6` 映射显示为 `GPT-6 / Latest`。collector 分别保留原始标签、thinking 档位和回复 slug。
 
 `deepIntegration` 报告 host 观察到的 parent completion request、child bootstrap/continuation start、terminal provider routing、完整有序 chain，以及 `successfulDshParents`、`failedDshParents`、`unsettledParentCompletionRequests`。成功 route 会在完整 response body relay 后成为 terminal evidence；失败 upstream response 会在 relay 前记录，因此 client disconnect 不会抹掉它的 routing 与 token estimate。`providerRouting.scopes.parent.providers` 和 `providerRouting.scopes.child.providers` 将 parent 与 child 分开计数：`routed`、`attempted`、`submitted`、`rateLimited`、`fallbackOut`、`completed`、`failed`、`preferenceRequested`、`preferenceHonored`，以及估算 input/output/total tokens。`fallbackOut` 表示 source provider 被放弃并转向 fallback，同时计为 `failed=1`；`rate_limit` attempt 的 `rateLimited` 只计入该 source provider。最终 provider counters 只描述它自身的 terminal outcome。`sweep` gate 还要求每个 trial 都有一个成功的 DSH parent completion 和一个 terminal parent route；`wiring` 与 `full` 会保留这些 outcome 字段用于诊断，但不会把 verifier reward 为 `0` 误报成 Harbor infrastructure error。
 
@@ -97,3 +105,5 @@ Observation 分别记录官方 verifier 成绩、routing outcome 和记录完整
 每个可见 rate/plan limit 都记录有界 detector proof ID、`minute | hour | day | week | unknown`、页面可见的 retry-after，以及关联 interaction 的估算 token。通用 live-DOM detector 覆盖 rate limit、too many requests、temporary unavailable、hourly/daily/weekly cap/limit 与 plan/usage limit。正式 run 如果出现新的 provider surface，Operation Router 会继续使用仍可用 provider；随后对该 persistent provider tab 做定向核对，并依据真实页面更新对应 detector。Audit 不包含 prompt、response、task text、credential、browser session、完整 DOM、截图或页面原文。
 
 每个 non-oracle trial 都必须贡献非空且合法的 `deep-integration.jsonl`，或由 Harbor 官方 result 证明的 pre-routing exception。pre-routing exception 不会产生 provider attempt；只要发生，`sweep` 仍然失败。`sweep` 还要求每个 trial 有完整的 host-observed chain、成功的 DSH parent outcome 和 terminal parent route；`wiring` 与 `full` 会保留合法但未完成的 audit outcome 用于报告。缺失或非法 evidence 会让 report 失败，不会被跳过。可选的 DSH failure diagnostic 只写入受限 JSON classification 和 exception class name；不会保留原始 DSH stdout、stderr、exception message 或 provider output。
+
+可在标签页采样时使用 `resource-sampler.mjs` 记录整机 CPU 与内存、浏览器进程树与 daemon 的 CPU/RSS、Docker host 进程以及任务容器 CPU/内存。进程 CPU 使用采样间隔差值（100% 表示一个逻辑 CPU）；RSS 求和可能重复计算共享内存，采样间隔内结束的短进程无法捕获。Docker 内存按 Docker 报告值单独记录。DSH 诊断仅保留退出码和白名单输出分类；分类命中只是诊断线索，不代表已证实根因。原始 DSH 输出直接丢弃。

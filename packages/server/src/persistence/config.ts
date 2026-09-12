@@ -1,4 +1,6 @@
 import fs from 'node:fs/promises'
+import type { ConfiguredRateLimitRule } from 'tokenless-internal-shared/dashboard'
+import { validateConfiguredRateLimits } from '../providers/configured-rate-limits.js'
 import os from 'node:os'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -24,6 +26,7 @@ type JsonRecord = Record<string, unknown>
 const configMutationLanes = new Map<string, Promise<void>>()
 
 export type TokenlessConfig = {
+  rateLimits: ConfiguredRateLimitRule[]
   protocol: typeof TOKENLESS_CONFIG_SCHEMA_ID
   updatedAt: string | null
   defaultProfile: string | null
@@ -46,13 +49,11 @@ export type ConfigBrowser = 'chrome' | 'brave'
 export type BrowserTabGcConfig = {
   idleTimeoutSeconds: number
   sweepIntervalSeconds: number
-  maxTabsPerProfile: number
 }
 
 export const DEFAULT_BROWSER_TAB_GC: Readonly<BrowserTabGcConfig> = Object.freeze({
   idleTimeoutSeconds: 120,
   sweepIntervalSeconds: 15,
-  maxTabsPerProfile: 8,
 })
 
 export function validateBrowserTabGc(value: unknown): BrowserTabGcConfig {
@@ -64,7 +65,7 @@ export function validateBrowserTabGc(value: unknown): BrowserTabGcConfig {
       throw configError('tokenless_config_invalid', `browserTabGc.${key} must be a positive integer.`)
     }
   }
-  return { idleTimeoutSeconds: Number(value.idleTimeoutSeconds), sweepIntervalSeconds: Number(value.sweepIntervalSeconds), maxTabsPerProfile: Number(value.maxTabsPerProfile) }
+  return { idleTimeoutSeconds: Number(value.idleTimeoutSeconds), sweepIntervalSeconds: Number(value.sweepIntervalSeconds) }
 }
 
 export type OutputSavingsConfig = {
@@ -221,6 +222,7 @@ async function readTokenlessConfigUnlocked(homeDir: string) {
     ? normalizeConfigBrowserExecutablePath(payload.browserExecutablePath)
     : null
   const config: TokenlessConfig = {
+    rateLimits: validateConfiguredRateLimits(payload.rateLimits ?? []),
     protocol: TOKENLESS_CONFIG_SCHEMA_ID,
     updatedAt: typeof payload.updatedAt === 'string' ? payload.updatedAt : null,
     defaultProfile: normalizeDefaultProfile(payload.defaultProfile, payload.profiles),
@@ -230,7 +232,12 @@ async function readTokenlessConfigUnlocked(homeDir: string) {
     browserVisibility: 'headed',
     daemonUrl: normalizeDaemonUrl(payload.daemonUrl),
     language: normalizeTokenlessLanguage(payload.language) ?? 'en',
-    browserTabGc: payload.browserTabGc === undefined ? { ...DEFAULT_BROWSER_TAB_GC } : validateBrowserTabGc(payload.browserTabGc),
+    browserTabGc: payload.browserTabGc === undefined ? { ...DEFAULT_BROWSER_TAB_GC } : validateBrowserTabGc(
+      // Existing config files contain the removed tab cap; it no longer controls allocation.
+      isJsonRecord(payload.browserTabGc)
+        ? Object.fromEntries(Object.entries(payload.browserTabGc).filter(([key]) => key !== 'maxTabsPerProfile'))
+        : payload.browserTabGc,
+    ),
     outputSavings: normalizeOutputSavingsConfig(payload.outputSavings),
     apiProxy: normalizeApiProxyConfig(payload.apiProxy),
     g4f: normalizeG4fConfig(payload.g4f),
@@ -250,6 +257,7 @@ export async function writeTokenlessConfig({
   daemonUrl,
   language,
   browserTabGc,
+  rateLimits,
   outputSavings,
   apiProxy,
   g4f,
@@ -265,6 +273,7 @@ export async function writeTokenlessConfig({
   daemonUrl?: unknown
   language?: unknown
   browserTabGc?: unknown
+  rateLimits?: unknown
   outputSavings?: unknown
   apiProxy?: unknown
   g4f?: unknown
@@ -288,6 +297,7 @@ export async function writeTokenlessConfig({
       current.profiles[slug] ? { ...current.profiles[slug], ...profile } : profile,
     ]))
     const config: TokenlessConfig = {
+      rateLimits: rateLimits === undefined ? current.rateLimits : validateConfiguredRateLimits(rateLimits),
       protocol: TOKENLESS_CONFIG_SCHEMA_ID,
       updatedAt: new Date().toISOString(),
       defaultProfile: defaultProfile === undefined
@@ -422,6 +432,7 @@ async function withConfigWriteDirectory<T>(homeDir: string, operation: () => Pro
 
 function emptyTokenlessConfig(): TokenlessConfig {
   return {
+    rateLimits: [],
     protocol: TOKENLESS_CONFIG_SCHEMA_ID,
     updatedAt: null,
     defaultProfile: null,

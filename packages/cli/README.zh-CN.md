@@ -16,7 +16,7 @@ Tokenless Web Harness 的 CLI 与本地 API 入口，让你已有的网页大模
 
 ## Provider 清单
 
-当前目录共 44 个 provider：16 个浏览器条目，以及 28 个仅 Direct 模式的条目。
+当前目录共 45 个 provider：18 个浏览器条目，以及 27 个仅 Direct 模式的条目。
 
 - **已支持的浏览器路由**：ChatGPT、Claude、Gemini、Grok、Arena。
 - **实验性浏览器路由**：Qwen / 千问、DeepSeek、Perplexity、Z.ai / GLM、Doubao / 豆包、Kimi、Dola、Meta AI、GitHub Copilot。
@@ -208,7 +208,7 @@ Tokenless API 每 **15 秒**检查一次，回收**连续空闲 120 秒**的自�
 
 - 活跃任务、生成、未发送草稿、上传及无法确认状态的页面保持保护。保留中的工作页会持续复查，确认完成后可重新进入 idle。显式打开的用户页面仍不参与回收。
 - 再次使用空闲页会重置计时。回收后，以相同 task ID（未提供时使用 Page Ref）正常续聊，会重新打开已保存的 provider 对话链接。
-- 在 **System** 或持久化 `config.json` 中设置 `browserTabGc`：`idleTimeoutSeconds`、`sweepIntervalSeconds`、`maxTabsPerProfile`。System 显示 busy/idle 数量和回收计数；计数随 daemon 重启清零。
+- 在 **System** 或持久化 `config.json` 中设置 `browserTabGc`：`idleTimeoutSeconds`、`sweepIntervalSeconds`。活跃工作标签页没有数量上限。System 显示 busy/idle 数量和回收计数；计数随 daemon 重启清零。
 
 回收器运行在 daemon 内，适用于 headed 和 headless 托管 context。它关闭标签页、保留常驻浏览器，不删除对话历史。所有已运行的注册 profile 都会自动接管，无需启动或重启浏览器。本地 target ID 归属文件让工作页在 daemon 重启后恢复监管；旧页面只有在完整 URL 匹配持久化任务对话时才接回。回答或用户活动变化会重置 idle 计时。System 显示浏览器实际页面数、未接管 / 用户页面数及 profile 连接失败；无法确认的页面保留并计入清单。
 

@@ -2,7 +2,6 @@ import { tokenlessError } from '../../browser/errors.js'
 import type { Page } from 'playwright-core'
 
 export const CHATGPT_CHAT_TRIGGER = 'button.__composer-pill[aria-haspopup="menu"]:not([class*="WorkTrigger"])'
-export const CHATGPT_CHAT_EFFORTS = ['Instant', 'Medium', 'High', 'Extra High', 'Pro'] as const
 export const CHATGPT_MODEL_CHOICES = '[data-testid="composer-model-picker-slider-advanced-view"][data-active="true"] [role="menuitemradio"]'
 export const CHATGPT_POWER_SLIDER = '[data-testid="composer-model-picker-slider-simple-view"][data-active="true"] [role="slider"]'
 
@@ -20,12 +19,43 @@ export async function readChatGptEffort(page: Page) {
       label: description.split(',')[0]?.trim(),
     }
   })
-  if (value.minimum !== 0 || value.maximum !== CHATGPT_CHAT_EFFORTS.length - 1
-    || value.label !== CHATGPT_CHAT_EFFORTS[value.index]) {
+  if (!Number.isInteger(value.index) || !Number.isInteger(value.minimum) || !Number.isInteger(value.maximum)
+    || value.minimum < 0 || value.maximum > 10 || value.index < value.minimum || value.index > value.maximum
+    || !value.label) {
     throw tokenlessError('chatgpt_effort_controls_changed', 'ChatGPT power labels do not match the observed slider state.', { retryable: false })
   }
-  return { index: value.index, label: value.label }
+  return { ...value, label: value.label }
 }
+
+export async function inspectChatGptEfforts(page: Page) {
+  const original = await readChatGptEffort(page)
+  const slider = page.locator(CHATGPT_POWER_SLIDER)
+  const choices = []
+  await slider.focus()
+  try {
+    for (let index = original.minimum; index <= original.maximum; index += 1) {
+      const current = await readChatGptEffort(page)
+      for (let step = 0; step < Math.abs(index - current.index); step += 1) {
+        await slider.press(index > current.index ? 'ArrowRight' : 'ArrowLeft')
+      }
+      const selected = await readChatGptEffort(page)
+      if (selected.index !== index) {
+        throw tokenlessError('chatgpt_effort_not_selected', 'ChatGPT did not select the requested power position.', { retryable: false })
+      }
+      choices.push({ label: selected.label, selected: index === original.index, enabled: true })
+    }
+  } finally {
+    const current = await readChatGptEffort(page)
+    for (let step = 0; step < Math.abs(original.index - current.index); step += 1) {
+      await slider.press(original.index > current.index ? 'ArrowRight' : 'ArrowLeft')
+    }
+    if ((await readChatGptEffort(page)).index !== original.index) {
+      throw tokenlessError('chatgpt_effort_not_restored', 'ChatGPT did not restore the original power position after inspection.', { retryable: false })
+    }
+  }
+  return choices
+}
+
 const historyWarningPages = new WeakSet<Page>()
 
 export async function dismissChatGptHistoryWarning(page: Page) {

@@ -165,6 +165,8 @@ Real visible rate-limit observations already stored on jobs temporarily remove t
 
 For a private provider-turn continuation, `tokenless/auto` keeps the settled provider conversation and exact mapping as the primary target. Only the exact portable action sequence `file.upload` → `prompt.input` → `prompt.submit` → `response.read` may carry currently eligible auto alternatives from provider-home targets; `conversation.continue` routes and nonportable actions do not receive fallback alternatives. An exact provider binding remains pinned with no fallback.
 
+Set `tokenless.profile` to select a configured managed profile for the request; omitting it uses the configured default profile.
+
 An OpenAI `tokenless/auto` request may include an advisory `tokenless.semantic_preference` provider id:
 
 ```json
