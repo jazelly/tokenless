@@ -16,33 +16,31 @@ Tokenless Web Harness 的 CLI 与本地 API 入口，让你已有的网页大模
 
 ## Provider 清单
 
-当前目录共 45 个 provider：18 个浏览器条目，以及 27 个仅 Direct 模式的条目。
+当前目录共 41 个 provider：18 个浏览器条目，以及 23 个仅 Direct 模式的条目。
 
 - **已支持的浏览器路由**：ChatGPT、Claude、Gemini、Grok、Arena。
 - **实验性浏览器路由**：Qwen / 千问、DeepSeek、Perplexity、Z.ai / GLM、Doubao / 豆包、Kimi、Dola、Meta AI、GitHub Copilot。
 - **待验证**：Microsoft Copilot。
 
 <details>
-<summary>查看 28 个仅 Direct 模式的 provider</summary>
+<summary>查看 23 个仅 Direct 模式的 provider</summary>
 
-以下为实验性 G4F 映射；目录登记不等于已通过逐项真实运行验证。另有 12 个浏览器 provider 也注册了 Direct 入口，共 40 个 Direct 映射。
+以下为实验性 G4F 映射；目录登记不等于已通过逐项真实运行验证。另有 13 个浏览器 provider 也注册了 Direct 入口，共 36 个 Direct 映射。
 
 | Provider | ID | Provider | ID |
 | --- | --- | --- | --- |
-| Black Forest Labs | `black-forest-labs` | Blackbox AI | `blackbox` |
-| Cerebras | `cerebras` | Cloudflare AI | `cloudflare` |
-| Cohere | `cohere` | DeepInfra | `deepinfra` |
-| ElevenLabs | `elevenlabs` | Fenay AI | `fenay-ai` |
-| GLHF | `glhf` | Groq | `groq` |
-| Hugging Face | `hugging-face` | MiniMax | `minimax` |
+| Black Forest Labs | `black-forest-labs` | Cerebras | `cerebras` |
+| Cloudflare AI | `cloudflare` | Cohere | `cohere` |
+| DeepInfra | `deepinfra` | ElevenLabs | `elevenlabs` |
+| Groq | `groq` | MiniMax | `minimax` |
 | NVIDIA | `nvidia` | Ollama | `ollama` |
 | OpenRouter | `openrouter` | Opera Aria | `opera-aria` |
 | Phind AI | `phind` | Pi | `pi` |
 | Pollinations | `pollinations` | Puter | `puter` |
 | Replicate | `replicate` | Sber GigaChat | `gigachat` |
 | Stability AI | `stability-ai` | Teach Anything | `teach-anything` |
-| TheB.AI | `theb-ai` | Together AI | `together` |
-| WhiteRabbitNeo | `whiterabbitneo` | YQCloud | `yqcloud` |
+| Together AI | `together` | WhiteRabbitNeo | `whiterabbitneo` |
+| YQCloud | `yqcloud` |  |  |
 
 </details>
 

@@ -153,8 +153,8 @@ test('local web control plane opens directly, establishes Dashboard sessions, an
     assert.equal(analyticsBody.timeZone, 'UTC')
     assert.equal(analyticsBody.range.id, '30d')
     assert.equal(analyticsBody.daily.length, 30)
-    assert.equal(snapshotBody.providers.length, 45)
-    assert.equal(new Set(snapshotBody.providers.map((provider) => provider.id)).size, 45)
+    assert.equal(snapshotBody.providers.length, 41)
+    assert.equal(new Set(snapshotBody.providers.map((provider) => provider.id)).size, 41)
     assert.equal(snapshotBody.providers.some((provider) => provider.id === 'ai-badgr'), false)
     assert.equal(snapshotBody.providers.some((provider) => provider.id === 'airforce'), false)
     for (const provider of snapshotBody.providers) {

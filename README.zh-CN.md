@@ -48,9 +48,9 @@ Tokenless Harness 管理任务与工具调用；Tokenless API 接入你的网页
 
 <a id="providers"></a>
 
-## 45 个 store providers
+## 41 个 store providers
 
-Browser mode：18 个；Direct API mode：40 个，其中 13 个两种模式均有。 [数量审查](docs/provider-capability-census.zh-CN.md#2026-09-12-provider-数量审查)。
+Browser mode：18 个；Direct API mode：36 个，其中 13 个两种模式均有。 [数量审查](docs/provider-capability-census.zh-CN.md#2026-09-12-provider-数量审查)。
 
 ### Browser mode · 18 个 providers
 
@@ -85,7 +85,7 @@ Browser mode：18 个；Direct API mode：40 个，其中 13 个两种模式均�
   </tr>
 </table>
 
-### Direct API mode · 40 个 providers
+### Direct API mode · 36 个 providers
 
 直接请求 provider 接口，通过 G4F 接入；ChatGPT 和 Perplexity 另有原生后端。部分接入仍为实验性，认证与能力要求因 provider 而异。
 
@@ -94,13 +94,12 @@ Browser mode：18 个；Direct API mode：40 个，其中 13 个两种模式均�
 | ChatGPT | Claude | Gemini | Grok |
 | Qwen / 千问 | DeepSeek | Perplexity | Z.ai / GLM |
 | Arena | Meta AI | Microsoft Copilot | GitHub Copilot |
-| Black Forest Labs | Blackbox AI | Cerebras | Cloudflare AI |
-| Cohere | DeepInfra | ElevenLabs | Fenay AI |
-| GLHF | Groq | Hugging Face | MiniMax |
-| NVIDIA | Ollama | OpenRouter | Opera Aria |
-| Phind AI | Pi | Pollinations | Puter |
-| Replicate | Sber GigaChat | Stability AI | Teach Anything |
-| TheB.AI | Together AI | WhiteRabbitNeo | YQCloud |
+| Black Forest Labs | Cerebras | Cloudflare AI | Cohere |
+| DeepInfra | ElevenLabs | Groq | Hugging Face |
+| MiniMax | NVIDIA | Ollama | OpenRouter |
+| Opera Aria | Phind AI | Pi | Pollinations |
+| Puter | Replicate | Sber GigaChat | Stability AI |
+| Teach Anything | Together AI | WhiteRabbitNeo | YQCloud |
 
 [Direct API mode 接入与限制](docs/g4f-direct-provider-service.zh-CN.md) · [各 provider 已验证的能力](docs/capability-matrix.zh-CN.md)
 

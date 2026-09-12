@@ -82,10 +82,6 @@
         "modelFamily": "*",
         "promptAction": "interactive.usage"
       },
-      "blackbox": {
-        "modelFamily": "*",
-        "promptAction": "interactive.usage"
-      },
       "cerebras": {
         "modelFamily": "*",
         "promptAction": "interactive.usage"
@@ -106,15 +102,7 @@
         "modelFamily": "*",
         "promptAction": "interactive.usage"
       },
-      "fenay-ai": {
-        "modelFamily": "*",
-        "promptAction": "interactive.usage"
-      },
       "github-copilot": {
-        "modelFamily": "*",
-        "promptAction": "interactive.usage"
-      },
-      "glhf": {
         "modelFamily": "*",
         "promptAction": "interactive.usage"
       },
@@ -179,10 +167,6 @@
         "promptAction": "interactive.usage"
       },
       "teach-anything": {
-        "modelFamily": "*",
-        "promptAction": "interactive.usage"
-      },
-      "theb-ai": {
         "modelFamily": "*",
         "promptAction": "interactive.usage"
       },

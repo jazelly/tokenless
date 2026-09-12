@@ -16,33 +16,31 @@ The CLI and local API entry point for the Tokenless Web Harness. Put your existi
 
 ## Provider catalog
 
-The current catalog contains 45 providers: 18 browser entries and 27 additional Direct-only entries.
+The current catalog contains 41 providers: 18 browser entries and 23 additional Direct-only entries.
 
 - **Supported browser routes**: ChatGPT, Claude, Gemini, Grok, Arena.
 - **Experimental browser routes**: Qwen / 千问, DeepSeek, Perplexity, Z.ai / GLM, Doubao / 豆包, Kimi, Dola, Meta AI, GitHub Copilot.
 - **Awaiting verification**: Microsoft Copilot.
 
 <details>
-<summary>View the 28 Direct-only providers</summary>
+<summary>View the 23 Direct-only providers</summary>
 
-These are experimental G4F mappings, not a claim that every provider has passed a real run. Twelve browser providers also have Direct entry points, for 40 Direct mappings in total.
+These are experimental G4F mappings, not a claim that every provider has passed a real run. Thirteen browser providers also have Direct entry points, for 36 Direct mappings in total.
 
 | Provider | ID | Provider | ID |
 | --- | --- | --- | --- |
-| Black Forest Labs | `black-forest-labs` | Blackbox AI | `blackbox` |
-| Cerebras | `cerebras` | Cloudflare AI | `cloudflare` |
-| Cohere | `cohere` | DeepInfra | `deepinfra` |
-| ElevenLabs | `elevenlabs` | Fenay AI | `fenay-ai` |
-| GLHF | `glhf` | Groq | `groq` |
-| Hugging Face | `hugging-face` | MiniMax | `minimax` |
+| Black Forest Labs | `black-forest-labs` | Cerebras | `cerebras` |
+| Cloudflare AI | `cloudflare` | Cohere | `cohere` |
+| DeepInfra | `deepinfra` | ElevenLabs | `elevenlabs` |
+| Groq | `groq` | MiniMax | `minimax` |
 | NVIDIA | `nvidia` | Ollama | `ollama` |
 | OpenRouter | `openrouter` | Opera Aria | `opera-aria` |
 | Phind AI | `phind` | Pi | `pi` |
 | Pollinations | `pollinations` | Puter | `puter` |
 | Replicate | `replicate` | Sber GigaChat | `gigachat` |
 | Stability AI | `stability-ai` | Teach Anything | `teach-anything` |
-| TheB.AI | `theb-ai` | Together AI | `together` |
-| WhiteRabbitNeo | `whiterabbitneo` | YQCloud | `yqcloud` |
+| Together AI | `together` | WhiteRabbitNeo | `whiterabbitneo` |
+| YQCloud | `yqcloud` |  |  |
 
 </details>
 

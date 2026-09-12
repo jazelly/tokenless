@@ -4,13 +4,14 @@
 
 ## 2026-09-12 provider 数量审查
 
-当前 Tokenless API registry 共 **43 个 store providers**：**15 个 Browser**、**40 个 Direct API**，其中 **12 个两种模式均有**。14 个 Browser provider 有任务路由；Microsoft Copilot 已注册，但尚未公布任务路由。Direct API 数量表示接入映射，不表示 40 家均已逐项验证。
+当前 Tokenless API registry 共 **41 个 store providers**：**18 个 Browser**、**36 个 Direct API**，其中 **13 个两种模式均有**。Direct API 数量表示接入映射，不表示 36 家均已逐项验证。
+
+GLHF、TheB.AI、Fenay AI 因真实站点无法正常加载而移除；Blackbox AI 因所选账户进入仅 Enterprise 可访问页面而移除。
 
 本次检查 GPT4Free main [`e5d68e1`](https://github.com/xtekky/gpt4free/tree/e5d68e15499260ec2e5da351dda4352270a15c40)（2026-09-10）。借助浏览器登录、处理验证或在页面内发 HTTP 请求，不等于提供了 Tokenless API 的网页操作 adapter。以下使用浏览器辅助的 provider 尚无对应 Browser mode：
 
 | Provider | GPT4Free 实现 | 当前 Tokenless API mode |
 | --- | --- | --- |
-| Hugging Face / HuggingChat | [HuggingChat.py](https://github.com/xtekky/gpt4free/blob/e5d68e15499260ec2e5da351dda4352270a15c40/g4f/Provider/needs_auth/hf/HuggingChat.py) | Direct API |
 | Pi | [Pi.py](https://github.com/xtekky/gpt4free/blob/e5d68e15499260ec2e5da351dda4352270a15c40/g4f/Provider/needs_auth/Pi.py) | Direct API |
 | MiniMax / HailuoAI | [HailuoAI.py](https://github.com/xtekky/gpt4free/blob/e5d68e15499260ec2e5da351dda4352270a15c40/g4f/Provider/needs_auth/mini_max/HailuoAI.py) | Direct API |
 | ElevenLabs | [ElevenLabs.py](https://github.com/xtekky/gpt4free/blob/e5d68e15499260ec2e5da351dda4352270a15c40/g4f/Provider/audio/ElevenLabs.py) | Direct API |

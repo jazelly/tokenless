@@ -4,13 +4,14 @@ Last reviewed: 2026-08-31
 
 ## 2026-09-12 provider inventory audit
 
-The current Tokenless API registry contains **43 store providers**: **15 Browser**, **40 Direct API**, with **12 in both modes**. Browser task routes exist for 14 providers; Microsoft Copilot is registered but still has no advertised task route. Direct API counts describe adapter mappings, not 40 individually verified providers.
+The current Tokenless API registry contains **41 store providers**: **18 Browser**, **36 Direct API**, with **13 in both modes**. Direct API counts describe adapter mappings, not 36 individually verified providers.
+
+GLHF, TheB.AI, and Fenay AI were removed after their live sites failed to load. Blackbox AI was removed after the selected account reached its enterprise-only access page.
 
 GPT4Free main was reviewed at [`e5d68e1`](https://github.com/xtekky/gpt4free/tree/e5d68e15499260ec2e5da351dda4352270a15c40) (2026-09-10). Browser-assisted authentication, challenge handling, and in-page HTTP requests do not supply Tokenless API DOM adapters. The following browser-assisted providers have no corresponding Browser mode in this repository:
 
 | Provider | GPT4Free implementation | Current Tokenless API mode |
 | --- | --- | --- |
-| Hugging Face / HuggingChat | [HuggingChat.py](https://github.com/xtekky/gpt4free/blob/e5d68e15499260ec2e5da351dda4352270a15c40/g4f/Provider/needs_auth/hf/HuggingChat.py) | Direct API |
 | Pi | [Pi.py](https://github.com/xtekky/gpt4free/blob/e5d68e15499260ec2e5da351dda4352270a15c40/g4f/Provider/needs_auth/Pi.py) | Direct API |
 | MiniMax / HailuoAI | [HailuoAI.py](https://github.com/xtekky/gpt4free/blob/e5d68e15499260ec2e5da351dda4352270a15c40/g4f/Provider/needs_auth/mini_max/HailuoAI.py) | Direct API |
 | ElevenLabs | [ElevenLabs.py](https://github.com/xtekky/gpt4free/blob/e5d68e15499260ec2e5da351dda4352270a15c40/g4f/Provider/audio/ElevenLabs.py) | Direct API |
