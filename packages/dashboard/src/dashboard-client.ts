@@ -1,6 +1,8 @@
 import { translate, translateError } from './i18n/index.js'
 import type {
   DashboardAnalytics,
+  DashboardInvocationQuery,
+  DashboardInvocationHistory,
   DashboardAnalyticsRange,
   DashboardConfirmedDeletion,
   DashboardConfig,
@@ -75,6 +77,11 @@ export class DashboardClient {
     const search = new URLSearchParams({ range })
     if (profile) search.set('profile', profile)
     return await this.requireResult(this.request<DashboardAnalytics>(`/analytics?${search}`, { method: 'GET' }))
+  }
+
+  async invocations(query: DashboardInvocationQuery): Promise<DashboardInvocationHistory> {
+    const search = new URLSearchParams(Object.entries(query).filter(([, value]) => value !== undefined && value !== '').map(([key, value]) => [key, String(value)]))
+    return await this.requireResult(this.request<DashboardInvocationHistory>(`/invocations?${search}`, { method: 'GET' }))
   }
 
   async updateConfig(input: DashboardConfigUpdate): Promise<DashboardConfig> {

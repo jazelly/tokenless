@@ -186,6 +186,14 @@ export class TokenlessDashboardServer {
       }))
       return true
     }
+    if (method === 'GET' && url.pathname === '/dashboard-api/v1/invocations') {
+      const query = Object.fromEntries(['profile', 'provider', 'capability', 'status', 'fromDay', 'toDay']
+        .flatMap((key) => url.searchParams.get(key) ? [[key, url.searchParams.get(key)!]] : []))
+      this.writeJson(response, 200, await this.services.invocationHistory({
+        ...query, offset: Number(url.searchParams.get('offset') ?? 0),
+      }))
+      return true
+    }
     if (method === 'GET' && url.pathname === '/dashboard-api/v1/snapshot') {
       const snapshot = await this.services.snapshot()
       const etag = `"${snapshot.revision}"`
@@ -383,7 +391,7 @@ function isDashboardPagePath(pathname: string) {
     || pathname === '/dashboard/'
     || pathname === '/dashboard/setup'
     || pathname === '/dashboard/setup/'
-    || /^\/dashboard\/(?:overview|profiles|providers|capabilities|rate-limits|jobs|system)\/?$/.test(pathname)
+    || /^\/dashboard\/(?:overview|profiles|providers|capabilities|rate-limits|jobs|invocations|system)\/?$/.test(pathname)
 }
 
 const DASHBOARD_SHELL_MESSAGES = {

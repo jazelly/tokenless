@@ -37,6 +37,7 @@ import {
 } from '../browser/profiles/registry.js'
 import {
   publicView,
+  dashboardJobCapabilities,
   type Job,
   type JobStore,
   type JobView,
@@ -57,6 +58,8 @@ import type {
   DashboardConfirmedDeletion,
   DashboardDiagnostic,
   DashboardJobDetail,
+  DashboardInvocationQuery,
+  DashboardInvocationHistory,
   DashboardJobSummary,
   DashboardOutputSavingsState,
   DashboardProfile,
@@ -242,6 +245,23 @@ export class TokenlessApplicationServices {
       this.store.outputSavingsForJob(jobId),
       publicConversationUrl(this.store, job),
     )
+  }
+
+  async invocationHistory(query: DashboardInvocationQuery): Promise<DashboardInvocationHistory> {
+    const history = this.store.invocationHistory(query)
+    const profiles = await this.profiles.listProfiles()
+    return {
+      ...history,
+      failureReasons: history.failureReasons.map((reason) => ({ ...reason, message: redactPrivatePaths(reason.message).slice(0, 240) })),
+      jobs: history.jobs.map((job) => ({
+        ...publicJobSummary(job, profiles, this.store.outputSavingsForJob(job.job_id), publicConversationUrl(this.store, job)),
+        error: publicError(job.error_json),
+        requestedCapabilities: dashboardJobCapabilities(job.request_json),
+        requestedActions: (Array.isArray(record(job.request_json)?.actions) ? record(job.request_json)!.actions as unknown[] : [])
+          .map((action) => record(action)?.action).filter((action): action is string => typeof action === 'string'),
+        submittedAt: job.provider_submitted_at,
+      })),
+    }
   }
 
   async menuBarSnapshot() {

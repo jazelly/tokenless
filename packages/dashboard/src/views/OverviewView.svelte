@@ -5,13 +5,14 @@
   import CapabilityIcon from '../components/CapabilityIcon.svelte'
   import TokenUnit from '../components/TokenUnit.svelte'
   import MetricCard from '../components/MetricCard.svelte'
-  import { capabilityFamilyLabel, capabilityText, type MessageKey } from '../i18n/index.js'
+  import { capabilityFamilyLabel, capabilityText, invocationFailureSummary, type MessageKey } from '../i18n/index.js'
   import { formatNumber } from '../formatting.js'
   import type {
     DashboardActions,
     DashboardAnalytics,
     DashboardAnalyticsCapabilityMatrixCell,
     DashboardAnalyticsRange,
+    DashboardInvocationHistory,
     DashboardSnapshot,
     Language,
   } from '../types.js'
@@ -47,7 +48,7 @@
   let loading = $state(true)
   let loadError = $state('')
   let matrixDetail = $state<{ provider: string; capabilityId: string; x: number; y: number } | null>(null)
-  let matrixTarget: HTMLButtonElement | null = null
+  let matrixTarget: HTMLElement | null = null
   let requestSequence = 0
   let activityKey = $derived(`${snapshot.jobs[0]?.updatedAt ?? ''}:${snapshot.outputSavings.summary.lastMeasuredAt ?? ''}`)
   let matrixCapabilities = $derived([...snapshot.capabilities].sort((left, right) => families.indexOf(left.family) - families.indexOf(right.family)))
@@ -137,7 +138,7 @@
     return `${label} · ${t(supportsCapability(provider, capabilityId) ? 'supportedUnused' : 'unsupportedCapability')}`
   }
 
-  async function showMatrixDetail(button: HTMLButtonElement, provider: string, capabilityId: string) {
+  async function showMatrixDetail(button: HTMLElement, provider: string, capabilityId: string) {
     const cell = button.getBoundingClientRect()
     matrixTarget = button
     matrixDetail = {
@@ -162,6 +163,39 @@
     if (matrixTarget === event.currentTarget && document.activeElement !== event.currentTarget) matrixDetail = null
   }
 
+  let failureReasons = $state<DashboardInvocationHistory['failureReasons']>([])
+  let failureLoading = $state(false)
+  let failureError = $state(false)
+  let failedCellKey = $derived(matrixDetail?.provider && matrixDetail?.capabilityId && matrixCell(matrixDetail.provider, matrixDetail.capabilityId)?.failedJobs ? `${matrixDetail.provider} ${matrixDetail.capabilityId}` : '')
+  $effect(() => {
+    const [provider, capability] = failedCellKey.split(' ')
+    const fromDay = analytics?.range.fromDay
+    const toDay = analytics?.range.toDay
+    const profile = selectedProfile
+    failureReasons = []
+    failureError = false
+    failureLoading = false
+    if (!provider || !capability || !fromDay || !toDay) return
+    let active = true
+    failureLoading = true
+    void actions.getInvocations({ provider, capability, profile, fromDay, toDay, status: 'failed' }).then(async (history) => {
+      if (!active) return
+      failureReasons = history.failureReasons
+      failureLoading = false
+      await tick()
+      if (active && matrixTarget) void showMatrixDetail(matrixTarget, provider, capability)
+    }).catch(() => {
+      if (active) { failureLoading = false; failureError = true }
+    })
+    return () => { active = false }
+  })
+
+  function historyHref(provider: string, capability: string) {
+    const query = new URLSearchParams({ provider, capability, fromDay: analytics?.range.fromDay ?? '', toDay: analytics?.range.toDay ?? '' })
+    if (selectedProfile) query.set('profile', selectedProfile)
+    return `/dashboard/invocations/?${query}`
+  }
+
   function heatLevel(count: number) {
     return Math.max(1, Math.min(5, Math.ceil(count / matrixMaximum * 5)))
   }
@@ -171,7 +205,7 @@
   }
 </script>
 
-<svelte:window onscroll={scrollMatrix} />
+<svelte:window onscroll={scrollMatrix} onkeydown={(event) => { if (event.key === 'Escape') matrixDetail = null }} />
 
 {#snippet matrixAxisIcon(kind: 'provider' | 'capability', id: string, label: string)}
   {@const provider = kind === 'provider' ? id : ''}
@@ -267,10 +301,10 @@
                 {@const cell = matrixCell(provider.id, capability.id)}
                 {@const supported = supportsCapability(provider.id, capability.id)}
                 {@const active = matrixDetail?.provider === provider.id && matrixDetail?.capabilityId === capability.id}
-                <button type="button" class:used={Boolean(cell?.finishedJobs)} class:absent={!cell?.finishedJobs && !supported} class:inspected={active} class="capability-matrix-cell" style={`--cell-fill:var(--demand-${heatLevel(cell?.finishedJobs ?? 0)})`} aria-label={capabilityTitle(provider.id, capability.id)} aria-describedby={active ? 'capability-demand-tooltip' : undefined}
+                <a href={historyHref(provider.id, capability.id)} data-dashboard-section="invocations" class:used={Boolean(cell?.finishedJobs)} class:absent={!cell?.finishedJobs && !supported} class:inspected={active} class="capability-matrix-cell" style={`--cell-fill:var(--demand-${heatLevel(cell?.finishedJobs ?? 0)})`} aria-label={capabilityTitle(provider.id, capability.id)} aria-describedby={active ? 'capability-demand-tooltip' : undefined}
                   onpointerenter={(event) => showMatrixDetail(event.currentTarget, provider.id, capability.id)} onpointerleave={hideMatrixDetail}
                   onfocus={(event) => showMatrixDetail(event.currentTarget, provider.id, capability.id)} onblur={() => matrixDetail = null}
-                  onclick={(event) => showMatrixDetail(event.currentTarget, provider.id, capability.id)} onkeydown={(event) => { if (event.key === 'Escape') matrixDetail = null }}></button>
+                  onkeydown={(event) => { if (event.key === 'Escape') matrixDetail = null }}></a>
               {/each}
             {/each}
           </div>
@@ -283,6 +317,17 @@
             <span class="demand-tooltip-count">{formatNumber(cell?.finishedJobs ?? 0, language)} <span>{t('routedRequirements')}</span></span>
             {#if cell?.finishedJobs}<span>{t('matrixCellOutcomes', { succeeded: cell.succeededJobs, failed: cell.failedJobs, canceled: cell.canceledJobs })}</span>
             {:else}<span>{t(supportsCapability(matrixDetail.provider, matrixDetail.capabilityId) ? 'supportedUnused' : 'unsupportedCapability')}</span>{/if}
+            {#if cell?.failedJobs}
+              <div class="matrix-failure-reasons">
+                <strong>{t('failedJobReasons')}</strong>
+                {#if failureLoading}<span>{t('loading')}</span>
+                {:else if failureError}<span>{t('failureReasonsUnavailable')}</span>
+                {:else if failureReasons.length}
+                  {#each failureReasons as reason}<span class="matrix-failure-row"><span>{invocationFailureSummary(language, reason.code, reason.message || t('failureReasonMissing'))}</span><b>{formatNumber(reason.count, language)}</b></span>{/each}
+                {:else}<span>{t('failureReasonMissing')}</span>{/if}
+              </div>
+            {/if}
+            <span class="matrix-history-hint">{t('clickForInvocations')}</span>
             {/if}
           </div>
         {/if}

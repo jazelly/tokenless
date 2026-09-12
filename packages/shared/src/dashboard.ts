@@ -418,6 +418,29 @@ export type DashboardJobDetail = DashboardJobSummary & {
   outputSavingsEvents: DashboardOutputSavingsEvent[]
 }
 
+export type DashboardInvocationQuery = {
+  profile?: string
+  provider?: string
+  capability?: string
+  status?: string
+  fromDay?: string
+  toDay?: string
+  offset?: number
+}
+
+export type DashboardInvocation = DashboardJobSummary & {
+  error: unknown
+  requestedCapabilities: string[]
+  requestedActions: string[]
+  submittedAt: string | null
+}
+
+export type DashboardInvocationHistory = {
+  jobs: DashboardInvocation[]
+  hasMore: boolean
+  failureReasons: Array<{ code: string; message: string; count: number }>
+}
+
 export type DashboardAnalyticsRange = '7d' | '30d' | '90d' | '1y' | 'all'
 
 export type DashboardAnalyticsTotals = {

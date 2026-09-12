@@ -86,7 +86,7 @@ test('local web control plane opens directly, establishes Dashboard sessions, an
     assert.match(initialHtml.headers.get('content-security-policy') ?? '', /frame-ancestors 'none'/)
     assert.equal(initialHtml.headers.get('x-content-type-options'), 'nosniff')
 
-    for (const pathname of ['/dashboard/overview/', '/dashboard/profiles/', '/dashboard/providers/', '/dashboard/capabilities/', '/dashboard/jobs/', '/dashboard/system/']) {
+    for (const pathname of ['/dashboard/overview/', '/dashboard/profiles/', '/dashboard/providers/', '/dashboard/capabilities/', '/dashboard/jobs/', '/dashboard/invocations/', '/dashboard/system/']) {
       const dashboardPage = await fetch(`${daemon.origin}${pathname}`, { headers: { cookie } })
       assert.equal(dashboardPage.status, 200, pathname)
       assert.match(await dashboardPage.text(), /<script type="module"/)
@@ -940,6 +940,62 @@ test('tab GC settings persist through the local control API and reject invalid i
     assert.equal(invalid.status, 400)
     const document = await fetch(`${daemon.origin}/dashboard-api/v1/config-document`, { headers: { cookie } })
     assert.deepEqual((await document.json()).browserTabGc, browserTabGc)
+  })
+})
+
+test('call history filters all saved calls, groups job failures, and pages beyond the first page', async () => {
+  await withDaemon(async ({ daemon, homeDir }) => {
+    const registry = new ManagedProfileRegistry(homeDir)
+    await registry.addProfile({ slug: 'history-profile', setDefault: true })
+    const ids = []
+    for (let index = 0; index < 52; index++) {
+      const job = daemon.store.createJob({
+        provider: 'chatgpt', profile_id: 'history-profile',
+        request_json: {
+          context: { requirements: ['conversation.chat', 'file.upload', 'file.upload'] },
+          actions: [{ action: 'page.inspect' }],
+        },
+      })
+      ids.push(job.job_id)
+      daemon.store.takeNextJob({}, 'history-profile')
+      daemon.store.completeJob(job.job_id, { error_json: { code: 'call_history_check', message: 'Saved control-plane failure', details: { cookie: 'private', path: '/Users/private/file' } } })
+    }
+    const today = new Date().toISOString().slice(0, 10)
+    const query = new URLSearchParams({ profile: 'history-profile', provider: 'chatgpt', capability: 'file.upload', status: 'failed', fromDay: today, toDay: today })
+    const read = async (params) => {
+      const response = await fetch(`${daemon.origin}/dashboard-api/v1/invocations?${params}`)
+      assert.equal(response.status, 200)
+      return response.json()
+    }
+    const first = await read(query)
+    assertDashboardSchema(dashboardSchemaValidator('InvocationHistory'), first)
+    assert.equal(first.jobs.length, 50)
+    assert.equal(first.hasMore, true)
+    assert.deepEqual(first.failureReasons, [{ code: 'call_history_check', message: 'Saved control-plane failure', count: 52 }])
+    assert.deepEqual(first.jobs[0].requestedCapabilities, ['conversation.chat', 'file.upload'])
+    assert.deepEqual(first.jobs[0].requestedActions, ['page.inspect'])
+    assert.equal(JSON.stringify(first).includes('private'), false)
+    query.set('offset', '50')
+    const second = await read(query)
+    assert.equal(second.jobs.length, 2)
+    assert.equal(second.hasMore, false)
+    assert.deepEqual(new Set([...first.jobs, ...second.jobs].map((job) => job.jobId)), new Set(ids))
+    query.set('offset', '0')
+    query.set('capability', 'image.generation')
+    assert.deepEqual((await read(query)).jobs, [])
+    query.set('capability', 'file.upload')
+    query.set('provider', 'github-copilot')
+    assert.deepEqual((await read(query)).failureReasons, [])
+    query.set('provider', 'chatgpt')
+    query.set('status', 'succeeded')
+    assert.deepEqual((await read(query)).jobs, [])
+    query.set('status', 'failed')
+    query.set('profile', 'another-profile')
+    assert.deepEqual((await read(query)).jobs, [])
+    query.set('profile', 'history-profile')
+    query.set('fromDay', '2000-01-01')
+    query.set('toDay', '2000-01-01')
+    assert.deepEqual((await read(query)).failureReasons, [])
   })
 })
 

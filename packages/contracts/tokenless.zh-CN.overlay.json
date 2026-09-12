@@ -6,6 +6,8 @@
   },
   "extends": "./tokenless.openapi.json",
   "actions": [
+    {"target": "$[\"paths\"][\"/dashboard-api/v1/invocations\"][\"get\"][\"summary\"]", "update": "读取已保存的调用记录及任务失败原因。"},
+    {"target": "$[\"paths\"][\"/dashboard-api/v1/invocations\"][\"get\"][\"responses\"][\"200\"][\"description\"]", "update": "每页最多 50 条调用，并返回全部匹配调用中最常见的 3 类失败原因。"},
     {"target": "$[\"components\"][\"schemas\"][\"VisibleActionRequest\"][\"description\"]", "update": "一个 provider 可见 action。GitHub Copilot 在 github-copilot namespace 下提供 mode.inspect/select、repository.inspect/select 和 usage.inspect。模型选项返回 enabled，以及锁定模型中观察到的 requiredPlan/description。用量返回账户 AI credits，以及可为 null 的 latestMessage inputTokens/outputTokens/creditsUsed；response.read 包含观察到的单条回复用量。结果与 repository / Project 映射见 docs/github-copilot.zh-CN.md。"},
     { "target": "$[\"info\"][\"title\"]", "update": "Tokenless HTTP API" },
     { "target": "$[\"info\"][\"description\"]", "update": "由一份 contract 生成的 OpenAI-compatible、Anthropic-compatible、Tokenless private machine、Dashboard 与 health HTTP interface 参考。Runtime validation 与 route implementation 位于各自负责的 server 和 caller module。" },

@@ -17,6 +17,86 @@
     }
   ],
   "paths": {
+    "/dashboard-api/v1/invocations": {
+      "get": {
+        "operationId": "getDashboardInvocationHistory",
+        "summary": "Read saved calls and their job failure reasons.",
+        "parameters": [
+          {
+            "name": "profile",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "provider",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "capability",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/JobStatus"
+            }
+          },
+          {
+            "name": "fromDay",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "toDay",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Up to 50 saved calls, with the three most frequent failure reasons across all matching calls.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvocationHistory"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "tags": [
+          "Dashboard"
+        ],
+        "security": []
+      }
+    },
     "/ready": {
       "get": {
         "operationId": "getReady",
@@ -3711,6 +3791,197 @@
       }
     },
     "schemas": {
+      "Invocation": {
+        "type": "object",
+        "properties": {
+          "jobId": {
+            "type": "string"
+          },
+          "profileId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "profileSlug": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProfileId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provider": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "taskId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "chatTitle": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "titlePrompt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "executionMode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "browser",
+              "direct",
+              null
+            ]
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
+          },
+          "conversationUrl": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uri"
+          },
+          "estimatedTokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "capabilityRoute": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "blocker": {},
+          "outputSavings": {
+            "$ref": "#/components/schemas/JobOutputSavings"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "error": {},
+          "requestedCapabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "requestedActions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "submittedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "jobId",
+          "profileId",
+          "profileSlug",
+          "provider",
+          "action",
+          "status",
+          "taskId",
+          "chatTitle",
+          "titlePrompt",
+          "executionMode",
+          "providers",
+          "conversationUrl",
+          "estimatedTokens",
+          "capabilityRoute",
+          "blocker",
+          "outputSavings",
+          "createdAt",
+          "updatedAt",
+          "error",
+          "requestedCapabilities",
+          "requestedActions",
+          "submittedAt"
+        ],
+        "additionalProperties": false
+      },
+      "InvocationHistory": {
+        "type": "object",
+        "properties": {
+          "jobs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Invocation"
+            }
+          },
+          "hasMore": {
+            "type": "boolean"
+          },
+          "failureReasons": {
+            "type": "array",
+            "maxItems": 3,
+            "items": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "count": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "required": [
+                "code",
+                "message",
+                "count"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "jobs",
+          "hasMore",
+          "failureReasons"
+        ],
+        "additionalProperties": false
+      },
       "BrowserTabGcConfig": {
         "type": "object",
         "additionalProperties": false,

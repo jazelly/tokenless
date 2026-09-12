@@ -5,6 +5,8 @@ type JsonRecord = Record<string, any>
 type Language = TokenlessLanguage
 
 const enMessages = {
+    invocations: 'Call history', allCapabilities: 'All capabilities', failedJobReasons: 'Main job failure reasons', failureReasonsUnavailable: 'Could not load reasons. Open call history for details.', failureReasonMissing: 'No failure reason saved', clickForInvocations: 'Click to view calls', fromDay: 'From (UTC)', toDay: 'To (UTC)', previousPage: 'Previous', nextPage: 'Next', invocationPage: 'Page {page}', invocationDetails: 'Call details', requestedActions: 'Requested actions', submittedAt: 'Submitted to provider', savedOutcome: 'Saved outcome', invocationRecordHelp: 'These are requested actions and saved job outcomes. Step-by-step execution logs were not recorded.', jobOutcomeHelp: 'Failure describes the whole job, not each requested capability.',
+
     rateLimits: 'Rate limits',
     overview: 'Overview', profiles: 'Profiles', providers: 'Providers', capabilities: 'Capabilities', routing: 'Routing', jobs: 'Chat history', system: 'System',
     localDashboard: 'Local Dashboard', operationalSummary: 'Operational summary', overviewLede: 'The exact daemon, browser, provider, and job state on this machine.',
@@ -47,13 +49,13 @@ const enMessages = {
     savingsEnabled: 'Output savings measurement is enabled.', savingsDisabled: 'Output savings measurement is disabled.', tokenizerNotInstalled: 'Not installed', tokenizerReady: 'The output savings tokenizer runtime is ready.', tokenizerUnavailable: 'Output savings is enabled, but its tokenizer runtime is unavailable.',
     savingsSummaryUnavailable: 'Token summary statistics are unavailable.', turnOnToReview: 'Turn it on to review how many output tokens Tokenless has saved.', savingsUnavailableTooltip: 'Token summary statistics are unavailable. Turn it on to review output tokens saved.', tokenizerPreparesOnFirstResponse: 'The tokenizer will be prepared when Tokenless measures the first visible response.', manageOutputSavings: 'Manage in System',
     confirmClearSavings: 'Clear all saved output savings measurements? This cannot be undone.', confirmUninstallTokenizer: 'Disable output savings and remove the local tokenizer runtime?', tokensSavedShort: 'tokens saved',
-    tokenUnitHelp: 'Tokens · model text units. The circled T is the Tokenless API unit icon, not a currency symbol. A token is not necessarily a word or character.', jobsCountUnit: 'Unit: jobs', estimatedTokenUnit: 'Unit: tokens · estimated visible output', matrixZeroLegend: 'Unused', matrixAbsentLegend: 'Not connected', matrixCellOutcomes: '{succeeded} succeeded · {failed} failed · {canceled} canceled',
+    tokenUnitHelp: 'Tokens · model text units. The circled T is the Tokenless API unit icon, not a currency symbol. A token is not necessarily a word or character.', jobsCountUnit: 'Unit: jobs', estimatedTokenUnit: 'Unit: tokens · estimated visible output', matrixZeroLegend: 'Unused', matrixAbsentLegend: 'Not connected', matrixCellOutcomes: 'Jobs: {succeeded} succeeded · {failed} failed · {canceled} canceled',
     analyticsTitle: 'Usage analytics', analyticsLoading: 'Loading usage analytics…', analyticsUnavailable: 'Usage analytics could not be loaded.', retryAnalytics: 'Try again',
     range7d: '7D', range30d: '30D', range90d: '90D', range1y: '1Y', rangeAll: 'All', utcDays: 'Daily buckets use UTC.', selectedRange: 'Selected range',
     mostUsedProvider: 'Most used provider', completedJobs: 'Completed jobs', successRate: 'Success rate', capabilityBreadth: 'Capability breadth', capabilityBreadthValue: '{used} of {total} used', noUsageYet: 'No completed usage yet',
     cumulativeSavings: 'Cumulative output savings', cumulativeSavingsHelp: 'Unit: tokens (circled T). A token is a piece of text processed by a model, not a word or character. This chart estimates visible assistant output locally; it is not provider-billed usage or money saved. The cumulative total includes measurements before the selected range; unmeasured output is excluded.', addedInRange: 'added in range', measurementCoverage: 'Measurement coverage',
     dailyOutcomes: 'Daily job outcomes', dailyOutcomesHelp: 'Unit: jobs. Each job counts once on the UTC day it ends, grouped as succeeded, failed, or canceled. Running jobs are excluded.', canceled: 'Canceled',
-    capabilityUsageMatrixHelp: 'Each square shows how often one capability was requested from a provider. Darker green means more use. Each capability counts once per finished job, including failed and canceled jobs. Dashed squares have no connected API route or usage.', routedRequirements: 'requests', supportedUnused: 'No requests in this period', unsupportedCapability: 'No connected API route or requests',
+    capabilityUsageMatrixHelp: 'Each square shows how often one capability was requested from a provider. Darker green means more use. Each capability counts once per finished job. Success or failure describes the whole job, not that individual capability. Dashed squares have no connected API route or usage.', routedRequirements: 'requests', supportedUnused: 'No requests in this period', unsupportedCapability: 'No connected API route or requests',
     capabilityUsage_7d: 'Capabilities used in the last 7 days', capabilityUsage_30d: 'Capabilities used in the last 30 days', capabilityUsage_90d: 'Capabilities used in the last 90 days', capabilityUsage_1y: 'Capabilities used in the last 1 year', capabilityUsage_all: 'Capabilities used so far',
     matrixLess: 'Less', matrixMore: 'More',
     capabilityMix: 'Daily capability usage', capabilityMixHelp: 'Requests per day, grouped by capability type. A job can use several capabilities. Failed and canceled jobs are included; days use UTC.', topCapabilities: 'Most used capabilities', topCapabilitiesHelp: 'Capabilities ranked by requests in this period. Each counts once per finished job, including failed and canceled jobs.',
@@ -71,6 +73,8 @@ const enMessages = {
 } as const
 
 const zhMessages: Record<keyof typeof enMessages, string> = {
+    invocations: '调用记录', allCapabilities: '所有能力', failedJobReasons: '主要任务失败原因', failureReasonsUnavailable: '原因加载失败，请打开调用记录查看详情。', failureReasonMissing: '未保存失败原因', clickForInvocations: '点击查看调用记录', fromDay: '开始日期（UTC）', toDay: '结束日期（UTC）', previousPage: '上一页', nextPage: '下一页', invocationPage: '第 {page} 页', invocationDetails: '调用详情', requestedActions: '请求的操作', submittedAt: '提交给 Provider', savedOutcome: '已保存的结果', invocationRecordHelp: '这里展示请求的操作和已保存的任务结果，未记录逐步骤执行日志。', jobOutcomeHelp: '失败指整个任务失败，不代表每项请求的能力都失败。',
+
     rateLimits: '限流规则',
     overview: '概览', profiles: 'Profile', providers: 'Provider', capabilities: '能力', routing: '路由', jobs: '对话历史', system: '系统',
     localDashboard: '本地 Dashboard', operationalSummary: '运行概览', overviewLede: '查看这台机器上 daemon、浏览器、provider 和任务的真实状态。',
@@ -113,13 +117,13 @@ const zhMessages: Record<keyof typeof enMessages, string> = {
     savingsEnabled: '输出节省计量已启用。', savingsDisabled: '输出节省计量已停用。', tokenizerNotInstalled: '未安装', tokenizerReady: '输出节省 tokenizer 运行时已就绪。', tokenizerUnavailable: '输出节省已启用，但 tokenizer 运行时不可用。',
     savingsSummaryUnavailable: 'Token 汇总统计不可用。', turnOnToReview: '开启后即可查看 Tokenless 已节省多少 output token。', savingsUnavailableTooltip: 'Token 汇总统计不可用；开启后即可查看已节省的 output token。', tokenizerPreparesOnFirstResponse: 'Tokenless 首次计量可见响应时会准备 tokenizer。', manageOutputSavings: '在系统中管理',
     confirmClearSavings: '清空全部输出节省计量记录？此操作无法撤销。', confirmUninstallTokenizer: '停用输出节省并移除本地 tokenizer 运行时？', tokensSavedShort: 'token 已节省',
-    tokenUnitHelp: 'tokens · 模型处理文本的计量单位。圆框 T 是 Tokenless API 的单位图标，不是货币符号。一个 token 不一定对应一个字或一个词。', jobsCountUnit: '单位：任务数', estimatedTokenUnit: '单位：tokens · 按可见输出估算', matrixZeroLegend: '未使用', matrixAbsentLegend: '未接入', matrixCellOutcomes: '{succeeded} 成功 · {failed} 失败 · {canceled} 取消',
+    tokenUnitHelp: 'tokens · 模型处理文本的计量单位。圆框 T 是 Tokenless API 的单位图标，不是货币符号。一个 token 不一定对应一个字或一个词。', jobsCountUnit: '单位：任务数', estimatedTokenUnit: '单位：tokens · 按可见输出估算', matrixZeroLegend: '未使用', matrixAbsentLegend: '未接入', matrixCellOutcomes: '任务：{succeeded} 成功 · {failed} 失败 · {canceled} 取消',
     analyticsTitle: '使用分析', analyticsLoading: '正在读取使用分析…', analyticsUnavailable: '无法读取使用分析。', retryAnalytics: '重试',
     range7d: '7 天', range30d: '30 天', range90d: '90 天', range1y: '1 年', rangeAll: '全部', utcDays: '每日数据按 UTC 划分。', selectedRange: '所选范围',
     mostUsedProvider: '最常用 Provider', completedJobs: '已结束任务', successRate: '成功率', capabilityBreadth: 'Capability 广度', capabilityBreadthValue: '已使用 {used}/{total}', noUsageYet: '还没有已完成的使用记录',
     cumulativeSavings: '累计输出节省', cumulativeSavingsHelp: '单位是 tokens（圆框 T 图标），表示模型处理的文本片段，不等于字数或词数。此图按可见回复在本地估算，不是 Provider 账单用量或节省金额。累计值包含所选时间之前的计量，未计量的输出不计入。', addedInRange: '所选范围新增', measurementCoverage: '测量覆盖',
     dailyOutcomes: '每日任务结果', dailyOutcomesHelp: '单位是任务数。每个任务在结束的 UTC 日期计 1 次，分为成功、失败、取消。运行中的任务不计入。', canceled: '已取消',
-    capabilityUsageMatrixHelp: '每格表示某个 Provider 的一项能力被请求的次数，绿色越深，次数越多。每个已结束任务的每项能力计一次，失败和取消也计入。虚线格表示没有 API 接入路线，也没有使用记录。', routedRequirements: '次请求', supportedUnused: '这段时间内没有请求', unsupportedCapability: '没有 API 接入路线或请求记录',
+    capabilityUsageMatrixHelp: '每格表示某个 Provider 的一项能力被请求的次数，绿色越深，次数越多。每个已结束任务的每项能力计一次。成败指整个任务的结果，不代表该项能力本身的成败。虚线格表示没有 API 接入路线，也没有使用记录。', routedRequirements: '次请求', supportedUnused: '这段时间内没有请求', unsupportedCapability: '没有 API 接入路线或请求记录',
     capabilityUsage_7d: '过去 7 天用了哪些能力', capabilityUsage_30d: '过去 30 天用了哪些能力', capabilityUsage_90d: '过去 90 天用了哪些能力', capabilityUsage_1y: '过去 1 年用了哪些能力', capabilityUsage_all: '至今用了哪些能力',
     matrixLess: '少', matrixMore: '多',
     capabilityMix: '每天用了哪些能力', capabilityMixHelp: '按天显示各类能力的请求次数，一个任务可以使用多项能力。包含失败和取消的任务，日期按 UTC 计算。', topCapabilities: '最常用的能力', topCapabilitiesHelp: '按这段时间内的请求次数排序。每个已结束任务的每项能力计一次，失败和取消也计入。',
@@ -290,6 +294,28 @@ export function translateError(language: Language, code: string, fallback?: stri
       : `${translate(language, 'requestFailed')}${code ? ` (${code})` : ''}`
   }
   return fallback ?? translate(language, 'requestFailed')
+}
+
+const invocationFailureLabels: Record<string, readonly [string, string]> = {
+  browser_tab_capacity_reached: ["Work tabs are all busy", "工作标签页已满"],
+  playwright_unexpected_error: ["Browser action did not complete", "浏览器操作未完成"],
+  provider_surface_not_ready: ["Provider page was not ready", "Provider 页面未就绪"],
+  job_interrupted: ["Interrupted by daemon restart", "服务重启中断了任务"],
+  provider_navigation_unavailable: ["Provider page could not be reached", "无法打开 Provider 页面"],
+  chatgpt_chat_surface_not_visible: ["Chat controls were not found", "未找到对话输入控件"],
+  github_copilot_agent_ambiguous: ["Multiple Agent sessions appeared", "出现多个 Agent 会话，无法确定目标"],
+  github_copilot_choice_unavailable: ["Requested option was unavailable", "所选选项不可用"],
+  file_upload_not_visibly_accepted: ["Attachment upload did not finish", "附件上传未完成"],
+  provider_capability_unavailable: ["Required capability was unavailable", "所需能力不可用"],
+  prompt_submit_actionability_timeout: ["Timed out waiting to send the prompt", "等待发送按钮超时"],
+  prompt_submit_failed: ["Prompt could not be sent", "提示词未能发送"],
+  provider_rate_limited: ["Provider usage limit reached", "触及 Provider 用量限制"],
+  e2e_browser_observer_timeout: ["Browser test observation timed out", "浏览器测试观察超时"],
+}
+
+export function invocationFailureSummary(language: Language, code: string, message?: string) {
+  const label = invocationFailureLabels[code]
+  return label ? label[language === 'zh-CN' ? 1 : 0] : translateError(language, code, message?.split('\n')[0])
 }
 
 export function capabilityText(language: Language, capability: JsonRecord) {

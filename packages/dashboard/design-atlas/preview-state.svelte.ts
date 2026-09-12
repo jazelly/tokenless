@@ -60,6 +60,7 @@ export function createPreviewState(language: Language, designState: DesignState,
   }
 
   const actions: DashboardActions = {
+    async getInvocations() { return { jobs: [], hasMore: false, failureReasons: [] } },
     async getAnalytics(profile, range) {
       if (designState === 'busy') return new Promise(() => {})
       if (designState === 'error') throw new Error(translate(language, 'requestFailed'))

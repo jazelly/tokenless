@@ -16,7 +16,7 @@ import {
 } from '../providers/rate-limit-policy.js'
 import { taskCapabilityDefinition } from '../providers/task-capabilities.js'
 import { configuredRuleUnits, projectConfiguredRateLimit, rateLimitRequestType, readConfiguredRateLimits, type RateLimitEvent } from '../providers/configured-rate-limits.js'
-import type { ConfiguredRateLimitRule } from 'tokenless-internal-shared/dashboard'
+import type { ConfiguredRateLimitRule, DashboardInvocationQuery } from 'tokenless-internal-shared/dashboard'
 import {
   controlAuthRejected,
   invalidInput,
@@ -609,6 +609,53 @@ export class JobStore {
 
   getJob(jobId: string) {
     return this.getJobRecord(jobId)
+  }
+
+  invocationHistory(query: DashboardInvocationQuery) {
+    const clauses: string[] = []
+    const params: SQLInputValue[] = []
+    for (const [column, value] of [['profile_id', query.profile], ['provider', query.provider]] as const) {
+      if (!value) continue
+      clauses.push(`${column} = ?`)
+      params.push(normalizeNonempty(value, column))
+    }
+    if (query.status) {
+      assertJobStatus(query.status)
+      clauses.push('status = ?')
+      params.push(query.status)
+    }
+    if (query.fromDay) {
+      clauses.push('updated_at >= ?')
+      params.push(`${dashboardDayInput(query.fromDay, 'fromDay')}T00:00:00.000Z`)
+    }
+    if (query.toDay) {
+      clauses.push('updated_at <= ?')
+      params.push(`${dashboardDayInput(query.toDay, 'toDay')}T23:59:59.999Z`)
+    }
+    if (query.fromDay && query.toDay && query.fromDay > query.toDay) throw invalidInput('fromDay must be on or before toDay')
+    if (query.capability) {
+      if (!taskCapabilityDefinition(query.capability)) throw invalidInput('Unknown capability')
+      clauses.push(`EXISTS (SELECT 1 FROM json_each(CASE
+        WHEN json_type(request_json, '$.context.requirements') = 'array' THEN json_extract(request_json, '$.context.requirements')
+        WHEN json_type(request_json, '$.capabilityRoute.requirements') = 'array' THEN json_extract(request_json, '$.capabilityRoute.requirements')
+        ELSE '[]' END) WHERE value = ?)`)
+      params.push(query.capability)
+    }
+    const offset = query.offset ?? 0
+    if (!Number.isSafeInteger(offset) || offset < 0) throw invalidInput('offset must be a nonnegative integer')
+    const where = clauses.length ? clauses.join(' AND ') : '1 = 1'
+    const jobs = this.all(`SELECT * FROM jobs WHERE ${where} ORDER BY updated_at DESC, job_id DESC LIMIT 51 OFFSET ?`, ...params, offset).map(rowToJob)
+    const failures = this.all(`SELECT
+        COALESCE(json_extract(error_json, '$.code'), '') AS code,
+        MAX(COALESCE(json_extract(error_json, '$.message'), '')) AS message,
+        COUNT(*) AS count
+      FROM jobs WHERE ${where} AND status = 'failed'
+      GROUP BY code ORDER BY count DESC, code ASC LIMIT 3`, ...params)
+    return {
+      jobs: jobs.slice(0, 50),
+      hasMore: jobs.length > 50,
+      failureReasons: failures.map((row) => ({ code: String(row.code), message: String(row.message), count: Number(row.count) })),
+    }
   }
 
   upsertProviderProject(input: {
@@ -1678,7 +1725,7 @@ function dashboardExecutionMode(requestJson: unknown): DashboardDailyMetric['exe
   return dashboardStoredExecutionMode(jsonRecord(requestJson)?.executionMode)
 }
 
-function dashboardJobCapabilities(requestJson: unknown) {
+export function dashboardJobCapabilities(requestJson: unknown) {
   const request = jsonRecord(requestJson)
   const context = jsonRecord(request?.context)
   const route = jsonRecord(request?.capabilityRoute)
