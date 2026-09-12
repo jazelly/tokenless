@@ -1917,6 +1917,38 @@ test('api proxy keeps Chat Completions fresh and Responses continuation on the m
   })
 })
 
+test('Responses store accepts only booleans before profile readiness', async () => {
+  await withDaemon(async (daemon) => {
+    await enableApiProxy(daemon.homeDir)
+    for (const route of ['/v1/responses', '/v1/openai/responses']) {
+      for (const stream of [false, true]) {
+        for (const store of [null, 'false', 0, {}, []]) {
+          const response = await call(daemon, 'POST', route, {
+            model: 'tokenless/monica',
+            input: 'STORE_TYPE_VALIDATION',
+            stream,
+            store,
+          })
+          assert.equal(response.status, 400, route)
+          assert.equal(response.body.error.code, 'invalid_request_error')
+          assert.equal(response.body.error.param, 'store')
+        }
+        for (const store of [undefined, false, true]) {
+          const response = await call(daemon, 'POST', route, {
+            model: 'tokenless/monica',
+            input: 'STORE_BOOLEAN_VALIDATION',
+            stream,
+            ...(store === undefined ? {} : { store }),
+          })
+          assert.equal(response.status, 409, route)
+          assert.equal(response.body.error.code, 'profile_not_configured')
+        }
+      }
+    }
+    assert.equal(daemon.store.listJobs({ limit: 50 }).length, 0)
+  })
+})
+
 async function enableApiProxy(homeDir) {
   const { writeTokenlessConfig } = await import(runtimeModule)
   await writeTokenlessConfig({ homeDir, apiProxy: { enabled: true, executionMode: 'direct' } })

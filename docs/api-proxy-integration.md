@@ -298,7 +298,8 @@ Structured JSON numbers must be finite and use the unique spelling returned by `
 
 - `input` accepts a non-empty string or up to 256 text items: user/system/developer/assistant messages, Tokenless output `message` items, `function_call`, and string `function_call_output`.
 - Function tools are flat: `{type, name, description?, parameters, strict?}`. `tool_choice` is `auto`, `none`, `required`, or `{type:"function",name}`. Non-function tool entries (for example Codex CLI's `namespace` and `web_search` tools) are ignored.
-- `instructions` (Codex CLI) is honored as the leading system message. Codex-reported extra fields (`reasoning`, `store`, `include`, `prompt_cache_key`, `client_metadata`) are accepted and ignored.
+- `instructions` (Codex CLI) is honored as the leading system message. Codex-reported extra fields (`reasoning`, `include`, `prompt_cache_key`, `client_metadata`) are accepted and ignored.
+- `store` must be a boolean and defaults to `true`. `store: false` omits this Response from the local ledger, so its id cannot be used for `previous_response_id` continuation; full-input replay remains available. It does not disable ordinary job history, control provider website retention, or configure prompt caching.
 - `text.format` accepts `text`, `json_object`, or flat `json_schema` with the same published schema subset above.
 - Tokenless validates every declared name, strict argument, unique `call_id`, and complete call/output pairing before provider submission. It never executes caller tools.
 
@@ -314,6 +315,8 @@ Continue in either official form:
 The ledger does not persist tool definitions. Both forms validate history against the `tools` catalog in the current request.
 
 The local ledger stores canonical public transcript items in `tokenless.sqlite3` without expiry or count eviction. Unknown ids return `response_not_found`; a daemon restart does not erase a known response. It stores no credentials, browser session, hidden reasoning, or fabricated opaque item. Changing provider, exact model, or execution mode returns `response_route_mismatch` before submission. This prompt-emulated route produces no provider opaque/reasoning items, so unknown reasoning or opaque replay fails with `unverifiable_replay_item`.
+
+Manual real-provider acceptance: configure `TOKENLESS_TEST_HOME` in repository `.env`, enable that home's API proxy, start the matching packaged daemon, then set `TOKENLESS_LIVE_RESPONSES_STORE=1` and run `node --test test/live-responses-store.e2e.mjs`. The gate reuses the default profile and submits four real browser conversation requests.
 
 For `tokenless/auto`, a portable ledger continuation may select another eligible provider on the next caller turn. Exact provider models remain hard provider/model/execution affine.
 

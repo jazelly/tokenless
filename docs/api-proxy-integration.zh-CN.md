@@ -163,6 +163,9 @@ Completion timeout 只取消对应 local job，不启动另一个 provider。精
 
 Job 中已经保存的真实可见 rate-limit observation 会在后续 execution attempt 中按 observed minute、hour、day 或 week window 暂时移除该 provider。明确的 retry duration 优先；unknown window 使用五分钟 cooldown。精确 provider request 仍会清晰失败，而不会切换。
 
+
+手动真实 provider 验收：在仓库 `.env` 配置 `TOKENLESS_TEST_HOME`、启用其 API proxy 并启动匹配的 packaged daemon 后，设置 `TOKENLESS_LIVE_RESPONSES_STORE=1`，运行 `node --test test/live-responses-store.e2e.mjs`。该测试复用默认 profile，并提交四次真实 browser conversation 请求。
+
 对于 private provider-turn continuation，`tokenless/auto` 会保留 settled provider conversation 与 exact mapping 作为 primary target。只有精确的 portable action sequence `file.upload` → `prompt.input` → `prompt.submit` → `response.read` 可以携带从 provider-home target 开始的当前 eligible auto alternatives；`conversation.continue` route 与 nonportable action 不会获得 fallback alternative。精确 provider binding 始终 pinned 且没有 fallback。
 
 设置 `tokenless.profile` 可为本次请求选择已配置的 managed profile；省略时使用配置中的默认 profile。
@@ -298,7 +301,8 @@ Structured JSON number 必须为 finite，并使用 `JSON.stringify(Number(token
 
 - `input` 接受非空 string 或最多 256 个 text item：user/system/developer/assistant message、Tokenless output `message` item、`function_call` 与 string `function_call_output`。
 - Function tool 为 flat shape：`{type, name, description?, parameters, strict?}`。`tool_choice` 支持 `auto`、`none`、`required` 或 `{type:"function",name}`。非 function 的 tool 条目（例如 Codex CLI 的 `namespace` 与 `web_search` tool）会被忽略。
-- `instructions`（Codex CLI）会被作为前置 system message 处理。Codex 报告的其他字段（`reasoning`、`store`、`include`、`prompt_cache_key`、`client_metadata`）会被接受并忽略。
+- `instructions`（Codex CLI）会被作为前置 system message 处理。Codex 报告的其他字段（`reasoning`、`include`、`prompt_cache_key`、`client_metadata`）会被接受并忽略。
+- `store` 必须是 boolean，默认 `true`。`store: false` 不写入本次 Response 的本地 ledger，因此不能用它的 id 做 `previous_response_id` 续接；仍可重放完整 input。这不关闭普通 job history，不控制 provider 网站保存，也不是 prompt cache 开关。
 - `text.format` 支持 `text`、`json_object` 或 flat `json_schema`，schema subset 与上文相同。
 - Tokenless 在 provider submission 前校验所有 declared name、strict argument、唯一 `call_id` 与完整 call/output 配对。它不会执行调用方 tool。
 

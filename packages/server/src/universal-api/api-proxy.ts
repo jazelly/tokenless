@@ -174,6 +174,7 @@ type RawApiProxyCompletion = {
 }
 
 type PreparedOpenAiResponse = {
+  store: boolean
   request: NormalizedRequest
   transcript: Record<string, unknown>[]
   responseId: string
@@ -258,13 +259,15 @@ export class ApiProxyAdapter {
       continuationMessages: prepared.continuationMessages,
     })
     const response = openAiResponseBody(completion, prepared)
-    this.store.putApiResponse({
-      response_id: String(response.id),
-      provider: completion.provider,
-      model: prepared.request.requestedModel,
-      execution_mode: completion.executionMode,
-      transcript: [...prepared.transcript, ...(response.output as unknown[])],
-    })
+    if (prepared.store) {
+      this.store.putApiResponse({
+        response_id: String(response.id),
+        provider: completion.provider,
+        model: prepared.request.requestedModel,
+        execution_mode: completion.executionMode,
+        transcript: [...prepared.transcript, ...(response.output as unknown[])],
+      })
+    }
     return {
       body: response,
       stream: prepared.request.stream,
@@ -1126,6 +1129,7 @@ function normalizeOpenAiResponsesRequest(
   const continuationMessages = previous ? messages.slice(priorMessageCount) : messages
   const options = normalizeTokenlessOptions(body.tokenless, model.auto)
   return {
+    store: body.store !== false,
     request: {
       provider: model.provider,
       auto: model.auto,
@@ -1173,12 +1177,12 @@ function rejectUnsupportedResponsesFields(body: Record<string, unknown>) {
     'parallel_tool_calls',
     'text',
     'stream',
+    'store',
     'previous_response_id',
     'tokenless',
     // Codex CLI sends these on every request; they are ignored like sampling
     // parameters so the Responses route stays usable from a real client.
     'reasoning',
-    'store',
     'include',
     'prompt_cache_key',
     'client_metadata',
@@ -1189,6 +1193,9 @@ function rejectUnsupportedResponsesFields(body: Record<string, unknown>) {
   }
   if (body.stream !== undefined && typeof body.stream !== 'boolean') {
     throw badRequest('stream must be a boolean', 'stream')
+  }
+  if (body.store !== undefined && typeof body.store !== 'boolean') {
+    throw badRequest('store must be a boolean', 'store')
   }
   if (body.instructions !== undefined && typeof body.instructions !== 'string') {
     throw badRequest('instructions must be a string', 'instructions')
@@ -2127,6 +2134,7 @@ function openAiResponseBody(completion: ApiProxyCompletion, prepared: PreparedOp
     output_text: completion.text,
     parallel_tool_calls: prepared.request.toolProtocol?.parallelToolCalls ?? true,
     previous_response_id: prepared.previousResponseId,
+    store: prepared.store,
     temperature: null,
     text: prepared.publicText,
     tool_choice: prepared.publicToolChoice,
