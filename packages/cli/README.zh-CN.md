@@ -16,16 +16,16 @@ Tokenless Web Harness 的 CLI 与本地 API 入口，让你已有的网页大模
 
 ## Provider 清单
 
-当前目录共 41 个 provider：18 个浏览器条目，以及 23 个仅 Direct 模式的条目。
+当前目录共 40 个 provider：18 个浏览器条目，以及 22 个仅 Direct 模式的条目。
 
 - **已支持的浏览器路由**：ChatGPT、Claude、Gemini、Grok、Arena。
 - **实验性浏览器路由**：Qwen / 千问、DeepSeek、Perplexity、Z.ai / GLM、Doubao / 豆包、Kimi、Dola、Meta AI、GitHub Copilot。
 - **待验证**：Microsoft Copilot。
 
 <details>
-<summary>查看 23 个仅 Direct 模式的 provider</summary>
+<summary>查看 22 个仅 Direct 模式的 provider</summary>
 
-以下为实验性 G4F 映射；目录登记不等于已通过逐项真实运行验证。另有 13 个浏览器 provider 也注册了 Direct 入口，共 36 个 Direct 映射。
+以下为实验性 G4F 映射；目录登记不等于已通过逐项真实运行验证。另有 13 个浏览器 provider 也注册了 Direct 入口，共 35 个 Direct 映射。
 
 | Provider | ID | Provider | ID |
 | --- | --- | --- | --- |
@@ -36,11 +36,10 @@ Tokenless Web Harness 的 CLI 与本地 API 入口，让你已有的网页大模
 | NVIDIA | `nvidia` | Ollama | `ollama` |
 | OpenRouter | `openrouter` | Opera Aria | `opera-aria` |
 | Phind AI | `phind` | Pi | `pi` |
-| Pollinations | `pollinations` | Puter | `puter` |
-| Replicate | `replicate` | Sber GigaChat | `gigachat` |
-| Stability AI | `stability-ai` | Teach Anything | `teach-anything` |
-| Together AI | `together` | WhiteRabbitNeo | `whiterabbitneo` |
-| YQCloud | `yqcloud` |  |  |
+| Pollinations | `pollinations` | Replicate | `replicate` |
+| Sber GigaChat | `gigachat` | Stability AI | `stability-ai` |
+| Teach Anything | `teach-anything` | Together AI | `together` |
+| WhiteRabbitNeo | `whiterabbitneo` | YQCloud | `yqcloud` |
 
 </details>
 

@@ -4,9 +4,11 @@ Last reviewed: 2026-08-31
 
 ## 2026-09-12 provider inventory audit
 
-The current Tokenless API registry contains **41 store providers**: **18 Browser**, **36 Direct API**, with **13 in both modes**. Direct API counts describe adapter mappings, not 36 individually verified providers.
+The current Tokenless API registry contains **40 store providers**: **18 Browser**, **35 Direct API**, with **13 in both modes**. Direct API counts describe adapter mappings, not 35 individually verified providers.
 
 GLHF, TheB.AI, and Fenay AI were removed after their live sites failed to load. Blackbox AI was removed after the selected account reached its enterprise-only access page.
+
+Puter was also removed from the supported catalog after local evaluation.
 
 GPT4Free main was reviewed at [`e5d68e1`](https://github.com/xtekky/gpt4free/tree/e5d68e15499260ec2e5da351dda4352270a15c40) (2026-09-10). Browser-assisted authentication, challenge handling, and in-page HTTP requests do not supply Tokenless API DOM adapters. The following browser-assisted providers have no corresponding Browser mode in this repository:
 

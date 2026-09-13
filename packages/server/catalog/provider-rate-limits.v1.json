@@ -150,10 +150,6 @@
         "modelFamily": "*",
         "promptAction": "interactive.usage"
       },
-      "puter": {
-        "modelFamily": "*",
-        "promptAction": "interactive.usage"
-      },
       "replicate": {
         "modelFamily": "*",
         "promptAction": "interactive.usage"

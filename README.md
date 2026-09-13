@@ -48,9 +48,9 @@ Add the Tokenless skill to your Harness; invoke it for selected tasks and bring 
 
 <a id="providers"></a>
 
-## 41 store providers
+## 40 store providers
 
-18 in Browser mode, 36 in Direct API mode; 13 appear in both. [Inventory audit](docs/provider-capability-census.md#2026-09-12-provider-inventory-audit).
+18 in Browser mode, 35 in Direct API mode; 13 appear in both. [Inventory audit](docs/provider-capability-census.md#2026-09-12-provider-inventory-audit).
 
 ### Browser mode · 18 providers
 
@@ -85,7 +85,7 @@ Interact with provider websites in your signed-in browser.
   </tr>
 </table>
 
-### Direct API mode · 36 providers
+### Direct API mode · 35 providers
 
 Call provider endpoints through G4F; ChatGPT and Perplexity also have native backends. Some integrations are experimental; authentication and capabilities vary by provider.
 
@@ -98,8 +98,8 @@ Call provider endpoints through G4F; ChatGPT and Perplexity also have native bac
 | DeepInfra | ElevenLabs | Groq | Hugging Face |
 | MiniMax | NVIDIA | Ollama | OpenRouter |
 | Opera Aria | Phind AI | Pi | Pollinations |
-| Puter | Replicate | Sber GigaChat | Stability AI |
-| Teach Anything | Together AI | WhiteRabbitNeo | YQCloud |
+| Replicate | Sber GigaChat | Stability AI | Teach Anything |
+| Together AI | WhiteRabbitNeo | YQCloud |  |
 
 [Direct API mode setup and limits](docs/g4f-direct-provider-service.md) · [Verified provider capabilities](docs/capability-matrix.md)
 

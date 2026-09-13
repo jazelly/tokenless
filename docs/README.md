@@ -5,7 +5,7 @@ This index separates user guidance, stable product contracts, implementation arc
 ## Start Here
 
 - [README](../README.md) — Web Harness, Dashboard, three workflows, and quick start.
-- [Provider catalog](../README.md#providers) — all 41 catalog entries, browser and Direct modes, and verification status.
+- [Provider catalog](../README.md#providers) — all 40 catalog entries, browser and Direct modes, and verification status.
 - [CLI Commands](../COMMANDS.md) — complete command and option reference.
 - [Updates](updates.md) — unified CLI and macOS app updates, configuration preservation, and database migrations.
 - [Capability Matrix](capability-matrix.md) — canonical outcomes, current provider mappings, support states, and extension rules.

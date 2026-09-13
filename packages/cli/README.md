@@ -16,16 +16,16 @@ The CLI and local API entry point for the Tokenless Web Harness. Put your existi
 
 ## Provider catalog
 
-The current catalog contains 41 providers: 18 browser entries and 23 additional Direct-only entries.
+The current catalog contains 40 providers: 18 browser entries and 22 additional Direct-only entries.
 
 - **Supported browser routes**: ChatGPT, Claude, Gemini, Grok, Arena.
 - **Experimental browser routes**: Qwen / 千问, DeepSeek, Perplexity, Z.ai / GLM, Doubao / 豆包, Kimi, Dola, Meta AI, GitHub Copilot.
 - **Awaiting verification**: Microsoft Copilot.
 
 <details>
-<summary>View the 23 Direct-only providers</summary>
+<summary>View the 22 Direct-only providers</summary>
 
-These are experimental G4F mappings, not a claim that every provider has passed a real run. Thirteen browser providers also have Direct entry points, for 36 Direct mappings in total.
+These are experimental G4F mappings, not a claim that every provider has passed a real run. Thirteen browser providers also have Direct entry points, for 35 Direct mappings in total.
 
 | Provider | ID | Provider | ID |
 | --- | --- | --- | --- |
@@ -36,11 +36,10 @@ These are experimental G4F mappings, not a claim that every provider has passed 
 | NVIDIA | `nvidia` | Ollama | `ollama` |
 | OpenRouter | `openrouter` | Opera Aria | `opera-aria` |
 | Phind AI | `phind` | Pi | `pi` |
-| Pollinations | `pollinations` | Puter | `puter` |
-| Replicate | `replicate` | Sber GigaChat | `gigachat` |
-| Stability AI | `stability-ai` | Teach Anything | `teach-anything` |
-| Together AI | `together` | WhiteRabbitNeo | `whiterabbitneo` |
-| YQCloud | `yqcloud` |  |  |
+| Pollinations | `pollinations` | Replicate | `replicate` |
+| Sber GigaChat | `gigachat` | Stability AI | `stability-ai` |
+| Teach Anything | `teach-anything` | Together AI | `together` |
+| WhiteRabbitNeo | `whiterabbitneo` | YQCloud | `yqcloud` |
 
 </details>
 
