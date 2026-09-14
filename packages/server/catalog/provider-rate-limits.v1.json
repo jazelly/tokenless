@@ -1,8 +1,8 @@
 {
   "schema": "tokenless.provider-rate-limit-catalog.v1",
   "catalogVersion": 1,
-  "revision": "2026-09-12",
-  "reviewedAt": "2026-08-31",
+  "revision": "2026-09-14",
+  "reviewedAt": "2026-09-14",
   "reviewAfter": "2026-09-30",
   "scope": {
     "productSurface": "consumer_web",
@@ -26,6 +26,10 @@
     "minimumBurstUnits": 2,
     "maximumBurstUnits": 8,
     "providerDefaults": {
+      "agnes": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
       "arena": {
         "modelFamily": "*",
         "promptAction": "interactive.usage"
@@ -189,6 +193,13 @@
     }
   },
   "sources": {
+    "agnes-web-subscription": {
+      "title": "Agnes consumer Web subscription",
+      "authority": "official",
+      "publisher": "Agnes AI",
+      "url": "https://app.agnes-ai.com/subscription",
+      "retrievedAt": "2026-09-14"
+    },
     "github-copilot-usage-limits": {
       "title": "GitHub Copilot usage limits",
       "authority": "official",
@@ -387,6 +398,38 @@
     }
   },
   "providers": {
+    "agnes": {
+      "label": "Agnes AI",
+      "plans": [
+        { "id": "free", "family": "free", "labels": ["Free"] },
+        { "id": "starter", "family": "paid", "labels": ["Starter"] },
+        { "id": "plus", "family": "paid", "labels": ["Plus"] },
+        { "id": "pro", "family": "paid", "labels": ["Pro"] },
+        { "id": "unknown", "family": "unknown", "labels": [] }
+      ],
+      "usageDrivers": ["task_complexity"],
+      "runtimeSignals": [],
+      "rules": [{
+        "id": "agnes.web.numeric-limits-unknown",
+        "status": "active",
+        "scope": "provider_profile",
+        "appliesTo": {
+          "planIds": ["free", "starter", "plus", "pro", "unknown"],
+          "accessClasses": ["guest", "signed_in_free", "signed_in_paid", "signed_in_unknown", "unknown"],
+          "modelFamilies": ["*"],
+          "actions": ["interactive.usage"]
+        },
+        "meter": { "kind": "unknown", "unit": "usage" },
+        "window": { "kind": "unknown" },
+        "allowance": { "kind": "unknown" },
+        "limitBehavior": { "kind": "provider_managed" },
+        "evidence": [{ "kind": "unknown", "sourceIds": ["agnes-web-subscription"] }],
+        "notes": [
+          "The consumer Web subscription page lists monthly credits, not a fixed Chat message allowance or reset window.",
+          "Agnes API RPM and Token Plan quotas do not establish consumer Web Chat limits."
+        ]
+      }]
+    },
     "hugging-face": {
       "label": "HuggingChat",
       "plans": [

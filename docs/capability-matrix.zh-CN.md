@@ -49,6 +49,8 @@ Provider selection 前会展开所有 implication。同一家 provider 必须满
 
 下表概括 checked-in routes；CLI 输出是当前列表的权威来源。
 
+Agnes AI 另有实验性 Browser 路由：`conversation.chat`、`conversation.continue`、`file.upload`、`document.input`、`image.input` 和 `response.citations`。Managed-profile gates 覆盖持久化 Chat 复用、Harness 只读附件闭环及可见引用链接；model/effort 控制及原生 agentic 工作流尚不公布。参见 [Agnes 验收记录](provider-capability-census.zh-CN.md#agnes-ai-browser-验收--2026-09-14)。
+
 | Canonical capability | ChatGPT | Claude | Gemini | Grok | Qwen | DeepSeek | Perplexity | Z.ai | Doubao | Kimi | Dola | Arena | Meta AI | Monica |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `conversation.chat` | Supported | Supported | Supported | Supported | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | Supported | Experimental | Experimental |

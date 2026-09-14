@@ -1,3 +1,4 @@
+import { AgnesProvider } from './agnes-provider.js'
 import { ArenaProvider } from './arena-provider.js'
 import { ChatGptProvider } from './chatgpt-provider.js'
 import { ClaudeProvider } from './claude-provider.js'
@@ -203,6 +204,7 @@ export const providerInstances = Object.freeze([
   new GitHubCopilotProvider(),
   new LovableProvider(),
   new HuggingChatProvider(),
+  new AgnesProvider(),
   new MonicaProvider(),
   ...createDirectOnlyG4fProviders(100),
 ] satisfies readonly ProviderInstance[])

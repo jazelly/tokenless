@@ -48,11 +48,11 @@ Add the Tokenless skill to your Harness; invoke it for selected tasks and bring 
 
 <a id="providers"></a>
 
-## 40 store providers
+## 41 store providers
 
-18 in Browser mode, 35 in Direct API mode; 13 appear in both. [Inventory audit](docs/provider-capability-census.md#2026-09-12-provider-inventory-audit).
+19 in Browser mode, 35 in Direct API mode; 13 appear in both. [Inventory audit](docs/provider-capability-census.md#2026-09-14-provider-inventory-audit).
 
-### Browser mode · 18 providers
+### Browser mode · 19 providers
 
 Interact with provider websites in your signed-in browser.
 
@@ -82,6 +82,7 @@ Interact with provider websites in your signed-in browser.
     <td align="center" width="20%"><a href="https://lovable.dev/"><strong>Lovable</strong></a><br><sub>Experimental</sub></td>
     <td align="center" width="20%"><a href="https://huggingface.co/chat"><img src="assets/providers/hugging-face.svg" alt="HuggingChat" width="32" height="32"><br><strong>HuggingChat</strong></a><br><sub>Awaiting route</sub></td>
     <td align="center" width="20%"><a href="https://monica.im/home/chat"><img src="assets/providers/monica.png" alt="Monica" width="32" height="32"><br><strong>Monica</strong></a><br><sub>Experimental</sub></td>
+    <td align="center" width="20%"><a href="https://app.agnes-ai.com/"><strong>Agnes AI</strong></a><br><sub>Experimental Chat + inputs</sub></td>
   </tr>
 </table>
 

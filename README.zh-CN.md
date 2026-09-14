@@ -48,11 +48,11 @@ Tokenless Harness 管理任务与工具调用；Tokenless API 接入你的网页
 
 <a id="providers"></a>
 
-## 40 个 store providers
+## 41 个 store providers
 
-Browser mode：18 个；Direct API mode：35 个，其中 13 个两种模式均有。 [数量审查](docs/provider-capability-census.zh-CN.md#2026-09-12-provider-数量审查)。
+Browser mode：19 个；Direct API mode：35 个，其中 13 个两种模式均有。 [数量审查](docs/provider-capability-census.zh-CN.md#2026-09-14-provider-数量审查)。
 
-### Browser mode · 18 个 providers
+### Browser mode · 19 个 providers
 
 在已登录的浏览器中操作 provider 网页。
 
@@ -82,6 +82,7 @@ Browser mode：18 个；Direct API mode：35 个，其中 13 个两种模式均�
     <td align="center" width="20%"><a href="https://lovable.dev/"><strong>Lovable</strong></a><br><sub>实验性</sub></td>
     <td align="center" width="20%"><a href="https://huggingface.co/chat"><img src="assets/providers/hugging-face.svg" alt="HuggingChat" width="32" height="32"><br><strong>HuggingChat</strong></a><br><sub>等待路由</sub></td>
     <td align="center" width="20%"><a href="https://monica.im/home/chat"><img src="assets/providers/monica.png" alt="Monica" width="32" height="32"><br><strong>Monica</strong></a><br><sub>实验性</sub></td>
+    <td align="center" width="20%"><a href="https://app.agnes-ai.com/"><strong>Agnes AI</strong></a><br><sub>实验性 Chat + 输入</sub></td>
   </tr>
 </table>
 

@@ -44,30 +44,30 @@ test('capabilities list exposes canonical outcomes and only evidence-backed rout
     byId.get('conversation.chat').routes
       .filter((route) => route.executionMode === 'browser')
       .map((route) => route.provider),
-    ['chatgpt', 'claude', 'gemini', 'grok', 'deepseek', 'perplexity', 'qwen', 'zai', 'doubao', 'kimi', 'meta', 'arena', 'dola'],
+    ['lovable', 'chatgpt', 'claude', 'gemini', 'grok', 'deepseek', 'perplexity', 'qwen', 'zai', 'doubao', 'kimi', 'meta', 'github-copilot', 'monica', 'arena', 'dola', 'agnes'],
   )
   assert.deepEqual(
     byId.get('file.upload').routes
       .filter((route) => route.executionMode === 'browser')
       .map((route) => route.provider),
-    ['chatgpt', 'claude', 'gemini', 'grok', 'deepseek', 'perplexity', 'qwen', 'zai', 'doubao', 'kimi', 'meta', 'arena', 'dola'],
+    ['chatgpt', 'claude', 'gemini', 'grok', 'deepseek', 'perplexity', 'qwen', 'zai', 'doubao', 'kimi', 'github-copilot', 'meta', 'arena', 'dola', 'agnes'],
   )
   assert.deepEqual(
     byId.get('document.input').routes
       .filter((route) => route.executionMode === 'browser')
       .map((route) => route.provider),
-    ['chatgpt', 'claude', 'gemini', 'grok', 'deepseek', 'perplexity', 'qwen', 'zai', 'doubao', 'kimi', 'meta', 'dola'],
+    ['chatgpt', 'claude', 'gemini', 'grok', 'deepseek', 'perplexity', 'qwen', 'zai', 'doubao', 'kimi', 'github-copilot', 'meta', 'dola', 'agnes'],
   )
   const arenaImageUpload = byId.get('file.upload').routes.find((route) => route.provider === 'arena')
   assert.equal(arenaImageUpload.support, 'experimental')
   assert.deepEqual(arenaImageUpload.evidence, ['arena-image'])
   assert.equal(byId.get('document.input').routes.some((route) => route.provider === 'arena'), false)
-  assert.deepEqual(byId.get('conversation.continue').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), ['arena'])
+  assert.deepEqual(byId.get('conversation.continue').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), ['github-copilot', 'arena', 'agnes'])
   assert.deepEqual(byId.get('model.compare').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), ['arena'])
-  assert.deepEqual(byId.get('agent.execute').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), [])
-  assert.deepEqual(byId.get('search.web').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), ['kimi', 'arena'])
-  assert.deepEqual(byId.get('response.citations').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), ['kimi', 'arena'])
-  assert.deepEqual(byId.get('image.input').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), ['arena'])
+  assert.deepEqual(byId.get('agent.execute').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), ['github-copilot'])
+  assert.deepEqual(byId.get('search.web').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), ['kimi', 'github-copilot', 'arena'])
+  assert.deepEqual(byId.get('response.citations').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), ['kimi', 'github-copilot', 'arena', 'agnes'])
+  assert.deepEqual(byId.get('image.input').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider), ['github-copilot', 'arena', 'agnes'])
   assert.deepEqual(
     byId.get('image.generation').routes
       .filter((route) => route.executionMode === 'browser')
@@ -112,7 +112,7 @@ test('capabilities list exposes canonical outcomes and only evidence-backed rout
   assert.equal(byId.get('workspace.native').routeable, true)
   assert.deepEqual(
     byId.get('workspace.native').routes.filter((route) => route.executionMode === 'browser').map((route) => route.provider),
-    ['claude'],
+    ['claude', 'github-copilot'],
   )
   assert.equal(byId.get('research.deep').routeable, false)
   assert.deepEqual(byId.get('research.deep').routes, [])

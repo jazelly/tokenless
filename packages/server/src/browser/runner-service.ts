@@ -2001,7 +2001,7 @@ function liveInspectionTarget(capability: TaskCapabilityId, provider: ProviderId
   if (provider === 'github-copilot' && (capability === TASK_CAPABILITIES.AGENT_EXECUTE || capability === TASK_CAPABILITIES.SEARCH_WEB)) {
     return { providerCapability: PROVIDER_CAPABILITIES.GITHUB_COPILOT_MODE, scope: 'overall' }
   }
-  if (provider === 'github-copilot' && capability === TASK_CAPABILITIES.IMAGE_INPUT) {
+  if ((provider === 'github-copilot' || provider === 'agnes') && capability === TASK_CAPABILITIES.IMAGE_INPUT) {
     return { providerCapability: PROVIDER_CAPABILITIES.FILE_UPLOAD, scope: 'overall' }
   }
   if (
@@ -2170,6 +2170,7 @@ function canReuseCurrentProviderPage(page: Page, provider: RunnerProvider, targe
   const target = provider.navigation.canonicalTarget(targetUrl)
   if (!target) return false
   if (current.target.href === target.href) return true
+  if (provider.id === 'agnes') return false
   return target.href === provider.navigation.homeTarget().href && provider.navigation.pagePatterns.some((pattern) => {
     const declared = provider.navigation.canonicalTarget(pattern.urlPattern)
     if (!declared || declared.origin.toLowerCase() !== current.target.origin.toLowerCase()) return false
@@ -2476,7 +2477,7 @@ function validatedConversationUrl(
   const target = provider.navigation.assertCurrentPageAllowed(value)
   if (!target) return null
   const canonical = new URL(target.href)
-  canonical.search = ''
+  if (provider.id !== 'agnes') canonical.search = ''
   canonical.hash = ''
   const href = canonical.toString()
   return href === projectUrl ? null : href

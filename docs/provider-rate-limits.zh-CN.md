@@ -1,6 +1,6 @@
 # Provider Rate-Limit 知识与 Runtime 策略
 
-最近复核：2026-08-02
+最近复核：2026-09-14
 
 ## 范围
 
@@ -43,6 +43,9 @@ Tokenless API 在 [`packages/server/catalog/provider-rate-limits.v1.json`](../pa
 | Z.ai / GLM | 无 | 未知的 consumer Web 数字限额；明确排除独立的 GLM Coding Plan quota |
 | Doubao / 豆包 | 无 | 未知的已登录 consumer Web 数字限额；明确排除 API 与 enterprise product quota |
 | Kimi | 无 | 未知的已登录 consumer Web 数字限额；不会从交互式 usage surface 推断数字 allowance |
+| Agnes AI | 无 | 网页月度 credits 不能推导 Chat RPM、消息成本或 reset time；真实 Chat/文档提交已完成，没有观察到实际限流 |
+
+2026-09-14 的 Agnes 有界 probe 使用真实 Browser profile，串行提交 3 次、间隔 1 秒、并发数 1。三个 job 全部成功，结果没有 `rateLimit` 或 `retryAfter`；脱敏记录保存在 `test-results/live-provider-e2e/agnes-rate-probe-20260914.json`。这是执行检查，不是数值 RPM 估算。
 
 Catalog 为每项事实链接官方来源。目前的主要来源是 OpenAI Help、Anthropic Help、Google Gemini Help、xAI pricing、Qwen 使用策略、DeepSeek 用户协议、Perplexity Help、Z.ai GLM 官方公告、豆包功能介绍和 Kimi 官方 Web 入口。只有 catalog 包含 `official_exact` 证据时，精确数字才可执行；relative、dynamic、qualitative、guarded、consumption-based 与 unknown allowance 在 runtime 中都保持为非数字。
 

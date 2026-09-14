@@ -29,6 +29,7 @@ import type { VisibleActionRequest, VisibleActionWireRequest } from './actions.j
 import type { ProviderId, ProviderInstance, TaskCapabilityId, TaskCapabilityRoute } from '../providers/registry.js'
 import type { ProviderBackend } from '../persistence/config.js'
 import { g4fProviderName, nativeDirectProviderAvailable } from '../providers/direct/g4f-map.js'
+import { isAgnesConversationUrl } from '../providers/navigation-policy.js'
 
 export { CONTEXT_ENVELOPE_SCHEMA_ID } from './context-envelope.js'
 export type { ContextEnvelope } from './context-envelope.js'
@@ -967,7 +968,8 @@ function validateSafeTarget(input: unknown, provider: ProviderInstance): Managed
   } catch {
     throw tokenlessError('invalid_playwright_job_target', 'Managed Playwright job target URL is invalid.')
   }
-  if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.hash || parsed.search) {
+  if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.hash ||
+    (parsed.search && !(provider.id === 'agnes' && isAgnesConversationUrl(parsed)))) {
     throw tokenlessError('invalid_playwright_job_target', 'Managed Playwright job target must be a public HTTPS provider URL without credentials, query, or fragment.')
   }
   if (!provider.navigation.canonicalTarget(input.url)) {

@@ -49,6 +49,8 @@ Implications are expanded before provider selection. One provider must satisfy t
 
 This table summarizes checked-in routes. The CLI output is the authoritative current list.
 
+Agnes AI additionally provides experimental `conversation.chat`, `conversation.continue`, `file.upload`, `document.input`, `image.input`, and `response.citations` Browser routes. Its managed-profile gates cover durable Chat reuse, the Harness read-only attachment roundtrip, and visible citation links; model/effort controls and native agentic workflows remain unadvertised. See the [Agnes acceptance record](provider-capability-census.md#agnes-ai-browser-acceptance--2026-09-14).
+
 | Canonical capability | ChatGPT | Claude | Gemini | Grok | Qwen | DeepSeek | Perplexity | Z.ai | Doubao | Kimi | Dola | Arena | Meta AI | Monica |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `conversation.chat` | Supported | Supported | Supported | Supported | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | Supported | Experimental | Experimental |

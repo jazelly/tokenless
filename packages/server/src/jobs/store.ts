@@ -15,6 +15,7 @@ import {
   type ProviderCapacityProjection,
 } from '../providers/rate-limit-policy.js'
 import { taskCapabilityDefinition } from '../providers/task-capabilities.js'
+import { isAgnesConversationUrl } from '../providers/navigation-policy.js'
 import { configuredRuleUnits, projectConfiguredRateLimit, rateLimitRequestType, readConfiguredRateLimits, type RateLimitEvent } from '../providers/configured-rate-limits.js'
 import type { ConfiguredRateLimitRule, DashboardInvocationQuery } from 'tokenless-internal-shared/dashboard'
 import {
@@ -696,7 +697,7 @@ export class JobStore {
     const provider = mappingText(input.provider, 'provider', 128)
     const profileId = mappingText(input.profile_id, 'profile_id', PROFILE_ID_CHARS)
     const taskId = mappingText(input.task_id, 'task_id', 256)
-    const canonicalUrl = canonicalMappingUrl(input.canonical_url)
+    const canonicalUrl = canonicalMappingUrl(input.canonical_url, provider)
     const projectResourceId = input.project_resource_id === undefined
       ? undefined
       : mappingText(input.project_resource_id, 'project_resource_id', 256)
@@ -1867,7 +1868,7 @@ function mappingText(value: unknown, field: string, maximumLength: number) {
   return normalized
 }
 
-function canonicalMappingUrl(value: unknown) {
+function canonicalMappingUrl(value: unknown, provider?: string) {
   const normalized = mappingText(value, 'canonical_url', 2048)
   let parsed: URL
   try {
@@ -1879,7 +1880,7 @@ function canonicalMappingUrl(value: unknown) {
     parsed.protocol !== 'https:' ||
     parsed.username !== '' ||
     parsed.password !== '' ||
-    parsed.search !== '' ||
+    (parsed.search !== '' && !(provider === 'agnes' && isAgnesConversationUrl(parsed))) ||
     parsed.hash !== ''
   ) {
     throw invalidInput('canonical_url must be a canonical public HTTPS URL')

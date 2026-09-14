@@ -4,6 +4,7 @@ import type {
 } from './navigation-policy.js'
 
 export type ProviderNavigationCatalogId =
+  | 'agnes'
   | 'hugging-face'
   | 'arena'
   | 'chatgpt'
@@ -43,6 +44,13 @@ function navigation(definition: ProviderNavigationDefinition): ProviderNavigatio
 // Page patterns are declared only from current adapter routes or redacted real-session provenance.
 // A missing pattern means the route shape is not yet known; it does not broaden the origin allowlist.
 export const PROVIDER_NAVIGATION_CATALOG = Object.freeze({
+  agnes: navigation({
+    entryUrl: 'https://app.agnes-ai.com/',
+    homeUrl: 'https://app.agnes-ai.com/',
+    origins: ['https://app.agnes-ai.com'],
+    pagePatterns: pages({ kind: 'entry', urlPattern: 'https://app.agnes-ai.com/' }),
+    trustedSignInOrigins: [],
+  }),
   lovable: navigation({
     entryUrl: 'https://lovable.dev/',
     homeUrl: 'https://lovable.dev/dashboard',

@@ -1,6 +1,6 @@
 # Provider Rate-Limit Knowledge and Runtime Policy
 
-Last reviewed: 2026-08-02
+Last reviewed: 2026-09-14
 
 ## Scope
 
@@ -43,6 +43,9 @@ Internal rules use exact rolling windows `(now - window, now]`, with no extra pe
 | Z.ai / GLM | None | Unknown numeric consumer Web limits; separate GLM Coding Plan quotas are explicitly excluded |
 | Doubao / 豆包 | None | Unknown numeric signed-in consumer Web limits; API and enterprise product quotas are explicitly excluded |
 | Kimi | None | Unknown numeric signed-in consumer Web limits; no numeric allowance is inferred from the interactive usage surface |
+| Agnes AI | None | Monthly Web credits do not establish Chat RPM, message cost, or reset time; real Chat/document submissions completed without an observed rate limit |
+
+The bounded Agnes probe on 2026-09-14 used the real Browser profile with three serial prompts, one-second spacing, and concurrency one. All three jobs succeeded without a `rateLimit` or `retryAfter` result; the sanitized record is `test-results/live-provider-e2e/agnes-rate-probe-20260914.json`. This probe is an execution check, not a numeric RPM estimate.
 
 The catalog links every fact to an official source. Its current primary sources are OpenAI Help, Anthropic Help, Google Gemini Help, xAI pricing, the Qwen usage policy, the DeepSeek user agreement, Perplexity Help, the official Z.ai GLM announcement, the Doubao feature introduction, and the official Kimi web entry. Exact numbers are executable only when the catalog contains `official_exact` evidence; relative, dynamic, qualitative, guarded, consumption-based, and unknown allowances remain non-numeric at runtime.
 
