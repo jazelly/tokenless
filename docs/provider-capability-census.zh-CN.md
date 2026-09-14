@@ -1,6 +1,6 @@
 # Provider Capability Census
 
-最近复核：2026-09-14
+最近复核：2026-09-15
 
 ## 2026-09-14 provider 数量审查
 
@@ -35,10 +35,10 @@ Puter 也已按本机评估从支持目录移除。
 | 所有 profile | `web-ai` 名称为 `Jason Z4350`；Registry 默认 `login-2026-09-05` 名称为 `XZHA4350`，保留现有 Cloak runtime binding；通过 `tokenless config` 启用 Agnes Browser membership |
 | 登录状态 | `tlp_7f089d0c-cced-4851-9509-a4872723f0d8`：已登录 `xzha4350`，实际显示 `Free`、`signed_in_free`；账号菜单检查后恢复，没有获取 session 值 |
 | 黄色 profile | 通过 production browser control API 实时执行 `auth.status` 返回已登录 `jasonz4350`，实际显示 `Free`、`signed_in_free`；两个配置 profile 现在都已登录 Agnes |
-| Rate limits | 页面只有非数值 monthly Web credits，因此 `limits inspect` 返回 `unknown`。`test-results/live-provider-e2e/agnes-rate-probe-20260914.json` 的真实有界 probe 串行提交 3 次、间隔 1 秒；全部成功且没有 `rateLimit` 或 `retryAfter`，不声称数值 RPM |
+| Rate limits | 页面只有非数值 monthly Web credits，因此 `limits inspect` 返回 `unknown`。`test-results/live-provider-e2e/agnes-rate-probe-20260914.json` 的真实有界 probe 串行提交 3 次、间隔 1 秒；全部成功且没有 `rateLimit` 或 `retryAfter`，不声称数值 RPM。随后官方长 prompt 返回 Agnes 的“Insufficient credits”答案；这是 credit/quota 阻断，不是 429 或 numeric rate-limit 证据 |
 | Blocker 检查 | 最终 rebuilt adapter：`tlp_306e3f7c-f7e1-411c-8b82-e2d9823d2b22` 在保留的真实对话中通过，`blocked: false`；未观察到的 Agnes 专属额度警告不单独配置 selectors |
-| Terminal-Bench | 官方 4.0 `wal-recovery-ordering`，固定 `tokenless/agnes`、蓝色 profile、k=1、retry=0：有效 daemon run `05-wal-recovery-ordering-agnes-20260914` 的 reward 为 0，97 项 verifier 中 44 项通过、53 项失败；此前真实 host job `5149b4f1-d162-43ef-81de-5188ea85c85a` 返回可见的 1,020 字符答案，但不是 JSON（没有 `protocol/nonce/kind/calls`），后续 run 超过 DSH client 窗口并以 `client_closed_request` 结束；没有观察到限流信号 |
-| Structured schema/tool 边界 | 完整官方输入包含 23 个声明函数并指定 `tool_choice=read`；没有观察到 Agnes `tool_calls`、工具结果或 continuation/child chain。因此当前只公布 Chat/文档/图片/引用，不公布 agentic Terminal-Bench 支持 |
+| Terminal-Bench | 官方 4.0 `wal-recovery-ordering`，固定 `tokenless/agnes`、蓝色 profile、k=1、retry=0：最新固定 run `07-wal-recovery-ordering-agnes-20260915` 完成 1 个真实 trial，reward 为 0，97 项 verifier 中 44 项通过、53 项失败。parent submission 产生了两个成功的 browser job（`24d9f273-d899-4ef9-a238-774a6b2482b9`，随后是 correction `d60a50f2-4067-49c5-bac6-3804be51092f`），两次都以 provider 的额度不足答案结束；随后 DSH parent 失败，没有 tool result 或 child chain。此前 `01`–`05` 仍保留；没有观察到 429/限流信号 |
+| Structured schema/tool 边界 | 独立的真实短 OpenAI-compatible probe（`26a0a391-42d1-4b51-bee6-46f07c09368c`）在 10 秒内返回 HTTP 200、`finish_reason=tool_calls` 和合法的 `read_file` function call。完整官方输入仍包含 23 个声明函数并设置 `tool_choice=read`；长 Agnes run 确实触发了有界 correction request，但额度阻止了合法的第二次 tool call，因此不声称有 tool result 或 continuation/child chain。当前 route 仍仅为 Chat/document/image/citation；不公布 agentic Terminal-Bench 支持 |
 
 [Consumer subscription 页面](https://app.agnes-ai.com/subscription) 显示 monthly credits：Starter 9,000、Plus 18,000、Pro 90,000。余额及月额度不能推导每条 Chat 消息的成本、RPM 或 reset window；独立的 [官方 API Token Plan FAQ](https://github.com/AgnesAI-Labs/AgnesAI-Models/blob/main/docs/TOKEN_PLAN_FAQ.md) 也不是 consumer Web 配额证据。
 
@@ -46,7 +46,7 @@ Benchmark 使用固定的 Harbor/DSH 配置并请求 reasoning effort `high`，�
 
 Parent job 实际存储 `capabilityRoute: null`；不能从当前 capability catalog 推断本次 benchmark 的 requirements 或已完成 provider-routing event。
 
-原始结果保留于 `benchmarks/terminalbench/results/agnes-20260914/` 下的串行官方尝试；启动身份及全部证据/任务文件哈希位于 `observations/agnes-20260914/`。这些 direct fixed-provider run 都没有 canonical collector 所需的 `tokenless-run.json`，因此不声称生成了 schema 验证的 `run-observation.json`。
+原始结果保留于 `benchmarks/terminalbench/results/agnes-20260914/` 与 `benchmarks/terminalbench/results/agnes-20260915-fixed/` 下的串行官方尝试；启动身份及全部证据/任务文件哈希位于 `observations/agnes-20260914/`。这些 direct fixed-provider run 都没有 canonical collector 所需的 `tokenless-run.json`，因此不声称生成了 schema 验证的 `run-observation.json`。
 
 Chat 复现命令：`TOKENLESS_LIVE_AGNES_GATE=1 node --test test/live-agnes-chat.e2e.mjs`；Harness 使用同一 gate 运行 `test/live-agnes-harness.e2e.mjs`；managed matrix 使用 `TOKENLESS_LIVE_E2E_GATE=mutation TOKENLESS_LIVE_E2E_PROVIDER=agnes TOKENLESS_LIVE_E2E_CASES=conversation-continuation,workspace-response-citations,workspace-response-baseline env -u CODEX_THREAD_ID node --test --test-concurrency=1 test/live-managed-playwright.e2e.mjs`。Model/effort 选择、原生 Projects、定时工作流、通用 `conversation-workflow` 及其他 agentic 动作，在实时闭环前不公布。早期 workflow timeout 保留为 job 历史，不是限流证据。
 

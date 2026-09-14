@@ -1,6 +1,6 @@
 # Provider Capability Census
 
-Last reviewed: 2026-09-14
+Last reviewed: 2026-09-15
 
 ## 2026-09-14 provider inventory audit
 
@@ -35,10 +35,10 @@ The experimental `agnes` adapter completes real Browser Chat, durable continuati
 | Selected profiles | `web-ai` is `Jason Z4350`; registry-default `login-2026-09-05` is `XZHA4350`, with the existing Cloak runtime binding preserved; Agnes Browser membership is enabled through `tokenless config` |
 | Authentication | `tlp_7f089d0c-cced-4851-9509-a4872723f0d8`: authenticated `xzha4350`, observed `Free`, `signed_in_free`; account menu inspected and restored, no session values acquired |
 | Yellow profile | Live `auth.status` through the production browser control API returned authenticated `jasonz4350`, observed `Free`, `signed_in_free`; both configured profiles are now logged in to Agnes |
-| Rate limits | `limits inspect` returned `unknown` because the page exposes only non-numeric monthly Web credits. The bounded real probe in `test-results/live-provider-e2e/agnes-rate-probe-20260914.json` ran three serial prompts at one-second spacing; all succeeded with no `rateLimit` or `retryAfter`, so no numeric RPM claim is made |
+| Rate limits | `limits inspect` returned `unknown` because the page exposes only non-numeric monthly Web credits. The bounded real probe in `test-results/live-provider-e2e/agnes-rate-probe-20260914.json` ran three serial prompts at one-second spacing; all succeeded with no `rateLimit` or `retryAfter`, so no numeric RPM claim is made. The official long-prompt run later returned an Agnes “Insufficient credits” answer; this is a credit/quota blocker, not 429 or numeric rate-limit evidence |
 | Blocker check | Final rebuilt adapter: `tlp_306e3f7c-f7e1-411c-8b82-e2d9823d2b22` passed against the retained real conversation, `blocked: false`; unobserved Agnes-specific quota-warning selectors remain absent |
-| Terminal-Bench | Official 4.0 `wal-recovery-ordering`, fixed `tokenless/agnes`, blue profile, k=1, retry=0: valid daemon run `05-wal-recovery-ordering-agnes-20260914` ended reward 0 with 44/97 verifier checks passed and 53 failed; the preceding real host job `5149b4f1-d162-43ef-81de-5188ea85c85a` returned a visible 1,020-character answer that was not JSON (`protocol/nonce/kind/calls` absent), while the later run exceeded the DSH client window and ended `client_closed_request`; no rate-limit signal observed |
-| Structured schema/tool boundary | The exact official input contained 23 declared functions and `tool_choice=read`; Agnes produced no observed `tool_calls`, no tool result, and no continuation/child chain. The route therefore remains Chat/document/image/citation only; agentic Terminal-Bench support is not advertised |
+| Terminal-Bench | Official 4.0 `wal-recovery-ordering`, fixed `tokenless/agnes`, blue profile, k=1, retry=0: latest fixed run `07-wal-recovery-ordering-agnes-20260915` completed one real trial with reward 0 and 44/97 verifier checks passed (53 failed). The parent submission produced two successful browser jobs (`24d9f273-d899-4ef9-a238-774a6b2482b9`, then correction `d60a50f2-4067-49c5-bac6-3804be51092f`), both ending in the provider's insufficient-credit answer; the DSH parent then failed with no tool result or child chain. Earlier runs `01`–`05` remain retained; no 429/rate-limit signal was observed |
+| Structured schema/tool boundary | A separate real short OpenAI-compatible probe (`26a0a391-42d1-4b51-bee6-46f07c09368c`) returned HTTP 200 in 10s with `finish_reason=tool_calls` and a valid `read_file` function call. The exact official input still contained 23 declared functions and `tool_choice=read`; the long Agnes run exercised the bounded correction request but credits prevented a valid second tool call, so no observed tool result or continuation/child chain is claimed. The route therefore remains Chat/document/image/citation only; agentic Terminal-Bench support is not advertised |
 
 The [consumer subscription page](https://app.agnes-ai.com/subscription) displayed monthly credits: Starter 9,000, Plus 18,000, Pro 90,000. Credit balances and monthly allowances do not establish a per-message Chat cost, RPM, or reset window. The separate [official API Token Plan FAQ](https://github.com/AgnesAI-Labs/AgnesAI-Models/blob/main/docs/TOKEN_PLAN_FAQ.md) is not evidence of consumer Web quotas.
 
@@ -46,7 +46,7 @@ The benchmark used the pinned Harbor/DSH setup with reasoning effort `high`; no 
 
 The parent job stored `capabilityRoute: null`; no benchmark capability requirements or completed provider-routing event are inferred from the current capability catalog.
 
-Raw results are retained under `benchmarks/terminalbench/results/agnes-20260914/` for the serial official attempts; startup identities and all evidence/artifact hashes are in `observations/agnes-20260914/`. The canonical collector requires `tokenless-run.json`, absent from these direct fixed-provider runs, so no schema-validated `run-observation.json` is claimed.
+Raw results are retained under `benchmarks/terminalbench/results/agnes-20260914/` and `benchmarks/terminalbench/results/agnes-20260915-fixed/` for the serial official attempts; startup identities and all evidence/artifact hashes are in `observations/agnes-20260914/`. The canonical collector requires `tokenless-run.json`, absent from these direct fixed-provider runs, so no schema-validated `run-observation.json` is claimed.
 
 Reproduce Chat acceptance with `TOKENLESS_LIVE_AGNES_GATE=1 node --test test/live-agnes-chat.e2e.mjs`, Harness with `test/live-agnes-harness.e2e.mjs`, and the managed matrix with `TOKENLESS_LIVE_E2E_GATE=mutation TOKENLESS_LIVE_E2E_PROVIDER=agnes TOKENLESS_LIVE_E2E_CASES=conversation-continuation,workspace-response-citations,workspace-response-baseline env -u CODEX_THREAD_ID node --test --test-concurrency=1 test/live-managed-playwright.e2e.mjs`. Model/effort selection, native Projects, scheduled workflows, generic `conversation-workflow`, and other agentic actions are not advertised without live closure. The earlier workflow timeout remains job history, not rate-limit evidence.
 
