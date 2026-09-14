@@ -1972,10 +1972,16 @@ async function validatedCompletion(
     )
   } catch (error) {
     const validationError = error instanceof Error ? error.message : 'invalid output'
-    if (!(error instanceof OpenAiToolResponseProtocolError) || !error.correctionEligible || !error.correctionKind) {
+    const semanticRecovery = request.provider === 'agnes'
+      && (request.toolProtocol.choice.mode === 'named' || request.toolProtocol.choice.mode === 'required')
+      && error instanceof OpenAiToolResponseProtocolError
+      && !error.correctionKind
+    const correctionKind = error instanceof OpenAiToolResponseProtocolError
+      ? error.correctionKind ?? (semanticRecovery ? 'tool_calls' : undefined)
+      : undefined
+    if (!(error instanceof OpenAiToolResponseProtocolError) || !correctionKind) {
       throw providerOutputProtocolError(validationError, completion.base.routing)
     }
-    const correctionKind = error.correctionKind
     const prompt = compileOpenAiToolCorrectionPrompt(
       request.toolProtocol.nonce,
       validationError,
@@ -1984,6 +1990,7 @@ async function validatedCompletion(
       request.toolProtocol.choice,
       request.toolProtocol.parallelToolCalls,
       request.toolProtocol.responseFormat,
+      semanticRecovery,
     )
     if (Buffer.byteLength(prompt, 'utf8') > MAX_PROMPT_BYTES) {
       throw providerOutputProtocolError(

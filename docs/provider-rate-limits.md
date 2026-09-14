@@ -43,7 +43,7 @@ Internal rules use exact rolling windows `(now - window, now]`, with no extra pe
 | Z.ai / GLM | None | Unknown numeric consumer Web limits; separate GLM Coding Plan quotas are explicitly excluded |
 | Doubao / 豆包 | None | Unknown numeric signed-in consumer Web limits; API and enterprise product quotas are explicitly excluded |
 | Kimi | None | Unknown numeric signed-in consumer Web limits; no numeric allowance is inferred from the interactive usage surface |
-| Agnes AI | None | Monthly Web credits do not establish Chat RPM, message cost, or reset time; real Chat/document submissions completed without an observed rate limit |
+| Agnes AI | None | Live `auth.status` is `signed_in_free` for both configured profiles (`XZHA4350` and `Jason Z4350`). Monthly Web credits do not establish Chat RPM, message cost, or reset time; real Chat/document submissions completed without an observed rate limit. |
 
 The bounded Agnes probe on 2026-09-14 used the real Browser profile with three serial prompts, one-second spacing, and concurrency one. All three jobs succeeded without a `rateLimit` or `retryAfter` result; the sanitized record is `test-results/live-provider-e2e/agnes-rate-probe-20260914.json`. This probe is an execution check, not a numeric RPM estimate.
 
