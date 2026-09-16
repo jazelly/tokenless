@@ -62,6 +62,7 @@ import type { ProviderActionPreparation } from '../providers/contracts.js'
 import type { ProviderCapacityProjection } from '../providers/rate-limit-policy.js'
 import type { BrowserContext, Page } from 'playwright-core'
 import type { G4fServiceClient } from '../providers/direct/g4f/client.js'
+import type { G4fAuthContextLease } from '../providers/direct/g4f/types.js'
 import { ProviderProtocolRouter } from '../providers/direct/protocol-router.js'
 import { g4fProviderName, isG4fDirectOnlyProvider } from '../providers/direct/g4f-map.js'
 import { persistDirectImageAsset } from './image-assets.js'
@@ -267,6 +268,60 @@ export class ManagedPlaywrightRunnerService {
       effectiveBrowserVisibility: managedContext.effectiveBrowserVisibility,
       pageCount: pages.length,
     }
+  }
+
+  async createG4fAuthContext(
+    profileId: string,
+    providerId: string,
+    signal?: AbortSignal,
+  ): Promise<G4fAuthContextLease | undefined> {
+    const profile = (await this.profileRegistry.listProfiles())
+      .find((candidate) => candidate.slug === profileId)
+    if (!profile) throw tokenlessError('profile_not_found', 'Managed profile is not registered or is not ready.')
+    const provider = getProviderInstanceById(providerId)
+    const upstreamProvider = g4fProviderName(providerId)
+    const client = this.g4fClient
+    if (!client || !provider || !upstreamProvider || isG4fDirectOnlyProvider(providerId)) return undefined
+
+    const contextId = `g4f-api-${randomUUID()}`
+    const targetUrl = provider.navigation.homeTarget().href
+    const operationSignal = signal ?? new AbortController().signal
+    return await this.contextManager.runWithProfile(profile, 'auto', async (managedContext) => {
+      const temporaryPage = await managedContext.acquireTemporaryPage()
+      let creationAttempted = false
+      let handedOff = false
+      try {
+        await this.createG4fAuthContextFromPage({
+          contextId,
+          provider,
+          profile: profile.slug,
+          targetUrl,
+          page: temporaryPage.page,
+          browserContext: managedContext.browserContext,
+          signal: operationSignal,
+          onCreateAttempted: () => { creationAttempted = true },
+        })
+        handedOff = true
+        let released = false
+        return {
+          contextId,
+          release: async () => {
+            if (released) return
+            released = true
+            try {
+              await this.deleteG4fAuthContext(contextId)
+            } finally {
+              await temporaryPage.close()
+            }
+          },
+        }
+      } catch (error) {
+        if (creationAttempted) await this.deleteG4fAuthContext(contextId, error)
+        throw error
+      } finally {
+        if (!handedOff) await temporaryPage.close()
+      }
+    })
   }
 
   async openProviderTabs(
@@ -1199,43 +1254,68 @@ export class ManagedPlaywrightRunnerService {
       const contextId = `g4f-${job.job_id}-${randomUUID()}`
       let creationAttempted = false
       try {
-        await navigateToTarget(providerPage.page, provider, request.target.url, signal, false)
-        const providerCookies = await managedContext.browserContext.cookies([request.target.url])
-        const cookies: Record<string, Record<string, string>> = {}
-        for (const cookie of providerCookies) {
-          const domain = cookie.domain.toLowerCase()
-          cookies[domain] ??= {}
-          cookies[domain]![cookie.name] = cookie.value
-        }
-        const browserValues = await providerPage.page.evaluate(() => ({
-          userAgent: navigator.userAgent,
-          language: navigator.language || 'en-US',
-        }))
-        const headers = {
-          [new URL(request.target.url).hostname]: {
-            'user-agent': browserValues.userAgent,
-            'accept-language': `${browserValues.language},en;q=0.8`,
-          },
-        }
-        let apiKey: string | undefined
-        if (provider.id === 'chatgpt') {
-          const session = await readChatGptBrowserSession(providerPage.page, managedContext.browserContext)
-          apiKey = session.accessToken
-        }
-        creationAttempted = true
-        await client.createAuthContext({
+        await this.createG4fAuthContextFromPage({
           contextId,
-          provider: upstreamProvider,
+          provider,
           profile: profile.slug,
-          lifetime: 'ephemeral',
-          source: { type: 'manual', cookies, headers, ...(apiKey ? { apiKey } : {}) },
-        }, signal)
+          targetUrl: request.target.url,
+          page: providerPage.page,
+          browserContext: managedContext.browserContext,
+          signal,
+          onCreateAttempted: () => { creationAttempted = true },
+        })
         return contextId
       } catch (error) {
         if (creationAttempted) await this.deleteG4fAuthContext(contextId, error)
         throw error
       }
     })
+  }
+
+  private async createG4fAuthContextFromPage(options: {
+    contextId: string
+    provider: RunnerProvider
+    profile: string
+    targetUrl: string
+    page: Page
+    browserContext: BrowserContext
+    signal: AbortSignal
+    onCreateAttempted: () => void
+  }) {
+    const client = this.g4fClient
+    const upstreamProvider = g4fProviderName(options.provider.id)
+    if (!client || !upstreamProvider) return
+    await navigateToTarget(options.page, options.provider, options.targetUrl, options.signal, false)
+    const providerCookies = await options.browserContext.cookies([options.targetUrl])
+    const cookies: Record<string, Record<string, string>> = {}
+    for (const cookie of providerCookies) {
+      const domain = cookie.domain.toLowerCase()
+      cookies[domain] ??= {}
+      cookies[domain]![cookie.name] = cookie.value
+    }
+    const browserValues = await options.page.evaluate(() => ({
+      userAgent: navigator.userAgent,
+      language: navigator.language || 'en-US',
+    }))
+    const headers = {
+      [new URL(options.targetUrl).hostname]: {
+        'user-agent': browserValues.userAgent,
+        'accept-language': `${browserValues.language},en;q=0.8`,
+      },
+    }
+    let apiKey: string | undefined
+    if (options.provider.id === 'chatgpt') {
+      const session = await readChatGptBrowserSession(options.page, options.browserContext)
+      apiKey = session.accessToken
+    }
+    options.onCreateAttempted()
+    await client.createAuthContext({
+      contextId: options.contextId,
+      provider: upstreamProvider,
+      profile: options.profile,
+      lifetime: 'ephemeral',
+      source: { type: 'manual', cookies, headers, ...(apiKey ? { apiKey } : {}) },
+    }, options.signal)
   }
 
   private async deleteG4fAuthContext(contextId: string, operationError?: unknown) {

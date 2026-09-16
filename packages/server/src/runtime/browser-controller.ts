@@ -12,6 +12,7 @@ import { type BrowserTabGcConfig, readTokenlessConfig } from '../persistence/con
 import type { JobStore } from '../jobs/store.js'
 import type { BrowserVisibility } from '../browser-visibility.js'
 import type { G4fServiceClient } from '../providers/direct/g4f/client.js'
+import type { G4fAuthContextLease } from '../providers/direct/g4f/types.js'
 
 export type BrowserRuntimeState = 'running' | 'quiescing' | 'quiesced' | 'stopped'
 
@@ -94,6 +95,17 @@ export class BrowserRuntimeController {
         ...opened,
         status: this.status(),
       }
+    })
+  }
+
+  async createG4fAuthContext(
+    profileId: string,
+    providerId: string,
+    signal?: AbortSignal,
+  ): Promise<G4fAuthContextLease | undefined> {
+    return await this.enqueue(async () => {
+      const runner = await this.ensureRunningInLane()
+      return await runner.service.createG4fAuthContext(profileId, providerId, signal)
     })
   }
 

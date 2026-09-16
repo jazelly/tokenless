@@ -84,7 +84,7 @@ macOS 会禁用 `browser-cookie3` 与直接 Cookie DB 解密，因为该 library
 - G4F 自己启动的 browser 会被强制设为 headless；它可以计算 provider challenge token，但不暴露 provider UI。自动发现其他 CDP browser 已禁用；只有显式选择的 `cdp` auth source 才能连接现有 browser。
 - Provider session value 不会进入 caller response、daemon error、telemetry 或 service log。
 
-Visible-browser execution 继续由 Tokenless 原生实现。ChatGPT G4F direct 未显式指定 auth context 时，Tokenless 只从所选 managed browser 读取该 provider session，创建临时 provider-scoped G4F auth cache，并在请求后删除。
+Visible-browser execution 继续由 Tokenless 原生实现。对于同时拥有 Tokenless browser adapter 的 G4F mapping，direct 未显式指定 auth context 时，Tokenless 只从 managed profile 中的临时 page 读取所选 provider session，创建临时 provider-scoped G4F auth cache，并在请求后删除。ChatGPT 还会提供 browser 中的短期 access token；direct-only catalog entry 继续使用原有 G4F auth 行为。
 
 真实 E2E 同时覆盖两种认证边界：
 

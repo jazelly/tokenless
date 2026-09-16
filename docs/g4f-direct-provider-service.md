@@ -84,7 +84,7 @@ Uploaded HAR files are reduced to requests for the selected provider domains bef
 - G4F-owned browser launches are forced to headless mode; they may compute provider challenge tokens but expose no provider UI. Automatic discovery of other CDP browsers is disabled; only an explicitly selected `cdp` auth source may attach to an existing browser.
 - Provider session values never enter caller responses, daemon errors, telemetry, or service logs.
 
-Visible-browser execution remains Tokenless-native. For ChatGPT G4F direct execution without an explicit auth context, Tokenless reads only the selected provider session from its managed browser, creates an ephemeral provider-scoped G4F auth cache, and deletes it after the request.
+Visible-browser execution remains Tokenless-native. For a G4F mapping that also has a Tokenless browser adapter, direct execution without an explicit auth context reads only the selected provider session from a temporary page in the managed profile, creates an ephemeral provider-scoped G4F auth cache, and deletes it after the request. ChatGPT additionally supplies its short-lived browser access token; direct-only catalog entries keep their existing G4F auth behavior.
 
 Real E2E covers both authentication boundaries:
 

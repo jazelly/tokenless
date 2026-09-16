@@ -148,7 +148,20 @@ export async function serveHttp({
     resolveHarnessRunHandler: async () => resolveAgentRunHandler?.(origin()),
   })
   const privateProviderTurn = new PrivateProviderTurnV0Adapter(store)
-  const apiProxy = new ApiProxyAdapter(store, async () => await runtimeController?.wake(), g4fService?.client)
+  const resolveG4fAuthContext = runtimeController === undefined
+    ? undefined
+    : async ({ profile, provider, signal }: {
+        profile: string
+        provider: string
+        signal?: AbortSignal | undefined
+      }) => await runtimeController.createG4fAuthContext(profile, provider, signal)
+  const apiProxy = new ApiProxyAdapter(
+    store,
+    async () => await runtimeController?.wake(),
+    g4fService?.client,
+    undefined,
+    resolveG4fAuthContext,
+  )
   const imageGeneration = new ImageGenerationAdapter(store, async () => await runtimeController?.wake(), g4fService?.client)
   server = http.createServer((request, response) => {
     void handleRequest(store, close, () => active, deactivate, runtimeController, g4fService, applicationServices, dashboardServer, privateProviderTurn, apiProxy, imageGeneration, featureBench, resolveAgentRunHandler, origin(), request, response)

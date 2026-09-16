@@ -30,6 +30,8 @@ import {
   type JobStore,
 } from '../jobs/store.js'
 import type { G4fServiceClient } from '../providers/direct/g4f/client.js'
+import { isG4fDirectOnlyProvider } from '../providers/direct/g4f-map.js'
+import type { G4fAuthContextLease } from '../providers/direct/g4f/types.js'
 import { ProviderProtocolRouter } from '../providers/direct/protocol-router.js'
 import {
   compileOpenAiToolCorrectionPrompt,
@@ -207,6 +209,12 @@ export type ApiProxyResponseResult = {
   routing?: ApiProxyRouting
 }
 
+export type ApiProxyG4fAuthContextResolver = (input: {
+  profile: string
+  provider: string
+  signal?: AbortSignal | undefined
+}) => Promise<G4fAuthContextLease | undefined>
+
 export class ApiProxyAdapter {
   private readonly profiles: ManagedProfileRegistry
   private readonly protocolRouter: ProviderProtocolRouter
@@ -216,6 +224,7 @@ export class ApiProxyAdapter {
     private readonly wake: () => Promise<unknown>,
     private readonly g4fClient?: G4fServiceClient | undefined,
     private readonly timeoutMs = DEFAULT_JOB_TIMEOUT_MS,
+    private readonly resolveG4fAuthContext?: ApiProxyG4fAuthContextResolver | undefined,
   ) {
     this.profiles = new ManagedProfileRegistry(store.homeDir)
     this.protocolRouter = new ProviderProtocolRouter(g4fClient)
@@ -368,13 +377,37 @@ export class ApiProxyAdapter {
       ? this.protocolRouter.backend(config.directProvider, selectedRequest.provider, selectedRequest.providerBackend ?? undefined)
       : 'browser'
     if (executionMode === 'direct' && providerBackend === 'g4f') {
-      const messages = providerMessages(selectedRequest)
-      const completion = await this.completeG4f(selectedRequest, messages, signal)
-      const validated = await validatedCompletion(selectedRequest, directRawCompletion(selectedRequest, completion, 'new-conversation'), async (prompt) => {
-        const corrected = await this.completeG4f(selectedRequest, [...messages, { role: 'user', content: prompt }], signal)
-        return directRawCompletion(selectedRequest, corrected, 'new-conversation')
+      let providerSubmitted = false
+      const directRouting = () => autoRouting(request, autoRoutes, autoExclusions, null, {
+        provider: selectedRequest.provider,
+        providerSubmitted,
       })
-      return withRouting(validated, request, selectedRequest, autoRoutes, autoExclusions)
+      const routedDirectCompletion = (raw: RawApiProxyCompletion): RawApiProxyCompletion => ({
+        ...raw,
+        base: { ...raw.base, routing: directRouting() },
+      })
+      let authContextLease: G4fAuthContextLease | null = null
+      try {
+        authContextLease = await this.resolveG4fAuthContextLease(selectedRequest, profile.slug, signal)
+        const directRequest = authContextLease
+          ? { ...selectedRequest, authContextId: authContextLease.contextId }
+          : selectedRequest
+        const messages = providerMessages(directRequest)
+        providerSubmitted = true
+        const completion = await this.completeG4f(directRequest, messages, signal)
+        const validated = await validatedCompletion(directRequest, routedDirectCompletion(directRawCompletion(directRequest, completion, 'new-conversation')), async (prompt) => {
+          const corrected = await this.completeG4f(directRequest, [...messages, { role: 'user', content: prompt }], signal)
+          return routedDirectCompletion(directRawCompletion(directRequest, corrected, 'new-conversation'))
+        })
+        return withRouting(validated, request, selectedRequest, autoRoutes, autoExclusions)
+      } catch (error) {
+        if (error instanceof ApiProxyError && error.routing === null) {
+          throw new ApiProxyError(error.status, error.code, error.message, error.param, directRouting())
+        }
+        throw error
+      } finally {
+        await authContextLease?.release()
+      }
     }
 
     const plan = responseContext
@@ -477,6 +510,46 @@ export class ApiProxyAdapter {
     }
   }
 
+  private async resolveG4fAuthContextLease(
+    request: NormalizedRequest,
+    profile: string,
+    signal?: AbortSignal,
+  ): Promise<G4fAuthContextLease | null> {
+    if (request.authContextId || isG4fDirectOnlyProvider(request.provider)) return null
+    if (!this.resolveG4fAuthContext) {
+      throw new ApiProxyError(
+        503,
+        'direct_auth_context_unavailable',
+        'The selected managed profile could not establish a direct provider auth context.',
+        'tokenless',
+      )
+    }
+    try {
+      const lease = await this.resolveG4fAuthContext({
+        profile,
+        provider: request.provider,
+        signal,
+      })
+      if (!lease) {
+        throw new ApiProxyError(
+          503,
+          'direct_auth_context_unavailable',
+          'The selected managed profile could not establish a direct provider auth context.',
+          'tokenless',
+        )
+      }
+      return lease
+    } catch (error) {
+      if (error instanceof ApiProxyError) throw error
+      throw new ApiProxyError(
+        503,
+        'direct_auth_context_unavailable',
+        'The selected managed profile could not establish a direct provider auth context.',
+        'tokenless',
+      )
+    }
+  }
+
   private async openG4fStream(
     config: Awaited<ReturnType<typeof readTokenlessConfig>>,
     request: NormalizedRequest,
@@ -510,16 +583,39 @@ export class ApiProxyAdapter {
       request.providerBackend ?? undefined,
     )
     if (providerBackend !== 'g4f') return null
+    const authContextLease = await this.resolveG4fAuthContextLease(request, profile.slug, signal)
+    const directRequest = authContextLease
+      ? { ...request, authContextId: authContextLease.contextId }
+      : request
+    const upstreamAbortController = authContextLease ? new AbortController() : undefined
+    const onCallerAbort = upstreamAbortController && signal
+      ? () => upstreamAbortController.abort()
+      : undefined
+    if (upstreamAbortController && signal && onCallerAbort) {
+      if (signal.aborted) onCallerAbort?.()
+      else signal.addEventListener('abort', onCallerAbort, { once: true })
+    }
     try {
-      return await this.protocolRouter.streamG4f({
-        provider: request.provider,
-        messages: providerMessages(request),
-        model: request.upstreamModel,
-        ...(request.authContextId ? { authContextId: request.authContextId } : {}),
-        signal,
+      const upstream = await this.protocolRouter.streamG4f({
+        provider: directRequest.provider,
+        messages: providerMessages(directRequest),
+        model: directRequest.upstreamModel,
+        ...(directRequest.authContextId ? { authContextId: directRequest.authContextId } : {}),
+        signal: upstreamAbortController?.signal ?? signal,
         endpoint,
       })
+      if (authContextLease && upstreamAbortController) {
+        return await responseWithCleanup(upstream, async () => {
+          if (signal && onCallerAbort) signal.removeEventListener('abort', onCallerAbort)
+          upstreamAbortController.abort()
+          await authContextLease.release()
+        })
+      }
+      return upstream
     } catch (error) {
+      if (signal && onCallerAbort) signal.removeEventListener('abort', onCallerAbort)
+      upstreamAbortController?.abort()
+      await authContextLease?.release().catch(() => undefined)
       const directError = safeDirectError(error)
       throw new ApiProxyError(502, directError.code, directError.message)
     }
@@ -2068,6 +2164,48 @@ function providerOutputProtocolError(detail: string, routing?: ApiProxyRouting) 
 
 function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function responseWithCleanup(response: Response, cleanup: () => Promise<void>) {
+  if (!response.body) {
+    await cleanup()
+    return response
+  }
+  const reader = response.body.getReader()
+  let cleaned = false
+  const release = async () => {
+    if (cleaned) return
+    cleaned = true
+    await cleanup()
+  }
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const chunk = await reader.read()
+        if (chunk.done) {
+          await release()
+          controller.close()
+          return
+        }
+        controller.enqueue(chunk.value)
+      } catch (error) {
+        await release().catch(() => undefined)
+        controller.error(error)
+      }
+    },
+    async cancel(reason) {
+      try {
+        await reader.cancel(reason)
+      } finally {
+        await release()
+      }
+    },
+  })
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  })
 }
 
 /**
