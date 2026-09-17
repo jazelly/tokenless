@@ -15,6 +15,7 @@ import {
   type HarnessFinalResponse,
   type HarnessToolCatalogEntry,
   type HarnessToolRegistry,
+  type HarnessRunTrace,
   type JsonValue,
   type ProviderTurnClient,
   type ProviderTurnState,
@@ -715,10 +716,58 @@ function publicView(record: HarnessRunRecord): AgentRunView {
     runId: record.runId,
     status: record.status,
     turn: record.turn,
+    trace: publicTrace(record),
     ...(record.providerTurn ? { providerTurnRef: record.providerTurn.turnRef } : {}),
     ...(waiting ? { waiting } : {}),
     ...(record.final ? { final: { output: record.final.output, artifacts: record.final.artifacts } } : {}),
     ...(record.error ? { error: record.error } : {}),
+  }
+}
+
+function publicTrace(record: HarnessRunRecord): HarnessRunTrace {
+  const calls = [
+    ...record.history.flatMap((entry) => entry.calls.map((call) => ({
+      turn: entry.batch.turn,
+      id: call.id,
+      tool: call.tool,
+      approval: call.approval,
+      status: call.status,
+      argumentsDigest: call.argumentsDigest,
+    }))),
+    ...(record.batch
+      ? record.calls.map((call) => ({
+          turn: record.batch!.turn,
+          id: call.id,
+          tool: call.tool,
+          approval: call.approval,
+          status: call.status,
+          argumentsDigest: call.argumentsDigest,
+        }))
+      : []),
+  ]
+  const currentResponse = record.providerTurn?.modelResponse
+  return {
+    tools: record.catalog.map((tool) => ({
+      name: tool.name,
+      source: tool.source,
+      readOnly: tool.readOnly,
+      approval: tool.approval,
+    })),
+    providerTurns: [
+      ...record.history.map((entry) => ({
+        turn: entry.batch.turn,
+        lifecycle: 'succeeded' as const,
+        responseKind: 'action_batch' as const,
+      })),
+      ...(record.providerTurn
+        ? [{
+            turn: record.providerTurn.turn,
+            lifecycle: record.providerTurn.lifecycle,
+            responseKind: currentResponse?.kind ?? null,
+          }]
+        : []),
+    ],
+    calls,
   }
 }
 

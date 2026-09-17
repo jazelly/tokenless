@@ -70,11 +70,18 @@ export async function dismissChatGptHistoryWarning(page: Page) {
 
 export async function ensureChatGptChat(page: Page) {
   await dismissChatGptHistoryWarning(page)
-  const chat = page.getByRole('radio', { name: 'Chat', exact: true })
-  if (await chat.isVisible().catch(() => false)) {
-    if (await chat.getAttribute('aria-checked') !== 'true') await chat.click({ timeout: 5000 })
-    if (await chat.getAttribute('aria-checked') !== 'true') {
-      throw tokenlessError('chatgpt_chat_surface_not_selected', 'ChatGPT Chat mode could not be selected.', { retryable: false })
+  const chat = page.getByRole('radio', { name: 'Chat', exact: true }).filter({ visible: true }).first()
+  if (await chat.count().catch(() => 0) > 0) {
+    // ChatGPT can remove the surface selector during a composer rerender. Treat
+    // that short-lived locator as stale and let the stable composer checks below
+    // prove that the conversation is still on the Chat surface.
+    const checked = await chat.getAttribute('aria-checked', { timeout: 1000 }).catch(() => null)
+    if (checked !== null && checked !== 'true') {
+      await chat.click({ timeout: 5000 })
+      const selected = await chat.getAttribute('aria-checked', { timeout: 5000 }).catch(() => null)
+      if (selected !== null && selected !== 'true') {
+        throw tokenlessError('chatgpt_chat_surface_not_selected', 'ChatGPT Chat mode could not be selected.', { retryable: false })
+      }
     }
   }
   if (await page.locator('button.__composer-pill[class*="WorkTrigger"]').isVisible().catch(() => false)) {

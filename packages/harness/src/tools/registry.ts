@@ -16,6 +16,10 @@ const execFileAsync = promisify(execFile)
 const WORKSPACE_SERVER = 'tokenless-workspace'
 const MAX_READ_BYTES = 1024 * 1024
 const MAX_SEARCH_BYTES = 256 * 1024
+const MAX_EDIT_TEXT_BYTES = 256 * 1024
+const MAX_BASH_OUTPUT_BYTES = 256 * 1024
+const DEFAULT_BASH_TIMEOUT_MS = 30_000
+const MAX_BASH_TIMEOUT_MS = 120_000
 
 const WORKSPACE_TOOLS: readonly HarnessToolCatalogEntry[] = [
   {
@@ -55,6 +59,44 @@ const WORKSPACE_TOOLS: readonly HarnessToolCatalogEntry[] = [
     readOnly: true,
     approval: 'allow_read_only',
   },
+  {
+    name: 'workspace.edit',
+    description: 'Replace exact UTF-8 text in an existing workspace file. The caller must approve this mutation.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Relative path to an existing file inside the delegated workspace; never use an absolute path.', minLength: 1, maxLength: 4096 },
+        oldText: { type: 'string', description: 'Exact text to replace. It must occur exactly once unless replaceAll is true.', minLength: 1, maxLength: 262144 },
+        newText: { type: 'string', description: 'Replacement text.', maxLength: 262144 },
+        replaceAll: { type: 'boolean', description: 'Replace every occurrence instead of requiring one exact match.' },
+      },
+      required: ['path', 'oldText', 'newText'],
+      additionalProperties: false,
+    },
+    source: 'filesystem',
+    server: WORKSPACE_SERVER,
+    serverToolName: 'edit',
+    readOnly: false,
+    approval: 'always',
+  },
+  {
+    name: 'workspace.bash',
+    description: 'Execute one bash command with the delegated workspace as its working directory. The caller must approve this operation.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        command: { type: 'string', minLength: 1, maxLength: 16384 },
+        timeoutMs: { type: 'integer', minimum: 1, maximum: MAX_BASH_TIMEOUT_MS },
+      },
+      required: ['command'],
+      additionalProperties: false,
+    },
+    source: 'local',
+    server: WORKSPACE_SERVER,
+    serverToolName: 'bash',
+    readOnly: false,
+    approval: 'always',
+  },
 ]
 
 export function createAgentToolRegistry(): HarnessToolRegistry {
@@ -81,6 +123,8 @@ export function createAgentToolRegistry(): HarnessToolRegistry {
       const root = await canonicalWorkspaceRoot(workspaceRoot)
       if (entry.serverToolName === 'read') return { status: 'succeeded', content: await readWorkspaceFile(root, argumentsValue) }
       if (entry.serverToolName === 'search') return { status: 'succeeded', content: await searchWorkspace(root, argumentsValue) }
+      if (entry.serverToolName === 'edit') return { status: 'succeeded', content: await editWorkspaceFile(root, argumentsValue) }
+      if (entry.serverToolName === 'bash') return await runWorkspaceBash(root, argumentsValue)
       throw new HarnessSkillError('harness_tool_not_configured', `Workspace tool '${entry.name}' is not configured.`)
     },
   }
@@ -169,6 +213,120 @@ async function searchWorkspace(root: string, input: Record<string, JsonValue>): 
     }
     if (error instanceof HarnessSkillError) throw error
     throw new HarnessSkillError('harness_workspace_search_failed', 'Workspace search failed at the local ripgrep boundary.')
+  }
+}
+
+async function editWorkspaceFile(root: string, input: Record<string, JsonValue>): Promise<JsonValue> {
+  const target = await workspaceTarget(root, input.path)
+  const oldText = input.oldText
+  const newText = input.newText
+  const replaceAll = input.replaceAll === true
+  if (typeof oldText !== 'string' || oldText.length === 0 || Buffer.byteLength(oldText, 'utf8') > MAX_EDIT_TEXT_BYTES) {
+    throw new HarnessSkillError('harness_workspace_edit_invalid', 'Workspace edit oldText must be nonempty UTF-8 text within the size limit.')
+  }
+  if (typeof newText !== 'string' || Buffer.byteLength(newText, 'utf8') > MAX_EDIT_TEXT_BYTES) {
+    throw new HarnessSkillError('harness_workspace_edit_invalid', 'Workspace edit newText must be UTF-8 text within the size limit.')
+  }
+  const stat = await fs.lstat(target.requested, { bigint: true }).catch(() => null)
+  if (!stat?.isFile() || stat.isSymbolicLink()) {
+    throw new HarnessSkillError('harness_workspace_edit_invalid', 'Workspace edit target must be a regular non-symlink file.')
+  }
+  const before = await fs.readFile(target.canonical)
+  if (before.byteLength > MAX_READ_BYTES) {
+    throw new HarnessSkillError('harness_workspace_edit_invalid', `Workspace edit target must be no larger than ${MAX_READ_BYTES} bytes.`)
+  }
+  let text: string
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(before)
+  } catch {
+    throw new HarnessSkillError('harness_workspace_edit_invalid', 'Workspace edit target is not UTF-8 text.')
+  }
+  const occurrences = countOccurrences(text, oldText)
+  if (occurrences === 0 || (!replaceAll && occurrences !== 1)) {
+    throw new HarnessSkillError(
+      'harness_workspace_edit_match_invalid',
+      replaceAll
+        ? 'Workspace edit oldText was not found.'
+        : `Workspace edit oldText must occur exactly once; found ${occurrences}.`,
+    )
+  }
+  const after = replaceAll ? text.split(oldText).join(newText) : text.replace(oldText, newText)
+  await fs.writeFile(target.canonical, after, 'utf8')
+  await verifyWorkspacePathIdentity(root, target.requested, stat)
+  return {
+    path: target.relative,
+    replacements: replaceAll ? occurrences : 1,
+    changed: after !== text,
+  }
+}
+
+async function runWorkspaceBash(root: string, input: Record<string, JsonValue>) {
+  const command = input.command
+  if (typeof command !== 'string' || command.trim().length === 0 || Buffer.byteLength(command, 'utf8') > MAX_EDIT_TEXT_BYTES) {
+    throw new HarnessSkillError('harness_workspace_bash_invalid', 'Workspace bash command must be nonempty UTF-8 text within the size limit.')
+  }
+  const timeoutMs = input.timeoutMs === undefined ? DEFAULT_BASH_TIMEOUT_MS : input.timeoutMs
+  if (!Number.isSafeInteger(timeoutMs) || Number(timeoutMs) < 1 || Number(timeoutMs) > MAX_BASH_TIMEOUT_MS) {
+    throw new HarnessSkillError('harness_workspace_bash_invalid', `Workspace bash timeoutMs must be an integer from 1 to ${MAX_BASH_TIMEOUT_MS}.`)
+  }
+  if (process.platform === 'win32') {
+    throw new HarnessSkillError('harness_workspace_bash_unavailable', 'Workspace bash is unavailable on Windows.')
+  }
+  try {
+    const result = await execFileAsync('/bin/bash', ['-lc', command], {
+      cwd: root,
+      env: safeWorkspaceEnvironment(),
+      encoding: 'utf8',
+      timeout: Number(timeoutMs),
+      maxBuffer: MAX_BASH_OUTPUT_BYTES,
+    })
+    return {
+      status: 'succeeded' as const,
+      content: {
+        exitCode: 0,
+        stdout: boundShellOutput(result.stdout),
+        stderr: boundShellOutput(result.stderr),
+      },
+    }
+  } catch (error) {
+    const failure = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string; killed?: boolean }
+    const timedOut = failure.killed === true || failure.code === 'ETIMEDOUT'
+    return {
+      status: 'failed' as const,
+      content: {
+        code: timedOut ? 'harness_workspace_bash_timeout' : 'harness_workspace_bash_failed',
+        exitCode: typeof failure.code === 'number' ? failure.code : null,
+        stdout: boundShellOutput(failure.stdout),
+        stderr: boundShellOutput(failure.stderr),
+      },
+    }
+  }
+}
+
+function countOccurrences(text: string, needle: string) {
+  let count = 0
+  let offset = 0
+  while (true) {
+    const index = text.indexOf(needle, offset)
+    if (index < 0) return count
+    count += 1
+    offset = index + needle.length
+  }
+}
+
+function boundShellOutput(value: unknown) {
+  if (typeof value !== 'string') return ''
+  return value.length > MAX_BASH_OUTPUT_BYTES
+    ? `${value.slice(0, MAX_BASH_OUTPUT_BYTES)}\n[output truncated]`
+    : value
+}
+
+function safeWorkspaceEnvironment() {
+  const pathValue = process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin'
+  return {
+    PATH: pathValue,
+    LANG: 'C.UTF-8',
+    LC_ALL: 'C.UTF-8',
   }
 }
 

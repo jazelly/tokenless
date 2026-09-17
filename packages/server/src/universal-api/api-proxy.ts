@@ -2069,13 +2069,13 @@ async function validatedCompletion(
   } catch (error) {
     const validationError = error instanceof Error ? error.message : 'invalid output'
     const semanticRecovery = request.provider === 'agnes'
-      && (request.toolProtocol.choice.mode === 'named' || request.toolProtocol.choice.mode === 'required')
+      && request.toolProtocol.tools.length > 0
       && error instanceof OpenAiToolResponseProtocolError
       && !error.correctionKind
     const correctionKind = error instanceof OpenAiToolResponseProtocolError
-      ? error.correctionKind ?? (semanticRecovery ? 'tool_calls' : undefined)
+      ? error.correctionKind
       : undefined
-    if (!(error instanceof OpenAiToolResponseProtocolError) || !correctionKind) {
+    if (!(error instanceof OpenAiToolResponseProtocolError) || (!correctionKind && !semanticRecovery)) {
       throw providerOutputProtocolError(validationError, completion.base.routing)
     }
     const prompt = compileOpenAiToolCorrectionPrompt(
@@ -2110,7 +2110,7 @@ async function validatedCompletion(
         completion.base.routing,
       )
     }
-    if (result.kind !== correctionKind) {
+    if (correctionKind && result.kind !== correctionKind) {
       throw providerOutputProtocolError('bounded correction changed the response kind', completion.base.routing)
     }
   }

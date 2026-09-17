@@ -328,11 +328,14 @@ export function compileOpenAiToolCorrectionPrompt(
     ? 'Inside final.content, JSON-escape every quote, backslash, newline, and control character. Summarize tool-result data instead of copying raw JSON when necessary.'
     : 'Set final.content directly to the same semantic outcome as one strict JSON object valid for the original response_format. Do not serialize that object as a string.'
   const maxCalls = choice.mode === 'named' || !parallelToolCalls ? 1 : MAX_TOOLS
+  const semanticRecoveryInstruction = choice.mode === 'auto'
+    ? 'The provider returned natural-language content instead of a valid response envelope. Discard that content and preserve its intended next step: emit tool_calls when a declared function is still needed, or final only when the conversation is actually complete. Do not claim that a tool ran unless the quoted tool results prove it.'
+    : 'The provider returned natural-language content instead of the required response envelope. Discard that content and emit the required tool_calls envelope for the declared tool choice. Do not perform the task or explain it.'
   return [
     'The previous response to this structured decision request failed validation before any result was returned.',
     ...(semanticRecovery
       ? [
-        'The provider returned natural-language content instead of the required response envelope. Discard that content and emit the required tool_calls envelope for the declared tool choice. Do not perform the task or explain it.',
+        semanticRecoveryInstruction,
         'Use the exact declared function name and a JSON object of arguments satisfying its schema. Do not copy invalid_provider_output verbatim.',
       ]
       : [
