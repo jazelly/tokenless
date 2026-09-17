@@ -72,7 +72,7 @@ export type DashboardProfileConfig = {
 
 export type DashboardApiProxyConfig = {
   enabled: boolean
-  executionMode: 'browser' | 'direct'
+  executionMode: readonly DashboardProviderExecutionMode[]
 }
 
 export type DashboardDirectProviderConfig = {

@@ -243,7 +243,7 @@ test('auto accepts plain browser requests and applies generic structured routing
     const { writeTokenlessConfig } = await import(runtimeModule)
     await writeTokenlessConfig({
       homeDir: daemon.homeDir,
-      apiProxy: { enabled: true, executionMode: 'browser' },
+      apiProxy: { enabled: true, executionMode: ['browser'] },
       profiles: {
         'web-ai': {
           roleLabel: '',
@@ -314,7 +314,7 @@ test('auto keeps Claude available through generic single-call structured control
     const { writeTokenlessConfig } = await import(runtimeModule)
     await writeTokenlessConfig({
       homeDir: daemon.homeDir,
-      apiProxy: { enabled: true, executionMode: 'browser' },
+      apiProxy: { enabled: true, executionMode: ['browser'] },
       profiles: {
         'web-ai': {
           roleLabel: '',
@@ -392,7 +392,7 @@ test('auto exposes bounded exclusions while generic prompt emulation admits ever
     }
     await writeTokenlessConfig({
       homeDir: daemon.homeDir,
-      apiProxy: { enabled: true, executionMode: 'browser' },
+      apiProxy: { enabled: true, executionMode: ['browser'] },
       profiles: { 'structured-auto': profile },
     })
 
@@ -488,7 +488,7 @@ test('auto semantic preference reorders only eligible conversation routes', asyn
     const { writeTokenlessConfig } = await import(runtimeModule)
     await writeTokenlessConfig({
       homeDir: daemon.homeDir,
-      apiProxy: { enabled: true, executionMode: 'browser' },
+      apiProxy: { enabled: true, executionMode: ['browser'] },
       profiles: {
         'semantic-auto': {
           roleLabel: '',
@@ -598,7 +598,7 @@ test('explicit auto applies portable call-id affinity and persists one real fall
     const { writeTokenlessConfig } = await import(runtimeModule)
     await writeTokenlessConfig({
       homeDir: daemon.homeDir,
-      apiProxy: { enabled: true, executionMode: 'browser' },
+      apiProxy: { enabled: true, executionMode: ['browser'] },
       profiles: {
         'web-ai': {
           roleLabel: '',
@@ -669,7 +669,7 @@ test('auto rate-limit fallback preserves one local job and reports source attrib
     const { writeTokenlessConfig } = await import(runtimeModule)
     await writeTokenlessConfig({
       homeDir: daemon.homeDir,
-      apiProxy: { enabled: true, executionMode: 'browser' },
+      apiProxy: { enabled: true, executionMode: ['browser'] },
       profiles: {
         'web-ai': {
           roleLabel: '',
@@ -797,7 +797,7 @@ test('auto fallback observer preserves captcha and unreachable attempt reasons',
     const { writeTokenlessConfig } = await import(runtimeModule)
     await writeTokenlessConfig({
       homeDir: daemon.homeDir,
-      apiProxy: { enabled: true, executionMode: 'browser' },
+      apiProxy: { enabled: true, executionMode: ['browser'] },
       profiles: {
         'web-ai': {
           roleLabel: '',
@@ -889,7 +889,7 @@ test('api proxy client abort cancels the exact local job', async () => {
     const { writeTokenlessConfig } = await import(runtimeModule)
     await writeTokenlessConfig({
       homeDir: daemon.homeDir,
-      apiProxy: { enabled: true, executionMode: 'browser' },
+      apiProxy: { enabled: true, executionMode: ['browser'] },
       profiles: {
         'web-ai': {
           roleLabel: '',
@@ -942,7 +942,7 @@ test('api proxy routes an explicit profile without changing the default', async 
     await registry.addProfile({ slug: 'default-profile', setDefault: true })
     await registry.addProfile({ slug: 'selected-profile', setDefault: false })
     const { writeTokenlessConfig } = await import(runtimeModule)
-    await writeTokenlessConfig({ homeDir: daemon.homeDir, apiProxy: { enabled: true, executionMode: 'browser' } })
+    await writeTokenlessConfig({ homeDir: daemon.homeDir, apiProxy: { enabled: true, executionMode: ['browser'] } })
     const pending = call(daemon, 'POST', '/v1/chat/completions', {
       model: 'tokenless/chatgpt',
       messages: [{ role: 'user', content: 'Profile routing acceptance.' }],
@@ -1261,7 +1261,7 @@ test('api proxy accepts bare and fenced final text containing Markdown code fenc
     const { writeTokenlessConfig } = await import(runtimeModule)
     await writeTokenlessConfig({
       homeDir: daemon.homeDir,
-      apiProxy: { enabled: true, executionMode: 'browser' },
+      apiProxy: { enabled: true, executionMode: ['browser'] },
       profiles: {
         'web-ai': {
           roleLabel: '',
@@ -1729,20 +1729,20 @@ test('api proxy enabled and execution mode round-trip through the persisted conf
     const { readTokenlessConfig, writeTokenlessConfig } = await import(runtimeModule)
     assert.deepEqual(
       (await readTokenlessConfig(daemon.homeDir)).apiProxy,
-      { enabled: false, executionMode: 'direct' },
+      { enabled: false, executionMode: ['direct'] },
     )
     await writeTokenlessConfig({
       homeDir: daemon.homeDir,
-      apiProxy: { enabled: true, executionMode: 'browser' },
+      apiProxy: { enabled: true, executionMode: ['browser'] },
     })
     assert.deepEqual(
       (await readTokenlessConfig(daemon.homeDir)).apiProxy,
-      { enabled: true, executionMode: 'browser' },
+      { enabled: true, executionMode: ['browser'] },
     )
     await assert.rejects(
       () => writeTokenlessConfig({
         homeDir: daemon.homeDir,
-        apiProxy: { enabled: true, executionMode: 'sometimes' },
+        apiProxy: { enabled: true, executionMode: ['sometimes'] },
       }),
       /API proxy configuration/,
     )
@@ -1763,7 +1763,7 @@ test('api proxy keeps Chat Completions fresh and Responses continuation on the m
     const { writeTokenlessConfig } = await import(runtimeModule)
     await writeTokenlessConfig({
       homeDir: daemon.homeDir,
-      apiProxy: { enabled: true, executionMode: 'browser' },
+      apiProxy: { enabled: true, executionMode: ['browser'] },
       profiles: {
         'web-ai': {
           roleLabel: '',
@@ -1951,7 +1951,7 @@ test('Responses store accepts only booleans before profile readiness', async () 
 
 async function enableApiProxy(homeDir) {
   const { writeTokenlessConfig } = await import(runtimeModule)
-  await writeTokenlessConfig({ homeDir, apiProxy: { enabled: true, executionMode: 'direct' } })
+  await writeTokenlessConfig({ homeDir, apiProxy: { enabled: true, executionMode: ['direct'] } })
 }
 
 function promptInputText(job) {

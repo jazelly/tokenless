@@ -401,7 +401,7 @@ async function ensureHostDaemon(homeDir, explicitDaemonUrl) {
   const runtimeEntry = path.join(root, 'packages', 'cli', 'dist', 'src', 'index.js')
   const runtime = await import(pathToFileURL(runtimeEntry).href)
   const config = await runtime.readTokenlessConfig(homeDir)
-  if (config?.apiProxy?.executionMode !== 'browser') {
+  if (!Array.isArray(config?.apiProxy?.executionMode) || !config.apiProxy.executionMode.includes('browser')) {
     throw new Error('The DeepSeek Harness lane requires browser execution mode in the selected Tokenless API home.')
   }
   const daemonUrl = runtime.daemonUrl(explicitDaemonUrl ?? config.daemonUrl ?? undefined)
@@ -410,7 +410,9 @@ async function ensureHostDaemon(homeDir, explicitDaemonUrl) {
     homeDir,
     daemonUrl,
   })
-  return { ...daemon, executionMode: config.apiProxy.executionMode }
+  // This lane always drives providers through browser execution regardless of which
+  // other modes the config also allows; record the concrete mode it actually uses.
+  return { ...daemon, executionMode: 'browser' }
 }
 
 async function writeRunReport({
@@ -733,7 +735,9 @@ async function captureTokenlessConfigSnapshot(tokenlessHome, profile) {
       sanitizedSha256: sha256Value(canonicalJson(sanitized)),
       bytes: bytes.byteLength,
       redactedFields: redaction.count,
-      executionMode: typeof raw?.apiProxy?.executionMode === 'string' ? raw.apiProxy.executionMode : null,
+      executionMode: typeof raw?.apiProxy?.executionMode === 'string'
+        ? raw.apiProxy.executionMode
+        : Array.isArray(raw?.apiProxy?.executionMode) ? raw.apiProxy.executionMode.join(',') : null,
       router: safeRouterMetadata(raw?.router),
       browser: typeof raw?.browser === 'string' ? raw.browser : null,
       browserVisibility: typeof raw?.browserVisibility === 'string' ? raw.browserVisibility : null,

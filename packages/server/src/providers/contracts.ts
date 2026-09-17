@@ -75,8 +75,14 @@ export type ProviderActionPreparation<Action extends VisibleAction = VisibleActi
   value: JsonValue
 }>
 
+export type RespondingSignalKind = 'answer-growth' | 'busy-indicator' | 'generation-control' | 'provider-specific'
+
 export type ProviderActionObservation = Readonly<{
   state: 'pending' | 'ready'
+  signal?: Readonly<{
+    active: boolean
+    kind: RespondingSignalKind
+  }>
 }>
 
 export type AttachmentInput = {

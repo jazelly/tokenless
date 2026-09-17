@@ -58,7 +58,7 @@ import type { ResponseReadResult } from './actions.js'
 import type { VisibleActionResult } from './actions.js'
 import type { VisibleBlocker } from './actions.js'
 import type { NativeWorkspaceEnsureResult } from './actions.js'
-import type { ProviderActionPreparation } from '../providers/contracts.js'
+import type { ProviderActionPreparation, RespondingSignalKind } from '../providers/contracts.js'
 import type { ProviderCapacityProjection } from '../providers/rate-limit-policy.js'
 import type { BrowserContext, Page } from 'playwright-core'
 import type { G4fServiceClient } from '../providers/direct/g4f/client.js'
@@ -79,6 +79,9 @@ export type ManagedPlaywrightRunnerServiceOptions = {
   pollIdleMs?: number | undefined
   cancelPollMs?: number | undefined
   responseWaitPollMs?: number | undefined
+  responseWaitCeilingMs?: number | undefined
+  responseWaitQuietWindowMs?: number | undefined
+  responseWaitRenderGraceMs?: number | undefined
   userHandoverTimeoutMs?: number | undefined
   userHandoverPollMs?: number | undefined
   attachmentRootForJob?: ((job: DaemonJob) => string | undefined | Promise<string | undefined>) | undefined
@@ -144,6 +147,9 @@ type RunnerProvider = NonNullable<ReturnType<typeof getProviderInstanceById>>
 const DEFAULT_CANCEL_POLL_MS = 500
 const DEFAULT_POLL_IDLE_MS = 1_000
 const DEFAULT_RESPONSE_WAIT_POLL_MS = 250
+const DEFAULT_RESPONSE_WAIT_CEILING_MS = 240_000
+const DEFAULT_RESPONSE_WAIT_QUIET_WINDOW_MS = 20_000
+const DEFAULT_RESPONSE_WAIT_RENDER_GRACE_MS = 10_000
 const DEFAULT_USER_HANDOVER_TIMEOUT_MS = 10 * 60_000
 const DEFAULT_USER_HANDOVER_POLL_MS = 1_000
 const SAFE_JOB_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
@@ -154,6 +160,9 @@ export class ManagedPlaywrightRunnerService {
   private readonly pollIdleMs: number
   private readonly cancelPollMs: number
   private readonly responseWaitPollMs: number
+  private readonly responseWaitCeilingMs: number
+  private readonly responseWaitQuietWindowMs: number
+  private readonly responseWaitRenderGraceMs: number
   private readonly userHandoverTimeoutMs: number
   private readonly userHandoverPollMs: number
   private readonly attachmentRootForJob: ((job: DaemonJob) => string | undefined | Promise<string | undefined>) | undefined
@@ -205,6 +214,9 @@ export class ManagedPlaywrightRunnerService {
     this.pollIdleMs = normalizedPositiveInteger(options.pollIdleMs, DEFAULT_POLL_IDLE_MS)
     this.cancelPollMs = normalizedPositiveInteger(options.cancelPollMs, DEFAULT_CANCEL_POLL_MS)
     this.responseWaitPollMs = normalizedPositiveInteger(options.responseWaitPollMs, DEFAULT_RESPONSE_WAIT_POLL_MS)
+    this.responseWaitCeilingMs = normalizedPositiveInteger(options.responseWaitCeilingMs, DEFAULT_RESPONSE_WAIT_CEILING_MS)
+    this.responseWaitQuietWindowMs = normalizedPositiveInteger(options.responseWaitQuietWindowMs, DEFAULT_RESPONSE_WAIT_QUIET_WINDOW_MS)
+    this.responseWaitRenderGraceMs = normalizedPositiveInteger(options.responseWaitRenderGraceMs, DEFAULT_RESPONSE_WAIT_RENDER_GRACE_MS)
     this.userHandoverTimeoutMs = normalizedPositiveInteger(options.userHandoverTimeoutMs, DEFAULT_USER_HANDOVER_TIMEOUT_MS)
     this.userHandoverPollMs = normalizedPositiveInteger(options.userHandoverPollMs, DEFAULT_USER_HANDOVER_POLL_MS)
     const defaultAttachmentHomeDir = options.homeDir
@@ -1040,6 +1052,7 @@ export class ManagedPlaywrightRunnerService {
               visibleAnswerCount: 0,
               visibleBusyCount: 0,
               generationStopVisible: false,
+              observability: 'not_observable',
             },
           })
           state.preparation = null
@@ -1120,6 +1133,7 @@ export class ManagedPlaywrightRunnerService {
             visibleAnswerCount: 0,
             visibleBusyCount: 0,
             generationStopVisible: false,
+            observability: 'not_observable',
           },
         }),
       ]
@@ -1215,6 +1229,7 @@ export class ManagedPlaywrightRunnerService {
             visibleAnswerCount: 0,
             visibleBusyCount: 0,
             generationStopVisible: false,
+            observability: 'not_observable',
           },
         }),
       ]
@@ -1473,14 +1488,55 @@ export class ManagedPlaywrightRunnerService {
       clearBlocker: () => Promise<number>
     }
   ) {
+    const startedAt = Date.now()
+    let lastActiveAt = startedAt
+    let everActive = false
+    let lastSignalKind: RespondingSignalKind | 'none' = 'none'
     while (true) {
       throwIfStopped(options.signal, options.isCanceled)
       await options.clearBlocker()
       const page = getPage()
-      if ((await options.provider.observeAction(page, options.action, options.preparation)).state === 'ready') return
+      const observation = await options.provider.observeAction(page, options.action, options.preparation)
+      if (observation.state === 'ready') return
+      const now = Date.now()
+      if (observation.signal?.active) {
+        lastActiveAt = now
+        everActive = true
+        lastSignalKind = observation.signal.kind
+      }
+      const respondingState = respondingStateFromObservation({ now, startedAt, lastActiveAt, everActive, renderGraceMs: this.responseWaitRenderGraceMs, quietWindowMs: this.responseWaitQuietWindowMs })
+      if (now - startedAt >= this.responseWaitCeilingMs) {
+        throw tokenlessError('response_wait_ceiling_exceeded', 'response.read did not become ready before the absolute wait ceiling.', {
+          retryable: true,
+          details: {
+            respondingState,
+            lastSignalKind,
+            lastActiveAt: new Date(lastActiveAt).toISOString(),
+            quietMs: now - lastActiveAt,
+            waitedMs: now - startedAt,
+          },
+        })
+      }
       await delay(options.pollMs, options.signal)
     }
   }
+}
+
+type RespondingState = 'working' | 'stalled' | 'unknown'
+
+function respondingStateFromObservation(input: {
+  now: number
+  startedAt: number
+  lastActiveAt: number
+  everActive: boolean
+  renderGraceMs: number
+  quietWindowMs: number
+}): RespondingState {
+  const quietMs = input.now - input.lastActiveAt
+  if (!input.everActive) {
+    return input.now - input.startedAt >= input.renderGraceMs ? 'unknown' : 'working'
+  }
+  return quietMs >= input.quietWindowMs ? 'stalled' : 'working'
 }
 
 async function chromiumTargetId(browserContext: BrowserContext, page: Page) {

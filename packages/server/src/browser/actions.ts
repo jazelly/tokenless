@@ -659,6 +659,7 @@ export type ResponseDecisionDiagnostics = {
   visibleAnswerCount: number
   visibleBusyCount: number
   generationStopVisible: boolean
+  observability?: 'not_observable'
 }
 
 export type VisibleCitation = {

@@ -74,7 +74,7 @@
     daemonUrl: untrack(() => snapshot.config.daemonUrl ?? ''),
     defaultProfile: initialDefaultProfile,
     browserTabGc: untrack(() => ({ ...snapshot.config.browserTabGc })),
-    apiProxy: { enabled: false, executionMode: 'direct' },
+    apiProxy: { enabled: false, executionMode: ['direct'] },
     g4f: untrack(() => ({ ...snapshot.config.g4f })),
     directProvider: untrack(() => ({
       defaultBackend: snapshot.config.directProvider.defaultBackend,
@@ -211,6 +211,35 @@
     if (checked) modes.add(mode)
     else modes.delete(mode)
     draft.providerModes[providerId] = [...modes]
+  }
+
+  const ALL_EXECUTION_MODES: DashboardProviderExecutionMode[] = ['direct', 'browser']
+
+  // Enabled modes keep their relative order (the array order is the preference
+  // order: the first enabled mode wins whenever more than one would apply);
+  // disabled modes are listed after them so they can be re-enabled.
+  function orderedExecutionModes(): DashboardProviderExecutionMode[] {
+    const enabled = global.apiProxy.executionMode
+    return [...enabled, ...ALL_EXECUTION_MODES.filter((mode) => !enabled.includes(mode))]
+  }
+
+  function toggleApiProxyExecutionMode(mode: DashboardProviderExecutionMode, event: Event) {
+    const checked = (event.currentTarget as HTMLInputElement).checked
+    const current = global.apiProxy.executionMode
+    if (checked) {
+      if (!current.includes(mode)) global.apiProxy.executionMode = [...current, mode]
+    } else if (current.length > 1) {
+      global.apiProxy.executionMode = current.filter((existing) => existing !== mode)
+    }
+  }
+
+  function promoteApiProxyExecutionMode(mode: DashboardProviderExecutionMode) {
+    const current = global.apiProxy.executionMode
+    const index = current.indexOf(mode)
+    if (index <= 0) return
+    const next = [...current]
+    ;[next[index - 1], next[index]] = [next[index]!, next[index - 1]!]
+    global.apiProxy.executionMode = next
   }
 
   function addDirectProvider() {
@@ -409,7 +438,7 @@
       <div class="form-stack">
         <div class="field"><div class="field-label-row"><label for="config-daemon-url">{t('daemonUrl')}</label>{@render helpTooltip(t('daemonUrlHelp'))}</div><input id="config-daemon-url" bind:value={global.daemonUrl} placeholder="http://127.0.0.1:8787" autocomplete="off" spellcheck="false" data-testid="config-daemon-url" /></div>
         <div class="switch-field"><span><span class="switch-heading"><strong>{t('apiProxy')}</strong>{@render helpTooltip(t('apiProxyHelp'))}</span></span><label class="switch"><input type="checkbox" bind:checked={global.apiProxy.enabled} data-testid="config-api-proxy-enabled" /><span></span></label></div>
-        <div class="field"><div class="field-label-row"><label for="config-api-proxy-execution-mode">{t('executionMode')}</label></div><select id="config-api-proxy-execution-mode" bind:value={global.apiProxy.executionMode} data-testid="config-api-proxy-execution-mode"><option value="direct">direct</option><option value="browser">browser</option></select></div>
+        <div class="field"><div class="field-label-row"><span>{t('executionMode')}</span>{@render helpTooltip(t('executionModePreferenceHelp'))}</div><ol class="config-mode-order-list">{#each orderedExecutionModes() as mode, index (mode)}<li><label><input type="checkbox" checked={global.apiProxy.executionMode.includes(mode)} onchange={(event) => toggleApiProxyExecutionMode(mode, event)} data-testid={`config-api-proxy-execution-mode-${mode}`} />{mode === 'direct' ? t('directMode') : t('browserMode')}</label>{#if global.apiProxy.executionMode.includes(mode) && index > 0}<button type="button" class="icon-button" onclick={() => promoteApiProxyExecutionMode(mode)} title={t('promoteExecutionMode')} data-testid={`config-api-proxy-execution-mode-${mode}-up`}>↑</button>{/if}</li>{/each}</ol></div>
       </div>
     </section>
 

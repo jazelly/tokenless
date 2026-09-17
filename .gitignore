@@ -17,6 +17,8 @@ apps/macos-menu/.build/
 
 .env
 
+graphify-out/
+
 .workbuddy-ai/
 docs/
 !docs/

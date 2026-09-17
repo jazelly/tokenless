@@ -133,7 +133,7 @@ export class GitHubCopilotProvider extends BaseProvider<'github-copilot'> {
 
   protected override async observeResponseAction(page: Page, preparation: ProviderActionPreparation) {
     if (gitHubCopilotTask(page.url()) && !await page.locator('[class*="SessionHeader-module__statusIcon"]').last().locator('svg.octicon-check').count()) {
-      return { state: 'pending' as const }
+      return { state: 'pending' as const, signal: { active: true, kind: 'provider-specific' as const } }
     }
     return await super.observeResponseAction(page, preparation)
   }

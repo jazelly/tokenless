@@ -74,7 +74,7 @@ export type OutputSavingsConfig = {
 
 export type ApiProxyConfig = {
   enabled: boolean
-  executionMode: 'browser' | 'direct'
+  executionMode: readonly ProviderExecutionMode[]
 }
 
 export const PROVIDER_BACKENDS = Object.freeze(['native', 'g4f'] as const)
@@ -452,13 +452,20 @@ function emptyTokenlessConfig(): TokenlessConfig {
 }
 
 function defaultApiProxyConfig(): ApiProxyConfig {
-  return { enabled: false, executionMode: 'direct' }
+  return { enabled: false, executionMode: ['direct'] }
 }
 
-function isApiProxyConfig(value: unknown): value is ApiProxyConfig {
+function isExecutionModeArray(value: unknown): value is ProviderExecutionMode[] {
+  return Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((mode) => mode === 'browser' || mode === 'direct') &&
+    new Set(value).size === value.length
+}
+
+function isApiProxyConfig(value: unknown): value is { enabled: boolean, executionMode: ProviderExecutionMode[] } {
   return isJsonRecord(value) &&
     typeof value.enabled === 'boolean' &&
-    (value.executionMode === 'browser' || value.executionMode === 'direct')
+    isExecutionModeArray(value.executionMode)
 }
 
 function normalizeApiProxyConfig(value: unknown): ApiProxyConfig {
@@ -469,7 +476,7 @@ function normalizeApiProxyConfig(value: unknown): ApiProxyConfig {
 
 function validateApiProxyConfig(value: unknown): ApiProxyConfig {
   if (!isApiProxyConfig(value)) {
-    throw configError('tokenless_config_invalid', 'Invalid Tokenless API proxy configuration.')
+    throw configError('tokenless_config_invalid', 'Invalid Tokenless API proxy configuration; executionMode must be a non-empty array of unique values from "browser"/"direct".')
   }
   return { enabled: value.enabled, executionMode: value.executionMode }
 }

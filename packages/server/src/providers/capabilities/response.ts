@@ -57,16 +57,36 @@ export async function observeDomResponseAction(
 ): Promise<ProviderActionObservation> {
   const baseline = validateDomResponsePreparation(provider, preparation)
   const observation = await observeDomResponseCursor(provider, page)
-  if (!isReadyResponseObservation(observation, baseline)) return { state: 'pending' as const }
+  if (!isReadyResponseObservation(observation, baseline)) {
+    return { state: 'pending' as const, signal: await respondingSignal(provider, page, observation, baseline) }
+  }
   await page.waitForTimeout(RESPONSE_CONFIRMATION_WINDOW_MS)
   const confirmation = await observeDomResponseCursor(provider, page)
-  return {
-    state: isReadyResponseObservation(confirmation, baseline) &&
-      confirmation.answerCount === observation.answerCount &&
-      confirmation.latestAnswerFingerprint === observation.latestAnswerFingerprint
-      ? 'ready' as const
-      : 'pending' as const,
+  if (
+    isReadyResponseObservation(confirmation, baseline) &&
+    confirmation.answerCount === observation.answerCount &&
+    confirmation.latestAnswerFingerprint === observation.latestAnswerFingerprint
+  ) {
+    return { state: 'ready' as const }
   }
+  return { state: 'pending' as const, signal: await respondingSignal(provider, page, confirmation, baseline) }
+}
+
+async function respondingSignal(
+  provider: ProviderDomDefinition,
+  page: Page,
+  observation: ResponseCursorObservation,
+  baseline: { answerCount: number, latestAnswerFingerprint: string | null },
+): Promise<NonNullable<ProviderActionObservation['signal']>> {
+  if (observation.busy) return { active: true, kind: 'busy-indicator' }
+  const generationStopVisible = await page.locator(GENERATION_STOP_SELECTOR).filter({ visible: true }).first()
+    .isVisible({ timeout: 100 }).catch(() => false)
+  if (generationStopVisible) return { active: true, kind: 'generation-control' }
+  const answerDivergedFromBaseline = observation.answerCount > baseline.answerCount ||
+    (baseline.latestAnswerFingerprint !== null &&
+      observation.latestAnswerFingerprint !== null &&
+      observation.latestAnswerFingerprint !== baseline.latestAnswerFingerprint)
+  return { active: answerDivergedFromBaseline, kind: 'answer-growth' }
 }
 
 export async function observeDomResponseCompletion(provider: ProviderDomDefinition, page: Page, baseline: number) {

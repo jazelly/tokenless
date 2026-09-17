@@ -14,7 +14,7 @@ export function createPreviewState(language: Language, designState: DesignState,
   }
   let snapshot = $state(initial)
   let toast = $state('')
-  let apiProxy = $state<DashboardConfigDocument['apiProxy']>({ enabled: false, executionMode: 'direct' })
+  let apiProxy = $state<DashboardConfigDocument['apiProxy']>({ enabled: false, executionMode: ['direct'] })
 
   function notify(message: string) { toast = message }
   const unavailable = async (): Promise<never> => {

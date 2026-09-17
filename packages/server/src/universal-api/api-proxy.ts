@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import { readTokenlessConfig, type ProviderBackend } from '../persistence/config.js'
+import type { ProviderExecutionMode } from '../providers/provider-identity.js'
 import {
   createManagedPlaywrightJobRequest,
   type ManagedPlaywrightRoutingExclusion,
@@ -258,9 +259,9 @@ export class ApiProxyAdapter {
     const requestBody = plainRecord(body)
     const model = providerFromModel(requestBody.model)
     const options = normalizeTokenlessOptions(requestBody.tokenless, model.auto)
-    const executionMode = options.executionMode ?? config.apiProxy.executionMode
+    const allowedModes = allowedExecutionModes(config, options.executionMode)
     const previous = previousResponse(requestBody.previous_response_id, this.store)
-    if (previous) assertPreviousResponseRoute(previous, model.provider, String(requestBody.model), executionMode)
+    if (previous) assertPreviousResponseRoute(previous, model.provider, String(requestBody.model), allowedModes)
     const prepared = normalizeOpenAiResponsesRequest(requestBody, previous, createOpenAiResponseId())
     const completion = await this.completeRequest(config, prepared.request, signal, {
       responseId: prepared.responseId,
@@ -293,14 +294,14 @@ export class ApiProxyAdapter {
     const requestBody = plainRecord(body)
     const model = providerFromModel(requestBody.model)
     const options = normalizeTokenlessOptions(requestBody.tokenless, model.auto)
-    const executionMode = options.executionMode ?? config.apiProxy.executionMode
+    const allowedModes = allowedExecutionModes(config, options.executionMode)
     const configuredBackend = options.providerBackend
       ?? config.directProvider.providerBackends[model.provider]
       ?? config.directProvider.defaultBackend
     if (
       requestBody.previous_response_id !== undefined
       && requestBody.previous_response_id !== null
-      && executionMode === 'direct'
+      && allowedModes.includes('direct')
       && configuredBackend === 'g4f'
     ) {
       throw new ApiProxyError(
@@ -315,7 +316,7 @@ export class ApiProxyAdapter {
       previous,
       model.provider,
       String(requestBody.model),
-      executionMode,
+      allowedModes,
     )
     const prepared = normalizeOpenAiResponsesRequest(requestBody, previous, createOpenAiResponseId())
     return await this.openG4fStream(config, prepared.request, 'responses', signal)
@@ -344,12 +345,16 @@ export class ApiProxyAdapter {
       )
     }
 
-    const executionMode = request.executionMode ?? config.apiProxy.executionMode
+    // A response continuation without an explicit override must keep using the same
+    // execution mode it started on, so it can never silently switch mid-conversation.
+    const allowedModes = responseContext?.previous && request.executionMode === null
+      ? [responseContext.previous.execution_mode]
+      : allowedExecutionModes(config, request.executionMode)
     const modeEnabledProviders = enabledProviders.filter((provider) => (
-      config.profiles[profile.slug]?.providerModes[provider]?.includes(executionMode)
+      config.profiles[profile.slug]?.providerModes[provider]?.some((mode) => allowedModes.includes(mode))
     ))
     if (!request.auto && !modeEnabledProviders.includes(request.provider)) {
-      throw new ApiProxyError(503, 'model_not_available', `${executionMode === 'browser' ? 'Browser' : 'Direct'} mode is disabled for ${request.provider} in this profile.`, 'model')
+      throw new ApiProxyError(503, 'model_not_available', `No allowed execution mode (${allowedModes.join('/')}) is enabled for ${request.provider} in this profile.`, 'model')
     }
     const autoResolution: AutoRouteResolution = request.auto
       ? request.toolProtocol
@@ -373,6 +378,12 @@ export class ApiProxyAdapter {
     const selectedRequest = selectedRoute
       ? { ...request, provider: selectedRoute.provider, upstreamModel: '' }
       : request
+    // Resolve the single concrete mode now that the target provider is known, preferring
+    // allowedModes order and restricted to what that provider actually supports.
+    const executionMode = resolveExecutionMode(
+      allowedModes,
+      config.profiles[profile.slug]?.providerModes[selectedRequest.provider],
+    ) ?? allowedModes[0]!
     const providerBackend = executionMode === 'direct'
       ? this.protocolRouter.backend(config.directProvider, selectedRequest.provider, selectedRequest.providerBackend ?? undefined)
       : 'browser'
@@ -556,8 +567,8 @@ export class ApiProxyAdapter {
     endpoint: 'chat' | 'responses',
     signal?: AbortSignal,
   ): Promise<Response | null> {
-    const executionMode = request.executionMode ?? config.apiProxy.executionMode
-    if (executionMode !== 'direct') return null
+    const allowedModes = allowedExecutionModes(config, request.executionMode)
+    if (!allowedModes.includes('direct')) return null
     if (request.auto) {
       assertAutoRequestScope(config, request)
       return null
@@ -574,9 +585,11 @@ export class ApiProxyAdapter {
         'model',
       )
     }
-    if (!config.profiles[profile.slug]?.providerModes[request.provider]?.includes('direct')) {
+    const providerSupportedModes = config.profiles[profile.slug]?.providerModes[request.provider]
+    if (!providerSupportedModes?.includes('direct')) {
       throw new ApiProxyError(503, 'model_not_available', `Direct mode is disabled for ${request.provider} in this profile.`, 'model')
     }
+    if (resolveExecutionMode(allowedModes, providerSupportedModes) !== 'direct') return null
     const providerBackend = this.protocolRouter.backend(
       config.directProvider,
       request.provider,
@@ -831,6 +844,23 @@ function routingWithJobIds(
   return { ...routing, jobIds: merged }
 }
 
+/** The execution modes a request may resolve to: an explicit per-request override, or the configured default set. */
+function allowedExecutionModes(
+  config: Awaited<ReturnType<typeof readTokenlessConfig>>,
+  explicitMode: ProviderExecutionMode | null,
+): readonly ProviderExecutionMode[] {
+  return explicitMode ? [explicitMode] : config.apiProxy.executionMode
+}
+
+/** Picks one concrete mode from the allowed set, preferring the config/request order, restricted to what the target actually supports. */
+function resolveExecutionMode(
+  allowedModes: readonly ProviderExecutionMode[],
+  supportedModes: readonly ProviderExecutionMode[] | undefined,
+): ProviderExecutionMode | null {
+  if (!supportedModes) return allowedModes[0] ?? null
+  return allowedModes.find((mode) => supportedModes.includes(mode)) ?? null
+}
+
 function assertProviderSupported(provider: string) {
   const instance = getProviderInstanceById(provider)
   if (!instance || instance.descriptor.stage === 'disabled') {
@@ -842,8 +872,8 @@ function assertAutoRequestScope(
   config: Awaited<ReturnType<typeof readTokenlessConfig>>,
   request: NormalizedRequest,
 ) {
-  const executionMode = request.executionMode ?? config.apiProxy.executionMode
-  if (executionMode !== 'browser' || request.providerBackend !== null || request.authContextId !== null) {
+  const modes = allowedExecutionModes(config, request.executionMode)
+  if (!modes.includes('browser') || request.providerBackend !== null || request.authContextId !== null) {
     throw new ApiProxyError(
       400,
       'auto_execution_mode_unsupported',
@@ -1523,10 +1553,11 @@ function assertPreviousResponseRoute(
   entry: ApiResponseLedgerEntry,
   provider: string,
   model: string,
-  executionMode: 'browser' | 'direct',
+  allowedModes: readonly ProviderExecutionMode[],
 ) {
-  if (provider === 'auto' && entry.model === model && entry.execution_mode === executionMode) return
-  if (entry.provider === provider && entry.model === model && entry.execution_mode === executionMode) return
+  const modeStillAllowed = allowedModes.includes(entry.execution_mode)
+  if (provider === 'auto' && entry.model === model && modeStillAllowed) return
+  if (entry.provider === provider && entry.model === model && modeStillAllowed) return
   throw new ApiProxyError(
     400,
     'response_route_mismatch',
