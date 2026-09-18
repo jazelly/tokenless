@@ -165,6 +165,8 @@ Real visible rate-limit observations already stored on jobs temporarily remove t
 
 For a private provider-turn continuation, `tokenless/auto` keeps the settled provider conversation and exact mapping as the primary target. Only the exact portable action sequence `file.upload` → `prompt.input` → `prompt.submit` → `response.read` may carry currently eligible auto alternatives from provider-home targets; `conversation.continue` routes and nonportable actions do not receive fallback alternatives. An exact provider binding remains pinned with no fallback.
 
+Set `tokenless.profile` to select a configured managed profile for the request; omitting it uses the configured default profile.
+
 An OpenAI `tokenless/auto` request may include an advisory `tokenless.semantic_preference` provider id:
 
 ```json
@@ -295,7 +297,9 @@ Structured JSON numbers must be finite and use the unique spelling returned by `
 `POST /v1/responses` and `/v1/openai/responses` map the current official [function-calling](https://developers.openai.com/api/docs/guides/function-calling) and [Responses create](https://developers.openai.com/api/reference/resources/responses/methods/create) shapes onto the same Tokenless validation and provider turn as Chat Completions.
 
 - `input` accepts a non-empty string or up to 256 text items: user/system/developer/assistant messages, Tokenless output `message` items, `function_call`, and string `function_call_output`.
-- Function tools are flat: `{type, name, description?, parameters, strict?}`. `tool_choice` is `auto`, `none`, `required`, or `{type:"function",name}`.
+- Function tools are flat: `{type, name, description?, parameters, strict?}`. `tool_choice` is `auto`, `none`, `required`, or `{type:"function",name}`. Non-function tool entries (for example Codex CLI's `namespace` and `web_search` tools) are ignored.
+- `instructions` (Codex CLI) is honored as the leading system message. Codex-reported extra fields (`reasoning`, `include`, `prompt_cache_key`, `client_metadata`) are accepted and ignored.
+- `store` must be a boolean and defaults to `true`. `store: false` omits this Response from the local ledger, so its id cannot be used for `previous_response_id` continuation; full-input replay remains available. It does not disable ordinary job history, control provider website retention, or configure prompt caching.
 - `text.format` accepts `text`, `json_object`, or flat `json_schema` with the same published schema subset above.
 - Tokenless validates every declared name, strict argument, unique `call_id`, and complete call/output pairing before provider submission. It never executes caller tools.
 
@@ -311,6 +315,8 @@ Continue in either official form:
 The ledger does not persist tool definitions. Both forms validate history against the `tools` catalog in the current request.
 
 The local ledger stores canonical public transcript items in `tokenless.sqlite3` without expiry or count eviction. Unknown ids return `response_not_found`; a daemon restart does not erase a known response. It stores no credentials, browser session, hidden reasoning, or fabricated opaque item. Changing provider, exact model, or execution mode returns `response_route_mismatch` before submission. This prompt-emulated route produces no provider opaque/reasoning items, so unknown reasoning or opaque replay fails with `unverifiable_replay_item`.
+
+Manual real-provider acceptance: configure `TOKENLESS_TEST_HOME` in repository `.env`, enable that home's API proxy, start the matching packaged daemon, then set `TOKENLESS_LIVE_RESPONSES_STORE=1` and run `node --test test/live-responses-store.e2e.mjs`. The gate reuses the default profile and submits four real browser conversation requests.
 
 For `tokenless/auto`, a portable ledger continuation may select another eligible provider on the next caller turn. Exact provider models remain hard provider/model/execution affine.
 
@@ -329,7 +335,7 @@ Responses V1 intentionally excludes Conversations, background mode, WebSockets, 
 }
 ```
 
-Roles in `messages`: `user`, `assistant` only. The system prompt goes in the top-level `system` field, as in the real API.
+Roles in `messages`: `user`, `assistant`, and `system`. A `system`-role message is folded into the leading system prompt; the top-level `system` field remains the canonical place for it, as in the real API. Anthropic `tools` and `tool_choice` are accepted and ignored; Anthropic tool use stays unadvertised.
 
 ### Content blocks
 
@@ -538,7 +544,7 @@ The status is the signal to branch on. Read `code` for the specific cause and tr
 | --- | --- | --- | --- |
 | 400 | `invalid_request_error` | Malformed body, tool catalog, tool choice, response format/schema, arguments, or unpaired history | No — fix the request |
 | 400 | `invalid_json` | Body is empty or not JSON | No |
-| 400 | `unsupported_parameter` | Legacy `functions` / `function_call`, or Anthropic tools/structured output | No |
+| 400 | `unsupported_parameter` | Legacy `functions` / `function_call`, or Anthropic structured output | No |
 | 400 | `auto_execution_mode_unsupported` / `auto_dialect_unsupported` | Auto was asked to use direct/provider-local/Anthropic state | No — use the documented OpenAI browser scope |
 | 401 | `control_auth_missing` | No bearer token | No |
 | 403 | `control_auth_rejected` | Wrong bearer token | No |

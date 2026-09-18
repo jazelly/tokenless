@@ -1,3 +1,4 @@
+import { firstVisibleLocator } from './dom-locators.js'
 import { VISIBLE_ACTIONS } from './contracts.js'
 import { ProviderCapabilityFailure, ProviderCapabilitySet } from './capability-set.js'
 import { isVisibleAction } from './action-catalog.js'

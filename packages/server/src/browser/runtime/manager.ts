@@ -953,6 +953,7 @@ async function runCommand(
   return await new Promise<{ stdout: string; stderr: string }>((resolvePromise, reject) => {
     const child = spawn(command, [...args], {
       stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
       ...(options.env ? { env: options.env } : {}),
     })
     const stdout: Buffer[] = []

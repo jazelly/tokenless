@@ -20,6 +20,12 @@ Use real Harbor, Tokenless API, and provider boundaries for benchmark evidence. 
 
 Do not claim a benchmark score from an interrupted, infrastructure-blocked, or incomplete run. Keep the official Harbor verifier result separate from routing observations, and retain failed-run evidence for diagnosis.
 
+Record requested and observed model and effort separately at the actual provider submission boundary. Preserve visible aliases such as `Latest` without inventing an underlying model ID. Missing observations require an explicit reason and must not be presented as a verified model configuration.
+
+Keep official task outcomes, recording completeness, and model-comparison eligibility separate. Record tool proposals separately from observed execution results; timing must identify the boundary actually measured. Native billing usage must remain unavailable when the provider does not expose it, rather than being replaced with token estimates.
+
+Capture the execution source and runtime identities before the run. Preserve a hash inventory of the resulting evidence and task artifacts. Never substitute the current checkout or current browser controls for the state of an earlier run.
+
 Generate `observations/<job-name>/run-observation.json` only through the harness collector and validate it against the tracked `observation.schema.json`. The observation must remain a deterministic metadata-only projection of the matching result and audit files, include their relative paths and SHA-256 digests, and never rely on an AI-authored summary. Keep official rewards, routing outcomes, timing, token estimates, and their limitations explicit and separate.
 
 ## Serial execution

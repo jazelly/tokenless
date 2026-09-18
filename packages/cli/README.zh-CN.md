@@ -16,32 +16,29 @@ Tokenless Web Harness 的 CLI 与本地 API 入口，让你已有的网页大模
 
 ## Provider 清单
 
-当前目录共 43 个 provider：15 个浏览器条目，以及 28 个仅 Direct 模式的条目。
+当前目录共 40 个 provider：18 个浏览器条目，其中 16 个有任务路由，以及 22 个仅 Direct 模式的条目。
 
 - **已支持的浏览器路由**：ChatGPT、Claude、Gemini、Grok、Arena。
-- **实验性浏览器路由**：Qwen / 千问、DeepSeek、Perplexity、Z.ai / GLM、Doubao / 豆包、Kimi、Dola、Meta AI、GitHub Copilot。
-- **待验证**：Microsoft Copilot。
+- **实验性浏览器路由**：Qwen / 千问、DeepSeek、Perplexity、Z.ai / GLM、Doubao / 豆包、Kimi、Dola、Meta AI、GitHub Copilot、Lovable、Monica。
+- **尚无任务路由的浏览器条目**：Microsoft Copilot、HuggingChat。
 
 <details>
-<summary>查看 28 个仅 Direct 模式的 provider</summary>
+<summary>查看 22 个仅 Direct 模式的 provider</summary>
 
-以下为实验性 G4F 映射；目录登记不等于已通过逐项真实运行验证。另有 12 个浏览器 provider 也注册了 Direct 入口，共 40 个 Direct 映射。
+以下为实验性 G4F 映射；目录登记不等于已通过逐项真实运行验证。另有 13 个浏览器 provider 也注册了 Direct 入口，共 35 个 Direct 映射。
 
 | Provider | ID | Provider | ID |
 | --- | --- | --- | --- |
-| Black Forest Labs | `black-forest-labs` | Blackbox AI | `blackbox` |
-| Cerebras | `cerebras` | Cloudflare AI | `cloudflare` |
-| Cohere | `cohere` | DeepInfra | `deepinfra` |
-| ElevenLabs | `elevenlabs` | Fenay AI | `fenay-ai` |
-| GLHF | `glhf` | Groq | `groq` |
-| Hugging Face | `hugging-face` | MiniMax | `minimax` |
+| Black Forest Labs | `black-forest-labs` | Cerebras | `cerebras` |
+| Cloudflare AI | `cloudflare` | Cohere | `cohere` |
+| DeepInfra | `deepinfra` | ElevenLabs | `elevenlabs` |
+| Groq | `groq` | MiniMax | `minimax` |
 | NVIDIA | `nvidia` | Ollama | `ollama` |
 | OpenRouter | `openrouter` | Opera Aria | `opera-aria` |
 | Phind AI | `phind` | Pi | `pi` |
-| Pollinations | `pollinations` | Puter | `puter` |
-| Replicate | `replicate` | Sber GigaChat | `gigachat` |
-| Stability AI | `stability-ai` | Teach Anything | `teach-anything` |
-| TheB.AI | `theb-ai` | Together AI | `together` |
+| Pollinations | `pollinations` | Replicate | `replicate` |
+| Sber GigaChat | `gigachat` | Stability AI | `stability-ai` |
+| Teach Anything | `teach-anything` | Together AI | `together` |
 | WhiteRabbitNeo | `whiterabbitneo` | YQCloud | `yqcloud` |
 
 </details>
@@ -200,9 +197,17 @@ Tokenless profile 只组织 provider tab 与配置，不创建独立 browser ide
 
 Managed runtime 会把不同 provider 和稳定的 task identity 保持在独立 tab 中。重新进入相同 project 或 conversation task 会返回原来的 tab；替换它需要通过 local job API 显式设置 `pagePolicy: replace`。
 
-Page Ref 是地址，不是执行锁：Tokenless API 允许并发使用同一 profile 和 Page Ref，conversation 顺序由 Tokenless Harness 控制。操作结束后 provider tab 保持打开，不按空闲时间自动过期。
+Page Ref 是地址，不是执行锁：Tokenless API 允许并发使用同一 profile 和 Page Ref，conversation 顺序由 Tokenless Harness 控制。完整读取回答后，自有工作标签页可进入空闲回收，具体限制见下文。
 
 ## Browser 与本地 Runtime
+
+Tokenless API 每 **15 秒**检查一次，回收**连续空闲 120 秒**的自有工作标签页。每个 profile 最多 **8 个工作标签页**：达到上限时提前回收最早空闲的页面；全部忙碌或保留时拒绝新建页面。
+
+- 活跃任务、生成、未发送草稿、上传及无法确认状态的页面保持保护。保留中的工作页会持续复查，确认完成后可重新进入 idle。显式打开的用户页面仍不参与回收。
+- 再次使用空闲页会重置计时。回收后，以相同 task ID（未提供时使用 Page Ref）正常续聊，会重新打开已保存的 provider 对话链接。
+- 在 **System** 或持久化 `config.json` 中设置 `browserTabGc`：`idleTimeoutSeconds`、`sweepIntervalSeconds`。活跃工作标签页没有数量上限。System 显示 busy/idle 数量和回收计数；计数随 daemon 重启清零。
+
+回收器运行在 daemon 内，适用于 headed 和 headless 托管 context。它关闭标签页、保留常驻浏览器，不删除对话历史。所有已运行的注册 profile 都会自动接管，无需启动或重启浏览器。本地 target ID 归属文件让工作页在 daemon 重启后恢复监管；旧页面只有在完整 URL 匹配持久化任务对话时才接回。回答或用户活动变化会重置 idle 计时。System 显示浏览器实际页面数、未接管 / 用户页面数及 profile 连接失败；无法确认的页面保留并计入清单。
 
 Native mode 只支持 headed，因为它控制用户已打开的 Chrome 或 Brave。停止或重启 daemon 只会断开 Playwright，不会关闭所选浏览器。
 

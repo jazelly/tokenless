@@ -43,6 +43,7 @@
     browserExecutablePath: string
     daemonUrl: string
     defaultProfile: string
+    browserTabGc: DashboardConfigDocument['browserTabGc']
     apiProxy: DashboardConfigDocument['apiProxy']
     g4f: DashboardConfigDocument['g4f']
     directProvider: DashboardConfigDocument['directProvider']
@@ -72,7 +73,8 @@
     browserExecutablePath: '',
     daemonUrl: untrack(() => snapshot.config.daemonUrl ?? ''),
     defaultProfile: initialDefaultProfile,
-    apiProxy: { enabled: false, executionMode: 'direct' },
+    browserTabGc: untrack(() => ({ ...snapshot.config.browserTabGc })),
+    apiProxy: { enabled: false, executionMode: ['direct'] },
     g4f: untrack(() => ({ ...snapshot.config.g4f })),
     directProvider: untrack(() => ({
       defaultBackend: snapshot.config.directProvider.defaultBackend,
@@ -118,6 +120,7 @@
     global.browserExecutablePath = document.browserExecutablePath ?? ''
     global.daemonUrl = document.daemonUrl ?? ''
     global.defaultProfile = document.defaultProfile ?? ''
+    global.browserTabGc = { ...document.browserTabGc }
     global.apiProxy = { ...document.apiProxy }
     global.g4f = { ...document.g4f }
     global.directProvider = {
@@ -166,6 +169,7 @@
         defaultBackend: global.directProvider.defaultBackend,
         providerBackends: { ...global.directProvider.providerBackends },
       },
+      browserTabGc: { ...global.browserTabGc },
       router: cloneRouter(global.router),
     }
     try {
@@ -207,6 +211,35 @@
     if (checked) modes.add(mode)
     else modes.delete(mode)
     draft.providerModes[providerId] = [...modes]
+  }
+
+  const ALL_EXECUTION_MODES: DashboardProviderExecutionMode[] = ['direct', 'browser']
+
+  // Enabled modes keep their relative order (the array order is the preference
+  // order: the first enabled mode wins whenever more than one would apply);
+  // disabled modes are listed after them so they can be re-enabled.
+  function orderedExecutionModes(): DashboardProviderExecutionMode[] {
+    const enabled = global.apiProxy.executionMode
+    return [...enabled, ...ALL_EXECUTION_MODES.filter((mode) => !enabled.includes(mode))]
+  }
+
+  function toggleApiProxyExecutionMode(mode: DashboardProviderExecutionMode, event: Event) {
+    const checked = (event.currentTarget as HTMLInputElement).checked
+    const current = global.apiProxy.executionMode
+    if (checked) {
+      if (!current.includes(mode)) global.apiProxy.executionMode = [...current, mode]
+    } else if (current.length > 1) {
+      global.apiProxy.executionMode = current.filter((existing) => existing !== mode)
+    }
+  }
+
+  function promoteApiProxyExecutionMode(mode: DashboardProviderExecutionMode) {
+    const current = global.apiProxy.executionMode
+    const index = current.indexOf(mode)
+    if (index <= 0) return
+    const next = [...current]
+    ;[next[index - 1], next[index]] = [next[index]!, next[index - 1]!]
+    global.apiProxy.executionMode = next
   }
 
   function addDirectProvider() {
@@ -385,13 +418,27 @@
       </div>
       <div class="field config-default-profile"><div class="field-label-row"><label for="config-default-profile-control">{t('defaultProfile')}</label></div><select id="config-default-profile-control" bind:value={global.defaultProfile} data-testid="config-default-profile-control"><option value="">{t('none')}</option>{#each snapshot.profiles as profile (profile.slug)}<option value={profile.slug}>{profile.slug}</option>{/each}</select></div>
     </section>
+      <section class="settings-section system-card" data-testid="browser-tab-gc">
+        <div class="settings-section-title"><div><h2>{t('tabGc')}</h2></div>{@render helpTooltip(t('tabGcHelp'))}</div>
+        <div class="form-stack">
+        <div class="field"><label for="gc-idle">{t('tabGcIdle')}</label><input id="gc-idle" type="number" min="1" step="1" bind:value={global.browserTabGc.idleTimeoutSeconds} /></div>
+        <div class="field"><label for="gc-sweep">{t('tabGcSweep')}</label><input id="gc-sweep" type="number" min="1" step="1" bind:value={global.browserTabGc.sweepIntervalSeconds} /></div>
+        </div>
+        {#if snapshot.runtime.tabGc}
+          {@const gc = snapshot.runtime.tabGc}
+          <p class="form-note" data-testid="tab-gc-counters">{t('tabGcReused')}: {gc.idleReuses} · {t('tabGcExpired')}: {gc.expired} · {t('tabGcReopened')}: {gc.reopenedSoon} · {t('tabGcFailures')}: {gc.closeFailures}</p>
+          {#each gc.profiles as profile (profile.profileId)}
+            <div class="settings-row"><span>{profile.profileId} · {profile.status ?? 'attached'}{profile.errorCode ? ` · ${profile.errorCode}` : ''}</span><strong>{t('tabGcObserved')}: {profile.totalPages ?? '—'} · {t('tabGcUntracked')}: {profile.untrackedPages ?? '—'} · {t('tabGcBusy')}: {profile.busyPages} · idle: {profile.idlePages} · {t('tabGcTotal')}: {profile.workPages}</strong></div>
+          {/each}
+        {/if}
+      </section>
 
     <section class="settings-section system-card">
       <div class="settings-section-title"><div><h2>{t('connection')}</h2></div>{@render helpTooltip(t('connectionHelp'))}</div>
       <div class="form-stack">
         <div class="field"><div class="field-label-row"><label for="config-daemon-url">{t('daemonUrl')}</label>{@render helpTooltip(t('daemonUrlHelp'))}</div><input id="config-daemon-url" bind:value={global.daemonUrl} placeholder="http://127.0.0.1:8787" autocomplete="off" spellcheck="false" data-testid="config-daemon-url" /></div>
         <div class="switch-field"><span><span class="switch-heading"><strong>{t('apiProxy')}</strong>{@render helpTooltip(t('apiProxyHelp'))}</span></span><label class="switch"><input type="checkbox" bind:checked={global.apiProxy.enabled} data-testid="config-api-proxy-enabled" /><span></span></label></div>
-        <div class="field"><div class="field-label-row"><label for="config-api-proxy-execution-mode">{t('executionMode')}</label></div><select id="config-api-proxy-execution-mode" bind:value={global.apiProxy.executionMode} data-testid="config-api-proxy-execution-mode"><option value="direct">direct</option><option value="browser">browser</option></select></div>
+        <div class="field"><div class="field-label-row"><span>{t('executionMode')}</span>{@render helpTooltip(t('executionModePreferenceHelp'))}</div><ol class="config-mode-order-list">{#each orderedExecutionModes() as mode, index (mode)}<li><label><input type="checkbox" checked={global.apiProxy.executionMode.includes(mode)} onchange={(event) => toggleApiProxyExecutionMode(mode, event)} data-testid={`config-api-proxy-execution-mode-${mode}`} />{mode === 'direct' ? t('directMode') : t('browserMode')}</label>{#if global.apiProxy.executionMode.includes(mode) && index > 0}<button type="button" class="icon-button" onclick={() => promoteApiProxyExecutionMode(mode)} title={t('promoteExecutionMode')} data-testid={`config-api-proxy-execution-mode-${mode}-up`}>↑</button>{/if}</li>{/each}</ol></div>
       </div>
     </section>
 

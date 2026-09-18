@@ -266,6 +266,17 @@ test('persistent config is the single source for profile identity and settings',
     assert.equal(current.defaultProfile, 'default')
     assert.deepEqual(Object.keys(current.profiles), ['default', 'work'])
     assert.equal(current.profiles.default.runtimeBinding, undefined)
+    await runtime.upsertTokenlessProfileConfig({
+      homeDir,
+      slug: 'work',
+      profile: { ...current.profiles.work, profileColor: '#0b57d0' },
+    })
+    assert.equal((await runtime.readTokenlessConfig(homeDir)).profiles.work.profileColor, '#0B57D0')
+    await assert.rejects(runtime.upsertTokenlessProfileConfig({
+      homeDir,
+      slug: 'work',
+      profile: { ...current.profiles.work, profileColor: 'blue' },
+    }), /expected #RRGGBB/)
     assert.equal((await registry.resolveProfile('work')).slug, 'work')
     const persisted = JSON.parse(fs.readFileSync(configPath, 'utf8'))
     assert.deepEqual(Object.keys(persisted.profiles), ['default', 'work'])

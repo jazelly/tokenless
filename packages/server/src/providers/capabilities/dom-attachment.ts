@@ -88,6 +88,13 @@ async function uploadFiles(
 ): Promise<FileUploadResult> {
   const attachments = value.map((attachment) => validateAttachmentInput(attachment))
   const files = await Promise.all(attachments.map((attachment) => resolveAttachmentPayload(context.attachmentRoot, attachment)))
+  // Agnes accepts text files but rejects the .md extension. Preserve Markdown bytes.
+  const visibleAttachments = attachments.map((attachment, index) => {
+    if (provider.descriptor.id !== 'agnes' || extname(attachment.name).toLowerCase() !== '.md') return attachment
+    const name = `${basename(attachment.name, extname(attachment.name))}.txt`
+    files[index] = { ...files[index]!, name, mimeType: 'text/plain' }
+    return { ...attachment, name, type: 'text/plain' }
+  })
   if (provider.descriptor.id === 'qwen') {
     await clearQwenPendingSameFileCards(
       page,
@@ -122,7 +129,7 @@ async function uploadFiles(
       { retryable: false },
     )
   }
-  const visibleEvidenceBeforeUpload = await visibleAttachmentEvidence(page, provider, attachments)
+  const visibleEvidenceBeforeUpload = await visibleAttachmentEvidence(page, provider, visibleAttachments)
   if (chooser) {
     await chooser.setFiles(files)
   } else if (fileInput) {
@@ -131,7 +138,7 @@ async function uploadFiles(
   const acceptedProof = await waitForVisibleAttachmentProof(
     page,
     provider,
-    attachments,
+    visibleAttachments,
     visibleEvidenceBeforeUpload,
     context.signal,
   )
@@ -573,6 +580,7 @@ async function visibleAttachmentEvidence(
       'li',
       '[data-default-action="true"] button[aria-label]',
       ...(providerId === 'meta' ? ['[class~="group/attachment-tile"]'] : []),
+      ...(providerId === 'agnes' ? ['[class*="pcComponents_fileCompact__"]'] : []),
       ...(providerId === 'zai' ? ['.chip-scroll > button'] : []),
       ...(providerId === 'github-copilot' ? ['form [role="toolbar"][aria-label="Attachments"] [class*="ReferenceToken-module__name__"]'] : []),
     ]

@@ -56,7 +56,7 @@ export function compileHarnessSystemPrompt({
   const outputContract = finalOutput.kind === 'markdown'
     ? 'Return the final user-facing answer as Markdown in the `output` string.'
     : [
-        'Return JSON serialized into the `output` string and make it satisfy this JSON Schema:',
+        'Return a JSON value in `output` that satisfies this JSON Schema. A strict JSON string containing that value is also accepted and normalized:',
         fencedJson(finalOutput.schema),
       ].join('\n')
 
@@ -106,6 +106,7 @@ export function compileHarnessSystemPrompt({
     '</TOKENLESS_HARNESS_RESPONSE>',
     '',
     'For more work, return this exact top-level shape:',
+    'Every action_batch must include all three arrays skillLoads, calls, and needs. Use [] for any array with no entries; never omit one of these keys.',
     '',
     fencedJson({
       protocol: WEB_AGENT_PROTOCOL,
@@ -140,7 +141,7 @@ export function compileHarnessSystemPrompt({
       artifacts: [],
     }),
     '',
-    'All ids must be unique within the envelope. Dependencies must reference call ids in the same batch and must be acyclic. Arguments must satisfy the advertised input schema.',
+    'All ids are scoped to the current envelope and must be unique within it. Dependencies must reference call ids in the same batch and must be acyclic; never reference a call id from a previous turn. The call and need ids inside action_batch_result are result identities, not dependencies for the next batch. After a continuation, return only the next required call(s), assign each a new id, do not repeat a completed call, and use dependsOn:[] when the next call has no same-batch dependency. Arguments must satisfy the advertised input schema.',
     'Never return an empty action_batch. If no Skill, tool call, or user input is needed, return a final response instead.',
     '',
     '## Harness result continuation',

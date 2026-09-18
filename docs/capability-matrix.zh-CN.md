@@ -49,24 +49,26 @@ Provider selection 前会展开所有 implication。同一家 provider 必须满
 
 下表概括 checked-in routes；CLI 输出是当前列表的权威来源。
 
-| Canonical capability | ChatGPT | Claude | Gemini | Grok | Qwen | DeepSeek | Perplexity | Z.ai | Doubao | Kimi | Dola | Arena | Meta AI |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `conversation.chat` | Supported | Supported | Supported | Supported | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | Supported | Experimental |
-| `conversation.continue` | — | — | — | — | — | — | — | — | — | — | — | Supported | — |
-| `model.compare` | — | — | — | — | — | — | — | — | — | — | — | Supported | — |
-| `agent.execute` | — | — | — | — | — | — | — | — | — | — | — | — | — |
-| `file.upload`（transport） | Supported | Supported | Experimental | Supported | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental |
-| `document.input` | Supported | Supported | Experimental | Supported | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | — | Experimental |
-| `image.input` | — | — | — | — | — | — | — | — | — | — | — | Experimental | — |
-| `audio.input` | — | — | — | — | — | — | — | — | — | — | — | — | — |
-| `video.input` | — | — | — | — | — | — | — | — | — | — | — | — | — |
-| `image.generation` | Experimental | — | Experimental | Experimental | — | — | — | — | Experimental | — | — | Experimental | Experimental |
-| `image.edit` | — | — | — | — | — | — | — | — | — | — | — | Experimental | — |
-| `artifact.download` | Experimental | — | Experimental | Experimental | — | — | — | — | Experimental | — | — | Experimental | Experimental |
-| `website.generation` | — | — | — | — | — | — | — | — | — | — | — | — | — |
-| `video.generation` | — | — | — | — | — | — | — | — | — | — | — | Experimental | — |
-| `search.web` | — | — | — | — | — | — | — | — | — | Experimental | — | Experimental | — |
-| `response.citations` | — | — | — | — | — | — | — | — | — | Experimental | — | Experimental | — |
+Agnes AI 另有实验性 Browser 路由：`conversation.chat`、`conversation.continue`、`file.upload`、`document.input`、`image.input` 和 `response.citations`。Managed-profile gates 覆盖持久化 Chat 复用、Harness 只读附件闭环及可见引用链接；model/effort 控制及原生 agentic 工作流尚不公布。参见 [Agnes 验收记录](provider-capability-census.zh-CN.md#agnes-ai-browser-验收--2026-09-14)。
+
+| Canonical capability | ChatGPT | Claude | Gemini | Grok | Qwen | DeepSeek | Perplexity | Z.ai | Doubao | Kimi | Dola | Arena | Meta AI | Monica |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `conversation.chat` | Supported | Supported | Supported | Supported | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | Supported | Experimental | Experimental |
+| `conversation.continue` | — | — | — | — | — | — | — | — | — | — | — | Supported | — | — |
+| `model.compare` | — | — | — | — | — | — | — | — | — | — | — | Supported | — | — |
+| `agent.execute` | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
+| `file.upload`（transport） | Supported | Supported | Experimental | Supported | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | — |
+| `document.input` | Supported | Supported | Experimental | Supported | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | — | Experimental | — |
+| `image.input` | — | — | — | — | — | — | — | — | — | — | — | Experimental | — | — |
+| `audio.input` | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
+| `video.input` | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
+| `image.generation` | Experimental | — | Experimental | Experimental | — | — | — | — | Experimental | — | — | Experimental | Experimental | — |
+| `image.edit` | — | — | — | — | — | — | — | — | — | — | — | Experimental | — | — |
+| `artifact.download` | Experimental | — | Experimental | Experimental | — | — | — | — | Experimental | — | — | Experimental | Experimental | — |
+| `website.generation` | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
+| `video.generation` | — | — | — | — | — | — | — | — | — | — | — | Experimental | — | — |
+| `search.web` | — | — | — | — | — | — | — | — | — | Experimental | — | Experimental | — | — |
+| `response.citations` | — | — | — | — | — | — | — | — | — | Experimental | — | Experimental | — | — |
 
 `—` 表示目前没有公开 route，不一定代表 provider 产品没有该功能；也可能是 implementation 或真实 provider evidence 尚未完成。
 

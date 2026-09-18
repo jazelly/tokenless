@@ -108,6 +108,17 @@ export class TokenlessDashboardServer {
       this.writeAsset(response, 200, await fs.readFile(path.join(DASHBOARD_ROOT, 'mark.png')), 'image/png')
       return
     }
+    const imageAsset = method === 'GET' ? /^\/dashboard\/assets\/([a-zA-Z0-9_-]+\.(svg|png|ico))$/.exec(url.pathname) : null
+    if (imageAsset) {
+      const contentType = { svg: 'image/svg+xml', png: 'image/png', ico: 'image/x-icon' }[imageAsset[2]!]
+      try {
+        this.writeAsset(response, 200, await fs.readFile(path.join(DASHBOARD_ROOT, 'assets', imageAsset[1]!)), contentType!)
+      } catch (error) {
+        if (!isMissingFile(error)) throw error
+        this.writeAsset(response, 404, 'Not found.', 'text/plain; charset=utf-8')
+      }
+      return
+    }
     const modulePath = method === 'GET' ? dashboardModulePath(url.pathname) : null
     if (modulePath) {
       try {
@@ -172,6 +183,14 @@ export class TokenlessDashboardServer {
       this.writeJson(response, 200, await this.services.analytics({
         profile: url.searchParams.get('profile') ?? undefined,
         range: url.searchParams.get('range') ?? undefined,
+      }))
+      return true
+    }
+    if (method === 'GET' && url.pathname === '/dashboard-api/v1/invocations') {
+      const query = Object.fromEntries(['profile', 'provider', 'capability', 'status', 'fromDay', 'toDay']
+        .flatMap((key) => url.searchParams.get(key) ? [[key, url.searchParams.get(key)!]] : []))
+      this.writeJson(response, 200, await this.services.invocationHistory({
+        ...query, offset: Number(url.searchParams.get('offset') ?? 0),
       }))
       return true
     }
@@ -372,7 +391,7 @@ function isDashboardPagePath(pathname: string) {
     || pathname === '/dashboard/'
     || pathname === '/dashboard/setup'
     || pathname === '/dashboard/setup/'
-    || /^\/dashboard\/(?:overview|profiles|providers|capabilities|jobs|system)\/?$/.test(pathname)
+    || /^\/dashboard\/(?:overview|profiles|providers|capabilities|rate-limits|jobs|invocations|system)\/?$/.test(pathname)
 }
 
 const DASHBOARD_SHELL_MESSAGES = {

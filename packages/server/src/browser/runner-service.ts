@@ -25,9 +25,13 @@ import {
   classifyVisibleProviderBlocker,
   type ClassifiedProviderFailure,
 } from './provider-failure-classification.js'
-import { VISIBLE_ACTIONS, VISIBLE_ACTION_SCHEMA_ID } from './actions.js'
+import {
+  createVisibleActionRequest,
+  VISIBLE_ACTIONS,
+  VISIBLE_ACTION_SCHEMA_ID,
+} from './actions.js'
 import { ManagedProfileRegistry } from './profiles/registry.js'
-import { readTokenlessConfig } from '../persistence/config.js'
+import { type BrowserTabGcConfig, readTokenlessConfig } from '../persistence/config.js'
 import { PROVIDER_CAPABILITIES, TASK_CAPABILITIES, getProviderInstanceById } from '../providers/registry.js'
 import { readChatGptBrowserSession, sendDirectChatGptMessage } from '../providers/direct/chatgpt.js'
 import { sendDirectPerplexityMessage } from '../providers/direct/perplexity.js'
@@ -42,15 +46,23 @@ import type { ManagedPlaywrightJobRequest } from './job-contract.js'
 import type { ProviderCapabilityId, ProviderId, TaskCapabilityId, TaskCapabilityRoute } from '../providers/registry.js'
 import type { BrowserVisibility } from '../browser-visibility.js'
 import type { VisibleActionRequest } from './actions.js'
-import type { VisibleActionResponse } from './actions.js'
+import type {
+  ProviderChoiceObservation,
+  ProviderModelObservation,
+  ProviderSubmissionObservation,
+  PromptSubmitResult,
+  VisibleActionMetadata,
+  VisibleActionResponse,
+} from './actions.js'
 import type { ResponseReadResult } from './actions.js'
 import type { VisibleActionResult } from './actions.js'
 import type { VisibleBlocker } from './actions.js'
 import type { NativeWorkspaceEnsureResult } from './actions.js'
-import type { ProviderActionPreparation } from '../providers/contracts.js'
+import type { ProviderActionPreparation, RespondingSignalKind } from '../providers/contracts.js'
 import type { ProviderCapacityProjection } from '../providers/rate-limit-policy.js'
 import type { BrowserContext, Page } from 'playwright-core'
 import type { G4fServiceClient } from '../providers/direct/g4f/client.js'
+import type { G4fAuthContextLease } from '../providers/direct/g4f/types.js'
 import { ProviderProtocolRouter } from '../providers/direct/protocol-router.js'
 import { g4fProviderName, isG4fDirectOnlyProvider } from '../providers/direct/g4f-map.js'
 import { persistDirectImageAsset } from './image-assets.js'
@@ -63,9 +75,13 @@ export type ManagedPlaywrightRunnerServiceOptions = {
   contextManager?: PersistentContextManagerType | undefined
   browser?: ManagedBrowserLaunchTarget | undefined
   browserResolver?: ManagedBrowserResolver | undefined
+  tabGc?: BrowserTabGcConfig
   pollIdleMs?: number | undefined
   cancelPollMs?: number | undefined
   responseWaitPollMs?: number | undefined
+  responseWaitCeilingMs?: number | undefined
+  responseWaitQuietWindowMs?: number | undefined
+  responseWaitRenderGraceMs?: number | undefined
   userHandoverTimeoutMs?: number | undefined
   userHandoverPollMs?: number | undefined
   attachmentRootForJob?: ((job: DaemonJob) => string | undefined | Promise<string | undefined>) | undefined
@@ -131,6 +147,9 @@ type RunnerProvider = NonNullable<ReturnType<typeof getProviderInstanceById>>
 const DEFAULT_CANCEL_POLL_MS = 500
 const DEFAULT_POLL_IDLE_MS = 1_000
 const DEFAULT_RESPONSE_WAIT_POLL_MS = 250
+const DEFAULT_RESPONSE_WAIT_CEILING_MS = 240_000
+const DEFAULT_RESPONSE_WAIT_QUIET_WINDOW_MS = 20_000
+const DEFAULT_RESPONSE_WAIT_RENDER_GRACE_MS = 10_000
 const DEFAULT_USER_HANDOVER_TIMEOUT_MS = 10 * 60_000
 const DEFAULT_USER_HANDOVER_POLL_MS = 1_000
 const SAFE_JOB_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
@@ -141,6 +160,9 @@ export class ManagedPlaywrightRunnerService {
   private readonly pollIdleMs: number
   private readonly cancelPollMs: number
   private readonly responseWaitPollMs: number
+  private readonly responseWaitCeilingMs: number
+  private readonly responseWaitQuietWindowMs: number
+  private readonly responseWaitRenderGraceMs: number
   private readonly userHandoverTimeoutMs: number
   private readonly userHandoverPollMs: number
   private readonly attachmentRootForJob: ((job: DaemonJob) => string | undefined | Promise<string | undefined>) | undefined
@@ -173,6 +195,7 @@ export class ManagedPlaywrightRunnerService {
           ])
           return profiles.map((profile) => ({
             ...profile,
+            profileColor: config.profiles[profile.slug]?.profileColor,
             proxy: config.profiles[profile.slug]?.proxy ?? null,
           }))
         },
@@ -180,12 +203,20 @@ export class ManagedPlaywrightRunnerService {
     }
     this.daemonClient = options.daemonClient
     this.contextManager = options.contextManager ?? new PersistentContextManager({
+      supervision: {
+        profiles: () => this.profileRegistry.listProfiles(),
+        recoverPage: (profile, page) => this.daemonClient.findProviderTaskConversationByUrl(profile.slug, page.url()),
+      },
+      ...(options.tabGc ? { tabGc: options.tabGc } : {}),
       ...(options.browser ? { browser: options.browser } : {}),
       ...(options.browserResolver ? { browserResolver: options.browserResolver } : {}),
     })
     this.pollIdleMs = normalizedPositiveInteger(options.pollIdleMs, DEFAULT_POLL_IDLE_MS)
     this.cancelPollMs = normalizedPositiveInteger(options.cancelPollMs, DEFAULT_CANCEL_POLL_MS)
     this.responseWaitPollMs = normalizedPositiveInteger(options.responseWaitPollMs, DEFAULT_RESPONSE_WAIT_POLL_MS)
+    this.responseWaitCeilingMs = normalizedPositiveInteger(options.responseWaitCeilingMs, DEFAULT_RESPONSE_WAIT_CEILING_MS)
+    this.responseWaitQuietWindowMs = normalizedPositiveInteger(options.responseWaitQuietWindowMs, DEFAULT_RESPONSE_WAIT_QUIET_WINDOW_MS)
+    this.responseWaitRenderGraceMs = normalizedPositiveInteger(options.responseWaitRenderGraceMs, DEFAULT_RESPONSE_WAIT_RENDER_GRACE_MS)
     this.userHandoverTimeoutMs = normalizedPositiveInteger(options.userHandoverTimeoutMs, DEFAULT_USER_HANDOVER_TIMEOUT_MS)
     this.userHandoverPollMs = normalizedPositiveInteger(options.userHandoverPollMs, DEFAULT_USER_HANDOVER_POLL_MS)
     const defaultAttachmentHomeDir = options.homeDir
@@ -205,8 +236,27 @@ export class ManagedPlaywrightRunnerService {
     return this.inFlightJobs.size
   }
 
+  configureTabGc(config: BrowserTabGcConfig) {
+    this.contextManager.configureTabGc(config)
+  }
+
+  tabGcStatus() {
+    return this.contextManager.tabGcStatus()
+  }
+
   activeProfileCount() {
     return this.contextManager.activeProfileIds().length
+  }
+
+  async closeProfile(profileId: string) {
+    const profile = (await this.profileRegistry.listProfiles()).find((candidate) => candidate.slug === profileId)
+    if (!profile) throw tokenlessError('profile_not_found', `Managed profile '${profileId}' is not registered.`)
+    try {
+      await this.contextManager.ensureContext(profile, 'auto', true)
+    } catch (error) {
+      if ((error as { code?: unknown }).code !== 'browser_endpoint_unavailable') throw error
+    }
+    await this.contextManager.closeProfile(profileId)
   }
 
   async openProfile(profileId: string, browserVisibility: BrowserVisibility): Promise<ManagedProfileOpenResult> {
@@ -230,6 +280,60 @@ export class ManagedPlaywrightRunnerService {
       effectiveBrowserVisibility: managedContext.effectiveBrowserVisibility,
       pageCount: pages.length,
     }
+  }
+
+  async createG4fAuthContext(
+    profileId: string,
+    providerId: string,
+    signal?: AbortSignal,
+  ): Promise<G4fAuthContextLease | undefined> {
+    const profile = (await this.profileRegistry.listProfiles())
+      .find((candidate) => candidate.slug === profileId)
+    if (!profile) throw tokenlessError('profile_not_found', 'Managed profile is not registered or is not ready.')
+    const provider = getProviderInstanceById(providerId)
+    const upstreamProvider = g4fProviderName(providerId)
+    const client = this.g4fClient
+    if (!client || !provider || !upstreamProvider || isG4fDirectOnlyProvider(providerId)) return undefined
+
+    const contextId = `g4f-api-${randomUUID()}`
+    const targetUrl = provider.navigation.homeTarget().href
+    const operationSignal = signal ?? new AbortController().signal
+    return await this.contextManager.runWithProfile(profile, 'auto', async (managedContext) => {
+      const temporaryPage = await managedContext.acquireTemporaryPage()
+      let creationAttempted = false
+      let handedOff = false
+      try {
+        await this.createG4fAuthContextFromPage({
+          contextId,
+          provider,
+          profile: profile.slug,
+          targetUrl,
+          page: temporaryPage.page,
+          browserContext: managedContext.browserContext,
+          signal: operationSignal,
+          onCreateAttempted: () => { creationAttempted = true },
+        })
+        handedOff = true
+        let released = false
+        return {
+          contextId,
+          release: async () => {
+            if (released) return
+            released = true
+            try {
+              await this.deleteG4fAuthContext(contextId)
+            } finally {
+              await temporaryPage.close()
+            }
+          },
+        }
+      } catch (error) {
+        if (creationAttempted) await this.deleteG4fAuthContext(contextId, error)
+        throw error
+      } finally {
+        if (!handedOff) await temporaryPage.close()
+      }
+    })
   }
 
   async openProviderTabs(
@@ -266,6 +370,7 @@ export class ManagedPlaywrightRunnerService {
         providerPage = await managedContext.acquireProviderPage({
           provider: provider.id,
           pageRef: providerHomePageRef(provider.id),
+          purpose: 'user',
           policy: 'preserve',
           matchesExistingPage: (page) => providerOwnsPage(provider, page),
           isAvailablePage: (page) => providerPageAvailable(provider, page),
@@ -369,11 +474,13 @@ export class ManagedPlaywrightRunnerService {
   private async executeJob(
     profile: ManagedBrowserProfile,
     job: DaemonJob,
-    outerSignal?: AbortSignal | undefined
+    outerSignal?: AbortSignal | undefined,
+    priorSubmissionResponses: readonly VisibleActionResponse[] = [],
   ): Promise<ManagedPlaywrightRunnerIteration> {
     const controller = new AbortController()
     const signal = outerSignal ? AbortSignal.any([outerSignal, controller.signal]) : controller.signal
     let canceled = false
+    const pageUses: ManagedProviderPage[] = []
     let attachmentRoot: string | undefined
     let providerAttachmentRoot: string | undefined
     const cancelTimer = setInterval(() => {
@@ -431,11 +538,13 @@ export class ManagedPlaywrightRunnerService {
         providerAttachmentRoot,
         signal,
         () => canceled,
+        pageUses,
       )
       if (canceled || signal.aborted) {
         return { taken: true, jobId: job.job_id, status: 'canceled' }
       }
-      const result = await this.measureOutputSavings(execution.result, signal)
+      const measuredResult = await this.measureOutputSavings(execution.result, signal)
+      const result = prependSubmissionEvidenceResponses(measuredResult, priorSubmissionResponses)
       await this.daemonClient.completeJob({
         jobId: job.job_id,
         result,
@@ -445,7 +554,12 @@ export class ManagedPlaywrightRunnerService {
       if (error instanceof ProviderFallbackSignal) {
         attachmentRoot = undefined
         const fallbackJob = await this.daemonClient.getJob({ jobId: job.job_id, signal })
-        return await this.executeJob(profile, fallbackJob, outerSignal)
+        return await this.executeJob(
+          profile,
+          fallbackJob,
+          outerSignal,
+          [...priorSubmissionResponses, ...error.submissionResponses],
+        )
       }
       if (canceled || signal.aborted) {
         return { taken: true, jobId: job.job_id, status: 'canceled' }
@@ -459,6 +573,7 @@ export class ManagedPlaywrightRunnerService {
       }).catch(() => undefined)
       return { taken: true, jobId: job.job_id, status: 'failed' }
     } finally {
+      for (const page of pageUses) page.release()
       clearInterval(cancelTimer)
       controller.abort()
       if (attachmentRoot && this.cleanupAttachmentRoot) {
@@ -546,6 +661,7 @@ export class ManagedPlaywrightRunnerService {
     attachmentRoot: string | undefined,
     signal: AbortSignal,
     isCanceled: () => boolean,
+    pageUses: ManagedProviderPage[],
   ): Promise<ManagedPlaywrightExecutionOutcome> {
     if (request.executionMode === 'direct') {
       const config = await readTokenlessConfig(this.homeDir)
@@ -556,11 +672,11 @@ export class ManagedPlaywrightRunnerService {
       )
       if (backend === 'g4f') {
         if (request.context.requirements.includes('image.generation')) {
-          return await this.executeG4fDirectImageActions(profile, job, request, signal, isCanceled)
+          return await this.executeG4fDirectImageActions(profile, job, request, signal, isCanceled, pageUses)
         }
-        return await this.executeG4fDirectChatActions(profile, job, request, signal, isCanceled)
+        return await this.executeG4fDirectChatActions(profile, job, request, signal, isCanceled, pageUses)
       }
-      return await this.executeDirectChatActions(profile, job, request, signal, isCanceled)
+      return await this.executeDirectChatActions(profile, job, request, signal, isCanceled, pageUses)
     }
     const requestedBrowserVisibility = request.browserVisibility
     const automaticAuthObservation = isAutomaticAuthObservation(request, requestedBrowserVisibility)
@@ -579,6 +695,7 @@ export class ManagedPlaywrightRunnerService {
             isAvailablePage: (candidate) => providerPageAvailable(provider, candidate),
           })
         : null
+      if (providerPage) pageUses.push(providerPage)
       const acquiredPage = temporaryPage?.page ?? providerPage?.page
       if (!acquiredPage) {
         throw tokenlessError('playwright_provider_page_unavailable', 'Managed provider page is unavailable.', { retryable: true })
@@ -610,9 +727,12 @@ export class ManagedPlaywrightRunnerService {
           }),
           ...(postSubmissionFallbackProof === null ? {} : { postSubmissionFallbackProof }),
         })
-        throw new ProviderFallbackSignal()
+        throw new ProviderFallbackSignal(submissionEvidenceResponses(state.responses))
       }
-      const startUrl = state.submitted?.providerUrl ?? request.target.url
+      const savedConversation = request.pagePolicy !== 'replace' && !request.userHandoff && provider.navigation.canonicalTarget(request.target.url)?.href === provider.navigation.homeTarget().href
+        ? await this.daemonClient.resolveProviderTaskConversation({ provider: request.provider, profileId: profile.slug, taskId: request.taskId ?? pageRef, signal })
+        : null
+      const startUrl = state.submitted?.providerUrl ?? savedConversation?.canonical_url ?? request.target.url
       try {
         await navigateToTarget(
           page,
@@ -730,6 +850,21 @@ export class ManagedPlaywrightRunnerService {
           ...(attachmentRoot === undefined ? {} : { attachmentRoot }),
           ...(this.homeDir === undefined ? {} : { assetRoot: path.join(this.homeDir, 'assets') }),
         }
+        const submissionObservation = action.action === VISIBLE_ACTIONS.PROMPT_SUBMIT && isBenchmarkSubmissionEvidenceRequest(request)
+          ? await observeProviderSubmission(
+              page,
+              provider,
+              request.actions,
+              actionIndex,
+              signal,
+              this.now,
+              profile.slug,
+              job.job_id,
+            )
+          : null
+        const actionStartedAt = this.now()
+        const admission = await this.daemonClient.admitProviderAction({ jobId: job.job_id, actionIndex, signal })
+        if (admission?.decision === 'defer') await failOrFallback(providerCapacityFailure(admission))
         const response = await (async (): Promise<VisibleActionResponse> => {
           try {
             return await provider.executeAction(page, action, providerContext)
@@ -741,6 +876,19 @@ export class ManagedPlaywrightRunnerService {
             }))
           }
         })()
+        const actionCompletedAt = this.now()
+        const responseWithMetadata = withVisibleActionMetadata(
+          response,
+          {
+            actionIndex,
+            provider: provider.id,
+            startedAt: actionStartedAt.toISOString(),
+            completedAt: actionCompletedAt.toISOString(),
+            durationMs: Math.max(0, actionCompletedAt.getTime() - actionStartedAt.getTime()),
+            executionMode: 'browser',
+          },
+          submissionObservation,
+        )
         if (!response.ok) {
           throwIfStopped(signal, isCanceled)
           const error = tokenlessError(response.error.code, response.error.message, {
@@ -754,7 +902,7 @@ export class ManagedPlaywrightRunnerService {
           })
           await failOrFallback(failure)
         }
-        state.responses.push(response)
+        state.responses.push(responseWithMetadata)
         if (lifecycle.completion === 'records_submission') {
           if (!state.preparation) {
             throw tokenlessError('invalid_playwright_runner_state', 'Managed Playwright runner did not prepare prompt submission completion.')
@@ -772,7 +920,7 @@ export class ManagedPlaywrightRunnerService {
         }
         if (lifecycle.completion === 'reads_response') state.preparation = null
         state.actionCursor = actionIndex + 1
-        if (action.action === VISIBLE_ACTIONS.WORKSPACE_ENSURE && isNativeWorkspaceResult(response.result)) {
+        if (action.action === VISIBLE_ACTIONS.WORKSPACE_ENSURE && response.ok && isNativeWorkspaceResult(response.result)) {
           await this.daemonClient.upsertProviderProject({
             provider: request.provider,
             profileId: profile.slug,
@@ -784,19 +932,19 @@ export class ManagedPlaywrightRunnerService {
         }
         const isGrokImagineResult = request.provider === 'grok' &&
           request.context.requirements.includes('image.generation')
-        if (lifecycle.completion === 'reads_response' && request.taskId && !isGrokImagineResult) {
+        if (lifecycle.completion === 'reads_response' && !isGrokImagineResult) {
           const workspace = latestNativeWorkspaceResult(state.responses)
           const conversationUrl = validatedConversationUrl(
             page.url(),
             provider,
-            workspace?.resource.canonicalUrl ?? request.target.url,
+            workspace?.resource.canonicalUrl ?? provider.navigation.homeTarget().href,
           )
           if (conversationUrl) {
             await this.daemonClient.upsertProviderTaskConversation({
               provider: request.provider,
               profileId: profile.slug,
               ...(workspace ? { projectResourceId: workspace.resource.id } : {}),
-              taskId: request.taskId,
+              taskId: request.taskId ?? pageRef,
               canonicalUrl: conversationUrl,
               signal,
             })
@@ -824,6 +972,7 @@ export class ManagedPlaywrightRunnerService {
     request: ManagedPlaywrightJobRequest,
     signal: AbortSignal,
     isCanceled: () => boolean,
+    pageUses: ManagedProviderPage[],
   ): Promise<ManagedPlaywrightExecutionOutcome> {
     const state = initialExecutionState()
     const promptAction = request.actions[0]
@@ -845,6 +994,7 @@ export class ManagedPlaywrightRunnerService {
         matchesExistingPage: (candidate) => providerOwnsPage(provider, candidate),
         isAvailablePage: (candidate) => providerPageAvailable(provider, candidate),
       })
+      pageUses.push(providerPage)
       const page = providerPage.page
       let directResult: Awaited<ReturnType<typeof sendDirectChatGptMessage>> | null = null
       await navigateToTarget(page, provider, request.target.url, signal, false)
@@ -902,6 +1052,7 @@ export class ManagedPlaywrightRunnerService {
               visibleAnswerCount: 0,
               visibleBusyCount: 0,
               generationStopVisible: false,
+              observability: 'not_observable',
             },
           })
           state.preparation = null
@@ -929,6 +1080,7 @@ export class ManagedPlaywrightRunnerService {
     request: ManagedPlaywrightJobRequest,
     signal: AbortSignal,
     isCanceled: () => boolean,
+    pageUses: ManagedProviderPage[],
   ): Promise<ManagedPlaywrightExecutionOutcome> {
     const promptAction = request.actions[0]
     const submitAction = request.actions[1]
@@ -946,7 +1098,7 @@ export class ManagedPlaywrightRunnerService {
     let authContextId = request.authContextId ?? undefined
     try {
       if (!authContextId && !isG4fDirectOnlyProvider(request.provider)) {
-        authContextId = await this.createG4fBrowserAuthContext(profile, job, request, signal)
+        authContextId = await this.createG4fBrowserAuthContext(profile, job, request, signal, pageUses)
         ephemeralContextId = authContextId
       }
       const completion = await this.protocolRouter.completeG4f({
@@ -981,6 +1133,7 @@ export class ManagedPlaywrightRunnerService {
             visibleAnswerCount: 0,
             visibleBusyCount: 0,
             generationStopVisible: false,
+            observability: 'not_observable',
           },
         }),
       ]
@@ -1002,6 +1155,7 @@ export class ManagedPlaywrightRunnerService {
     request: ManagedPlaywrightJobRequest,
     signal: AbortSignal,
     isCanceled: () => boolean,
+    pageUses: ManagedProviderPage[],
   ): Promise<ManagedPlaywrightExecutionOutcome> {
     const promptAction = request.actions[0]
     const submitAction = request.actions[1]
@@ -1022,7 +1176,7 @@ export class ManagedPlaywrightRunnerService {
     let authContextId = request.authContextId ?? undefined
     try {
       if (!authContextId && !isG4fDirectOnlyProvider(request.provider)) {
-        authContextId = await this.createG4fBrowserAuthContext(profile, job, request, signal)
+        authContextId = await this.createG4fBrowserAuthContext(profile, job, request, signal, pageUses)
         ephemeralContextId = authContextId
       }
       let images: Awaited<ReturnType<ProviderProtocolRouter['generateImageG4f']>>
@@ -1075,6 +1229,7 @@ export class ManagedPlaywrightRunnerService {
             visibleAnswerCount: 0,
             visibleBusyCount: 0,
             generationStopVisible: false,
+            observability: 'not_observable',
           },
         }),
       ]
@@ -1095,6 +1250,7 @@ export class ManagedPlaywrightRunnerService {
     job: DaemonJob,
     request: ManagedPlaywrightJobRequest,
     signal: AbortSignal,
+    pageUses: ManagedProviderPage[],
   ) {
     const client = this.g4fClient
     const provider = getProviderInstanceById(request.provider)
@@ -1109,46 +1265,72 @@ export class ManagedPlaywrightRunnerService {
         matchesExistingPage: (candidate) => providerOwnsPage(provider, candidate),
         isAvailablePage: (candidate) => providerPageAvailable(provider, candidate),
       })
+      pageUses.push(providerPage)
       const contextId = `g4f-${job.job_id}-${randomUUID()}`
       let creationAttempted = false
       try {
-        await navigateToTarget(providerPage.page, provider, request.target.url, signal, false)
-        const providerCookies = await managedContext.browserContext.cookies([request.target.url])
-        const cookies: Record<string, Record<string, string>> = {}
-        for (const cookie of providerCookies) {
-          const domain = cookie.domain.toLowerCase()
-          cookies[domain] ??= {}
-          cookies[domain]![cookie.name] = cookie.value
-        }
-        const browserValues = await providerPage.page.evaluate(() => ({
-          userAgent: navigator.userAgent,
-          language: navigator.language || 'en-US',
-        }))
-        const headers = {
-          [new URL(request.target.url).hostname]: {
-            'user-agent': browserValues.userAgent,
-            'accept-language': `${browserValues.language},en;q=0.8`,
-          },
-        }
-        let apiKey: string | undefined
-        if (provider.id === 'chatgpt') {
-          const session = await readChatGptBrowserSession(providerPage.page, managedContext.browserContext)
-          apiKey = session.accessToken
-        }
-        creationAttempted = true
-        await client.createAuthContext({
+        await this.createG4fAuthContextFromPage({
           contextId,
-          provider: upstreamProvider,
+          provider,
           profile: profile.slug,
-          lifetime: 'ephemeral',
-          source: { type: 'manual', cookies, headers, ...(apiKey ? { apiKey } : {}) },
-        }, signal)
+          targetUrl: request.target.url,
+          page: providerPage.page,
+          browserContext: managedContext.browserContext,
+          signal,
+          onCreateAttempted: () => { creationAttempted = true },
+        })
         return contextId
       } catch (error) {
         if (creationAttempted) await this.deleteG4fAuthContext(contextId, error)
         throw error
       }
     })
+  }
+
+  private async createG4fAuthContextFromPage(options: {
+    contextId: string
+    provider: RunnerProvider
+    profile: string
+    targetUrl: string
+    page: Page
+    browserContext: BrowserContext
+    signal: AbortSignal
+    onCreateAttempted: () => void
+  }) {
+    const client = this.g4fClient
+    const upstreamProvider = g4fProviderName(options.provider.id)
+    if (!client || !upstreamProvider) return
+    await navigateToTarget(options.page, options.provider, options.targetUrl, options.signal, false)
+    const providerCookies = await options.browserContext.cookies([options.targetUrl])
+    const cookies: Record<string, Record<string, string>> = {}
+    for (const cookie of providerCookies) {
+      const domain = cookie.domain.toLowerCase()
+      cookies[domain] ??= {}
+      cookies[domain]![cookie.name] = cookie.value
+    }
+    const browserValues = await options.page.evaluate(() => ({
+      userAgent: navigator.userAgent,
+      language: navigator.language || 'en-US',
+    }))
+    const headers = {
+      [new URL(options.targetUrl).hostname]: {
+        'user-agent': browserValues.userAgent,
+        'accept-language': `${browserValues.language},en;q=0.8`,
+      },
+    }
+    let apiKey: string | undefined
+    if (options.provider.id === 'chatgpt') {
+      const session = await readChatGptBrowserSession(options.page, options.browserContext)
+      apiKey = session.accessToken
+    }
+    options.onCreateAttempted()
+    await client.createAuthContext({
+      contextId: options.contextId,
+      provider: upstreamProvider,
+      profile: options.profile,
+      lifetime: 'ephemeral',
+      source: { type: 'manual', cookies, headers, ...(apiKey ? { apiKey } : {}) },
+    }, options.signal)
   }
 
   private async deleteG4fAuthContext(contextId: string, operationError?: unknown) {
@@ -1208,7 +1390,7 @@ export class ManagedPlaywrightRunnerService {
         },
         ...(postSubmissionFallbackProof === null ? {} : { postSubmissionFallbackProof }),
       })
-      throw new ProviderFallbackSignal()
+      throw new ProviderFallbackSignal(submissionEvidenceResponses(options.state.responses))
     }
     const initialCapacityDelay = options.state.submitted === null
       ? observedCapacityDelaySeconds(initial.primary)
@@ -1306,14 +1488,55 @@ export class ManagedPlaywrightRunnerService {
       clearBlocker: () => Promise<number>
     }
   ) {
+    const startedAt = Date.now()
+    let lastActiveAt = startedAt
+    let everActive = false
+    let lastSignalKind: RespondingSignalKind | 'none' = 'none'
     while (true) {
       throwIfStopped(options.signal, options.isCanceled)
       await options.clearBlocker()
       const page = getPage()
-      if ((await options.provider.observeAction(page, options.action, options.preparation)).state === 'ready') return
+      const observation = await options.provider.observeAction(page, options.action, options.preparation)
+      if (observation.state === 'ready') return
+      const now = Date.now()
+      if (observation.signal?.active) {
+        lastActiveAt = now
+        everActive = true
+        lastSignalKind = observation.signal.kind
+      }
+      const respondingState = respondingStateFromObservation({ now, startedAt, lastActiveAt, everActive, renderGraceMs: this.responseWaitRenderGraceMs, quietWindowMs: this.responseWaitQuietWindowMs })
+      if (now - startedAt >= this.responseWaitCeilingMs) {
+        throw tokenlessError('response_wait_ceiling_exceeded', 'response.read did not become ready before the absolute wait ceiling.', {
+          retryable: true,
+          details: {
+            respondingState,
+            lastSignalKind,
+            lastActiveAt: new Date(lastActiveAt).toISOString(),
+            quietMs: now - lastActiveAt,
+            waitedMs: now - startedAt,
+          },
+        })
+      }
       await delay(options.pollMs, options.signal)
     }
   }
+}
+
+type RespondingState = 'working' | 'stalled' | 'unknown'
+
+function respondingStateFromObservation(input: {
+  now: number
+  startedAt: number
+  lastActiveAt: number
+  everActive: boolean
+  renderGraceMs: number
+  quietWindowMs: number
+}): RespondingState {
+  const quietMs = input.now - input.lastActiveAt
+  if (!input.everActive) {
+    return input.now - input.startedAt >= input.renderGraceMs ? 'unknown' : 'working'
+  }
+  return quietMs >= input.quietWindowMs ? 'stalled' : 'working'
 }
 
 async function chromiumTargetId(browserContext: BrowserContext, page: Page) {
@@ -1397,8 +1620,209 @@ function directActionSuccess(
   }
 }
 
+async function observeProviderSubmission(
+  page: Page,
+  provider: RunnerProvider,
+  actions: readonly VisibleActionRequest[],
+  actionIndex: number,
+  signal: AbortSignal,
+  now: () => Date,
+  profileId: string,
+  operationId: string,
+): Promise<ProviderSubmissionObservation> {
+  const modelRequestedLabel = requestedChoiceLabel(actions, actionIndex, VISIBLE_ACTIONS.MODEL_SELECT)
+  const effortRequestedLabel = requestedChoiceLabel(actions, actionIndex, VISIBLE_ACTIONS.EFFORT_SELECT)
+  const pageObservation = await observeProviderPageSurface(page, provider)
+  const choiceInspectionAllowed = provider.id !== 'chatgpt' || pageObservation.surface === 'chat'
+  const modelResponse = choiceInspectionAllowed
+    ? await inspectProviderChoice(page, provider, VISIBLE_ACTIONS.MODEL_INSPECT, 'model', signal, profileId, operationId)
+    : null
+  const effortResponse = choiceInspectionAllowed
+    ? await inspectProviderChoice(page, provider, VISIBLE_ACTIONS.EFFORT_INSPECT, 'effort', signal, profileId, operationId)
+    : null
+  const skippedReason = choiceInspectionAllowed ? null : 'provider_surface_not_chat'
+  return {
+    protocol: 'tokenless.provider-submission-observation.v1',
+    observedAt: now().toISOString(),
+    source: 'visible-provider-controls-before-submit',
+    page: pageObservation,
+    model: readModelObservation(modelResponse, modelRequestedLabel, skippedReason),
+    effort: readChoiceObservation(effortResponse, effortRequestedLabel, skippedReason),
+  }
+}
+
+async function inspectProviderChoice(
+  page: Page,
+  provider: RunnerProvider,
+  action: typeof VISIBLE_ACTIONS.MODEL_INSPECT | typeof VISIBLE_ACTIONS.EFFORT_INSPECT,
+  kind: 'model' | 'effort',
+  signal: AbortSignal,
+  profileId: string,
+  operationId: string,
+): Promise<VisibleActionResponse | null> {
+  if (signal.aborted) return null
+  const request = createVisibleActionRequest({
+    protocol: VISIBLE_ACTION_SCHEMA_ID,
+    requestId: observationRequestId(provider.id, kind),
+    provider: provider.id,
+    action,
+    payload: {},
+  })
+  try {
+    const response = await provider.executeAction(page, request, { profileId, operationId, signal })
+    // Choice inspection is deliberately read-only, but leave any provider menu
+    // closed before the real prompt.submit action begins.
+    await page.keyboard.press('Escape').catch(() => undefined)
+    return response
+  } catch {
+    await page.keyboard.press('Escape').catch(() => undefined)
+    return null
+  }
+}
+
+function requestedChoiceLabel(
+  actions: readonly VisibleActionRequest[],
+  actionIndex: number,
+  action: typeof VISIBLE_ACTIONS.MODEL_SELECT | typeof VISIBLE_ACTIONS.EFFORT_SELECT,
+) {
+  for (let index = actionIndex - 1; index >= 0; index -= 1) {
+    const candidate = actions[index]
+    if (!candidate || candidate.action !== action) continue
+    const payload = candidate.payload
+    return 'label' in payload && typeof payload.label === 'string' ? payload.label : null
+  }
+  return null
+}
+
+async function observeProviderPageSurface(
+  page: Page,
+  provider: RunnerProvider,
+): Promise<ProviderSubmissionObservation['page']> {
+  if (provider.id !== 'chatgpt') {
+    return { surface: 'unknown', origin: safePageOrigin(page.url()) }
+  }
+  const workTrigger = page.locator('button.__composer-pill[class*="WorkTrigger"]').filter({ visible: true })
+  if (await workTrigger.count().catch(() => 0) > 0) {
+    return { surface: 'work', origin: safePageOrigin(page.url()) }
+  }
+  const chatTrigger = page.locator('button.__composer-pill[aria-haspopup="menu"]:not([class*="WorkTrigger"])').filter({ visible: true })
+  if (await chatTrigger.count().catch(() => 0) > 0) {
+    return { surface: 'chat', origin: safePageOrigin(page.url()) }
+  }
+  const chatRadio = page.getByRole('radio', { name: 'Chat', exact: true }).filter({ visible: true })
+  if (await chatRadio.count().catch(() => 0) > 0 && await chatRadio.getAttribute('aria-checked').catch(() => null) === 'true') {
+    return { surface: 'chat', origin: safePageOrigin(page.url()) }
+  }
+  return { surface: 'unknown', origin: safePageOrigin(page.url()) }
+}
+
+function isBenchmarkSubmissionEvidenceRequest(request: ManagedPlaywrightJobRequest) {
+  return (request as ManagedPlaywrightJobRequest & { submissionEvidence?: unknown }).submissionEvidence === 'benchmark'
+}
+
+function readModelObservation(
+  response: VisibleActionResponse | null,
+  requestedLabel: string | null,
+  unavailableReason: string | null = null,
+): ProviderModelObservation {
+  const observation = readChoiceObservation(response, requestedLabel, unavailableReason)
+  return {
+    ...observation,
+    providerModelId: null,
+    identityStatus: observation.status === 'observed' ? 'not-exposed' : 'unknown',
+    reason: observation.status === 'observed'
+      ? 'visible_model_label_does_not_expose_provider_model_id'
+      : observation.reason,
+  }
+}
+
+function readChoiceObservation(
+  response: VisibleActionResponse | null,
+  requestedLabel: string | null,
+  unavailableReason: string | null = null,
+): ProviderChoiceObservation {
+  if (response === null) {
+    return unknownChoiceObservation(requestedLabel, unavailableReason ?? 'provider_choice_inspection_failed')
+  }
+  if (!response.ok) {
+    return unknownChoiceObservation(requestedLabel, 'provider_choice_inspection_error')
+  }
+  const result = response.result as unknown
+  if (!isRecord(result) || result.supported !== true || !Array.isArray(result.choices)) {
+    const reason = isRecord(result) && result.reason === 'unsupported_by_provider'
+      ? 'provider_choice_unsupported_by_provider'
+      : isRecord(result) && result.reason === 'selector_not_available'
+        ? 'provider_choice_selector_not_available'
+        : 'provider_choice_selection_not_observed'
+    return unknownChoiceObservation(requestedLabel, reason)
+  }
+  const choices = result.choices as unknown[]
+  const selected = choices.find((choice: unknown) => (
+    isRecord(choice) && choice.selected === true && typeof choice.label === 'string'
+  ))
+  if (!isRecord(selected) || typeof selected.label !== 'string') {
+    return unknownChoiceObservation(requestedLabel, 'provider_choice_selected_label_not_observed')
+  }
+  return {
+    requestedLabel,
+    observedLabel: selected.label,
+    status: 'observed',
+    source: 'visible-provider-choice-inspect',
+    reason: null,
+  }
+}
+
+function unknownChoiceObservation(
+  requestedLabel: string | null,
+  reason: string,
+): ProviderChoiceObservation {
+  return {
+    requestedLabel,
+    observedLabel: null,
+    status: 'unknown',
+    source: 'not-observed',
+    reason,
+  }
+}
+
+function withVisibleActionMetadata(
+  response: VisibleActionResponse,
+  metadata: VisibleActionMetadata,
+  submissionObservation: ProviderSubmissionObservation | null,
+): VisibleActionResponse {
+  if (submissionObservation === null || response.action !== VISIBLE_ACTIONS.PROMPT_SUBMIT) {
+    return { ...response, metadata }
+  }
+  if (!response.ok) return { ...response, metadata, submissionObservation }
+  const result = response.result as PromptSubmitResult
+  return {
+    ...response,
+    metadata,
+    result: {
+      ...result,
+      submissionObservation,
+    },
+  }
+}
+
+function observationRequestId(provider: ProviderId, kind: 'model' | 'effort') {
+  return `observe:${provider}:${kind}`
+}
+
+function safePageOrigin(url: string) {
+  try {
+    return new URL(url).origin
+  } catch {
+    return null
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
 class ProviderFallbackSignal extends Error {
-  constructor() {
+  constructor(readonly submissionResponses: readonly VisibleActionResponse[] = []) {
     super('Managed Playwright execution selected its next provider fallback.')
     this.name = 'ProviderFallbackSignal'
   }
@@ -1410,6 +1834,22 @@ function throwRunnerControlFlow(error: unknown): void {
 
 function initialExecutionState(): RunnerExecutionState {
   return { actionCursor: 0, responses: [], preparation: null, submitted: null }
+}
+
+function prependSubmissionEvidenceResponses(
+  result: ManagedPlaywrightJobResult,
+  priorResponses: readonly VisibleActionResponse[],
+): ManagedPlaywrightJobResult {
+  if (priorResponses.length === 0) return result
+  return { ...result, responses: [...priorResponses, ...result.responses] }
+}
+
+function submissionEvidenceResponses(responses: readonly VisibleActionResponse[]) {
+  return responses.filter((response) => {
+    if (!response.ok || response.action !== VISIBLE_ACTIONS.PROMPT_SUBMIT) return false
+    const result: unknown = response.result
+    return isRecord(result) && isRecord(result.submissionObservation)
+  })
 }
 
 function providerCapacityFailure(projection: ProviderCapacityProjection): ClassifiedProviderFailure {
@@ -1493,6 +1933,7 @@ function safeFallbackRequest(
       attempts,
     },
     ...(request.pagePolicy === undefined ? {} : { pagePolicy: request.pagePolicy }),
+    ...(request.submissionEvidence === undefined ? {} : { submissionEvidence: request.submissionEvidence }),
     actions: request.actions.map((action) => ({ ...action, provider: alternative.provider })),
   })
 }
@@ -1696,7 +2137,7 @@ function liveInspectionTarget(capability: TaskCapabilityId, provider: ProviderId
   if (provider === 'github-copilot' && (capability === TASK_CAPABILITIES.AGENT_EXECUTE || capability === TASK_CAPABILITIES.SEARCH_WEB)) {
     return { providerCapability: PROVIDER_CAPABILITIES.GITHUB_COPILOT_MODE, scope: 'overall' }
   }
-  if (provider === 'github-copilot' && capability === TASK_CAPABILITIES.IMAGE_INPUT) {
+  if ((provider === 'github-copilot' || provider === 'agnes') && capability === TASK_CAPABILITIES.IMAGE_INPUT) {
     return { providerCapability: PROVIDER_CAPABILITIES.FILE_UPLOAD, scope: 'overall' }
   }
   if (
@@ -1865,6 +2306,7 @@ function canReuseCurrentProviderPage(page: Page, provider: RunnerProvider, targe
   const target = provider.navigation.canonicalTarget(targetUrl)
   if (!target) return false
   if (current.target.href === target.href) return true
+  if (provider.id === 'agnes') return false
   return target.href === provider.navigation.homeTarget().href && provider.navigation.pagePatterns.some((pattern) => {
     const declared = provider.navigation.canonicalTarget(pattern.urlPattern)
     if (!declared || declared.origin.toLowerCase() !== current.target.origin.toLowerCase()) return false
@@ -2171,7 +2613,7 @@ function validatedConversationUrl(
   const target = provider.navigation.assertCurrentPageAllowed(value)
   if (!target) return null
   const canonical = new URL(target.href)
-  canonical.search = ''
+  if (provider.id !== 'agnes') canonical.search = ''
   canonical.hash = ''
   const href = canonical.toString()
   return href === projectUrl ? null : href

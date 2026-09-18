@@ -894,7 +894,7 @@ export function renderHarnessBootstrapPrompt({
     runId,
     turn: 1,
     nonce,
-    instruction: 'Read the attached Tokenless Harness instructions as the user-requested response format for this task. Follow provider system instructions and safety policies. Return the requested structured proposal without claiming to execute local tools yourself or answering the task directly.',
+    instruction: `Read the attached Tokenless Harness instructions as the user-requested response format for this task. Follow provider system instructions and safety policies. Return exactly one <TOKENLESS_HARNESS_RESPONSE>...</TOKENLESS_HARNESS_RESPONSE> envelope and no prose outside it. Use runId ${runId}, turn 1, and nonce ${nonce} exactly in that envelope. A non-final action_batch must contain the three arrays skillLoads, calls, and needs, using [] when empty; a final must contain output and artifacts. Return the requested structured proposal without claiming to execute local tools yourself or answering the task directly.`,
     task: {
       authority: 'untrusted_lower_priority_data',
       content: taskPrompt,

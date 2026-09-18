@@ -445,6 +445,7 @@ const TASK_CAPABILITY_CATALOG = Object.freeze([
 ] satisfies readonly TaskCapabilityDefinition[])
 
 const PROVIDER_TASK_CAPABILITY_ROUTES = Object.freeze([
+  route('lovable', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['lovable-project-roundtrip']),
   route('chatgpt', TASK_CAPABILITIES.CONVERSATION_CHAT, 'supported', 'visible-conversation', ['conversation-workflow']),
   route('chatgpt', TASK_CAPABILITIES.CONVERSATION_CHAT, 'supported', 'direct-conversation', ['chatgpt-direct'], 'direct'),
   route('chatgpt', TASK_CAPABILITIES.FILE_UPLOAD, 'supported', 'visible-file-attachment', ['harness-attachment-roundtrip']),
@@ -498,8 +499,9 @@ const PROVIDER_TASK_CAPABILITY_ROUTES = Object.freeze([
   route('github-copilot', TASK_CAPABILITIES.IMAGE_INPUT, 'experimental', 'github-copilot-image-attachment', ['github-copilot-file-inputs']),
   route('github-copilot', TASK_CAPABILITIES.CONVERSATION_CONTINUE, 'experimental', 'visible-conversation-continuation', ['conversation-continuation']),
   route('github-copilot', TASK_CAPABILITIES.RESPONSE_CITATIONS, 'experimental', 'visible-response-citations', ['conversation-workflow']),
-  route('github-copilot', TASK_CAPABILITIES.FILE_UPLOAD, 'experimental', 'visible-file-attachment', ['harness-attachment-roundtrip']),
-  route('github-copilot', TASK_CAPABILITIES.DOCUMENT_INPUT, 'experimental', 'visible-document-attachment', ['harness-attachment-roundtrip']),
+  route('github-copilot', TASK_CAPABILITIES.FILE_UPLOAD, 'experimental', 'visible-file-attachment', ['github-copilot-file-inputs']),
+  route('github-copilot', TASK_CAPABILITIES.DOCUMENT_INPUT, 'experimental', 'visible-document-attachment', ['github-copilot-file-inputs']),
+  route('monica', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['workspace-response-baseline']),
   route('meta', TASK_CAPABILITIES.FILE_UPLOAD, 'experimental', 'visible-file-attachment', ['file-selection']),
   route('meta', TASK_CAPABILITIES.DOCUMENT_INPUT, 'experimental', 'visible-document-attachment', ['file-selection']),
   route('meta', TASK_CAPABILITIES.IMAGE_GENERATION, 'experimental', 'meta-image-generation', ['meta-image']),
@@ -517,6 +519,12 @@ const PROVIDER_TASK_CAPABILITY_ROUTES = Object.freeze([
   route('dola', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['harness-attachment-roundtrip']),
   route('dola', TASK_CAPABILITIES.FILE_UPLOAD, 'experimental', 'visible-file-attachment', ['harness-attachment-roundtrip']),
   route('dola', TASK_CAPABILITIES.DOCUMENT_INPUT, 'experimental', 'visible-document-attachment', ['harness-attachment-roundtrip']),
+  route('agnes', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['conversation-continuation']),
+  route('agnes', TASK_CAPABILITIES.CONVERSATION_CONTINUE, 'experimental', 'visible-conversation', ['conversation-continuation']),
+  route('agnes', TASK_CAPABILITIES.FILE_UPLOAD, 'experimental', 'visible-file-attachment', ['file-selection', 'harness-attachment-roundtrip']),
+  route('agnes', TASK_CAPABILITIES.DOCUMENT_INPUT, 'experimental', 'visible-document-attachment', ['harness-attachment-roundtrip']),
+  route('agnes', TASK_CAPABILITIES.IMAGE_INPUT, 'experimental', 'visible-image-attachment', ['file-selection']),
+  route('agnes', TASK_CAPABILITIES.RESPONSE_CITATIONS, 'experimental', 'visible-response-citations', ['workspace-response-citations']),
   route('arena', TASK_CAPABILITIES.VIDEO_GENERATION, 'experimental', 'arena-video-generation', ['arena-video']),
 ] satisfies readonly ProviderTaskCapabilityRoute[])
 

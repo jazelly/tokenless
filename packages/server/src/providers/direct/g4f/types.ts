@@ -31,6 +31,11 @@ export type G4fAuthContextInput = {
   source: G4fAuthSource
 }
 
+export type G4fAuthContextLease = {
+  contextId: string
+  release(): Promise<void>
+}
+
 export type G4fProxyRequest = {
   path: string
   method?: string

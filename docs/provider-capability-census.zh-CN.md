@@ -1,19 +1,75 @@
 # Provider Capability Census
 
-最近复核：2026-08-31
+最近复核：2026-09-15
+
+## 2026-09-14 provider 数量审查
+
+当前 Tokenless API registry 共 **41 个 store providers**：**19 个 Browser**、**35 个 Direct API**，其中 **13 个两种模式均有**。17 个 Browser provider 有任务路由；Microsoft Copilot 和 HuggingChat 已注册，但尚未公布任务路由。Direct API 数量表示接入映射，不表示 35 家均已逐项验证。
+
+GLHF、TheB.AI、Fenay AI 因真实站点无法正常加载而移除；Blackbox AI 因所选账户进入仅 Enterprise 可访问页面而移除。
+
+Puter 也已按本机评估从支持目录移除。
+
+本次检查 GPT4Free main [`e5d68e1`](https://github.com/xtekky/gpt4free/tree/e5d68e15499260ec2e5da351dda4352270a15c40)（2026-09-10）。借助浏览器登录、处理验证或在页面内发 HTTP 请求，不等于提供了 Tokenless API 的网页操作 adapter。以下使用浏览器辅助的 provider 尚无已完成的 Browser task route：
+
+| Provider | GPT4Free 实现 | 当前 Tokenless API mode |
+| --- | --- | --- |
+| Hugging Face / HuggingChat | [HuggingChat.py](https://github.com/xtekky/gpt4free/blob/e5d68e15499260ec2e5da351dda4352270a15c40/g4f/Provider/needs_auth/hf/HuggingChat.py) | 已登记 Browser，但尚无已完成 task route；Direct API |
+| Pi | [Pi.py](https://github.com/xtekky/gpt4free/blob/e5d68e15499260ec2e5da351dda4352270a15c40/g4f/Provider/needs_auth/Pi.py) | Direct API |
+| MiniMax / HailuoAI | [HailuoAI.py](https://github.com/xtekky/gpt4free/blob/e5d68e15499260ec2e5da351dda4352270a15c40/g4f/Provider/needs_auth/mini_max/HailuoAI.py) | Direct API |
+| ElevenLabs | [ElevenLabs.py](https://github.com/xtekky/gpt4free/blob/e5d68e15499260ec2e5da351dda4352270a15c40/g4f/Provider/audio/ElevenLabs.py) | Direct API |
+| Microsoft Designer | [MicrosoftDesigner.py](https://github.com/xtekky/gpt4free/blob/e5d68e15499260ec2e5da351dda4352270a15c40/g4f/Provider/needs_auth/MicrosoftDesigner.py) | 未注册 |
+
+这些是待验证的候选，尚未新增支持。MiniMax Agent 与上表 HailuoAI adapter 对应的网页产品不同。
+
+## Agnes AI Browser 验收 · 2026-09-14
+
+实验性 `agnes` adapter 已通过 built CLI 和 packaged daemon 完成真实 Browser Chat、持久化续聊、Markdown/文档与 PNG/图片输入、规范化引用及账号检查。Ego Lite 用于探查实时 selectors，下方验收使用 registry 默认的 managed profile。
+
+| 边界 | 实际结果 |
+| --- | --- |
+| Built CLI / packaged daemon | Build 与 focused real-provider gates 通过；没有 fixture 或 Direct API 替代 |
+| Chat、文档、图片、续聊与引用 | 新鲜的 `TOKENLESS_LIVE_AGNES_GATE=1 node --test test/live-agnes-chat.e2e.mjs` 在 123.6 秒内完成 5 次提交：`tlp_ec3fbde3-06fa-4a23-9a3b-16420a3b6e0a`、`tlp_a8c6027b-9d15-48bf-9f85-974691227830`、`tlp_82f1e8d1-9774-46cc-aa89-52befa2515b4`、`tlp_7bc08362-7aec-4dec-9b36-cda6347a00b1`、`tlp_90ab918d-e1d2-4de7-aae3-5d019e38170e`；全部成功，包含持久化续聊和规范化引用输出 |
+| Harness 附件闭环 | 新鲜的 `test/live-agnes-harness.e2e.mjs` 在 83.8 秒内完成两轮：`b0c3f67a-c4c6-4686-9387-d3657ba16b96`、`d523f9ba-f6d4-45d8-bd8d-94d0a0453d71`；两轮均接受 Markdown 附件、使用本地只读 `workspace.read`，无 fallback 并返回准确 final proof |
+| Managed capability matrix | Non-submission `test-results/live-provider-e2e/20260914T073222Z_52ca655a-non_submission.json` 通过 readiness、prompt draft、file selection 3/3；mutation `test-results/live-provider-e2e/20260914T072313Z_85788bbb-mutation.json` 通过 continuation、citation、baseline 3/3。通用附件加引用的 `conversation-workflow` 暂不可用，不对外公布 |
+| 所有 profile | `web-ai` 名称为 `Jason Z4350`；Registry 默认 `login-2026-09-05` 名称为 `XZHA4350`，保留现有 Cloak runtime binding；通过 `tokenless config` 启用 Agnes Browser membership |
+| 登录状态 | `tlp_7f089d0c-cced-4851-9509-a4872723f0d8`：已登录 `xzha4350`，实际显示 `Free`、`signed_in_free`；账号菜单检查后恢复，没有获取 session 值 |
+| 黄色 profile | 通过 production browser control API 实时执行 `auth.status` 返回已登录 `jasonz4350`，实际显示 `Free`、`signed_in_free`；两个配置 profile 现在都已登录 Agnes |
+| Rate limits | 页面只有非数值 monthly Web credits，因此 `limits inspect` 返回 `unknown`。`test-results/live-provider-e2e/agnes-rate-probe-20260914.json` 的真实有界 probe 串行提交 3 次、间隔 1 秒；全部成功且没有 `rateLimit` 或 `retryAfter`，不声称数值 RPM。随后官方长 prompt 返回 Agnes 的“Insufficient credits”答案；这是 credit/quota 阻断，不是 429 或 numeric rate-limit 证据 |
+| Credits / quota 阻断 | rebuilt response boundary 现在会把真实 Agnes 答案分类为 `provider_credits_exhausted`，family 为 `plan_limit`，proof 为 `visible-agnes-insufficient-credits-text`；routing 记录为 capacity，且 `rateLimited: false`。2026-09-15 黄色 `web-ai` 的实时 Usage 显示 `Free`、Time-sensitive 1,200、Permanent 0，以及 `Daily Free Credits +1200`。这只确认该账号该日期观察到的每日刷新，不证明普遍固定的 model multiplier 或单条消息价格 |
+| Blocker 检查 | 最终 rebuilt adapter：`tlp_306e3f7c-f7e1-411c-8b82-e2d9823d2b22` 在保留的真实对话中通过，`blocked: false`；未观察到的 Agnes 专属额度警告不单独配置 selectors |
+| Terminal-Bench | 官方 4.0 `wal-recovery-ordering`，固定 `tokenless/agnes`、蓝色 profile、k=1、retry=0：最新固定 run `07-wal-recovery-ordering-agnes-20260915` 完成 1 个真实 trial，reward 为 0，97 项 verifier 中 44 项通过、53 项失败。parent submission 产生了两个成功的 browser job（`24d9f273-d899-4ef9-a238-774a6b2482b9`，随后是 correction `d60a50f2-4067-49c5-bac6-3804be51092f`），两次都以 provider 的额度不足答案结束；随后 DSH parent 失败，没有 tool result 或 child chain。此前 `01`–`05` 仍保留；没有观察到 429/限流信号 |
+| 黄色 Terminal-Bench 重跑 | 同一官方任务在 2026-09-15 使用固定 `tokenless/agnes` 和明确 `web-ai` 只运行 1 次（`08-wal-recovery-ordering-agnes-yellow-20260915`）：reward 为 0，97 项 verifier 中 44 项通过、53 项失败，未 retry。第一次 provider job 成功提交，但返回真实的 permission-error 答案；correction job 以 `prompt_submit_failed` 结束；`rateLimited: false`，没有 tool result 或 child chain。本次刷新后的 1,200 额度没有触发额度不足答案 |
+| Structured schema/tool 边界 | 独立的真实短 OpenAI-compatible probe（`26a0a391-42d1-4b51-bee6-46f07c09368c`）在 10 秒内返回 HTTP 200、`finish_reason=tool_calls` 和合法的 `read_file` function call。完整官方输入仍包含 23 个声明函数并设置 `tool_choice=read`；长 Agnes run 确实触发了有界 correction request，但额度阻止了合法的第二次 tool call，因此不声称有 tool result 或 continuation/child chain。当前 route 仍仅为 Chat/document/image/citation；不公布 agentic Terminal-Bench 支持 |
+
+[Consumer subscription 页面](https://app.agnes-ai.com/subscription) 显示 monthly credits：Starter 9,000、Plus 18,000、Pro 90,000。余额及月额度不能推导每条 Chat 消息的成本、RPM 或 reset window；独立的 [官方 API Token Plan FAQ](https://github.com/AgnesAI-Labs/AgnesAI-Models/blob/main/docs/TOKEN_PLAN_FAQ.md) 也不是 consumer Web 配额证据。
+
+Benchmark 使用固定的 Harbor/DSH 配置并请求 reasoning effort `high`，但没有观察到网页 model/effort label。官方 run 仅 1 个 trial、0 次 retry，原生 token/cost usage 不可用。
+
+Parent job 实际存储 `capabilityRoute: null`；不能从当前 capability catalog 推断本次 benchmark 的 requirements 或已完成 provider-routing event。
+
+原始结果保留于 `benchmarks/terminalbench/results/agnes-20260914/` 与 `benchmarks/terminalbench/results/agnes-20260915-fixed/` 下的串行官方尝试；启动身份及全部证据/任务文件哈希位于 `observations/agnes-20260914/`。这些 direct fixed-provider run 都没有 canonical collector 所需的 `tokenless-run.json`，因此不声称生成了 schema 验证的 `run-observation.json`。
+
+Chat 复现命令：`TOKENLESS_LIVE_AGNES_GATE=1 node --test test/live-agnes-chat.e2e.mjs`；Harness 使用同一 gate 运行 `test/live-agnes-harness.e2e.mjs`；managed matrix 使用 `TOKENLESS_LIVE_E2E_GATE=mutation TOKENLESS_LIVE_E2E_PROVIDER=agnes TOKENLESS_LIVE_E2E_CASES=conversation-continuation,workspace-response-citations,workspace-response-baseline env -u CODEX_THREAD_ID node --test --test-concurrency=1 test/live-managed-playwright.e2e.mjs`。Model/effort 选择、原生 Projects、定时工作流、通用 `conversation-workflow` 及其他 agentic 动作，在实时闭环前不公布。早期 workflow timeout 保留为 job 历史，不是限流证据。
+
+Checked-in live-matrix validator 现在已通过 42 个 case、19 个 provider。Focused Agnes gates 单独验证，不声称全 provider live E2E suite 已通过。
+
+## 既有能力证据
 
 这是一份产品调研记录，不是 Tokenless support 声明。Provider 官方文档只能证明产品 feature 存在；只有 provider adapter 实现完整可见 lifecycle，且真实 provider browser E2E 闭合必需证据后，Tokenless 才会公布 route。规范的命名、映射、support 与扩展规则位于 [Capability Matrix](capability-matrix.zh-CN.md)。
 
 提交到仓库的 runtime catalog 与 provider routing matrix 位于 `packages/server/src/providers/task-capabilities.ts`。`tokenless capabilities list --json` 无需打开浏览器即可公开这个带版本的 catalog。当前 V3 可路由 outcome 为：
 
-- `conversation.chat`：ChatGPT、Claude、Gemini、Grok、Arena，以及实验性 Qwen、DeepSeek、Perplexity、Z.ai、Doubao、Kimi、Dola 和 Meta AI；
+- `conversation.chat`：ChatGPT、Claude、Gemini、Grok、Arena，以及实验性 Qwen、DeepSeek、Perplexity、Z.ai、Doubao、Kimi、Dola、Meta AI、GitHub Copilot、Lovable、Monica 和 Agnes；
+- `conversation.continue`：支持的 Arena，以及实验性 GitHub Copilot 与 Agnes；
 - `image.generation` 与 `artifact.download`：实验性 ChatGPT、Gemini、Grok、Doubao、Arena 和 Meta AI；
-- `file.upload`（transport）：支持的 ChatGPT、Claude 与 Grok；实验性 Gemini、Qwen、DeepSeek、Perplexity、Z.ai、Doubao、Kimi、Dola 与 Meta AI，另有仅限图片的 Arena route；
-- `document.input`（Markdown/PDF 等文档）：与 generic-document `file.upload` 相同的 evidence-backed provider 集合，不包括 Arena 的 image-only route；Harness Markdown 与其他非媒体 attachment 默认使用此 semantic input；
+- `file.upload`（transport）：支持的 ChatGPT、Claude 与 Grok；实验性 Gemini、Qwen、DeepSeek、Perplexity、Z.ai、Doubao、Kimi、Dola、Meta AI 与 Agnes，另有仅限图片的 Arena route；
+- `document.input`（Markdown/PDF 等文档）：与 generic-document `file.upload` 相同的 evidence-backed provider 集合，不包括 Arena 的 image-only route，并包括 Agnes；Harness Markdown 与其他非媒体 attachment 默认使用此 semantic input；
+- `image.input`：实验性 Arena 与 Agnes；
 - `search.web`：实验性 Kimi；以及
-- `response.citations`：实验性 Kimi search。
+- `response.citations`：实验性 Kimi search 与 Agnes。
 
-下面其他条目仍是待发现 candidate。特别是 `research.deep`、作为必需 production postcondition 的 citation、作为显式 capability 的 continuation、其他 generated media 与 generated work artifact，在完整 execution contract 得到实现并通过真实 provider E2E 闭合前均不可路由。
+下面其他条目仍是待发现 candidate。特别是 `research.deep`、没有闭合 route 的 provider-specific citation 或 continuation outcome、其他 generated media 与 generated work artifact，在完整 execution contract 得到实现并通过真实 provider E2E 闭合前均不可路由。
 
 Harness attachment gate 比 generic file upload 更严格：它要求 bootstrap Markdown、framed tool call、真实只读工具执行、同 conversation tool-result Markdown，以及无 fallback 的 succeeded child run。ChatGPT、Gemini、DeepSeek、Z.ai、Doubao、Kimi 与 Dola 已于 2026-08-31 通过；Qwen 已于 2026-09-01 在 74,595ms 内通过，完成两次 submission、可见 attachment/submission/response proof、同一 conversation 的两个可见 turn、durable state，且无 fallback。Claude、Grok、Perplexity 与 Meta AI 保留 generic Markdown document route，但不进入 Harness V0/Auto。Arena 接受图片而不接受 Markdown；其 experimental `file.upload` transport 与 `image.input` 配对，且没有 `document.input` route。具体当前原因记录在 [Capability Matrix](capability-matrix.zh-CN.md#harness-附件准入)。
 
@@ -51,11 +107,13 @@ Product surface 比当前 Tokenless evidence 更广。中间一列结合官方�
 | Arena | 已登录 Battle、Direct 与 Side-by-Side chat；model selection；file input；Search、Code、Agent、Image 与 Video surface | 支持 Direct chat，独立 generated-image route 保持 experimental；实验性 image-scoped `file.upload` transport 与 `image.input` 接受 PNG、JPEG 与 WebP，但没有 `document.input` 或 Markdown route |
 | Meta AI | 已登录 Web chat；Instant 与 Thinking mode；广泛 file input；可见 image generation；research-progress 与 assistant-response surface | 实验性 chat、image 与 generic Markdown `file.upload` transport、`document.input` 保留；精确 Harness bytes 可上传，但组合 attachment instruction 被静默拒绝且不创建 conversation |
 | GitHub Copilot | 已登录的 Ask/Agent、repository context、模型权限、文件／图片、回复 token、账户 AI credits、Spaces 与 cloud agent | 实验性 Ask/Agent 控制、repository 作为 Project、可选与 Pro+/Max 锁定模型区分、回复 token 计数及账户／session AI credits。真实 GPT-5.6 Luna 验收覆盖 TXT、Markdown、JSON、CSV、TypeScript、PNG、仓库读取、云端 Agent 工具步骤及无 fallback 的两轮 Harness Markdown 往返。见[控制与验证](github-copilot.zh-CN.md)。Spaces 仍不公布 |
+| Lovable | 已登录的 AI app builder、项目 preview 与同项目 chat | 实验性 Browser `conversation.chat`；2026-09-14 在 `login-2026-09-05` 新鲜通过 packaged CLI/daemon `lovable-project-roundtrip` 验收，包括真实项目 prompt、可见回复、preview 标题与可点击计数器。报告：`test-results/live-provider-e2e/20260914T070953Z_3d9f7673-mutation.json` |
+| Agnes AI | Browser Chat、Markdown/文档与 PNG/图片输入、持久化续聊、可见引用及账号套餐检查 | 实验性 Browser `conversation.chat`、`conversation.continue`、`file.upload`、`document.input`、`image.input` 与 `response.citations`；model/effort 控制、原生 Projects 与 provider-native agentic 工作流尚不公布 |
 
 官方参考：
 
 - [GitHub Copilot Web chat](https://docs.github.com/en/copilot/how-tos/copilot-on-github/chat-with-copilot/chat-in-github) 与 [usage limits](https://docs.github.com/en/copilot/concepts/usage-limits)
-
+- [Lovable](https://lovable.dev/) 与 [pricing and credits](https://lovable.dev/pricing)
 - [ChatGPT capabilities](https://help.openai.com/en/articles/9260256-chatgpt-capabilities-overview)、[Deep Research](https://help.openai.com/en/articles/10500283-deep-research-in-chatgpt) 与 [Projects](https://help.openai.com/en/articles/10169521-projects-in-chatgpt)
 - [Claude Research](https://support.anthropic.com/en/articles/11088861-using-research-on-claude-ai)、[Web search](https://support.anthropic.com/en/articles/10684626-enabling-and-using-web-search)、[Projects](https://support.anthropic.com/en/articles/9529781-examples-of-projects-you-can-create) 与 [Artifacts](https://support.anthropic.com/en/articles/9487310-what-are-artifacts-and-how-do-i-use-them)
 - [Gemini Apps capability index](https://support.google.com/gemini) 与 [Gemini Deep Research](https://support.google.com/gemini/answer/15719111)
@@ -75,6 +133,8 @@ Product surface 比当前 Tokenless evidence 更广。中间一列结合官方�
 
 | Candidate | Canonical Web 入口 | 官方已记录或当前已确认的 surface | 建议评估 |
 | --- | --- | --- | --- |
+| Lovable | `https://lovable.dev/` | 2026-09-12 已在真实登录页面提交最小计数器建站任务，并创建项目 | 实验性 Browser adapter 已实现并为 `conversation.chat` 提供 route；2026-09-14 在 `login-2026-09-05` 通过 packaged CLI/daemon `lovable-project-roundtrip` gate 与 preview 计数器读回。 |
+| Replit | `https://replit.com/` | [Replit Agent](https://replit.com/products/agent) 支持通过对话构建应用；本次浏览器检查要求登录 | 用户指定优先接入。需手动登录后检查、实现真实 workspace 流程，尚未公布 adapter |
 | Mistral Le Chat | `https://chat.mistral.ai/` | Web search 与 citation、Deep Research、Think mode、Projects 与 Libraries、file、code interpreter、image generation/editing、Canvas、agent 与 MCP connector | P1。Capability 匹配广，官方文档相对清晰；适合作为 research 与 artifact semantics 的第二个 adapter |
 | Microsoft Copilot | `https://copilot.microsoft.com/` | 2026-09-05 已观察到：chat、Smart/Think deeper/Study and learn/Search mode、Markdown upload、image 与 Deep Research 入口、podcast、quiz、connector 和 Projects | 已登录的 ego-browser Observer 在同一会话完成两轮对话，并从上传的 Markdown 读出唯一标记。Tokenless API 配置中的 profile 仍需单独通过 CLI/daemon 验收 |
 | Tencent Yuanbao | `https://yuanbao.tencent.com/` | Web product、腾讯增强 Web search、多格式 file reading、reasoning/model surface 与更广泛的腾讯内容 ecosystem | P2。有价值的中文 search 与 file route；高级 artifact 与 workspace 声明需要官方和真实闭合 |

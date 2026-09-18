@@ -186,7 +186,7 @@ function parseProviderTargetUrl(value: unknown, origins: readonly string[]): URL
     parsed.username !== '' ||
     parsed.password !== '' ||
     parsed.port !== '' ||
-    parsed.search !== '' ||
+    (parsed.search !== '' && !isAgnesConversationUrl(parsed)) ||
     parsed.hash !== '' ||
     !origins.some((origin) => origin.toLowerCase() === parsed.origin.toLowerCase())
   ) {
@@ -201,10 +201,15 @@ function canonicalProviderTargetFromUrl(providerId: ProviderId, parsed: URL): Ca
   const pathname = canonicalPathname(parsed.pathname)
   return {
     providerId,
-    href: `${parsed.origin}${pathname}`,
+    href: `${parsed.origin}${pathname}${providerId === 'agnes' && isAgnesConversationUrl(parsed) ? parsed.search : ''}`,
     origin: parsed.origin,
     pathname,
   }
+}
+
+export function isAgnesConversationUrl(url: URL): boolean {
+  return url.origin === 'https://app.agnes-ai.com' && url.pathname === '/' &&
+    /^\?conversationId=\d{1,30}$/.test(url.search) && url.hash === ''
 }
 
 function canonicalPathname(pathname: string) {

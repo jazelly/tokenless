@@ -15,6 +15,7 @@ export default defineConfig({
     outDir: path.join(packageRoot, 'dist'),
     emptyOutDir: true,
     cssCodeSplit: false,
+    assetsInlineLimit: 0,
     sourcemap: false,
     rollupOptions: {
       output: {

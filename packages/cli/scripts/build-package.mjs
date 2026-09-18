@@ -2,11 +2,17 @@
 
 import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const distRoot = path.join(packageRoot, 'dist')
+const require = createRequire(import.meta.url)
+const nodeBins = {
+  tsc: resolveNodeBin('typescript', 'tsc'),
+  vite: resolveNodeBin('vite', 'vite'),
+}
 
 fs.rmSync(distRoot, { recursive: true, force: true })
 
@@ -65,7 +71,18 @@ fs.chmodSync(path.join(distRoot, 'server', 'src', 'entry.mjs'), 0o755)
 run(process.execPath, [path.join(providersRoot, 'rate-limit-catalog-check.mjs')])
 
 function run(command, args) {
-  const executable = process.platform === 'win32' && !path.isAbsolute(command) ? `${command}.cmd` : command
-  const shell = process.platform === 'win32' && !path.isAbsolute(command)
-  execFileSync(executable, args, { cwd: packageRoot, stdio: 'inherit', shell })
+  const nodeBin = nodeBins[command]
+  execFileSync(nodeBin ? process.execPath : command, nodeBin ? [nodeBin, ...args] : args, {
+    cwd: packageRoot,
+    stdio: 'inherit',
+    windowsHide: true,
+  })
+}
+
+function resolveNodeBin(packageName, binName) {
+  const manifestPath = require.resolve(packageName + '/package.json')
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+  const relativePath = typeof manifest.bin === 'string' ? manifest.bin : manifest.bin?.[binName]
+  if (typeof relativePath !== 'string') throw new Error('Missing ' + binName + ' binary in ' + manifestPath)
+  return path.resolve(path.dirname(manifestPath), relativePath)
 }

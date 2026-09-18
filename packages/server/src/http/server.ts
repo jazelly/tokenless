@@ -148,7 +148,20 @@ export async function serveHttp({
     resolveHarnessRunHandler: async () => resolveAgentRunHandler?.(origin()),
   })
   const privateProviderTurn = new PrivateProviderTurnV0Adapter(store)
-  const apiProxy = new ApiProxyAdapter(store, async () => await runtimeController?.wake(), g4fService?.client)
+  const resolveG4fAuthContext = runtimeController === undefined
+    ? undefined
+    : async ({ profile, provider, signal }: {
+        profile: string
+        provider: string
+        signal?: AbortSignal | undefined
+      }) => await runtimeController.createG4fAuthContext(profile, provider, signal)
+  const apiProxy = new ApiProxyAdapter(
+    store,
+    async () => await runtimeController?.wake(),
+    g4fService?.client,
+    undefined,
+    resolveG4fAuthContext,
+  )
   const imageGeneration = new ImageGenerationAdapter(store, async () => await runtimeController?.wake(), g4fService?.client)
   server = http.createServer((request, response) => {
     void handleRequest(store, close, () => active, deactivate, runtimeController, g4fService, applicationServices, dashboardServer, privateProviderTurn, apiProxy, imageGeneration, featureBench, resolveAgentRunHandler, origin(), request, response)
@@ -750,7 +763,7 @@ async function handlePrivateProviderTurnRequest(
     const action = turnRoute[2] ?? null
     if (method === 'GET' && action === null) {
       const read = await providerTurn.readWithRouting(turnRef)
-      writeApiProxyRoutingHeaders(response, read.routing, read.outcome)
+      writeApiProxyRoutingHeaders(response, read.routing, read.outcome, [read.jobId])
       writeJson(response, 200, { turn: read.turn })
       return true
     }
@@ -871,6 +884,11 @@ type ApiProxyRoute =
  * OpenAI SDK work with nothing but a `baseURL` override, so OpenAI is the
  * default dialect. The prefixed paths stay authoritative and are the only way
  * to reach Anthropic.
+ *
+ * Standard Anthropic clients append `/v1/messages` to their configured base
+ * URL, so a client pointed at `http://127.0.0.1:7331/v1/anthropic` requests
+ * `/v1/anthropic/v1/messages`. Accept that client-appended alias as well as
+ * the canonical `/v1/anthropic/messages` route.
  */
 function matchApiProxyRoute(method: string, pathname: string): ApiProxyRoute | null {
   if (method === 'POST' && (pathname === '/v1/openai/chat/completions' || pathname === '/v1/chat/completions')) {
@@ -879,7 +897,9 @@ function matchApiProxyRoute(method: string, pathname: string): ApiProxyRoute | n
   if (method === 'POST' && (pathname === '/v1/openai/responses' || pathname === '/v1/responses')) {
     return { kind: 'response' }
   }
-  if (method === 'POST' && pathname === '/v1/anthropic/messages') return { kind: 'completion', dialect: 'anthropic' }
+  if (method === 'POST' && (pathname === '/v1/anthropic/messages' || pathname === '/v1/anthropic/v1/messages')) {
+    return { kind: 'completion', dialect: 'anthropic' }
+  }
   if (method === 'GET' && (pathname === '/v1/openai/models' || pathname === '/v1/models')) return { kind: 'models' }
   return null
 }
@@ -910,6 +930,12 @@ async function handleApiProxyRequest(
         }
       }
       const result = await apiProxy.respond(body, requestLifetime.signal)
+      writeApiProxyRoutingHeaders(
+        response,
+        result.routing,
+        undefined,
+        result.executionMode === 'browser' ? result.jobIds : undefined,
+      )
       if (result.stream) {
         writeApiProxyStream(response, openAiResponseStreamFrames(result.body))
         return
@@ -925,7 +951,12 @@ async function handleApiProxyRequest(
       }
     }
     const completion = await apiProxy.complete(dialect, body, requestLifetime.signal)
-    writeApiProxyRoutingHeaders(response, completion.routing)
+      writeApiProxyRoutingHeaders(
+        response,
+        completion.routing,
+        undefined,
+        completion.executionMode === 'browser' ? completion.jobIds : undefined,
+      )
     if (body.stream === true) {
       writeApiProxyStream(response, dialect === 'openai'
         ? openAiStreamFrames(completion, requestedModel)
@@ -945,7 +976,7 @@ async function handleApiProxyRequest(
 function writeApiProxyError(response: ServerResponse, dialect: ApiProxyDialect, error: unknown) {
   if (response.destroyed || response.headersSent || response.writableEnded) return
   if (error instanceof ApiProxyError) {
-    writeApiProxyRoutingHeaders(response, error.routing)
+      writeApiProxyRoutingHeaders(response, error.routing)
     writeJson(response, error.status, apiProxyErrorBody(dialect, error.code, error.message, error.status, error.param))
     return
   }
@@ -966,8 +997,15 @@ function writeApiProxyRoutingHeaders(
   response: ServerResponse,
   routing: ApiProxyRouting | null | undefined,
   outcome: 'pending' | 'completed' | 'failed' | undefined = undefined,
+  jobIds: readonly string[] | undefined = undefined,
 ) {
   if (outcome !== undefined) response.setHeader('X-Tokenless-Route-Outcome', outcome)
+  const resolvedJobIds = (jobIds ?? routing?.jobIds ?? [])
+    .filter((jobId) => /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(jobId))
+    .slice(0, 2)
+  if (resolvedJobIds.length > 0) {
+    response.setHeader('X-Tokenless-Route-Job-Ids', resolvedJobIds.join(','))
+  }
   if (!routing || !/^[a-z][a-z0-9-]{0,63}$/.test(routing.provider)) return
   response.setHeader('X-Tokenless-Route-Mode', routing.mode)
   response.setHeader('X-Tokenless-Route-Provider', routing.provider)

@@ -4,6 +4,8 @@ import type {
 } from './navigation-policy.js'
 
 export type ProviderNavigationCatalogId =
+  | 'agnes'
+  | 'hugging-face'
   | 'arena'
   | 'chatgpt'
   | 'claude'
@@ -19,6 +21,8 @@ export type ProviderNavigationCatalogId =
   | 'meta'
   | 'microsoft-copilot'
   | 'github-copilot'
+  | 'lovable'
+  | 'monica'
 
 function pages(...patterns: ProviderPagePattern[]) {
   return Object.freeze(patterns.map((pattern) => Object.freeze(pattern)))
@@ -40,6 +44,34 @@ function navigation(definition: ProviderNavigationDefinition): ProviderNavigatio
 // Page patterns are declared only from current adapter routes or redacted real-session provenance.
 // A missing pattern means the route shape is not yet known; it does not broaden the origin allowlist.
 export const PROVIDER_NAVIGATION_CATALOG = Object.freeze({
+  agnes: navigation({
+    entryUrl: 'https://app.agnes-ai.com/',
+    homeUrl: 'https://app.agnes-ai.com/',
+    origins: ['https://app.agnes-ai.com'],
+    pagePatterns: pages({ kind: 'entry', urlPattern: 'https://app.agnes-ai.com/' }),
+    trustedSignInOrigins: [],
+  }),
+  lovable: navigation({
+    entryUrl: 'https://lovable.dev/',
+    homeUrl: 'https://lovable.dev/dashboard',
+    origins: ['https://lovable.dev'],
+    pagePatterns: pages(
+      { kind: 'entry', urlPattern: 'https://lovable.dev/' },
+      { kind: 'chat_runtime', urlPattern: 'https://lovable.dev/dashboard' },
+      { kind: 'conversation', urlPattern: 'https://lovable.dev/projects/:conversationId' },
+    ),
+    trustedSignInOrigins: [],
+  }),
+  'hugging-face': navigation({
+    entryUrl: 'https://huggingface.co/chat/',
+    homeUrl: 'https://huggingface.co/chat/',
+    origins: ['https://huggingface.co'],
+    pagePatterns: pages(
+      { kind: 'entry', urlPattern: 'https://huggingface.co/chat/' },
+      { kind: 'conversation', urlPattern: 'https://huggingface.co/chat/conversation/:conversationId' },
+    ),
+    trustedSignInOrigins: [],
+  }),
   arena: navigation({
     entryUrl: 'https://arena.ai/',
     homeUrl: 'https://arena.ai/text/direct',
@@ -229,6 +261,16 @@ export const PROVIDER_NAVIGATION_CATALOG = Object.freeze({
       { kind: 'entry', urlPattern: 'https://github.com/copilot' },
       { kind: 'conversation', urlPattern: 'https://github.com/copilot/c/:conversationId' },
       { kind: 'conversation', urlPattern: 'https://github.com/:owner/:repo/tasks/:conversationId' },
+    ),
+    trustedSignInOrigins: [],
+  }),
+  monica: navigation({
+    entryUrl: 'https://monica.im/home/chat',
+    homeUrl: 'https://monica.im/home/chat',
+    origins: ['https://monica.im'],
+    pagePatterns: pages(
+      { kind: 'entry', urlPattern: 'https://monica.im/home/chat' },
+      { kind: 'conversation', urlPattern: 'https://monica.im/home/chat/:agent/:botUid' },
     ),
     trustedSignInOrigins: [],
   }),

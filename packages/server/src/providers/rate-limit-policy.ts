@@ -15,6 +15,9 @@ type CatalogPlan = {
 type CatalogRule = {
   id: string
   status: string
+  scope: string
+  meter: { unit: string }
+  evidence: Array<{ kind: string; sourceIds: string[] }>
   appliesTo: {
     planIds: readonly string[]
     accessClasses: readonly string[]
@@ -79,7 +82,8 @@ export type ProviderCapacityInput = {
 
 export type ProviderRuleCapacityProjection = {
   ruleId: string
-  knowledge: 'official_exact' | 'non_numeric'
+  knowledge: 'official_exact' | 'non_numeric' | 'internal'
+  eligibleAt?: string | null
   action: string
   windowSeconds: number | null
   publishedAllowance: number | null

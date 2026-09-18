@@ -14,7 +14,7 @@ export function createPreviewState(language: Language, designState: DesignState,
   }
   let snapshot = $state(initial)
   let toast = $state('')
-  let apiProxy = $state<DashboardConfigDocument['apiProxy']>({ enabled: false, executionMode: 'direct' })
+  let apiProxy = $state<DashboardConfigDocument['apiProxy']>({ enabled: false, executionMode: ['direct'] })
 
   function notify(message: string) { toast = message }
   const unavailable = async (): Promise<never> => {
@@ -60,6 +60,7 @@ export function createPreviewState(language: Language, designState: DesignState,
   }
 
   const actions: DashboardActions = {
+    async getInvocations() { return { jobs: [], hasMore: false, failureReasons: [] } },
     async getAnalytics(profile, range) {
       if (designState === 'busy') return new Promise(() => {})
       if (designState === 'error') throw new Error(translate(language, 'requestFailed'))

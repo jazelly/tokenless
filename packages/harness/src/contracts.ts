@@ -512,6 +512,8 @@ export type AgentRunView = {
   runId: string
   status: AgentRunStatus
   turn: number
+  /** Secret-free execution facts: names, lifecycle, statuses, and argument digests only. */
+  trace: HarnessRunTrace
   providerTurnRef?: string | undefined
   waiting?: {
     kind: 'approval' | 'authentication' | 'user_input' | 'provider'
@@ -521,6 +523,28 @@ export type AgentRunView = {
   } | undefined
   final?: { output: string; artifacts: readonly string[] } | undefined
   error?: { code: string; message: string } | undefined
+}
+
+export type HarnessRunTrace = {
+  tools: readonly {
+    name: string
+    source: HarnessToolDescriptor['source']
+    readOnly: boolean
+    approval: HarnessToolCatalogEntry['approval']
+  }[]
+  providerTurns: readonly {
+    turn: number
+    lifecycle: ProviderTurnState['lifecycle']
+    responseKind: HarnessModelResponse['kind'] | null
+  }[]
+  calls: readonly {
+    turn: number
+    id: string
+    tool: string
+    approval: 'not_required' | 'pending' | 'approved'
+    status: 'pending' | 'executing' | 'succeeded' | 'failed' | 'authentication_required'
+    argumentsDigest: string
+  }[]
 }
 
 export type AgentRunIntervention = {

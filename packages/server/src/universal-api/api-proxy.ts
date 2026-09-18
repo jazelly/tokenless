@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import { readTokenlessConfig, type ProviderBackend } from '../persistence/config.js'
+import type { ProviderExecutionMode } from '../providers/provider-identity.js'
 import {
   createManagedPlaywrightJobRequest,
   type ManagedPlaywrightRoutingExclusion,
@@ -30,6 +31,8 @@ import {
   type JobStore,
 } from '../jobs/store.js'
 import type { G4fServiceClient } from '../providers/direct/g4f/client.js'
+import { isG4fDirectOnlyProvider } from '../providers/direct/g4f-map.js'
+import type { G4fAuthContextLease } from '../providers/direct/g4f/types.js'
 import { ProviderProtocolRouter } from '../providers/direct/protocol-router.js'
 import {
   compileOpenAiToolCorrectionPrompt,
@@ -80,6 +83,8 @@ const MODEL_PREFIX = 'tokenless/'
 const MAX_MESSAGES = 256
 const MAX_PROMPT_BYTES = 1024 * 1024
 const JOB_POLL_INTERVAL_MS = 250
+const SAFE_JOB_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u
+const MAX_EVIDENCE_JOB_IDS = 2
 
 /** Visible provider work is browser-paced, so the ceiling is minutes rather than seconds. */
 const DEFAULT_JOB_TIMEOUT_MS = 10 * 60_000
@@ -111,6 +116,7 @@ export type ApiProxyRouting = {
   preferenceRequested: string | null
   preferenceHonored: boolean
   providerSubmitted: boolean
+  jobIds?: string[]
   visibleProof?: string
   limitWindow?: 'minute' | 'hour' | 'day' | 'week' | 'unknown'
   retryAfterSeconds?: number
@@ -127,7 +133,9 @@ type NormalizedRequest = {
   executionMode: 'browser' | 'direct' | null
   providerBackend: ProviderBackend | null
   authContextId: string | null
+  profile: string | null
   semanticPreference: string | null
+  submissionEvidence: 'benchmark' | null
   toolProtocol: {
     nonce: string
     tools: OpenAiFunctionTool[]
@@ -142,6 +150,8 @@ export type ApiProxyCompletion = {
   text: string
   citations: { url: string; title?: string }[]
   jobId: string
+  /** Managed browser job ids that produced the completion, in execution order. */
+  jobIds: string[]
   conversationMode: ApiProxyConversationMode
   executionMode: 'browser' | 'direct'
   providerBackend: 'browser' | ProviderBackend
@@ -167,6 +177,7 @@ type RawApiProxyCompletion = {
 }
 
 type PreparedOpenAiResponse = {
+  store: boolean
   request: NormalizedRequest
   transcript: Record<string, unknown>[]
   responseId: string
@@ -193,7 +204,17 @@ type ConversationPlan = {
 export type ApiProxyResponseResult = {
   body: Record<string, unknown>
   stream: boolean
+  jobId?: string
+  jobIds?: string[]
+  executionMode?: 'browser' | 'direct'
+  routing?: ApiProxyRouting
 }
+
+export type ApiProxyG4fAuthContextResolver = (input: {
+  profile: string
+  provider: string
+  signal?: AbortSignal | undefined
+}) => Promise<G4fAuthContextLease | undefined>
 
 export class ApiProxyAdapter {
   private readonly profiles: ManagedProfileRegistry
@@ -204,6 +225,7 @@ export class ApiProxyAdapter {
     private readonly wake: () => Promise<unknown>,
     private readonly g4fClient?: G4fServiceClient | undefined,
     private readonly timeoutMs = DEFAULT_JOB_TIMEOUT_MS,
+    private readonly resolveG4fAuthContext?: ApiProxyG4fAuthContextResolver | undefined,
   ) {
     this.profiles = new ManagedProfileRegistry(store.homeDir)
     this.protocolRouter = new ProviderProtocolRouter(g4fClient)
@@ -237,9 +259,9 @@ export class ApiProxyAdapter {
     const requestBody = plainRecord(body)
     const model = providerFromModel(requestBody.model)
     const options = normalizeTokenlessOptions(requestBody.tokenless, model.auto)
-    const executionMode = options.executionMode ?? config.apiProxy.executionMode
+    const allowedModes = allowedExecutionModes(config, options.executionMode)
     const previous = previousResponse(requestBody.previous_response_id, this.store)
-    if (previous) assertPreviousResponseRoute(previous, model.provider, String(requestBody.model), executionMode)
+    if (previous) assertPreviousResponseRoute(previous, model.provider, String(requestBody.model), allowedModes)
     const prepared = normalizeOpenAiResponsesRequest(requestBody, previous, createOpenAiResponseId())
     const completion = await this.completeRequest(config, prepared.request, signal, {
       responseId: prepared.responseId,
@@ -247,14 +269,23 @@ export class ApiProxyAdapter {
       continuationMessages: prepared.continuationMessages,
     })
     const response = openAiResponseBody(completion, prepared)
-    this.store.putApiResponse({
-      response_id: String(response.id),
-      provider: completion.provider,
-      model: prepared.request.requestedModel,
-      execution_mode: completion.executionMode,
-      transcript: [...prepared.transcript, ...(response.output as unknown[])],
-    })
-    return { body: response, stream: prepared.request.stream }
+    if (prepared.store) {
+      this.store.putApiResponse({
+        response_id: String(response.id),
+        provider: completion.provider,
+        model: prepared.request.requestedModel,
+        execution_mode: completion.executionMode,
+        transcript: [...prepared.transcript, ...(response.output as unknown[])],
+      })
+    }
+    return {
+      body: response,
+      stream: prepared.request.stream,
+      jobId: completion.jobId,
+      jobIds: completion.jobIds,
+      executionMode: completion.executionMode,
+      ...(completion.routing === undefined ? {} : { routing: completion.routing }),
+    }
   }
 
   async streamResponse(body: unknown, signal?: AbortSignal): Promise<Response | null> {
@@ -263,14 +294,14 @@ export class ApiProxyAdapter {
     const requestBody = plainRecord(body)
     const model = providerFromModel(requestBody.model)
     const options = normalizeTokenlessOptions(requestBody.tokenless, model.auto)
-    const executionMode = options.executionMode ?? config.apiProxy.executionMode
+    const allowedModes = allowedExecutionModes(config, options.executionMode)
     const configuredBackend = options.providerBackend
       ?? config.directProvider.providerBackends[model.provider]
       ?? config.directProvider.defaultBackend
     if (
       requestBody.previous_response_id !== undefined
       && requestBody.previous_response_id !== null
-      && executionMode === 'direct'
+      && allowedModes.includes('direct')
       && configuredBackend === 'g4f'
     ) {
       throw new ApiProxyError(
@@ -285,7 +316,7 @@ export class ApiProxyAdapter {
       previous,
       model.provider,
       String(requestBody.model),
-      executionMode,
+      allowedModes,
     )
     const prepared = normalizeOpenAiResponsesRequest(requestBody, previous, createOpenAiResponseId())
     return await this.openG4fStream(config, prepared.request, 'responses', signal)
@@ -303,7 +334,7 @@ export class ApiProxyAdapter {
     if (request.auto) assertAutoRequestScope(config, request)
     else assertProviderSupported(request.provider)
     if (request.toolProtocol) requestPrompt(request)
-    const profile = await this.profiles.resolveProfile()
+    const profile = await this.profiles.resolveProfile(request.profile ?? undefined)
     const enabledProviders = config.profiles[profile.slug]?.enabledProviders ?? []
     if (!request.auto && !enabledProviders.includes(request.provider)) {
       throw new ApiProxyError(
@@ -314,12 +345,16 @@ export class ApiProxyAdapter {
       )
     }
 
-    const executionMode = request.executionMode ?? config.apiProxy.executionMode
+    // A response continuation without an explicit override must keep using the same
+    // execution mode it started on, so it can never silently switch mid-conversation.
+    const allowedModes = responseContext?.previous && request.executionMode === null
+      ? [responseContext.previous.execution_mode]
+      : allowedExecutionModes(config, request.executionMode)
     const modeEnabledProviders = enabledProviders.filter((provider) => (
-      config.profiles[profile.slug]?.providerModes[provider]?.includes(executionMode)
+      config.profiles[profile.slug]?.providerModes[provider]?.some((mode) => allowedModes.includes(mode))
     ))
     if (!request.auto && !modeEnabledProviders.includes(request.provider)) {
-      throw new ApiProxyError(503, 'model_not_available', `${executionMode === 'browser' ? 'Browser' : 'Direct'} mode is disabled for ${request.provider} in this profile.`, 'model')
+      throw new ApiProxyError(503, 'model_not_available', `No allowed execution mode (${allowedModes.join('/')}) is enabled for ${request.provider} in this profile.`, 'model')
     }
     const autoResolution: AutoRouteResolution = request.auto
       ? request.toolProtocol
@@ -343,23 +378,54 @@ export class ApiProxyAdapter {
     const selectedRequest = selectedRoute
       ? { ...request, provider: selectedRoute.provider, upstreamModel: '' }
       : request
+    // Resolve the single concrete mode now that the target provider is known, preferring
+    // allowedModes order and restricted to what that provider actually supports.
+    const executionMode = resolveExecutionMode(
+      allowedModes,
+      config.profiles[profile.slug]?.providerModes[selectedRequest.provider],
+    ) ?? allowedModes[0]!
     const providerBackend = executionMode === 'direct'
       ? this.protocolRouter.backend(config.directProvider, selectedRequest.provider, selectedRequest.providerBackend ?? undefined)
       : 'browser'
     if (executionMode === 'direct' && providerBackend === 'g4f') {
-      const messages = providerMessages(selectedRequest)
-      const completion = await this.completeG4f(selectedRequest, messages, signal)
-      const validated = await validatedCompletion(selectedRequest, directRawCompletion(selectedRequest, completion, 'new-conversation'), async (prompt) => {
-        const corrected = await this.completeG4f(selectedRequest, [...messages, { role: 'user', content: prompt }], signal)
-        return directRawCompletion(selectedRequest, corrected, 'new-conversation')
+      let providerSubmitted = false
+      const directRouting = () => autoRouting(request, autoRoutes, autoExclusions, null, {
+        provider: selectedRequest.provider,
+        providerSubmitted,
       })
-      return withRouting(validated, request, selectedRequest, autoRoutes, autoExclusions)
+      const routedDirectCompletion = (raw: RawApiProxyCompletion): RawApiProxyCompletion => ({
+        ...raw,
+        base: { ...raw.base, routing: directRouting() },
+      })
+      let authContextLease: G4fAuthContextLease | null = null
+      try {
+        authContextLease = await this.resolveG4fAuthContextLease(selectedRequest, profile.slug, signal)
+        const directRequest = authContextLease
+          ? { ...selectedRequest, authContextId: authContextLease.contextId }
+          : selectedRequest
+        const messages = providerMessages(directRequest)
+        providerSubmitted = true
+        const completion = await this.completeG4f(directRequest, messages, signal)
+        const validated = await validatedCompletion(directRequest, routedDirectCompletion(directRawCompletion(directRequest, completion, 'new-conversation')), async (prompt) => {
+          const corrected = await this.completeG4f(directRequest, [...messages, { role: 'user', content: prompt }], signal)
+          return routedDirectCompletion(directRawCompletion(directRequest, corrected, 'new-conversation'))
+        })
+        return withRouting(validated, request, selectedRequest, autoRoutes, autoExclusions)
+      } catch (error) {
+        if (error instanceof ApiProxyError && error.routing === null) {
+          throw new ApiProxyError(error.status, error.code, error.message, error.param, directRouting())
+        }
+        throw error
+      } finally {
+        await authContextLease?.release()
+      }
     }
 
     const plan = responseContext
       ? responseConversationPlan(selectedRequest, responseContext, profile.slug, this.store, executionMode)
       : newConversationPlan(selectedRequest)
 
+    const attemptedJobIds: string[] = []
     try {
       const completion = await this.completeManagedPrompt({
         request: selectedRequest,
@@ -374,8 +440,10 @@ export class ApiProxyAdapter {
         fallbackRoutes: autoRoutes.slice(1),
         structuredControlStrategy: structuredControlStrategy(selectedRequest, selectedRoute),
         semanticPreference: request.semanticPreference,
+        submissionEvidence: request.submissionEvidence,
         signal,
       })
+      attemptedJobIds.push(...completion.base.jobIds)
       const validated = await validatedCompletion(selectedRequest, completion, async (prompt) => {
         const settledRoute = autoRoutes.find((route) => route.provider === completion.base.provider) ?? selectedRoute
         const correctionRequest = { ...selectedRequest, provider: completion.base.provider }
@@ -384,7 +452,7 @@ export class ApiProxyAdapter {
           profile_id: profile.slug,
           task_id: plan.taskId,
         })
-        return await this.completeManagedPrompt({
+        const corrected = await this.completeManagedPrompt({
           request: correctionRequest,
           profileId: profile.slug,
           taskId: plan.taskId,
@@ -397,19 +465,38 @@ export class ApiProxyAdapter {
           fallbackRoutes: [],
           structuredControlStrategy: structuredControlStrategy(correctionRequest, settledRoute),
           semanticPreference: correctionRequest.semanticPreference,
+          submissionEvidence: correctionRequest.submissionEvidence,
           signal,
         })
+        attemptedJobIds.push(...corrected.base.jobIds)
+        return corrected
       })
-      return withRouting(validated, request, selectedRequest, autoRoutes, autoExclusions)
+      return withRouting(
+        { ...validated, jobIds: uniqueJobIds(attemptedJobIds) },
+        request,
+        selectedRequest,
+        autoRoutes,
+        autoExclusions,
+      )
     } catch (error) {
-      if (request.auto && error instanceof ApiProxyError) {
-        throw new ApiProxyError(
-          error.status,
-          error.code,
-          error.message,
-          error.param,
-          autoRouting(request, autoRoutes, autoExclusions, error.routing),
-        )
+      if (error instanceof ApiProxyError) {
+        const routingWithEvidence = routingWithJobIds(error.routing, attemptedJobIds)
+        const routing = request.auto
+          ? autoRouting(request, autoRoutes, autoExclusions, routingWithEvidence)
+          : routingWithEvidence ?? (
+            attemptedJobIds.length > 0
+              ? autoRouting(request, autoRoutes, autoExclusions, null)
+              : null
+          )
+        if (request.auto || routing !== error.routing) {
+          throw new ApiProxyError(
+            error.status,
+            error.code,
+            error.message,
+            error.param,
+            routing,
+          )
+        }
       }
       throw error
     }
@@ -434,21 +521,61 @@ export class ApiProxyAdapter {
     }
   }
 
+  private async resolveG4fAuthContextLease(
+    request: NormalizedRequest,
+    profile: string,
+    signal?: AbortSignal,
+  ): Promise<G4fAuthContextLease | null> {
+    if (request.authContextId || isG4fDirectOnlyProvider(request.provider)) return null
+    if (!this.resolveG4fAuthContext) {
+      throw new ApiProxyError(
+        503,
+        'direct_auth_context_unavailable',
+        'The selected managed profile could not establish a direct provider auth context.',
+        'tokenless',
+      )
+    }
+    try {
+      const lease = await this.resolveG4fAuthContext({
+        profile,
+        provider: request.provider,
+        signal,
+      })
+      if (!lease) {
+        throw new ApiProxyError(
+          503,
+          'direct_auth_context_unavailable',
+          'The selected managed profile could not establish a direct provider auth context.',
+          'tokenless',
+        )
+      }
+      return lease
+    } catch (error) {
+      if (error instanceof ApiProxyError) throw error
+      throw new ApiProxyError(
+        503,
+        'direct_auth_context_unavailable',
+        'The selected managed profile could not establish a direct provider auth context.',
+        'tokenless',
+      )
+    }
+  }
+
   private async openG4fStream(
     config: Awaited<ReturnType<typeof readTokenlessConfig>>,
     request: NormalizedRequest,
     endpoint: 'chat' | 'responses',
     signal?: AbortSignal,
   ): Promise<Response | null> {
-    const executionMode = request.executionMode ?? config.apiProxy.executionMode
-    if (executionMode !== 'direct') return null
+    const allowedModes = allowedExecutionModes(config, request.executionMode)
+    if (!allowedModes.includes('direct')) return null
     if (request.auto) {
       assertAutoRequestScope(config, request)
       return null
     }
     assertProviderSupported(request.provider)
     if (request.toolProtocol) return null
-    const profile = await this.profiles.resolveProfile()
+    const profile = await this.profiles.resolveProfile(request.profile ?? undefined)
     const enabledProviders = config.profiles[profile.slug]?.enabledProviders ?? []
     if (!enabledProviders.includes(request.provider)) {
       throw new ApiProxyError(
@@ -458,25 +585,50 @@ export class ApiProxyAdapter {
         'model',
       )
     }
-    if (!config.profiles[profile.slug]?.providerModes[request.provider]?.includes('direct')) {
+    const providerSupportedModes = config.profiles[profile.slug]?.providerModes[request.provider]
+    if (!providerSupportedModes?.includes('direct')) {
       throw new ApiProxyError(503, 'model_not_available', `Direct mode is disabled for ${request.provider} in this profile.`, 'model')
     }
+    if (resolveExecutionMode(allowedModes, providerSupportedModes) !== 'direct') return null
     const providerBackend = this.protocolRouter.backend(
       config.directProvider,
       request.provider,
       request.providerBackend ?? undefined,
     )
     if (providerBackend !== 'g4f') return null
+    const authContextLease = await this.resolveG4fAuthContextLease(request, profile.slug, signal)
+    const directRequest = authContextLease
+      ? { ...request, authContextId: authContextLease.contextId }
+      : request
+    const upstreamAbortController = authContextLease ? new AbortController() : undefined
+    const onCallerAbort = upstreamAbortController && signal
+      ? () => upstreamAbortController.abort()
+      : undefined
+    if (upstreamAbortController && signal && onCallerAbort) {
+      if (signal.aborted) onCallerAbort?.()
+      else signal.addEventListener('abort', onCallerAbort, { once: true })
+    }
     try {
-      return await this.protocolRouter.streamG4f({
-        provider: request.provider,
-        messages: providerMessages(request),
-        model: request.upstreamModel,
-        ...(request.authContextId ? { authContextId: request.authContextId } : {}),
-        signal,
+      const upstream = await this.protocolRouter.streamG4f({
+        provider: directRequest.provider,
+        messages: providerMessages(directRequest),
+        model: directRequest.upstreamModel,
+        ...(directRequest.authContextId ? { authContextId: directRequest.authContextId } : {}),
+        signal: upstreamAbortController?.signal ?? signal,
         endpoint,
       })
+      if (authContextLease && upstreamAbortController) {
+        return await responseWithCleanup(upstream, async () => {
+          if (signal && onCallerAbort) signal.removeEventListener('abort', onCallerAbort)
+          upstreamAbortController.abort()
+          await authContextLease.release()
+        })
+      }
+      return upstream
     } catch (error) {
+      if (signal && onCallerAbort) signal.removeEventListener('abort', onCallerAbort)
+      upstreamAbortController?.abort()
+      await authContextLease?.release().catch(() => undefined)
       const directError = safeDirectError(error)
       throw new ApiProxyError(502, directError.code, directError.message)
     }
@@ -493,9 +645,10 @@ export class ApiProxyAdapter {
     providerBackend,
     capabilityRoute,
     fallbackRoutes,
-    structuredControlStrategy,
-    semanticPreference,
-    signal,
+      structuredControlStrategy,
+      semanticPreference,
+      submissionEvidence,
+      signal,
   }: {
     request: NormalizedRequest
     profileId: string
@@ -509,6 +662,7 @@ export class ApiProxyAdapter {
     fallbackRoutes: readonly ApiProxyRoute[]
     structuredControlStrategy: string | null
     semanticPreference: string | null
+    submissionEvidence: 'benchmark' | null
     signal: AbortSignal | undefined
   }): Promise<RawApiProxyCompletion> {
     const alternatives = fallbackRoutes.slice(0, 5)
@@ -518,6 +672,7 @@ export class ApiProxyAdapter {
       browserVisibility: 'auto',
       userHandoff: false,
       ...(semanticPreference === null ? {} : { semanticPreference }),
+      ...(submissionEvidence === null ? {} : { submissionEvidence }),
       executionMode,
       capabilityRoute,
       pagePolicy: conversationMode === 'new-conversation' ? 'replace' : 'preserve',
@@ -565,6 +720,7 @@ export class ApiProxyAdapter {
         provider: settled.provider,
         citations: result.citations,
         jobId: settled.job_id,
+        jobIds: [settled.job_id],
         conversationMode,
         executionMode,
         providerBackend,
@@ -657,10 +813,52 @@ function autoRouting(
       request.auto && request.semanticPreference !== null && routes[0]?.provider === request.semanticPreference
     ),
     providerSubmitted: overrides.providerSubmitted ?? existing?.providerSubmitted ?? false,
+    ...(existing?.jobIds === undefined ? {} : { jobIds: existing.jobIds }),
     ...(existing?.visibleProof === undefined ? {} : { visibleProof: existing.visibleProof }),
     ...(existing?.limitWindow === undefined ? {} : { limitWindow: existing.limitWindow }),
     ...(existing?.retryAfterSeconds === undefined ? {} : { retryAfterSeconds: existing.retryAfterSeconds }),
   }
+}
+
+function uniqueJobIds(...groups: readonly (readonly string[])[]) {
+  const seen = new Set<string>()
+  const jobIds: string[] = []
+  for (const group of groups) {
+    for (const jobId of group) {
+      if (!SAFE_JOB_ID_PATTERN.test(jobId) || seen.has(jobId)) continue
+      seen.add(jobId)
+      jobIds.push(jobId)
+      if (jobIds.length === MAX_EVIDENCE_JOB_IDS) return jobIds
+    }
+  }
+  return jobIds
+}
+
+function routingWithJobIds(
+  routing: ApiProxyRouting | null,
+  jobIds: readonly string[],
+) {
+  if (!routing) return null
+  const merged = uniqueJobIds(jobIds, routing.jobIds ?? [])
+  if (merged.length === 0) return routing
+  return { ...routing, jobIds: merged }
+}
+
+/** The execution modes a request may resolve to: an explicit per-request override, or the configured default set. */
+function allowedExecutionModes(
+  config: Awaited<ReturnType<typeof readTokenlessConfig>>,
+  explicitMode: ProviderExecutionMode | null,
+): readonly ProviderExecutionMode[] {
+  return explicitMode ? [explicitMode] : config.apiProxy.executionMode
+}
+
+/** Picks one concrete mode from the allowed set, preferring the config/request order, restricted to what the target actually supports. */
+function resolveExecutionMode(
+  allowedModes: readonly ProviderExecutionMode[],
+  supportedModes: readonly ProviderExecutionMode[] | undefined,
+): ProviderExecutionMode | null {
+  if (!supportedModes) return allowedModes[0] ?? null
+  return allowedModes.find((mode) => supportedModes.includes(mode)) ?? null
 }
 
 function assertProviderSupported(provider: string) {
@@ -674,8 +872,8 @@ function assertAutoRequestScope(
   config: Awaited<ReturnType<typeof readTokenlessConfig>>,
   request: NormalizedRequest,
 ) {
-  const executionMode = request.executionMode ?? config.apiProxy.executionMode
-  if (executionMode !== 'browser' || request.providerBackend !== null || request.authContextId !== null) {
+  const modes = allowedExecutionModes(config, request.executionMode)
+  if (!modes.includes('browser') || request.providerBackend !== null || request.authContextId !== null) {
     throw new ApiProxyError(
       400,
       'auto_execution_mode_unsupported',
@@ -1027,6 +1225,10 @@ function normalizeOpenAiResponsesRequest(
   rejectUnsupportedResponsesFields(body)
   const model = providerFromModel(body.model)
   const currentInput = normalizeResponsesInput(body.input)
+  const instructions = typeof body.instructions === 'string' ? body.instructions.trim() : ''
+  if (instructions.length > 0) {
+    currentInput.unshift({ role: 'system', content: instructions })
+  }
   const priorInput = previous?.transcript.map((item, index) => normalizeResponsesInputItem(item, index)) ?? []
   const transcript = [...priorInput, ...currentInput]
   if (transcript.length > MAX_MESSAGES) {
@@ -1053,6 +1255,7 @@ function normalizeOpenAiResponsesRequest(
   const continuationMessages = previous ? messages.slice(priorMessageCount) : messages
   const options = normalizeTokenlessOptions(body.tokenless, model.auto)
   return {
+    store: body.store !== false,
     request: {
       provider: model.provider,
       auto: model.auto,
@@ -1094,13 +1297,21 @@ function rejectUnsupportedResponsesFields(body: Record<string, unknown>) {
   const supported = new Set([
     'model',
     'input',
+    'instructions',
     'tools',
     'tool_choice',
     'parallel_tool_calls',
     'text',
     'stream',
+    'store',
     'previous_response_id',
     'tokenless',
+    // Codex CLI sends these on every request; they are ignored like sampling
+    // parameters so the Responses route stays usable from a real client.
+    'reasoning',
+    'include',
+    'prompt_cache_key',
+    'client_metadata',
   ])
   const field = Object.keys(body).find((key) => !supported.has(key))
   if (field) {
@@ -1108,6 +1319,12 @@ function rejectUnsupportedResponsesFields(body: Record<string, unknown>) {
   }
   if (body.stream !== undefined && typeof body.stream !== 'boolean') {
     throw badRequest('stream must be a boolean', 'stream')
+  }
+  if (body.store !== undefined && typeof body.store !== 'boolean') {
+    throw badRequest('store must be a boolean', 'store')
+  }
+  if (body.instructions !== undefined && typeof body.instructions !== 'string') {
+    throw badRequest('instructions must be a string', 'instructions')
   }
 }
 
@@ -1161,9 +1378,12 @@ function normalizeResponsesInputItem(value: unknown, index: number): Record<stri
     }
   }
   if (item.type === 'function_call_output') {
-    requireResponsesKeys(item, ['type', 'call_id', 'output'], [], `input[${index}]`)
+    requireResponsesKeys(item, ['type', 'call_id', 'output'], ['id', 'status'], `input[${index}]`)
     if (typeof item.call_id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(item.call_id)) {
       throw badRequest(`input[${index}].call_id is invalid`, 'input')
+    }
+    if (item.id !== undefined && (typeof item.id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(item.id))) {
+      throw badRequest(`input[${index}].id is invalid`, 'input')
     }
     if (typeof item.output !== 'string') throw badRequest(`input[${index}].output must be a string`, 'input')
     return { type: 'function_call_output', call_id: item.call_id, output: item.output }
@@ -1255,12 +1475,14 @@ function responsesItemsToMessages(items: readonly Record<string, unknown>[]) {
 function normalizeResponsesTools(value: unknown): Record<string, unknown>[] {
   if (value === undefined) return []
   if (!Array.isArray(value) || value.length === 0) throw badRequest('tools must be a non-empty array', 'tools')
-  return value.map((entry, index) => {
+  return value.flatMap((entry, index) => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw badRequest(`tools[${index}] must be an object`, 'tools')
     const tool = entry as Record<string, unknown>
+    // Codex CLI also sends namespace and built-in tool types (multi_agent_v1,
+    // web_search) that this proxy cannot emulate; keep only function tools.
+    if (tool.type !== 'function') return []
     requireResponsesKeys(tool, ['type', 'name', 'parameters'], ['description', 'strict'], `tools[${index}]`)
-    if (tool.type !== 'function') throw new ApiProxyError(400, 'unsupported_parameter', 'Responses supports only function tools.', 'tools')
-    return { ...tool }
+    return [{ ...tool }]
   })
 }
 
@@ -1331,10 +1553,11 @@ function assertPreviousResponseRoute(
   entry: ApiResponseLedgerEntry,
   provider: string,
   model: string,
-  executionMode: 'browser' | 'direct',
+  allowedModes: readonly ProviderExecutionMode[],
 ) {
-  if (provider === 'auto' && entry.model === model && entry.execution_mode === executionMode) return
-  if (entry.provider === provider && entry.model === model && entry.execution_mode === executionMode) return
+  const modeStillAllowed = allowedModes.includes(entry.execution_mode)
+  if (provider === 'auto' && entry.model === model && modeStillAllowed) return
+  if (entry.provider === provider && entry.model === model && modeStillAllowed) return
   throw new ApiProxyError(
     400,
     'response_route_mismatch',
@@ -1367,17 +1590,29 @@ export function normalizeAnthropicRequest(body: unknown): NormalizedRequest {
     throw badRequest(`messages must contain at most ${MAX_MESSAGES} entries`, 'messages')
   }
   const messages: OpenAiProtocolMessage[] = []
+  const systemParts: string[] = []
   if (record.system !== undefined) {
-    messages.push({ role: 'system', content: anthropicContentText(record.system) })
+    systemParts.push(anthropicContentText(record.system))
   }
+  const conversation: OpenAiProtocolMessage[] = []
   for (const entry of rawMessages) {
     const message = plainRecord(entry)
     const role = message.role
+    if (role === 'system') {
+      // Anthropic clients such as Claude Code may place system-role messages
+      // inside `messages`; fold them into the leading system message.
+      systemParts.push(anthropicContentText(message.content))
+      continue
+    }
     if (role !== 'user' && role !== 'assistant') {
       throw badRequest(`unsupported message role: ${String(role)}`, 'messages')
     }
-    messages.push({ role, content: anthropicContentText(message.content) })
+    conversation.push({ role, content: anthropicContentText(message.content) })
   }
+  if (systemParts.length > 0) {
+    messages.push({ role: 'system', content: systemParts.join('\n\n') })
+  }
+  messages.push(...conversation)
   rejectUnsupportedAnthropicToolFields(record)
   const options = normalizeTokenlessOptions(record.tokenless, model.auto)
   return {
@@ -1416,7 +1651,7 @@ function normalizeResponseFormat(value: unknown) {
 }
 
 function rejectUnsupportedAnthropicToolFields(record: Record<string, unknown>) {
-  for (const field of ['tools', 'tool_choice', 'functions', 'function_call', 'response_format']) {
+  for (const field of ['functions', 'function_call', 'response_format']) {
     if (record[field] !== undefined) {
       throw new ApiProxyError(
         400,
@@ -1426,6 +1661,8 @@ function rejectUnsupportedAnthropicToolFields(record: Record<string, unknown>) {
       )
     }
   }
+  // `tools` and `tool_choice` are ignored like sampling parameters: real
+  // Anthropic clients (Claude Code) always send them; tool use stays unadvertised.
 }
 
 function normalizeToolCatalog(value: unknown) {
@@ -1497,11 +1734,15 @@ function providerFromModel(value: unknown) {
 function normalizeTokenlessOptions(
   value: unknown,
   allowSemanticPreference = false,
-): Pick<NormalizedRequest, 'executionMode' | 'providerBackend' | 'authContextId' | 'semanticPreference'> {
+): Pick<NormalizedRequest, 'executionMode' | 'providerBackend' | 'authContextId' | 'profile' | 'semanticPreference' | 'submissionEvidence'> {
   if (value === undefined) {
-    return { executionMode: null, providerBackend: null, authContextId: null, semanticPreference: null }
+    return { executionMode: null, providerBackend: null, authContextId: null, profile: null, semanticPreference: null, submissionEvidence: null }
   }
   const options = plainRecord(value)
+  const profile = options.profile
+  if (profile !== undefined && (typeof profile !== 'string' || !/^[a-z0-9][a-z0-9._-]{0,63}$/u.test(profile))) {
+    throw badRequest('tokenless.profile must be a managed profile id.', 'tokenless.profile')
+  }
   const executionMode = options.execution_mode
   if (executionMode !== undefined && executionMode !== 'browser' && executionMode !== 'direct') {
     throw badRequest('tokenless.execution_mode must be browser or direct', 'tokenless.execution_mode')
@@ -1526,11 +1767,20 @@ function normalizeTokenlessOptions(
   )) {
     throw badRequest('tokenless.semantic_preference must be a provider id.', 'tokenless.semantic_preference')
   }
+  const submissionEvidence = options.submission_evidence
+  if (submissionEvidence !== undefined && submissionEvidence !== null && submissionEvidence !== 'benchmark') {
+    throw badRequest('tokenless.submission_evidence must be benchmark.', 'tokenless.submission_evidence')
+  }
+  if (submissionEvidence === 'benchmark' && executionMode === 'direct') {
+    throw badRequest('tokenless.submission_evidence applies only to browser execution.', 'tokenless.submission_evidence')
+  }
   return {
     executionMode: executionMode ?? null,
     providerBackend: providerBackend ?? null,
     authContextId: authContextId ?? null,
+    profile: profile ?? null,
     semanticPreference: typeof semanticPreference === 'string' ? semanticPreference : null,
+    submissionEvidence: submissionEvidence === 'benchmark' ? submissionEvidence : null,
   }
 }
 
@@ -1593,6 +1843,7 @@ export function routingFromJob(job: Job, modeOverride?: ApiProxyRouting['mode'])
       preferenceRequested: null,
       preferenceHonored: false,
       providerSubmitted: job.provider_submitted_at !== null,
+      jobIds: [job.job_id],
       ...limitEvidence,
     }
   }
@@ -1633,6 +1884,7 @@ export function routingFromJob(job: Job, modeOverride?: ApiProxyRouting['mode'])
       job.provider === preferenceRequested || attempts.some((attempt) => attempt.provider === preferenceRequested)
     ),
     providerSubmitted: job.provider_submitted_at !== null,
+    jobIds: [job.job_id],
     ...limitEvidence,
   }
 }
@@ -1847,10 +2099,16 @@ async function validatedCompletion(
     )
   } catch (error) {
     const validationError = error instanceof Error ? error.message : 'invalid output'
-    if (!(error instanceof OpenAiToolResponseProtocolError) || !error.correctionEligible || !error.correctionKind) {
+    const semanticRecovery = request.provider === 'agnes'
+      && request.toolProtocol.tools.length > 0
+      && error instanceof OpenAiToolResponseProtocolError
+      && !error.correctionKind
+    const correctionKind = error instanceof OpenAiToolResponseProtocolError
+      ? error.correctionKind
+      : undefined
+    if (!(error instanceof OpenAiToolResponseProtocolError) || (!correctionKind && !semanticRecovery)) {
       throw providerOutputProtocolError(validationError, completion.base.routing)
     }
-    const correctionKind = error.correctionKind
     const prompt = compileOpenAiToolCorrectionPrompt(
       request.toolProtocol.nonce,
       validationError,
@@ -1859,6 +2117,7 @@ async function validatedCompletion(
       request.toolProtocol.choice,
       request.toolProtocol.parallelToolCalls,
       request.toolProtocol.responseFormat,
+      semanticRecovery,
     )
     if (Buffer.byteLength(prompt, 'utf8') > MAX_PROMPT_BYTES) {
       throw providerOutputProtocolError(
@@ -1882,7 +2141,7 @@ async function validatedCompletion(
         completion.base.routing,
       )
     }
-    if (result.kind !== correctionKind) {
+    if (correctionKind && result.kind !== correctionKind) {
       throw providerOutputProtocolError('bounded correction changed the response kind', completion.base.routing)
     }
   }
@@ -1936,6 +2195,48 @@ function providerOutputProtocolError(detail: string, routing?: ApiProxyRouting) 
 
 function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function responseWithCleanup(response: Response, cleanup: () => Promise<void>) {
+  if (!response.body) {
+    await cleanup()
+    return response
+  }
+  const reader = response.body.getReader()
+  let cleaned = false
+  const release = async () => {
+    if (cleaned) return
+    cleaned = true
+    await cleanup()
+  }
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const chunk = await reader.read()
+        if (chunk.done) {
+          await release()
+          controller.close()
+          return
+        }
+        controller.enqueue(chunk.value)
+      } catch (error) {
+        await release().catch(() => undefined)
+        controller.error(error)
+      }
+    },
+    async cancel(reason) {
+      try {
+        await reader.cancel(reason)
+      } finally {
+        await release()
+      }
+    },
+  })
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  })
 }
 
 /**
@@ -2009,6 +2310,7 @@ function openAiResponseBody(completion: ApiProxyCompletion, prepared: PreparedOp
     output_text: completion.text,
     parallel_tool_calls: prepared.request.toolProtocol?.parallelToolCalls ?? true,
     previous_response_id: prepared.previousResponseId,
+    store: prepared.store,
     temperature: null,
     text: prepared.publicText,
     tool_choice: prepared.publicToolChoice,
@@ -2150,6 +2452,7 @@ function directRawCompletion(
       provider: request.provider,
       citations: completion.citations,
       jobId: completion.requestId,
+      jobIds: [completion.requestId],
       conversationMode,
       executionMode: 'direct',
       providerBackend: 'g4f',

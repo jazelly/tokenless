@@ -1,3 +1,4 @@
+import { AgnesProvider } from './agnes-provider.js'
 import { ArenaProvider } from './arena-provider.js'
 import { ChatGptProvider } from './chatgpt-provider.js'
 import { ClaudeProvider } from './claude-provider.js'
@@ -8,9 +9,12 @@ import { DoubaoProvider } from './doubao-provider.js'
 import { GeminiProvider } from './gemini-provider.js'
 import { GitHubCopilotProvider } from './github-copilot-provider.js'
 import { GrokProvider } from './grok-provider.js'
+import { HuggingChatProvider } from './hugging-chat-provider.js'
 import { KimiProvider } from './kimi-provider.js'
+import { LovableProvider } from './lovable-provider.js'
 import { MetaProvider } from './meta-provider.js'
 import { MicrosoftCopilotProvider } from './microsoft-copilot-provider.js'
+import { MonicaProvider } from './monica-provider.js'
 import { PerplexityProvider } from './perplexity-provider.js'
 import { QwenProvider } from './qwen-provider.js'
 import { ZaiProvider } from './zai-provider.js'
@@ -198,6 +202,10 @@ export const providerInstances = Object.freeze([
   new MetaProvider(),
   new MicrosoftCopilotProvider(),
   new GitHubCopilotProvider(),
+  new LovableProvider(),
+  new HuggingChatProvider(),
+  new AgnesProvider(),
+  new MonicaProvider(),
   ...createDirectOnlyG4fProviders(100),
 ] satisfies readonly ProviderInstance[])
 

@@ -1,4 +1,6 @@
 import { chromium } from 'playwright-core'
+import { performance } from 'node:perf_hooks'
+import { DEFAULT_BROWSER_TAB_GC, validateBrowserTabGc, type BrowserTabGcConfig } from '../../persistence/config.js'
 import { execFile, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
@@ -19,6 +21,7 @@ export type ManagedBrowserProfile = {
   slug: string
   directory: string
   runtimeBinding?: BrowserRuntimeBinding | undefined
+  profileColor?: string | undefined
   proxy?: { server: string, bypass: readonly string[] } | null | undefined
   lastObservedAuth?: Partial<Record<string, {
     access: string
@@ -57,6 +60,7 @@ export type ManagedPageRequest = {
 export type ManagedProviderPageRequest = {
   provider: string
   pageRef: string
+  purpose?: 'work' | 'user'
   policy?: ManagedPagePolicy | undefined
   matchesExistingPage?: ((page: Page) => boolean) | undefined
   isAvailablePage?: ((page: Page) => Promise<boolean>) | undefined
@@ -65,6 +69,7 @@ export type ManagedProviderPageRequest = {
 export type ManagedProviderPage = {
   page: Page
   reused: boolean
+  release(): void
 }
 
 export type PersistentChromeLaunchOptions = NonNullable<Parameters<typeof chromium.launchPersistentContext>[1]>
@@ -82,8 +87,13 @@ const execFileAsync = promisify(execFile)
 
 export type PersistentContextManagerOptions = {
   maxContexts?: number
+  tabGc?: BrowserTabGcConfig
   browser?: ManagedBrowserLaunchTarget
   browserResolver?: ManagedBrowserResolver
+  supervision?: {
+    profiles(): Promise<ManagedBrowserProfile[]>
+    recoverPage(profile: ManagedBrowserProfile, page: Page): Promise<{ provider: string; pageRef: string } | null>
+  }
 }
 
 export type ManagedBrowserLaunchTarget = {
@@ -109,8 +119,9 @@ type ActiveContext = {
   ownedPages: Set<Page>
   providerPages: Map<Page, ProviderPageState>
   providerPagesByRef: Map<string, ProviderPageState>
-  // Short-lived identity resolution for concurrent first acquires; it never serializes page use.
-  providerPageCreationsByRef: Map<string, Promise<ManagedProviderPage>>
+  // Serialize allocation and collection only; page operations remain concurrent.
+  pageAllocation: Promise<unknown>
+  temporaryPages: Set<Page>
   observedProviderPages: Set<Page>
   unavailablePages: Set<Page>
   reuseExistingPages: boolean
@@ -126,6 +137,13 @@ type ProviderPageState = {
   pageRef: string
   page: Page
   refKey: string
+  purpose: 'work' | 'user'
+  users: number
+  held: boolean
+  idleSince: number | null
+  collecting: boolean
+  targetId: string | null
+  observation: string | null
 }
 
 
@@ -153,8 +171,185 @@ export class PersistentContextManager {
   private readonly contexts = new Map<string, ActiveContext>()
   private creationLane: Promise<unknown> = Promise.resolve()
   private shuttingDown = false
+  private tabGc: BrowserTabGcConfig
+  private gcTimer: ReturnType<typeof setInterval> | undefined
+  private gcRunning = false
+  private readonly supervision: PersistentContextManagerOptions['supervision']
+  private readonly profileCoverage = new Map<string, { status: string; errorCode: string | null }>()
+  private readonly recentlyCollected = new Map<string, number>()
+  private readonly gcCounters = { idleReuses: 0, expired: 0, closeFailures: 0, reopenedSoon: 0 }
+
+  configureTabGc(config: BrowserTabGcConfig) {
+    this.tabGc = validateBrowserTabGc(config)
+    clearInterval(this.gcTimer)
+    if (this.shuttingDown) return
+    this.gcTimer = setInterval(() => { void this.collectIdlePages() }, config.sweepIntervalSeconds * 1000)
+    this.gcTimer.unref()
+  }
+
+  tabGcStatus() {
+    return {
+      ...this.gcCounters,
+      profiles: [...new Set([...this.profileCoverage.keys(), ...this.contexts.keys()])].map((profileId) => {
+        const active = this.contexts.get(profileId)
+        const pages = active ? [...active.providerPages.values()].filter((state) => state.purpose === 'work' && !state.page.isClosed()) : []
+        const idle = active ? pages.filter((state) => isIdlePage(active, state)).length : 0
+        const temporary = active?.temporaryPages.size ?? 0
+        const all = active?.browserContext.pages().filter((page) => !page.isClosed()) ?? []
+        return { profileId, ...this.profileCoverage.get(profileId), workPages: pages.length + temporary, idlePages: idle,
+          busyPages: pages.length - idle + temporary, totalPages: active ? all.length : null,
+          untrackedPages: active ? all.filter((page) => !active.providerPages.has(page) && !active.temporaryPages.has(page) && ![...active.reservedPagesByKey.values()].includes(page)).length : null }
+      }),
+    }
+  }
+
+  private async collectIdlePages() {
+    if (this.gcRunning || this.shuttingDown) return
+    this.gcRunning = true
+    try {
+      if (this.supervision) {
+        for (const profile of await this.supervision.profiles()) {
+          if (this.shuttingDown) return
+          if (this.contexts.has(profile.slug)) continue
+          try { await this.ensureContext(profile, 'auto', true) } catch (error) {
+            const code = (error as { code?: string }).code ?? 'browser_supervision_unavailable'
+            this.profileCoverage.set(profile.slug, { status: 'unreachable', errorCode: code })
+          }
+        }
+      }
+      for (const [ref, at] of this.recentlyCollected) {
+        if (performance.now() - at > this.tabGc.idleTimeoutSeconds * 1000) this.recentlyCollected.delete(ref)
+      }
+      for (const active of this.contexts.values()) {
+        await withPageAllocation(active, async () => {
+          if (this.shuttingDown || active.closing) return
+          if (this.supervision) await this.restorePages(active)
+          this.profileCoverage.set(active.profile.slug, { status: 'attached', errorCode: null })
+          for (const state of active.providerPages.values()) {
+            if (active.closing || this.shuttingDown) return
+            await this.refreshActivity(state)
+            if (isIdlePage(active, state) && performance.now() - state.idleSince! >= this.tabGc.idleTimeoutSeconds * 1000) {
+              await this.collectPage(active, state)
+            }
+          }
+        }).catch((error) => {
+          this.profileCoverage.set(active.profile.slug, { status: 'unreachable', errorCode: (error as { code?: string }).code ?? 'browser_supervision_failed' })
+        })
+      }
+    } finally {
+      this.gcRunning = false
+    }
+  }
+
+  private async collectPage(active: ActiveContext, state: ProviderPageState) {
+    await this.refreshActivity(state)
+    if (!isIdlePage(active, state)) return
+    if (performance.now() - state.idleSince! < this.tabGc.idleTimeoutSeconds * 1000) return
+    state.collecting = true
+    try {
+      // Preserve the resident browser when its last work tab is reclaimed.
+      await preserveResidentBrowser(active)
+      await state.page.close()
+      await this.savePages(active)
+      this.gcCounters.expired += 1
+      this.recentlyCollected.set(JSON.stringify([active.profile.slug, state.refKey]), performance.now())
+    } catch {
+      state.held = true
+      state.idleSince = null
+      this.gcCounters.closeFailures += 1
+    } finally {
+      state.collecting = false
+    }
+  }
+
+  private async refreshActivity(state: ProviderPageState) {
+    if (state.users > 0 || state.purpose !== 'work' || state.page.isClosed()) return
+    // Task leases determine busy state; static drafts and errors must not pin released work tabs.
+    const observation = await state.page.evaluate(() => {
+      const host = window as unknown as { __tokenlessGcActivity?: number }
+      if (host.__tokenlessGcActivity === undefined) {
+        host.__tokenlessGcActivity = 0
+        for (const event of ['pointerdown', 'keydown', 'input', 'wheel']) {
+          document.addEventListener(event, (event) => {
+            if (event.isTrusted) host.__tokenlessGcActivity = (host.__tokenlessGcActivity ?? 0) + 1
+          }, { capture: true, passive: true })
+        }
+      }
+      return JSON.stringify([location.href, performance.timeOrigin, host.__tokenlessGcActivity])
+    }).catch(() => null)
+    if (state.idleSince === null || (state.observation !== null && observation !== null && state.observation !== observation)) state.idleSince = performance.now()
+    state.held = false
+    state.observation = observation
+  }
+
+  private async rememberPage(active: ActiveContext, state: ProviderPageState) {
+    if (!this.supervision) return
+    state.targetId = await pageTargetId(active.browserContext, state.page)
+    await this.savePages(active)
+  }
+
+  private async savePages(active: ActiveContext) {
+    if (!this.supervision) return
+    const file = path.join(active.profile.directory, 'tokenless-browser-tabs.json')
+    const pages = [...active.providerPages.values()].filter((state) => state.targetId && !state.page.isClosed())
+      .map(({ targetId, provider, pageRef, purpose }) => ({ targetId, provider, pageRef, purpose }))
+    await fs.writeFile(file + '.tmp', JSON.stringify(pages), { mode: 0o600 })
+    await fs.rename(file + '.tmp', file)
+  }
+
+  private async restorePages(active: ActiveContext) {
+    if (!this.supervision) return
+    const file = path.join(active.profile.directory, 'tokenless-browser-tabs.json')
+    let saved: Array<{ targetId: string; provider: string; pageRef: string; purpose: 'work' | 'user' }> = []
+    try { saved = JSON.parse(await fs.readFile(file, 'utf8')) } catch (error) {
+      if (!isMissingFileError(error)) throw error
+    }
+    if (!Array.isArray(saved) || saved.some((entry) => !entry || typeof entry.targetId !== 'string' ||
+      typeof entry.provider !== 'string' || typeof entry.pageRef !== 'string' || !['work', 'user'].includes(entry.purpose))) {
+      throw tokenlessError('browser_tab_registry_invalid', 'The browser tab ownership registry is invalid.')
+    }
+    let changed = false
+    for (const page of active.browserContext.pages()) {
+      if (page.isClosed() || managedPageClaimed(active, page) || active.temporaryPages.has(page)) continue
+      const targetId = await pageTargetId(active.browserContext, page)
+      const persisted = saved.find((entry) => entry.targetId === targetId)
+      const recovered = persisted ?? await this.supervision.recoverPage(active.profile, page)
+      if (!recovered) continue
+      // Multiple resident tabs may contain the same persisted conversation.
+      const pageRef = active.providerPagesByRef.has(managedProviderPageRefKey(recovered.provider, recovered.pageRef))
+        ? `resident:${targetId}` : recovered.pageRef
+      const state = bindProviderPage(active, { provider: recovered.provider, pageRef, page, purpose: persisted?.purpose ?? 'work' })
+      state.targetId = targetId
+      state.idleSince = performance.now()
+      active.ownedPages.add(page)
+      changed = true
+    }
+    if (changed) await this.savePages(active)
+  }
+
+  private useProviderPage(active: ActiveContext, state: ProviderPageState, reused: boolean): ManagedProviderPage {
+    if (state.idleSince !== null) this.gcCounters.idleReuses += 1
+    if (state.users === 0) state.held = false
+    state.idleSince = null
+    state.observation = null
+    state.users += 1
+    let released = false
+    return {
+      page: state.page,
+      reused,
+      release() {
+        if (released) return
+        released = true
+        state.users -= 1
+        if (state.users === 0 && !state.held && state.purpose === 'work' && active.ownedPages.has(state.page)) state.idleSince = performance.now()
+      },
+    }
+  }
 
   constructor(options: PersistentContextManagerOptions = {}) {
+    this.tabGc = validateBrowserTabGc(options.tabGc ?? DEFAULT_BROWSER_TAB_GC)
+    this.supervision = options.supervision
+    if (this.supervision) this.configureTabGc(this.tabGc)
     this.maxContexts = options.maxContexts ?? MAX_ACTIVE_BROWSER_PROFILES
     this.browser = normalizeManagedBrowserLaunchTarget(options.browser)
     this.browserResolver = options.browserResolver ?? (async () => this.browser)
@@ -202,8 +397,10 @@ export class PersistentContextManager {
 
   async ensureContext(
     profile: ManagedBrowserProfile,
-    visibility: BrowserVisibility = 'headed'
+    visibility: BrowserVisibility = 'headed',
+    residentOnly = false,
   ): Promise<ManagedBrowserContext> {
+    if (!this.gcTimer && !this.shuttingDown) this.configureTabGc(this.tabGc)
     const requestedVisibility = validateRequestedVisibility(visibility)
     const browserTarget = normalizeManagedBrowserLaunchTarget(await this.browserResolver(profile))
     const effectiveVisibility = browserTarget.launchPolicy === 'native'
@@ -216,6 +413,7 @@ export class PersistentContextManager {
       isManagedBrowserConnected(existing) &&
       visibilityMatches(existing, requestedVisibility, effectiveVisibility) &&
       sameBrowserRuntime(existing.browserTarget, browserTarget) &&
+      sameBrowserProfileColor(existing.profile.profileColor, profile.profileColor) &&
       sameBrowserProxy(existing.profile.proxy, profile.proxy)
     ) {
       existing.profile = profile
@@ -234,6 +432,7 @@ export class PersistentContextManager {
         isManagedBrowserConnected(current) &&
         visibilityMatches(current, requestedVisibility, effectiveVisibility) &&
         sameBrowserRuntime(current.browserTarget, browserTarget) &&
+        sameBrowserProfileColor(current.profile.profileColor, profile.profileColor) &&
         sameBrowserProxy(current.profile.proxy, profile.proxy)
       ) {
         current.profile = profile
@@ -252,18 +451,20 @@ export class PersistentContextManager {
       } else if (current?.closePromise) {
         await current.closePromise
       }
-      if (this.contexts.size >= this.maxContexts) {
+      if (!residentOnly && this.contexts.size >= this.maxContexts) {
         throw tokenlessError(
           'playwright_context_limit_reached',
           'Too many managed browser profiles are active; existing profile browsers remain open.',
           { retryable: true },
         )
       }
-      const launched = browserTarget.launchPolicy === 'native'
+      const launched = residentOnly
+        ? await connectResidentForSupervision(profile, browserTarget)
+        : browserTarget.launchPolicy === 'native'
         ? await connectNativeBrowserContext(browserTarget.id, requestedVisibility)
         : await launchCdpManagedContext(
             profile.directory,
-            managedBrowserLaunchOptions(browserTarget, requestedVisibility, profile.proxy),
+            managedBrowserLaunchOptions(browserTarget, requestedVisibility, profile.proxy, profile.profileColor),
             browserTarget,
             requestedVisibility,
           )
@@ -285,13 +486,21 @@ export class PersistentContextManager {
         closeBrowser: launched.closeBrowser,
         detachBrowser: launched.detachBrowser,
         providerPagesByRef: new Map(),
-        providerPageCreationsByRef: new Map(),
+        pageAllocation: Promise.resolve(),
+        temporaryPages: new Set(),
         observedProviderPages: new Set(),
         unavailablePages: new Set(),
         browserTarget,
         closing: false,
       }
+      try {
+        if (this.supervision) await this.restorePages(active)
+      } catch (error) {
+        await launched.detachBrowser()
+        throw error
+      }
       this.contexts.set(profile.slug, active)
+      this.profileCoverage.set(profile.slug, { status: 'attached', errorCode: null })
       browserContext.once('close', () => {
         if (!active.closing) void this.closeActiveContext(profile.slug, active).catch(() => undefined)
       })
@@ -313,15 +522,18 @@ export class PersistentContextManager {
 
   async shutdown(): Promise<void> {
     this.shuttingDown = true
+    clearInterval(this.gcTimer)
     await this.creationLane.catch(() => undefined)
     await Promise.all([...this.contexts.keys()].map((profileId) => this.closeProfile(profileId)))
   }
 
   async detach(): Promise<void> {
     this.shuttingDown = true
+    clearInterval(this.gcTimer)
     await this.creationLane.catch(() => undefined)
     await Promise.all([...this.contexts.entries()].map(async ([profileId, active]) => {
       active.closing = true
+      await active.pageAllocation
       await active.detachBrowser()
       if (this.contexts.get(profileId) === active) this.contexts.delete(profileId)
     }))
@@ -373,123 +585,70 @@ export class PersistentContextManager {
         return page
       },
       async acquireProviderPage(request) {
-        const provider = validateManagedPageKey(request.provider)
-        const pageRef = validateManagedPageKey(request.pageRef)
-        const refKey = managedProviderPageRefKey(provider, pageRef)
-        const policy = request.policy ?? 'preserve'
-        if (policy !== 'preserve' && policy !== 'replace') {
-          throw tokenlessError('invalid_managed_page_policy', 'Managed browser page policy must be preserve or replace.')
-        }
-        assertManagedContextOpen(active)
-        const pending = policy === 'preserve'
-          ? active.providerPageCreationsByRef.get(refKey)
-          : undefined
-        if (pending) return await pending
-        let existing = active.providerPagesByRef.get(refKey)
-        if (existing && (
-          existing.page.isClosed() ||
-          active.unavailablePages.has(existing.page) ||
-          active.providerPages.get(existing.page) !== existing
-        )) {
-          detachProviderPageBinding(active, existing)
-          existing = undefined
-        }
-        if (existing && policy === 'preserve') {
-          return { page: existing.page, reused: true }
-        }
-        if (existing && policy === 'replace') {
-          const replacementPage = await createOwnedBackgroundPage(active)
-          try {
-            assertManagedContextOpen(active)
-          } catch (error) {
-            await replacementPage.close().catch(() => undefined)
-            throw error
-          }
-          detachProviderPageBinding(active, existing)
-          const replacement = bindProviderPage(active, {
-            provider,
-            pageRef,
-            page: replacementPage,
-          })
-          await closeReplacedProviderPage(active, existing.page)
-          return { page: replacement.page, reused: false }
-        }
-
-        const createUnboundPage = async () => {
-          const claimedPages = new Set([
-            ...active.pagesByKey.values(),
-            ...active.reservedPagesByKey.values(),
-            ...active.providerPages.keys(),
-          ])
-          const reusablePages = active.browserContext.pages().filter((page) => (
-            !page.isClosed() &&
-            !active.unavailablePages.has(page) &&
-            !claimedPages.has(page)
-          ))
-          if (policy === 'preserve' && active.reuseExistingPages && request.matchesExistingPage) {
-            for (const candidate of reusablePages) {
-              if (!request.matchesExistingPage(candidate)) continue
-              // Bind before the availability probe so another ref cannot claim the
-              // same browser page while the provider-specific probe is pending.
-              if (candidate.isClosed() || managedPageClaimed(active, candidate)) continue
-              const state = bindProviderPage(active, {
-                provider,
-                pageRef,
-                page: candidate,
-              })
+        return await withPageAllocation(active, async () => {
+          assertManagedContextOpen(active)
+          const provider = validateManagedPageKey(request.provider)
+          const pageRef = validateManagedPageKey(request.pageRef)
+          const refKey = managedProviderPageRefKey(provider, pageRef)
+          const policy = request.policy ?? 'preserve'
+          if (policy !== 'preserve' && policy !== 'replace') throw tokenlessError('invalid_managed_page_policy', 'Managed browser page policy must be preserve or replace.')
+          const existing = active.providerPagesByRef.get(refKey)
+          if (existing && !existing.page.isClosed() && !active.unavailablePages.has(existing.page)) {
+            if (policy === 'preserve') return manager.useProviderPage(active, existing, true)
+            if (existing.users > 0 || existing.held) throw tokenlessError('browser_page_busy', 'Cannot replace a page while it is in use or retained.')
+            if (active.ownedPages.has(existing.page)) {
               try {
-                if (request.isAvailablePage && !await request.isAvailablePage(candidate)) {
-                  detachProviderPageBinding(active, state)
-                  continue
-                }
-                assertManagedContextOpen(active)
+                await preserveResidentBrowser(active)
+                await existing.page.close()
               } catch (error) {
-                detachProviderPageBinding(active, state)
+                existing.held = true
+                existing.idleSince = null
+                manager.gcCounters.closeFailures += 1
                 throw error
               }
-              return { page: state.page, reused: false }
+            }
+            detachProviderPageBinding(active, existing)
+          } else if (existing) {
+            if (!existing.page.isClosed()) throw tokenlessError('browser_page_unavailable', 'The work tab is unavailable and remains retained.')
+            detachProviderPageBinding(active, existing)
+          }
+          if (policy === 'preserve' && active.reuseExistingPages && request.matchesExistingPage) {
+            for (const candidate of active.browserContext.pages()) {
+              if (candidate.isClosed() || active.unavailablePages.has(candidate) || managedPageClaimed(active, candidate) || (request.purpose !== 'user' && !active.ownedPages.has(candidate)) || !request.matchesExistingPage(candidate)) continue
+              if (request.isAvailablePage && !await request.isAvailablePage(candidate)) continue
+              assertManagedContextOpen(active)
+              const state = bindProviderPage(active, { provider, pageRef, page: candidate, purpose: request.purpose ?? 'work' })
+              await manager.rememberPage(active, state)
+              return manager.useProviderPage(active, state, false)
             }
           }
-
           const page = await createOwnedBackgroundPage(active)
-          try {
-            assertManagedContextOpen(active)
-          } catch (error) {
-            await page.close().catch(() => undefined)
-            throw error
+          assertManagedContextOpen(active)
+          const state = bindProviderPage(active, { provider, pageRef, page, purpose: request.purpose ?? 'work' })
+          await manager.rememberPage(active, state)
+          const collectedKey = JSON.stringify([active.profile.slug, refKey])
+          const collectedAt = manager.recentlyCollected.get(collectedKey)
+          if (collectedAt !== undefined) {
+            if (performance.now() - collectedAt <= manager.tabGc.idleTimeoutSeconds * 1000) manager.gcCounters.reopenedSoon += 1
+            manager.recentlyCollected.delete(collectedKey)
           }
-          const state = bindProviderPage(active, {
-            provider,
-            pageRef,
-            page,
-          })
-          return { page: state.page, reused: false }
-        }
-        if (policy === 'replace') return await createUnboundPage()
-        const creation = createUnboundPage()
-        active.providerPageCreationsByRef.set(refKey, creation)
-        try {
-          return await creation
-        } finally {
-          if (active.providerPageCreationsByRef.get(refKey) === creation) {
-            active.providerPageCreationsByRef.delete(refKey)
-          }
-        }
+          return manager.useProviderPage(active, state, false)
+        })
       },
       async acquireTemporaryPage() {
-        const page = await createOwnedBackgroundPage(active)
-        let closed = false
-        return {
-          page,
-          ownership: 'task-owned' as const,
-          async close() {
-            if (closed) return
-            closed = true
-            await page.close().catch((error) => {
-              if (!page.isClosed()) throw error
-            })
-          },
-        }
+        return await withPageAllocation(active, async () => {
+          assertManagedContextOpen(active)
+          const page = await createOwnedBackgroundPage(active)
+          active.temporaryPages.add(page)
+          page.once('close', () => active.temporaryPages.delete(page))
+          return {
+            page,
+            ownership: 'task-owned' as const,
+            async close() {
+              if (!page.isClosed()) await page.close()
+            },
+          }
+        })
       },
       async acquireReservedPage(request) {
         const key = validateManagedPageKey(request.key)
@@ -548,6 +707,16 @@ export class PersistentContextManager {
 
 }
 
+function isIdlePage(active: ActiveContext, state: ProviderPageState) {
+  return !active.closing && state.purpose === 'work' && active.ownedPages.has(state.page) && !state.page.isClosed() && !active.unavailablePages.has(state.page) && !state.collecting && state.users === 0 && !state.held && state.idleSince !== null
+}
+
+async function withPageAllocation<T>(active: ActiveContext, operation: () => Promise<T>): Promise<T> {
+  const next = active.pageAllocation.catch(() => undefined).then(operation)
+  active.pageAllocation = next.catch(() => undefined)
+  return await next
+}
+
 function managedPageClaimed(active: ActiveContext, page: Page) {
   return active.providerPages.has(page) ||
     [...active.pagesByKey.values()].includes(page) ||
@@ -564,6 +733,7 @@ function bindProviderPage(
     provider: string
     pageRef: string
     page: Page
+    purpose: 'work' | 'user'
   },
 ) {
   const refKey = managedProviderPageRefKey(options.provider, options.pageRef)
@@ -577,6 +747,13 @@ function bindProviderPage(
     pageRef: options.pageRef,
     page: options.page,
     refKey,
+    purpose: options.purpose,
+    users: 0,
+    held: false,
+    idleSince: null,
+    collecting: false,
+    targetId: null,
+    observation: null,
   }
   active.providerPages.set(options.page, state)
   active.providerPagesByRef.set(refKey, state)
@@ -590,13 +767,17 @@ function observeProviderPageLifecycle(active: ActiveContext, page: Page) {
     page.off('crash', onCrash)
     active.observedProviderPages.delete(page)
     active.unavailablePages.delete(page)
+    active.ownedPages.delete(page)
     const current = active.providerPages.get(page)
     if (current) detachProviderPageBinding(active, current)
   }
   const onCrash = () => {
     active.unavailablePages.add(page)
     const current = active.providerPages.get(page)
-    if (current) detachProviderPageBinding(active, current)
+    if (current) {
+      current.held = true
+      current.idleSince = null
+    }
   }
   active.observedProviderPages.add(page)
   page.once('close', onClose)
@@ -619,15 +800,10 @@ function detachProviderPageBinding(
   return detached
 }
 
-async function closeReplacedProviderPage(active: ActiveContext, page: Page) {
-  if (
-    page.isClosed() ||
-    !active.ownedPages.has(page) ||
-    active.providerPages.has(page) ||
-    [...active.pagesByKey.values()].includes(page) ||
-    [...active.reservedPagesByKey.values()].includes(page)
-  ) return
-  await page.close().catch(() => undefined)
+async function preserveResidentBrowser(active: ActiveContext) {
+  if (active.browserContext.pages().filter((page) => !page.isClosed()).length !== 1) return
+  const keeper = await createOwnedBackgroundPage(active)
+  active.reservedPagesByKey.set('tokenless:control-plane:resident', keeper)
 }
 
 async function createOwnedBackgroundPage(active: ActiveContext): Promise<Page> {
@@ -701,6 +877,30 @@ function nativeChromeVisibility(visibility: BrowserVisibility): EffectiveBrowser
     )
   }
   return 'headed'
+}
+
+async function pageTargetId(context: BrowserContext, page: Page): Promise<string> {
+  const session = await context.newCDPSession(page)
+  try { return (await session.send('Target.getTargetInfo')).targetInfo.targetId } finally { await session.detach() }
+}
+
+async function connectResidentForSupervision(profile: ManagedBrowserProfile, target: ManagedBrowserLaunchTarget): Promise<LaunchedManagedContext> {
+  const native = target.launchPolicy === 'native'
+  const directory = native ? nativeBrowserUserDataDir(target.id) : profile.directory
+  const endpoint = await readDevToolsEndpoint(path.join(directory, 'DevToolsActivePort'))
+  if (!endpoint) throw tokenlessError('browser_endpoint_unavailable', 'The profile has no accessible resident browser endpoint.')
+  const metadata = native ? null : await readBrowserRuntimeSession(path.join(directory, BROWSER_RUNTIME_SESSION_FILE))
+  const browser = await chromium.connectOverCDP(endpoint, { timeout: 5000 })
+  const context = browser.contexts()[0]
+  if (!context || browser.contexts().length !== 1) {
+    await browser.close()
+    throw tokenlessError('browser_supervision_unavailable', 'The resident browser did not expose one persistent context.')
+  }
+  return { browserContext: context, effectiveVisibility: metadata?.effectiveVisibility ?? 'headed',
+    reuseExistingPages: !native,
+    closeBrowser: native ? () => browser.close() : () => closeConnectedCdpManagedBrowser(browser, metadata?.pid ?? null)
+      .finally(() => removeBrowserRuntimeSession(path.join(directory, BROWSER_RUNTIME_SESSION_FILE), path.join(directory, 'DevToolsActivePort'))),
+    detachBrowser: () => browser.close() }
 }
 
 async function connectNativeBrowserContext(
@@ -1301,6 +1501,7 @@ export function managedBrowserLaunchOptions(
   browser: ManagedBrowserLaunchTarget = { id: 'chrome' },
   visibility: BrowserVisibility = 'headed',
   proxy?: ManagedBrowserProfile['proxy'],
+  profileColor?: ManagedBrowserProfile['profileColor'],
 ): PersistentChromeLaunchOptions {
   const normalized = normalizeManagedBrowserLaunchTarget(browser)
   const effectiveVisibility = resolveEffectiveBrowserVisibility(validateRequestedVisibility(visibility))
@@ -1322,6 +1523,7 @@ export function managedBrowserLaunchOptions(
       '--disable-sync',
       '--no-first-run',
       '--no-default-browser-check',
+      ...profileThemeArguments(profileColor),
       ...(normalized.launchPolicy === 'test-profile'
         ? PLAYWRIGHT_KEYCHAIN_NEUTRAL_DEFAULT_ARGUMENTS
         : []),
@@ -1355,6 +1557,15 @@ export function managedBrowserLaunchOptions(
   return launchOptions
 }
 
+function profileThemeArguments(profileColor: ManagedBrowserProfile['profileColor']) {
+  if (profileColor === undefined) return []
+  const match = /^#([0-9A-F]{2})([0-9A-F]{2})([0-9A-F]{2})$/u.exec(profileColor)
+  if (!match) {
+    throw tokenlessError('profile_color_invalid', 'Managed profile color must use canonical #RRGGBB form.')
+  }
+  return [`--install-autogenerated-theme=${match.slice(1).map((component) => Number.parseInt(component, 16)).join(',')}`]
+}
+
 export function chromeLaunchOptions(): PersistentChromeLaunchOptions {
   return managedBrowserLaunchOptions({ id: 'chrome' })
 }
@@ -1365,6 +1576,10 @@ function sameBrowserProxy(
 ) {
   if (!left || !right) return !left && !right
   return left.server === right.server && left.bypass.join('\n') === right.bypass.join('\n')
+}
+
+function sameBrowserProfileColor(left: string | undefined, right: string | undefined) {
+  return left === right
 }
 
 function isManagedBrowserConnected(active: ActiveContext) {

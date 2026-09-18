@@ -16,6 +16,21 @@ const daemonConfig = pathToFileURL(path.join(root, 'packages/server/dist/src/per
 const startExample = JSON.parse(fs.readFileSync(path.join(root, 'packages/contracts/examples/v0/start-turn-request.json'), 'utf8'))
 const maxStageBytes = 1024 * 1024
 
+test('Copilot raw provider turns do not advertise or execute the local Harness attachment route', async () => {
+  await withHome(async (homeDir) => {
+    const daemon = await startControlPlane(homeDir)
+    try {
+      const { client, binding } = await configuredClient(homeDir, daemon, 'github-copilot', 'copilot-context')
+      assert.deepEqual(binding.capabilities.supportedCapabilities, ['conversation.chat'])
+      const attachment = await client.stage(binding.providerBindingRef, new TextEncoder().encode('# local task\n'))
+      await assertLocalHttpError(client.start(binding.providerBindingRef, requestFor(binding, attachment, 'c')), 400, 'invalid_input')
+      assert.equal(daemon.store.listJobs().length, 0)
+    } finally {
+      await daemon.close()
+    }
+  })
+})
+
 test('oversize stage is bounded and sanitized', async () => {
   await withHome(async (homeDir) => {
     const daemon = await startControlPlane(homeDir)
@@ -205,7 +220,7 @@ test('auto bootstrap preference reorders eligible providers while continuation k
         profiles: {
           [profile.slug]: {
             roleLabel: '',
-            enabledProviders: ['grok', 'gemini', 'chatgpt', 'deepseek', 'perplexity', 'blackbox'],
+            enabledProviders: ['grok', 'gemini', 'chatgpt', 'deepseek', 'perplexity', 'cohere'],
             browserVisibility: 'headed',
             proxy: null,
           },
@@ -230,7 +245,7 @@ test('auto bootstrap preference reorders eligible providers while continuation k
         { provider: 'grok', category: 'capability', reason: 'capability_route_unavailable' },
         { provider: 'deepseek', category: 'access', reason: 'provider_access_account_blocked' },
         { provider: 'perplexity', category: 'capability', reason: 'capability_route_unavailable' },
-        { provider: 'blackbox', category: 'runtime', reason: 'provider_mode_disabled' },
+        { provider: 'cohere', category: 'runtime', reason: 'provider_mode_disabled' },
       ]
       assert.deepEqual(firstJob.request_json.routingObservation, {
         protocol: 'tokenless.provider-routing-observation.v1',
@@ -344,7 +359,7 @@ test('auto bootstrap no-route error exposes bounded provider exclusions', async 
         profiles: {
           [profile.slug]: {
             roleLabel: '',
-            enabledProviders: ['deepseek', 'perplexity', 'blackbox'],
+            enabledProviders: ['deepseek', 'perplexity', 'cohere'],
             browserVisibility: 'headed',
             proxy: null,
           },
@@ -367,7 +382,7 @@ test('auto bootstrap no-route error exposes bounded provider exclusions', async 
       assert.deepEqual(JSON.parse(response.headers.get('x-tokenless-route-exclusions')), [
         { provider: 'deepseek', category: 'access', reason: 'provider_access_account_blocked' },
         { provider: 'perplexity', category: 'capability', reason: 'capability_route_unavailable' },
-        { provider: 'blackbox', category: 'runtime', reason: 'provider_mode_disabled' },
+        { provider: 'cohere', category: 'runtime', reason: 'provider_mode_disabled' },
       ])
       assert.deepEqual(await response.json(), {
         error: {

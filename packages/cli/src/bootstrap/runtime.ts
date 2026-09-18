@@ -1045,7 +1045,7 @@ function safeSegment(value: unknown) {
 }
 
 async function execFileJson(command: string, args: string[]) {
-  const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] })
+  const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
   let stdout = ''
   let stderr = ''
   let outputBytes = 0

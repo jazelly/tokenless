@@ -1,4 +1,6 @@
 import fs from 'node:fs/promises'
+import type { ConfiguredRateLimitRule } from 'tokenless-internal-shared/dashboard'
+import { validateConfiguredRateLimits } from '../providers/configured-rate-limits.js'
 import os from 'node:os'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -24,6 +26,7 @@ type JsonRecord = Record<string, unknown>
 const configMutationLanes = new Map<string, Promise<void>>()
 
 export type TokenlessConfig = {
+  rateLimits: ConfiguredRateLimitRule[]
   protocol: typeof TOKENLESS_CONFIG_SCHEMA_ID
   updatedAt: string | null
   defaultProfile: string | null
@@ -33,6 +36,7 @@ export type TokenlessConfig = {
   browserVisibility: BrowserVisibility
   daemonUrl: string | null
   language: TokenlessLanguage
+  browserTabGc: BrowserTabGcConfig
   outputSavings: OutputSavingsConfig
   apiProxy: ApiProxyConfig
   g4f: G4fConfig
@@ -42,13 +46,35 @@ export type TokenlessConfig = {
 
 export type ConfigBrowser = 'chrome' | 'brave'
 
+export type BrowserTabGcConfig = {
+  idleTimeoutSeconds: number
+  sweepIntervalSeconds: number
+}
+
+export const DEFAULT_BROWSER_TAB_GC: Readonly<BrowserTabGcConfig> = Object.freeze({
+  idleTimeoutSeconds: 120,
+  sweepIntervalSeconds: 15,
+})
+
+export function validateBrowserTabGc(value: unknown): BrowserTabGcConfig {
+  if (!isJsonRecord(value) || Object.keys(value).some((key) => !Object.hasOwn(DEFAULT_BROWSER_TAB_GC, key))) {
+    throw configError('tokenless_config_invalid', 'Invalid browserTabGc configuration.')
+  }
+  for (const key of Object.keys(DEFAULT_BROWSER_TAB_GC)) {
+    if (!Number.isSafeInteger(value[key]) || Number(value[key]) < 1) {
+      throw configError('tokenless_config_invalid', `browserTabGc.${key} must be a positive integer.`)
+    }
+  }
+  return { idleTimeoutSeconds: Number(value.idleTimeoutSeconds), sweepIntervalSeconds: Number(value.sweepIntervalSeconds) }
+}
+
 export type OutputSavingsConfig = {
   enabled: boolean
 }
 
 export type ApiProxyConfig = {
   enabled: boolean
-  executionMode: 'browser' | 'direct'
+  executionMode: readonly ProviderExecutionMode[]
 }
 
 export const PROVIDER_BACKENDS = Object.freeze(['native', 'g4f'] as const)
@@ -79,6 +105,7 @@ export type RouterProviderRule = {
 
 export type ManagedProfileConfig = {
   runtimeBinding?: BrowserRuntimeBinding
+  profileColor?: string
   roleLabel: string
   enabledProviders: string[]
   providerModes: Record<string, ProviderExecutionMode[]>
@@ -195,6 +222,7 @@ async function readTokenlessConfigUnlocked(homeDir: string) {
     ? normalizeConfigBrowserExecutablePath(payload.browserExecutablePath)
     : null
   const config: TokenlessConfig = {
+    rateLimits: validateConfiguredRateLimits(payload.rateLimits ?? []),
     protocol: TOKENLESS_CONFIG_SCHEMA_ID,
     updatedAt: typeof payload.updatedAt === 'string' ? payload.updatedAt : null,
     defaultProfile: normalizeDefaultProfile(payload.defaultProfile, payload.profiles),
@@ -204,6 +232,12 @@ async function readTokenlessConfigUnlocked(homeDir: string) {
     browserVisibility: 'headed',
     daemonUrl: normalizeDaemonUrl(payload.daemonUrl),
     language: normalizeTokenlessLanguage(payload.language) ?? 'en',
+    browserTabGc: payload.browserTabGc === undefined ? { ...DEFAULT_BROWSER_TAB_GC } : validateBrowserTabGc(
+      // Existing config files contain the removed tab cap; it no longer controls allocation.
+      isJsonRecord(payload.browserTabGc)
+        ? Object.fromEntries(Object.entries(payload.browserTabGc).filter(([key]) => key !== 'maxTabsPerProfile'))
+        : payload.browserTabGc,
+    ),
     outputSavings: normalizeOutputSavingsConfig(payload.outputSavings),
     apiProxy: normalizeApiProxyConfig(payload.apiProxy),
     g4f: normalizeG4fConfig(payload.g4f),
@@ -222,6 +256,8 @@ export async function writeTokenlessConfig({
   browserVisibility,
   daemonUrl,
   language,
+  browserTabGc,
+  rateLimits,
   outputSavings,
   apiProxy,
   g4f,
@@ -236,6 +272,8 @@ export async function writeTokenlessConfig({
   browserVisibility?: unknown
   daemonUrl?: unknown
   language?: unknown
+  browserTabGc?: unknown
+  rateLimits?: unknown
   outputSavings?: unknown
   apiProxy?: unknown
   g4f?: unknown
@@ -259,6 +297,7 @@ export async function writeTokenlessConfig({
       current.profiles[slug] ? { ...current.profiles[slug], ...profile } : profile,
     ]))
     const config: TokenlessConfig = {
+      rateLimits: rateLimits === undefined ? current.rateLimits : validateConfiguredRateLimits(rateLimits),
       protocol: TOKENLESS_CONFIG_SCHEMA_ID,
       updatedAt: new Date().toISOString(),
       defaultProfile: defaultProfile === undefined
@@ -270,6 +309,7 @@ export async function writeTokenlessConfig({
       browserVisibility: 'headed',
       daemonUrl: daemonUrl === undefined ? current.daemonUrl : normalizeDaemonUrl(daemonUrl),
       language: language === undefined ? current.language : validateConfigLanguage(language),
+      browserTabGc: browserTabGc === undefined ? current.browserTabGc : validateBrowserTabGc(browserTabGc),
       outputSavings: outputSavings === undefined
         ? current.outputSavings
         : validateOutputSavingsConfig(outputSavings),
@@ -392,6 +432,7 @@ async function withConfigWriteDirectory<T>(homeDir: string, operation: () => Pro
 
 function emptyTokenlessConfig(): TokenlessConfig {
   return {
+    rateLimits: [],
     protocol: TOKENLESS_CONFIG_SCHEMA_ID,
     updatedAt: null,
     defaultProfile: null,
@@ -401,6 +442,7 @@ function emptyTokenlessConfig(): TokenlessConfig {
     browserVisibility: 'headed',
     daemonUrl: null,
     language: 'en',
+    browserTabGc: { ...DEFAULT_BROWSER_TAB_GC },
     outputSavings: { enabled: true },
     apiProxy: defaultApiProxyConfig(),
     g4f: { enabled: false },
@@ -410,24 +452,36 @@ function emptyTokenlessConfig(): TokenlessConfig {
 }
 
 function defaultApiProxyConfig(): ApiProxyConfig {
-  return { enabled: false, executionMode: 'direct' }
+  return { enabled: false, executionMode: ['direct'] }
 }
 
-function isApiProxyConfig(value: unknown): value is ApiProxyConfig {
+function isExecutionModeArray(value: unknown): value is ProviderExecutionMode[] {
+  return Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((mode) => mode === 'browser' || mode === 'direct') &&
+    new Set(value).size === value.length
+}
+
+function isApiProxyConfig(value: unknown): value is { enabled: boolean, executionMode: ProviderExecutionMode[] } {
   return isJsonRecord(value) &&
     typeof value.enabled === 'boolean' &&
-    (value.executionMode === 'browser' || value.executionMode === 'direct')
+    isExecutionModeArray(value.executionMode)
 }
 
 function normalizeApiProxyConfig(value: unknown): ApiProxyConfig {
-  return isApiProxyConfig(value)
-    ? { enabled: value.enabled, executionMode: value.executionMode }
-    : defaultApiProxyConfig()
+  if (isApiProxyConfig(value)) {
+    return { enabled: value.enabled, executionMode: value.executionMode }
+  }
+  if (isJsonRecord(value) && typeof value.enabled === 'boolean' &&
+    (value.executionMode === 'browser' || value.executionMode === 'direct')) {
+    return { enabled: value.enabled, executionMode: [value.executionMode] }
+  }
+  return defaultApiProxyConfig()
 }
 
 function validateApiProxyConfig(value: unknown): ApiProxyConfig {
   if (!isApiProxyConfig(value)) {
-    throw configError('tokenless_config_invalid', 'Invalid Tokenless API proxy configuration.')
+    throw configError('tokenless_config_invalid', 'Invalid Tokenless API proxy configuration; executionMode must be a non-empty array of unique values from "browser"/"direct".')
   }
   return { enabled: value.enabled, executionMode: value.executionMode }
 }
@@ -547,8 +601,13 @@ function normalizeProfiles(value: unknown): Record<string, ManagedProfileConfig>
     if (candidate.runtimeBinding !== undefined && !runtimeBinding) {
       throw configError('tokenless_config_invalid', `Invalid runtime binding for profile '${profileId}'.`)
     }
+    const profileColor = normalizeManagedProfileColor(candidate.profileColor)
+    if (candidate.profileColor !== undefined && !profileColor) {
+      throw configError('profile_color_invalid', `Invalid profile color for '${profileId}'; expected #RRGGBB.`)
+    }
     profiles[profileId] = {
       ...(runtimeBinding ? { runtimeBinding } : {}),
+      ...(profileColor ? { profileColor } : {}),
       roleLabel: normalizeRoleLabel(candidate.roleLabel),
       enabledProviders: normalizeProviderList(candidate.enabledProviders),
       providerModes: normalizeProviderModes(candidate.providerModes),
@@ -557,6 +616,13 @@ function normalizeProfiles(value: unknown): Record<string, ManagedProfileConfig>
     }
   }
   return profiles
+}
+
+export function normalizeManagedProfileColor(value: unknown) {
+  if (typeof value !== 'string') return undefined
+  const normalized = value.trim().toUpperCase()
+  const withHash = normalized.startsWith('#') ? normalized : `#${normalized}`
+  return /^#[0-9A-F]{6}$/u.test(withHash) ? withHash : undefined
 }
 
 function normalizeProfileProxy(value: unknown, profileId: string) {

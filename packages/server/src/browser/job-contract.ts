@@ -29,6 +29,7 @@ import type { VisibleActionRequest, VisibleActionWireRequest } from './actions.j
 import type { ProviderId, ProviderInstance, TaskCapabilityId, TaskCapabilityRoute } from '../providers/registry.js'
 import type { ProviderBackend } from '../persistence/config.js'
 import { g4fProviderName, nativeDirectProviderAvailable } from '../providers/direct/g4f-map.js'
+import { isAgnesConversationUrl } from '../providers/navigation-policy.js'
 
 export { CONTEXT_ENVELOPE_SCHEMA_ID } from './context-envelope.js'
 export type { ContextEnvelope } from './context-envelope.js'
@@ -63,6 +64,7 @@ export type ManagedPlaywrightJobRequest = {
   semanticPreference?: string | undefined
   routingObservation?: ManagedPlaywrightRoutingObservation | undefined
   pagePolicy?: ManagedPagePolicy | undefined
+  submissionEvidence?: 'benchmark' | undefined
   actions: readonly VisibleActionRequest[]
 }
 
@@ -130,6 +132,7 @@ export type CreateManagedPlaywrightJobRequestInput = {
   semanticPreference?: unknown
   routingObservation?: unknown
   pagePolicy?: unknown
+  submissionEvidence?: unknown
   actions: readonly (VisibleActionRequest | (Omit<Partial<VisibleActionWireRequest>, 'protocol' | 'provider'> & {
     requestId?: string | undefined
   }))[]
@@ -196,6 +199,7 @@ export function createManagedPlaywrightJobRequest(
       : { semanticPreference: validateSemanticPreference(input.semanticPreference) }),
     ...(input.routingObservation === undefined ? {} : { routingObservation: validateRoutingObservation(input.routingObservation) }),
     ...(input.pagePolicy === undefined ? {} : { pagePolicy: validateManagedPagePolicy(input.pagePolicy) }),
+    ...(input.submissionEvidence === undefined ? {} : { submissionEvidence: validateSubmissionEvidence(input.submissionEvidence) }),
     actions,
   })
 }
@@ -207,7 +211,7 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
   requireKeys(
     input,
     ['protocol'],
-    ['provider', 'target', 'taskId', 'pageRef', 'capabilityRoute', 'fallback', 'context', 'executionMode', 'providerBackend', 'authContextId', 'browserVisibility', 'semanticPreference', 'routingObservation', 'pagePolicy', 'userHandoff', 'actions'],
+    ['provider', 'target', 'taskId', 'pageRef', 'capabilityRoute', 'fallback', 'context', 'executionMode', 'providerBackend', 'authContextId', 'browserVisibility', 'semanticPreference', 'routingObservation', 'pagePolicy', 'submissionEvidence', 'userHandoff', 'actions'],
     'invalid_playwright_job_request',
   )
 
@@ -230,7 +234,7 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
     legacyV3
       ? ['protocol', 'provider', 'target', 'taskId', 'browserVisibility', 'actions']
       : ['protocol', 'provider', 'target', 'taskId', 'pageRef', 'browserVisibility', 'actions'],
-    ['capabilityRoute', 'fallback', 'context', 'executionMode', 'providerBackend', 'authContextId', 'semanticPreference', 'routingObservation', 'pagePolicy', 'userHandoff'],
+    ['capabilityRoute', 'fallback', 'context', 'executionMode', 'providerBackend', 'authContextId', 'semanticPreference', 'routingObservation', 'pagePolicy', 'submissionEvidence', 'userHandoff'],
     'invalid_playwright_job_request',
   )
   const provider = getProviderInstanceById(input.provider)
@@ -285,6 +289,9 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
     ? undefined
     : validateRoutingObservation(input.routingObservation)
   const pagePolicy = input.pagePolicy === undefined ? undefined : validateManagedPagePolicy(input.pagePolicy)
+  const submissionEvidence = input.submissionEvidence === undefined
+    ? undefined
+    : validateSubmissionEvidence(input.submissionEvidence)
   const providerBackend = validateProviderBackend(input.providerBackend ?? null)
   const authContextId = validateAuthContextId(input.authContextId ?? null)
   if (!provider.descriptor.executionModes.includes(executionMode)) {
@@ -295,6 +302,9 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
   }
   if (executionMode === 'browser' && (providerBackend !== null || authContextId !== null)) {
     throw tokenlessError('invalid_playwright_job_provider_backend', 'providerBackend and authContextId apply only to direct execution.')
+  }
+  if (submissionEvidence !== undefined && executionMode !== 'browser') {
+    throw tokenlessError('invalid_playwright_submission_evidence', 'submissionEvidence applies only to browser execution.')
   }
   if (fallback && actions.some((action) => !AUTOMATIC_FALLBACK_ACTIONS.has(action.action))) {
     throw tokenlessError('invalid_playwright_job_fallback', 'Automatic provider fallback accepts only portable conversation actions.')
@@ -319,6 +329,7 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
     ...(semanticPreference === undefined ? {} : { semanticPreference }),
     ...(routingObservation === undefined ? {} : { routingObservation }),
     ...(pagePolicy === undefined ? {} : { pagePolicy }),
+    ...(submissionEvidence === undefined ? {} : { submissionEvidence }),
     actions,
   }
 }
@@ -349,6 +360,13 @@ function validateAuthContextId(value: unknown) {
 function validateSemanticPreference(value: unknown) {
   if (typeof value !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/u.test(value)) {
     throw tokenlessError('invalid_playwright_semantic_preference', 'Managed Playwright semanticPreference is invalid.')
+  }
+  return value
+}
+
+function validateSubmissionEvidence(value: unknown): 'benchmark' {
+  if (value !== 'benchmark') {
+    throw tokenlessError('invalid_playwright_submission_evidence', 'Managed Playwright submissionEvidence must be benchmark.')
   }
   return value
 }
@@ -950,7 +968,8 @@ function validateSafeTarget(input: unknown, provider: ProviderInstance): Managed
   } catch {
     throw tokenlessError('invalid_playwright_job_target', 'Managed Playwright job target URL is invalid.')
   }
-  if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.hash || parsed.search) {
+  if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.hash ||
+    (parsed.search && !(provider.id === 'agnes' && isAgnesConversationUrl(parsed)))) {
     throw tokenlessError('invalid_playwright_job_target', 'Managed Playwright job target must be a public HTTPS provider URL without credentials, query, or fragment.')
   }
   if (!provider.navigation.canonicalTarget(input.url)) {

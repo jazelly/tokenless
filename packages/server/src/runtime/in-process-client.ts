@@ -33,6 +33,7 @@ export function createInProcessDaemonClient(store: JobStore): ManagedDaemonClien
     recordProviderSubmission: (options) => inProcessDaemonRequest(options.signal, () => publicView(
       store.recordProviderSubmission(options.jobId),
     )),
+    admitProviderAction: (options) => inProcessDaemonRequest(options.signal, () => store.admitProviderAction(options.jobId, options.actionIndex)),
     markJobWaitingForUser: (options) => inProcessDaemonRequest(options.signal, () => publicView(
       store.markWaitingForUser(options.jobId, options.blocker),
     )),
@@ -69,6 +70,10 @@ export function createInProcessDaemonClient(store: JobStore): ManagedDaemonClien
       resource_id: options.resourceId,
       name: options.name,
       canonical_url: options.canonicalUrl,
+    })),
+    findProviderTaskConversationByUrl: async (profileId, url) => store.findProviderTaskConversationByUrl(profileId, url),
+    resolveProviderTaskConversation: (options) => inProcessDaemonRequest(options.signal, () => store.resolveProviderTaskConversation({
+      provider: options.provider, profile_id: options.profileId, task_id: options.taskId,
     })),
     upsertProviderTaskConversation: (options) => inProcessDaemonRequest(options.signal, () => store.upsertProviderTaskConversation({
       provider: options.provider,

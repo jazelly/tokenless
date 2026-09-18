@@ -55,6 +55,7 @@ const handlers = {
   'arena-agent': arenaAgent,
   'arena-video': arenaVideo,
   'conversation-workflow': conversationWorkflow,
+  'lovable-project-roundtrip': lovableProjectRoundtrip,
   'workspace-response-citations': workspaceResponseCitations,
   'workspace-response-baseline': workspaceResponseBaseline,
   'qwen-mode-workspace': qwenModeWorkspace,
@@ -834,8 +835,11 @@ async function fileSelection({ provider, journey }) {
         'Gemini observer must see one newly visible physical attachment card',
       )
     } else {
-      const visibleName = provider === 'kimi' || provider === 'meta' ? path.parse(name).name : name
-      assert.equal(await exactTextVisible(uploaded.page, visibleName), true, `${provider} observer must see selected attachment`)
+      const visibleName = visibleAttachmentName(provider, name)
+      const visible = provider === 'agnes'
+        ? await agnesAttachmentVisible(uploaded.page, name)
+        : await exactTextVisible(uploaded.page, visibleName)
+      assert.equal(visible, true, `${provider} observer must see selected attachment`)
     }
     await uploaded.close()
     const cleared = await journey.action('prompt.clear')
@@ -871,10 +875,21 @@ async function harnessAttachmentRoundtrip({ provider, journey }) {
       '--provider', provider,
       '--workspace-root', workspace,
       '--prompt', [
-        `Use the read-only workspace.read tool to read ${proofFile}.`,
-        'No Skill loads are needed. Propose workspace.read directly in your first response.',
-        'Then return exactly the complete file contents with no additional text.',
-        'Do not call any write tool.',
+        ...(provider === 'agnes'
+          ? [
+              'Follow the attached Tokenless Harness system document and its exact response-envelope protocol.',
+              `Use only the Tokenless Harness workspace.read proposal to read ${proofFile} on the caller computer.`,
+              'Agnes native sandbox tools cannot access this file: do not execute Agnes tools or search its sandbox.',
+              'No Skill loads are needed. Propose workspace.read directly in your first response.',
+              'After the caller tool result arrives, return exactly the complete file contents as final output.',
+              'Do not call any write tool.',
+            ]
+          : [
+              `Use the read-only workspace.read tool to read ${proofFile}.`,
+              'No Skill loads are needed. Propose workspace.read directly in your first response.',
+              'Then return exactly the complete file contents with no additional text.',
+              'Do not call any write tool.',
+            ]),
       ].join(' '),
       '--max-turns', '4',
       '--timeout-ms', String(timeoutMs),
@@ -967,7 +982,7 @@ function harnessTurnRequest(jobId, provider, expectedAttachmentPrefix) {
     assert.ok(Array.isArray(names) && names.length >= 1)
     assert.ok(names[0].startsWith(expectedAttachmentPrefix))
     assert.ok(names.every((name) => name.endsWith('.md')))
-    return { pageRef: request.pageRef, taskId: request.taskId }
+    return { pageRef: request.pageRef, taskId: request.taskId, attachmentName: names[0] }
   } finally {
     database.close()
   }
@@ -993,11 +1008,9 @@ async function observeHarnessProviderTurn({ waiting, page, provider, turn, evide
   assert.ok(responses.every((response) => response.ok === true))
   const attachmentNames = responses[0]?.result?.attachments?.map((attachment) => attachment.name)
   assert.ok(Array.isArray(attachmentNames) && attachmentNames.length >= 1)
-  assert.equal(
-    await harnessAttachmentVisible(page, provider, attachmentNames[0]),
-    true,
-    `${provider} observer must see the Harness turn ${turn} Markdown attachment`,
-  )
+  assert.equal(responses[0]?.result?.acceptance, 'accepted')
+  assert.equal(responses[0]?.result?.visibleProof, 'visible-attachment-evidence')
+  assert.ok(responses[0]?.result?.attachments?.every((attachment) => attachment.visible === true))
   assert.ok((responses[3]?.result?.text ?? '').trim().length > 0)
   const entry = {
     jobId: waiting.jobId,
@@ -1023,8 +1036,25 @@ function readHarnessJob(jobId) {
 }
 
 async function harnessAttachmentVisible(page, provider, name) {
-  const visibleName = provider === 'kimi' || provider === 'meta' ? path.parse(name).name : name
+  if (provider === 'agnes') return agnesAttachmentVisible(page, name)
+  const visibleName = visibleAttachmentName(provider, name)
   return pageContains(page, visibleName)
+}
+
+async function agnesAttachmentVisible(page, name) {
+  return await page.locator('[class*="pcComponents_fileCompact__"]').filter({ visible: true }).evaluateAll(
+    (elements) => elements.some((element) => {
+      const text = (element.textContent ?? '').replace(/\s+/gu, ' ').trim()
+      return /\.txt$/iu.test(text)
+    }),
+  )
+}
+
+function visibleAttachmentName(provider, name) {
+  if (provider === 'agnes' && path.extname(name).toLowerCase() === '.md') {
+    return `${path.parse(name).name}.txt`
+  }
+  return provider === 'kimi' || provider === 'meta' ? path.parse(name).name : name
 }
 
 async function writeHarnessRoundtripEvidence(provider, evidence) {
@@ -1056,11 +1086,13 @@ async function conversationContinuation({ provider, journey }) {
     '--project-name', name,
     '--workspace-mode', 'conversation',
     '--capability', 'conversation.continue',
-    '--prompt', 'Reply with exactly the secret from my previous message and no other text.',
+    '--prompt', provider === 'agnes'
+      ? 'Reply with exactly the marker from your previous answer and no other text.'
+      : 'Reply with exactly the secret from my previous message and no other text.',
   ])
   const secondText = responseResult(second.payload, 'response.read')?.text ?? ''
-  assert.match(secondText, new RegExp(escapeRegExp(contextSecret)))
-  assert.doesNotMatch(secondText, new RegExp(escapeRegExp(firstMarker)))
+  assert.match(secondText, new RegExp(escapeRegExp(provider === 'agnes' ? firstMarker : contextSecret)))
+  if (provider !== 'agnes') assert.doesNotMatch(secondText, new RegExp(escapeRegExp(firstMarker)))
   assert.equal(canonicalPageUrl(second.page.url()), conversationUrl)
   await second.close()
 }
@@ -1557,6 +1589,47 @@ async function conversationWorkflow({ provider, journey }) {
   }
 }
 
+async function lovableProjectRoundtrip({ provider, journey }) {
+  assert.equal(provider, 'lovable')
+  const projectName = markerFor(provider, 'PROJECT')
+  const responseMarker = markerFor(provider, 'PROJECT_RESPONSE')
+  const heading = markerFor(provider, 'COUNTER_HEADING')
+  const run = await journey.run([
+    '--project-name', projectName,
+    '--workspace-mode', 'conversation',
+    '--prompt', [
+      `Build a tiny counter app with a visible preview heading exactly ${heading}.`,
+      'Include a visible button labelled Increment, initialize the displayed integer at 0, and make one click change it to 1.',
+      `When the preview is ready, include this exact response marker: ${responseMarker}.`,
+    ].join(' '),
+  ], 600_000, async ({ page }) => {
+    const deadline = Date.now() + 540_000
+    const answers = page.locator(
+      '[data-testid="agent-message"]:has([data-testid="agent-message-toolbar"]) > [data-selectable="true"]',
+    ).filter({ visible: true })
+    while (Date.now() <= deadline) {
+      const texts = await answers.allInnerTexts().catch(() => [])
+      if (texts.some((text) => text.includes(responseMarker))) return true
+      await new Promise((resolve) => setTimeout(resolve, 500))
+    }
+    return false
+  })
+  const response = responseResult(run.payload, 'response.read')
+  assert.match(response?.text ?? '', new RegExp(escapeRegExp(responseMarker)))
+  assert.match(response?.text ?? '', new RegExp(escapeRegExp(heading)))
+  assert.match(response?.text ?? '', /Increment/iu)
+  assert.match(response?.text ?? '', /\b0\b/)
+  assert.match(response?.text ?? '', /\b1\b/)
+  assert.equal(run.observerResult, true, 'Lovable observer must see the completed project response')
+  const conversation = run.payload.providerContext?.conversation
+  assert.equal(conversation?.provider, 'lovable')
+  assert.match(
+    conversation?.canonical_url ?? '',
+    /^https:\/\/lovable\.dev\/projects\/[0-9a-f-]{36}$/iu,
+  )
+  await run.close()
+}
+
 async function deepSeekVisionInput({ provider, journey }) {
   assert.equal(provider, 'deepseek')
   const original = await captureDeepSeekState(journey)
@@ -1625,10 +1698,18 @@ async function restoreDeepSeekState(journey, state) {
 async function workspaceResponseCitations({ provider, journey }) {
   const name = markerFor(provider, 'WORKSPACE_RESPONSE')
   const responseMarker = markerFor(provider, 'WORKSPACE_RESPONSE_MARKER')
+  const prompt = provider === 'agnes'
+    ? [
+        'Answer in English.',
+        `Your first line must be exactly ${responseMarker}.`,
+        'On the next line, identify the official Node.js homepage and include a Markdown link to https://nodejs.org/.',
+        'Use web search only for the official source and do not omit the first-line marker.',
+      ].join(' ')
+    : `Include this exact marker: ${responseMarker}. Identify the official Node.js homepage and cite that official source.`
   const run = await journey.run([
     '--project-name', name,
     '--workspace-mode', 'conversation',
-    '--prompt', `Include this exact marker: ${responseMarker}. Identify the official Node.js homepage and cite that official source.`,
+    '--prompt', prompt,
   ])
   const response = responseResult(run.payload, 'response.read')
   assert.match(response?.text ?? '', new RegExp(escapeRegExp(responseMarker)))
@@ -1641,15 +1722,20 @@ async function workspaceResponseCitations({ provider, journey }) {
 
 async function workspaceResponseBaseline({ provider, journey }) {
   const name = markerFor(provider, 'WORKSPACE_RESPONSE')
-  const prompt = 'What is the capital of Australia? Answer in one sentence.'
+  const prompt = provider === 'agnes'
+    ? 'What is the capital of Australia? Answer in one sentence in English.'
+    : 'What is the capital of Australia? Answer in one sentence.'
   const run = await journey.run([
     '--project-name', name,
     '--workspace-mode', 'conversation',
     '--prompt', prompt,
   ])
   const response = responseResult(run.payload, 'response.read')
-  assert.match(response?.text ?? '', /Canberra/i)
-  assert.equal(await pageContains(run.page, 'Canberra'), true)
+  assert.match(response?.text ?? '', /Canberra|堪培拉/iu)
+  assert.equal(
+    await pageContains(run.page, 'Canberra') || await pageContains(run.page, '堪培拉'),
+    true,
+  )
   assertConversationWorkspaceResult(run)
   await run.close()
 }

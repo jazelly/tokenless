@@ -16,32 +16,29 @@ The CLI and local API entry point for the Tokenless Web Harness. Put your existi
 
 ## Provider catalog
 
-The current catalog contains 43 providers: 15 browser entries and 28 additional Direct-only entries.
+The current catalog contains 40 providers: 18 browser entries, 16 with task routes, and 22 additional Direct-only entries.
 
 - **Supported browser routes**: ChatGPT, Claude, Gemini, Grok, Arena.
-- **Experimental browser routes**: Qwen / 千问, DeepSeek, Perplexity, Z.ai / GLM, Doubao / 豆包, Kimi, Dola, Meta AI, GitHub Copilot.
-- **Awaiting verification**: Microsoft Copilot.
+- **Experimental browser routes**: Qwen / 千问, DeepSeek, Perplexity, Z.ai / GLM, Doubao / 豆包, Kimi, Dola, Meta AI, GitHub Copilot, Lovable, Monica.
+- **Browser entries without a task route**: Microsoft Copilot, HuggingChat.
 
 <details>
-<summary>View the 28 Direct-only providers</summary>
+<summary>View the 22 Direct-only providers</summary>
 
-These are experimental G4F mappings, not a claim that every provider has passed a real run. Twelve browser providers also have Direct entry points, for 40 Direct mappings in total.
+These are experimental G4F mappings, not a claim that every provider has passed a real run. Thirteen browser providers also have Direct entry points, for 35 Direct mappings in total.
 
 | Provider | ID | Provider | ID |
 | --- | --- | --- | --- |
-| Black Forest Labs | `black-forest-labs` | Blackbox AI | `blackbox` |
-| Cerebras | `cerebras` | Cloudflare AI | `cloudflare` |
-| Cohere | `cohere` | DeepInfra | `deepinfra` |
-| ElevenLabs | `elevenlabs` | Fenay AI | `fenay-ai` |
-| GLHF | `glhf` | Groq | `groq` |
-| Hugging Face | `hugging-face` | MiniMax | `minimax` |
+| Black Forest Labs | `black-forest-labs` | Cerebras | `cerebras` |
+| Cloudflare AI | `cloudflare` | Cohere | `cohere` |
+| DeepInfra | `deepinfra` | ElevenLabs | `elevenlabs` |
+| Groq | `groq` | MiniMax | `minimax` |
 | NVIDIA | `nvidia` | Ollama | `ollama` |
 | OpenRouter | `openrouter` | Opera Aria | `opera-aria` |
 | Phind AI | `phind` | Pi | `pi` |
-| Pollinations | `pollinations` | Puter | `puter` |
-| Replicate | `replicate` | Sber GigaChat | `gigachat` |
-| Stability AI | `stability-ai` | Teach Anything | `teach-anything` |
-| TheB.AI | `theb-ai` | Together AI | `together` |
+| Pollinations | `pollinations` | Replicate | `replicate` |
+| Sber GigaChat | `gigachat` | Stability AI | `stability-ai` |
+| Teach Anything | `teach-anything` | Together AI | `together` |
 | WhiteRabbitNeo | `whiterabbitneo` | YQCloud | `yqcloud` |
 
 </details>
@@ -216,7 +213,7 @@ One managed profile can hold sessions for all enabled providers. Use separate pr
 
 The managed runtime keeps different providers and stable task identities in separate tabs. Re-entering the same project or conversation task returns to its tab; replacing it requires explicit `pagePolicy: replace` through the local job API.
 
-Page Ref is an address, not an execution lock: Tokenless API permits concurrent use of the same profile and Page Ref, while Tokenless Harness owns conversation ordering. Completed operations leave provider tabs open without idle expiry.
+Page Ref is an address, not an execution lock: Tokenless API permits concurrent use of the same profile and Page Ref, while Tokenless Harness owns conversation ordering. Completed response reads make owned work tabs eligible for idle collection; see the limits below.
 
 ```bash
 tokenless profiles list --json
@@ -228,6 +225,14 @@ tokenless profiles status --profile work --provider claude --json
 Tokenless profiles organize provider tabs and configuration; they do not create separate browser identities. The currently shipped visible-browser mode does not inspect individual cookies, tokens, browser storage, Keychain data, or authentication values, and no mode exposes those values to agents.
 
 ## Browser and Local Runtime
+
+Tokenless API reclaims owned work tabs after **120 seconds continuously idle**, checked every **15 seconds**. Each profile allows **8 work tabs**: at capacity, the oldest idle tab is reclaimed early; if every tab is busy or retained, a new tab is rejected.
+
+- Active jobs, generation, unsent drafts, uploads, and uncertain page states stay protected. Previously retained work is checked again and can become idle when it is visibly finished. Explicitly opened user tabs remain excluded.
+- Reusing an idle tab resets its timer. After collection, a normal continuation with the same task ID (or Page Ref when no task ID is supplied) reopens its saved provider conversation URL.
+- Configure `browserTabGc` in **System** or the persisted `config.json`: `idleTimeoutSeconds` and `sweepIntervalSeconds`. Active work tabs have no count limit. System shows current busy/idle counts and collection counters; counters reset with the daemon.
+
+The collector runs inside the daemon and applies to headed and headless managed contexts. It closes tabs, preserves the resident browser, and does not delete conversation history. Every running registered profile is attached without launching or relaunching a browser. A local target-ID ownership file restores work tabs after daemon restart; older tabs are recovered only when their exact URL matches a persisted task conversation. Page observations restart the idle timer when the answer or user activity changes. System reports actual browser pages, untracked/user pages, and profile connection failures. Unknown pages remain visible in the counts and are preserved.
 
 Native mode is headed-only because it controls the Chrome or Brave instance the user already opened. Stopping or restarting the daemon disconnects Playwright without closing the browser.
 

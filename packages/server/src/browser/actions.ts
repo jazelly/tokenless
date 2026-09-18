@@ -86,6 +86,40 @@ export type VisibleActionError = {
   details?: unknown
 }
 
+export type ProviderChoiceObservation = {
+  requestedLabel: string | null
+  observedLabel: string | null
+  status: 'observed' | 'unknown'
+  source: 'visible-provider-choice-inspect' | 'not-observed'
+  reason: string | null
+}
+
+export type ProviderModelObservation = ProviderChoiceObservation & {
+  providerModelId: string | null
+  identityStatus: 'not-exposed' | 'unknown'
+}
+
+export type ProviderSubmissionObservation = {
+  protocol: 'tokenless.provider-submission-observation.v1'
+  observedAt: string
+  source: 'visible-provider-controls-before-submit' | 'direct-protocol-no-visible-controls'
+  page: {
+    surface: 'chat' | 'work' | 'unknown'
+    origin: string | null
+  }
+  model: ProviderModelObservation
+  effort: ProviderChoiceObservation
+}
+
+export type VisibleActionMetadata = {
+  actionIndex: number
+  provider: ProviderId
+  startedAt: string
+  completedAt: string
+  durationMs: number
+  executionMode: 'browser' | 'direct'
+}
+
 export type VisibleActionResponse =
   | {
     protocol: VisibleActionProtocolVersion
@@ -95,6 +129,7 @@ export type VisibleActionResponse =
     ok: true
     result: VisibleActionResult
     error: null
+    metadata?: VisibleActionMetadata
   }
   | {
     protocol: VisibleActionProtocolVersion
@@ -104,6 +139,8 @@ export type VisibleActionResponse =
     ok: false
     result: null
     error: VisibleActionError
+    metadata?: VisibleActionMetadata
+    submissionObservation?: ProviderSubmissionObservation
   }
 
 export type AuthStatusResult = {
@@ -521,6 +558,7 @@ export type PromptClearResult = {
 export type PromptSubmitResult = {
   visible: true
   submissionProof: string
+  submissionObservation?: ProviderSubmissionObservation
 }
 
 export type ResponseReadResult = {
@@ -530,6 +568,13 @@ export type ResponseReadResult = {
   artifacts?: readonly VisibleResponseArtifact[]
   agentRun?: VisibleAgentRun
   usage?: GitHubCopilotMessageUsage
+  modelObservation?: {
+    providerModelId: string | null
+    status: 'observed' | 'unknown'
+    source: 'assistant-message-dom'
+    observedAt: string
+    reason: 'assistant_message_model_not_exposed' | null
+  }
   visibleProof: string
   decisionDiagnostics: ResponseDecisionDiagnostics
   outputSavings?: import('../output-savings/index.js').OutputSavingsResult
@@ -614,6 +659,7 @@ export type ResponseDecisionDiagnostics = {
   visibleAnswerCount: number
   visibleBusyCount: number
   generationStopVisible: boolean
+  observability?: 'not_observable'
 }
 
 export type VisibleCitation = {

@@ -22,6 +22,7 @@ export type ManagedDaemonClient = {
     subscriptionLabel?: string | null | undefined
   }): Promise<ProviderCapacityProjection>
   recordProviderSubmission(options: JobOptions): Promise<DaemonJob>
+  admitProviderAction(options: JobOptions & { actionIndex: number }): Promise<ProviderCapacityProjection | null>
   markJobWaitingForUser(options: JobOptions & { blocker: unknown }): Promise<DaemonJob>
   markJobRunning(options: JobOptions): Promise<DaemonJob>
   fallbackJob(options: JobOptions & {
@@ -42,6 +43,13 @@ export type ManagedDaemonClient = {
     canonicalUrl: string
     signal?: AbortSignal | undefined
   }): Promise<unknown>
+  findProviderTaskConversationByUrl(profileId: string, url: string): Promise<{ provider: string; pageRef: string } | null>
+  resolveProviderTaskConversation(options: {
+    provider: string
+    profileId: string
+    taskId: string
+    signal?: AbortSignal | undefined
+  }): Promise<{ canonical_url: string } | null>
   upsertProviderTaskConversation(options: {
     provider: string
     profileId: string

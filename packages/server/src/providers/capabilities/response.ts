@@ -10,6 +10,7 @@ import type { CaptureVisibleOutput } from '../../output-savings/index.js'
 
 export const RESPONSE_CURSOR_SCHEMA = 'tokenless.provider.response-cursor.v2'
 const RESPONSE_CONFIRMATION_WINDOW_MS = 3_000
+const AGNES_INSUFFICIENT_CREDITS_PATTERN = /\binsufficient credits\b[\s\S]{0,240}\b(?:top up|try again)\b/iu
 
 const GENERATION_STOP_SELECTOR = [
   'button[data-testid="stop-button"]',
@@ -56,16 +57,36 @@ export async function observeDomResponseAction(
 ): Promise<ProviderActionObservation> {
   const baseline = validateDomResponsePreparation(provider, preparation)
   const observation = await observeDomResponseCursor(provider, page)
-  if (!isReadyResponseObservation(observation, baseline)) return { state: 'pending' as const }
+  if (!isReadyResponseObservation(observation, baseline)) {
+    return { state: 'pending' as const, signal: await respondingSignal(provider, page, observation, baseline) }
+  }
   await page.waitForTimeout(RESPONSE_CONFIRMATION_WINDOW_MS)
   const confirmation = await observeDomResponseCursor(provider, page)
-  return {
-    state: isReadyResponseObservation(confirmation, baseline) &&
-      confirmation.answerCount === observation.answerCount &&
-      confirmation.latestAnswerFingerprint === observation.latestAnswerFingerprint
-      ? 'ready' as const
-      : 'pending' as const,
+  if (
+    isReadyResponseObservation(confirmation, baseline) &&
+    confirmation.answerCount === observation.answerCount &&
+    confirmation.latestAnswerFingerprint === observation.latestAnswerFingerprint
+  ) {
+    return { state: 'ready' as const }
   }
+  return { state: 'pending' as const, signal: await respondingSignal(provider, page, confirmation, baseline) }
+}
+
+async function respondingSignal(
+  provider: ProviderDomDefinition,
+  page: Page,
+  observation: ResponseCursorObservation,
+  baseline: { answerCount: number, latestAnswerFingerprint: string | null },
+): Promise<NonNullable<ProviderActionObservation['signal']>> {
+  if (observation.busy) return { active: true, kind: 'busy-indicator' }
+  const generationStopVisible = await page.locator(GENERATION_STOP_SELECTOR).filter({ visible: true }).first()
+    .isVisible({ timeout: 100 }).catch(() => false)
+  if (generationStopVisible) return { active: true, kind: 'generation-control' }
+  const answerDivergedFromBaseline = observation.answerCount > baseline.answerCount ||
+    (baseline.latestAnswerFingerprint !== null &&
+      observation.latestAnswerFingerprint !== null &&
+      observation.latestAnswerFingerprint !== baseline.latestAnswerFingerprint)
+  return { active: answerDivergedFromBaseline, kind: 'answer-growth' }
 }
 
 export async function observeDomResponseCompletion(provider: ProviderDomDefinition, page: Page, baseline: number) {
@@ -101,7 +122,12 @@ export async function readDomResponse(
       { retryable: true, details: { visibleProof: 'no-visible-answer', ...await observations } },
     )
   }
-  const response = await answer.evaluate((element) => {
+  const response = await answer.evaluate((element, providerId) => {
+    // Read identity from the same assistant node as the returned text, never an earlier turn.
+    const rawModel = providerId === 'chatgpt'
+      ? (element.matches('[data-message-model-slug]') ? element : element.querySelector('[data-message-model-slug]'))?.getAttribute('data-message-model-slug')
+      : null
+    const providerModelId = rawModel && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(rawModel) ? rawModel : null
     const text = (() => {
       if (!(element instanceof HTMLElement)) return ''
       const clone = element.cloneNode(true) as HTMLElement
@@ -151,12 +177,26 @@ export async function readDomResponse(
       }
       const ancestors: ResponseDecisionElement[] = []
       for (let parent = element.parentElement; parent && ancestors.length < 3; parent = parent.parentElement) ancestors.push(describe(parent))
-      return { text, selected: { ...describe(element), ancestors } }
+      return { text, providerModelId, selected: { ...describe(element), ancestors } }
     } catch {
-      return { text, selected: null }
+      return { text, providerModelId, selected: null }
     }
-  }, undefined, { timeout: 5000 })
+  }, provider.descriptor.id, { timeout: 5000 })
   const completeText = normalizeVisibleText(response.text)
+  if (provider.descriptor.id === 'agnes' && AGNES_INSUFFICIENT_CREDITS_PATTERN.test(completeText)) {
+    throw tokenlessError(
+      'provider_credits_exhausted',
+      'Agnes visibly reported insufficient credits; top up or wait for the provider credit reset before retrying.',
+      {
+        retryable: false,
+        details: {
+          family: 'plan_limit',
+          visibleProof: 'visible-agnes-insufficient-credits-text',
+          limitWindow: 'unknown',
+        },
+      },
+    )
+  }
   if (
     provider.descriptor.id === 'chatgpt' &&
     /^(?:chatgpt said:\s*)?the message you submitted was too long(?:[,.]|\s)/iu.test(completeText)
@@ -182,6 +222,15 @@ export async function readDomResponse(
   return {
     text,
     citations,
+    ...(provider.descriptor.id === 'chatgpt' ? {
+      modelObservation: {
+        providerModelId: response.providerModelId,
+        status: response.providerModelId ? 'observed' as const : 'unknown' as const,
+        source: 'assistant-message-dom' as const,
+        observedAt: new Date().toISOString(),
+        reason: response.providerModelId ? null : 'assistant_message_model_not_exposed' as const,
+      },
+    } : {}),
     visibleProof: 'visible-answer-read',
     decisionDiagnostics: { selected: response.selected, ...await observations },
   }

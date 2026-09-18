@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import {
   configPath,
+  normalizeManagedProfileColor,
   readTokenlessConfig,
   upsertTokenlessProfileConfig,
   writeTokenlessConfig,
@@ -8,6 +9,7 @@ import {
   type TokenlessConfig,
 } from '../persistence/config.js'
 import { tokenlessPackageVersion } from '../platform-package.js'
+import { providerRateLimitTable } from '../providers/rate-limit-table.js'
 import { BrowserRuntimeManager } from '../browser/runtime/manager.js'
 import { normalizeBrowserSelection } from '../browser/runtime/types.js'
 import { normalizeBrowserVisibility } from '../browser-visibility.js'
@@ -35,6 +37,7 @@ import {
 } from '../browser/profiles/registry.js'
 import {
   publicView,
+  dashboardJobCapabilities,
   type Job,
   type JobStore,
   type JobView,
@@ -55,6 +58,8 @@ import type {
   DashboardConfirmedDeletion,
   DashboardDiagnostic,
   DashboardJobDetail,
+  DashboardInvocationQuery,
+  DashboardInvocationHistory,
   DashboardJobSummary,
   DashboardOutputSavingsState,
   DashboardProfile,
@@ -154,6 +159,7 @@ export class TokenlessApplicationServices {
       config: publicConfig(config),
       setup,
       outputSavings,
+      rateLimits: providerRateLimitTable(providers, this.store.configuredRateLimitUsage(config.rateLimits, profiles.map((profile) => profile.slug))),
       profiles: profiles.map((profile) => publicProfile(
         profile,
         profileData.defaultProfile,
@@ -239,6 +245,23 @@ export class TokenlessApplicationServices {
       this.store.outputSavingsForJob(jobId),
       publicConversationUrl(this.store, job),
     )
+  }
+
+  async invocationHistory(query: DashboardInvocationQuery): Promise<DashboardInvocationHistory> {
+    const history = this.store.invocationHistory(query)
+    const profiles = await this.profiles.listProfiles()
+    return {
+      ...history,
+      failureReasons: history.failureReasons.map((reason) => ({ ...reason, message: redactPrivatePaths(reason.message).slice(0, 240) })),
+      jobs: history.jobs.map((job) => ({
+        ...publicJobSummary(job, profiles, this.store.outputSavingsForJob(job.job_id), publicConversationUrl(this.store, job)),
+        error: publicError(job.error_json),
+        requestedCapabilities: dashboardJobCapabilities(job.request_json),
+        requestedActions: (Array.isArray(record(job.request_json)?.actions) ? record(job.request_json)!.actions as unknown[] : [])
+          .map((action) => record(action)?.action).filter((action): action is string => typeof action === 'string'),
+        submittedAt: job.provider_submitted_at,
+      })),
+    }
   }
 
   async menuBarSnapshot() {
@@ -500,13 +523,30 @@ export class TokenlessApplicationServices {
   }
 
   async updateControlProfileConfig(slug: string, input: ManagedProfileConfig) {
-    await this.profiles.resolveProfile(slug)
+    const profile = await this.profiles.resolveProfile(slug)
+    const current = profileConfig(await this.readConfig(), profile.slug)
+    const requestedProfileColor = input.profileColor === undefined
+      ? current.profileColor
+      : normalizeManagedProfileColor(input.profileColor)
+    if (input.profileColor !== undefined && !requestedProfileColor) {
+      throw applicationError('profile_color_invalid', 'Profile color must use #RRGGBB form.')
+    }
+    if (requestedProfileColor !== undefined && !profile.runtimeBinding) {
+      throw applicationError(
+        'profile_managed_browser_required',
+        'Profile colors require a managed Chromium profile with its own browser identity.',
+      )
+    }
+    if (requestedProfileColor !== current.profileColor) {
+      this.assertProfilesHaveNoPendingJobs([profile])
+      await this.runtimeController?.closeProfile(profile.slug)
+    }
     const config = await upsertTokenlessProfileConfig({
       homeDir: this.store.homeDir,
-      slug,
+      slug: profile.slug,
       profile: input,
     })
-    return { config, profile: config.profiles[slug] }
+    return { config, profile: config.profiles[profile.slug] }
   }
 
   async updateControlConfig(input: Record<string, unknown>) {
@@ -621,6 +661,8 @@ export class TokenlessApplicationServices {
       'browserVisibility',
       'daemonUrl',
       'language',
+      'browserTabGc',
+      'rateLimits',
       'outputSavings',
       'apiProxy',
       'g4f',
@@ -679,12 +721,15 @@ export class TokenlessApplicationServices {
       browserVisibility: 'headed',
       daemonUrl: input.daemonUrl,
       language,
+      browserTabGc: input.browserTabGc,
+      rateLimits: input.rateLimits,
       outputSavings: input.outputSavings,
       apiProxy: input.apiProxy,
       g4f: input.g4f,
       directProvider: input.directProvider,
       router: input.router,
     })
+    this.runtimeController?.configureTabGc(saved.browserTabGc)
     return publicConfig(saved)
   }
 
@@ -1115,6 +1160,7 @@ export class TokenlessApplicationServices {
 
 function publicConfig(config: TokenlessConfig) {
   return {
+    rateLimits: config.rateLimits,
     updatedAt: config.updatedAt,
     profiles: config.profiles,
     browser: config.browser,
@@ -1122,6 +1168,7 @@ function publicConfig(config: TokenlessConfig) {
     browserVisibility: config.browserVisibility,
     daemonUrl: config.daemonUrl,
     language: config.language,
+    browserTabGc: config.browserTabGc,
     outputSavings: config.outputSavings,
     g4f: config.g4f,
     directProvider: config.directProvider,

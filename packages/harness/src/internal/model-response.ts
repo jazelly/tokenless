@@ -162,7 +162,15 @@ function isJsonObject(value: JsonValue): value is Record<string, JsonValue> {
 }
 
 function finalResponse(value: Record<string, unknown>, state: HarnessSkillState): HarnessFinalResponse {
-  if (typeof value.output !== 'string') {
+  let output: string
+  if (typeof value.output === 'string') output = value.output
+  else if (state.finalOutput.kind === 'json_schema') {
+    assertJsonValue(value.output, 'final.output')
+    const serialized = JSON.stringify(value.output)
+    if (serialized === undefined) throw new HarnessSkillError('harness_final_invalid', 'final.output must be JSON-serializable.')
+    validateJsonSchemaValue(state.finalOutput.schema, value.output, 'final.output')
+    output = serialized
+  } else {
     throw new HarnessSkillError('harness_final_invalid', 'final.output must be a string.')
   }
   const artifacts = array(value.artifacts, 'artifacts', 128).map((artifact) => {
@@ -173,16 +181,18 @@ function finalResponse(value: Record<string, unknown>, state: HarnessSkillState)
   })
   requireUnique(artifacts, 'artifact ids')
   if (state.finalOutput.kind === 'json_schema') {
-    let structuredOutput: unknown
-    try {
-      structuredOutput = parseHarnessStrictJson(value.output)
-    } catch (error) {
-      throw new HarnessSkillError(
-        'harness_final_output_invalid',
-        `final.output must contain strict JSON: ${error instanceof Error ? error.message : 'invalid JSON'}`,
-      )
+    if (typeof value.output === 'string') {
+      let structuredOutput: unknown
+      try {
+        structuredOutput = parseHarnessStrictJson(value.output)
+      } catch (error) {
+        throw new HarnessSkillError(
+          'harness_final_output_invalid',
+          `final.output must contain strict JSON: ${error instanceof Error ? error.message : 'invalid JSON'}`,
+        )
+      }
+      validateJsonSchemaValue(state.finalOutput.schema, structuredOutput, 'final.output')
     }
-    validateJsonSchemaValue(state.finalOutput.schema, structuredOutput, 'final.output')
   }
   return {
     protocol: WEB_AGENT_PROTOCOL,
@@ -190,7 +200,7 @@ function finalResponse(value: Record<string, unknown>, state: HarnessSkillState)
     runId: value.runId as string,
     turn: value.turn as number,
     nonce: value.nonce as string,
-    output: value.output,
+    output,
     artifacts,
   }
 }
