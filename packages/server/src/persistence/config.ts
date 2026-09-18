@@ -469,9 +469,14 @@ function isApiProxyConfig(value: unknown): value is { enabled: boolean, executio
 }
 
 function normalizeApiProxyConfig(value: unknown): ApiProxyConfig {
-  return isApiProxyConfig(value)
-    ? { enabled: value.enabled, executionMode: value.executionMode }
-    : defaultApiProxyConfig()
+  if (isApiProxyConfig(value)) {
+    return { enabled: value.enabled, executionMode: value.executionMode }
+  }
+  if (isJsonRecord(value) && typeof value.enabled === 'boolean' &&
+    (value.executionMode === 'browser' || value.executionMode === 'direct')) {
+    return { enabled: value.enabled, executionMode: [value.executionMode] }
+  }
+  return defaultApiProxyConfig()
 }
 
 function validateApiProxyConfig(value: unknown): ApiProxyConfig {
