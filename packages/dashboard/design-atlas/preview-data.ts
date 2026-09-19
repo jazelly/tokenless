@@ -52,7 +52,7 @@ export function createPreviewSnapshot(language: Language): DashboardSnapshot {
       browser: 'chrome', browserExecutablePathConfigured: true, browserVisibility: 'headed',
       daemonUrl: null, language, outputSavings: { enabled: true }, g4f: { enabled: false },
       directProvider: { defaultBackend: 'native', providerBackends: {} },
-      router: { enabled: false, engine: 'chrome-prompt-api', providers: [] },
+      router: { enabled: false, engine: 'chrome-prompt-api', providers: [], jevApiKeyConfigured: false },
     },
     setup: {
       defaultProfileSlug: 'design', configuredProfileSlugs: profiles.map(profile => profile.slug),

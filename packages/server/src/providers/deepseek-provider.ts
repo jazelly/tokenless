@@ -69,6 +69,7 @@ export class DeepSeekProvider extends BaseProvider<'deepseek'> {
         'input[type="password"][placeholder="Password"]',
         'div[role="button"]:has-text("Log in")',
       ]),
+      capacityExhaustedTextPatterns: Object.freeze([]),
       blockerSelectors: Object.freeze([
         'iframe[src*="hcaptcha.com" i]',
         'iframe[title*="hcaptcha" i]',

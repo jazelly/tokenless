@@ -82,6 +82,7 @@ export class QwenProvider extends BaseProvider<'qwen'> {
         'button:has-text("Sign up")',
         'button:has-text("登录")',
       ]),
+      capacityExhaustedTextPatterns: Object.freeze([]),
       blockerSelectors: Object.freeze([]),
       busySelectors: Object.freeze([
         'button.stop-button',

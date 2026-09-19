@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
+import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { promisify } from 'node:util'
@@ -37,15 +39,25 @@ test('built CLI and benchmark orchestrator expose the same pinned FeatureBench c
 })
 
 test('built CLI rejects an unscoped FeatureBench container run', async () => {
-  await assert.rejects(
-    execFileAsync(process.execPath, [cliEntry, 'featurebench', 'run', '--json'], { encoding: 'utf8' }),
-    (error) => {
-      const payload = JSON.parse(error.stdout)
-      assert.equal(payload.ok, false)
-      assert.match(payload.error.message, /--channel-file is required/)
-      return true
-    },
-  )
+  // Isolated from the real ~/.tokenless home: without this, a persisted non-English
+  // language config on this machine would localize the JSON error message below.
+  const isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-featurebench-'))
+  try {
+    await assert.rejects(
+      execFileAsync(process.execPath, [cliEntry, 'featurebench', 'run', '--json'], {
+        encoding: 'utf8',
+        env: { ...process.env, TOKENLESS_HOME: isolatedHome, LC_ALL: 'en_US.UTF-8', LANG: 'en_US.UTF-8' },
+      }),
+      (error) => {
+        const payload = JSON.parse(error.stdout)
+        assert.equal(payload.ok, false)
+        assert.match(payload.error.message, /--channel-file is required/)
+        return true
+      },
+    )
+  } finally {
+    fs.rmSync(isolatedHome, { recursive: true, force: true })
+  }
 })
 
 async function jsonProcess(arguments_) {

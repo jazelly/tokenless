@@ -32,6 +32,7 @@ import {
   type JobStatus,
 } from '../errors.js'
 import { migrateDatabase } from '#tokenless-shared/database/migrate.js'
+import { applyInitialMigration } from '#tokenless-shared/database/migrations/0001-initial.js'
 
 export type { JobStatus } from '../errors.js'
 
@@ -85,6 +86,13 @@ export type PostSubmissionFallbackProof =
     protocol: 'tokenless.provider-input-limit-fallback.v1'
     provider: string
     code: 'provider_input_too_long'
+    providerScoped: true
+    visibleResponse: false
+  }>
+  | Readonly<{
+    protocol: 'tokenless.provider-credits-exhausted-fallback.v1'
+    provider: string
+    code: 'provider_credits_exhausted'
     providerScoped: true
     visibleResponse: false
   }>
@@ -1348,7 +1356,14 @@ export class JobStore {
        WHERE type = 'table' AND name = 'dashboard_daily_capability_metrics'`,
     ))
     migrateDatabase(this.#db)
-    if (!analyticsTablesExist) this.rebuildDashboardMetrics()
+    // migrateDatabase() only applies migrations above the database's current version, so it
+    // won't recreate these tables if they were dropped from an already-migrated database.
+    // applyInitialMigration() is idempotent (CREATE TABLE IF NOT EXISTS), so it safely
+    // restores just what's missing here.
+    if (!analyticsTablesExist) {
+      applyInitialMigration(this.#db)
+      this.rebuildDashboardMetrics()
+    }
     this.failInterruptedJobs()
     restrictFilePermissionsSync(this.databasePath)
   }
@@ -2020,7 +2035,9 @@ function isPostSubmissionFallback(input: {
     ? { code: 'provider_rate_limited', reason: 'rate_limit' }
     : proof?.protocol === 'tokenless.provider-input-limit-fallback.v1'
       ? { code: 'provider_input_too_long', reason: 'capacity' }
-      : null
+      : proof?.protocol === 'tokenless.provider-credits-exhausted-fallback.v1'
+        ? { code: 'provider_credits_exhausted', reason: 'capacity' }
+        : null
   if (
     !proof ||
     !expected ||

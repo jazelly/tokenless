@@ -124,7 +124,7 @@ test('an installed npm CLI upgrades a running daemon with a local archive and pr
     assert.equal(updatePayload.phases.npmInstall.ok, true)
     assert.equal(updatePayload.phases.runtimeInstall.ok, true)
     assert.equal(updatePayload.phases.runtimeInstall.payload.version, targetVersion)
-    assert.equal(updatePayload.phases.runtimeInstall.payload.databaseVersion, 1)
+    assert.equal(updatePayload.phases.runtimeInstall.payload.databaseVersion, 2)
     assert.equal(updatePayload.phases.runtimeInstall.payload.daemon.version, targetVersion)
     assert.equal(updatePayload.phases.runtimeInstall.payload.api.ok, true)
     assert.equal(updatePayload.phases.runtimeInstall.payload.skills.ok, true)
@@ -144,7 +144,7 @@ test('an installed npm CLI upgrades a running daemon with a local archive and pr
 
     const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'), { readOnly: true })
     try {
-      assert.equal(database.prepare('PRAGMA user_version').get().user_version, 1)
+      assert.equal(database.prepare('PRAGMA user_version').get().user_version, 2)
       assert.deepEqual(Object.fromEntries(Object.entries(database.prepare('SELECT profile_id, provider, status, request_json FROM jobs WHERE job_id = ?').get('baseline8b-job'))), {
         profile_id: 'baseline8b',
         provider: 'chatgpt',

@@ -1,12 +1,19 @@
 import assert from 'node:assert/strict'
 import path from 'node:path'
+import test from 'node:test'
 import { pathToFileURL } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import { resolveConfiguredBrowserTarget } from './helpers/configured-browser-profile.mjs'
 
-// Run through ego-browser nodejs; all browser mutations use the packaged
-// production page manager. These are browser lifecycle checks, not provider replicas.
+if (process.env.TOKENLESS_LIVE_TAB_GC_GATE !== '1') {
+  throw new Error('Set TOKENLESS_LIVE_TAB_GC_GATE=1 to run the real idle-tab collection acceptance against the configured persistent browser profile.')
+}
+
+const log = (entry) => console.log(JSON.stringify(entry))
+
+// All browser mutations use the packaged production page manager against the
+// configured persistent profile. These are browser lifecycle checks, not provider replicas.
 export async function verifyTabGcLifecycle({ packageRoot = path.resolve('packages/cli'), log = () => {} } = {}) {
   const target = await resolveConfiguredBrowserTarget()
   const { PersistentContextManager } = await import(pathToFileURL(path.join(packageRoot, 'dist/server/src/browser/browser/context-manager.js')).href)
@@ -268,3 +275,19 @@ export async function verifyTabSupervision({ packageRoot, nodeExecutable, reside
     log({ check: 'second profile original conversation resumed after restart and collection', passed: true, jobId: resumed.jobId })
   } finally { database.close() }
 }
+
+test('idle work tabs are reclaimed while busy and user pages are preserved', { timeout: 15 * 60_000 }, async () => {
+  await verifyTabGcLifecycle({ log })
+})
+
+test('a status check and an abandoned draft are reclaimed without ever reading a response', { timeout: 10 * 60_000 }, async () => {
+  await verifyTabGcReleasedWork({ log })
+})
+
+test('a real chat conversation reuses its tab, expires on schedule, and reopens on the next turn', { timeout: 15 * 60_000 }, async () => {
+  await verifyTabGcConversation({ log })
+})
+
+test('every resident registered profile is supervised and survives a daemon restart', { timeout: 20 * 60_000 }, async () => {
+  await verifyTabSupervision({ packageRoot: path.resolve('packages/cli'), nodeExecutable: process.execPath, log })
+})

@@ -47,7 +47,13 @@
     apiProxy: DashboardConfigDocument['apiProxy']
     g4f: DashboardConfigDocument['g4f']
     directProvider: DashboardConfigDocument['directProvider']
-    router: DashboardRouterConfig
+    router: {
+      enabled: boolean
+      engine: DashboardRouterConfig['engine']
+      providers: DashboardRouterConfig['providers']
+    }
+    jevApiKeyDraft: string
+    jevApiKeyClear: boolean
   }
 
   let {
@@ -81,6 +87,8 @@
       providerBackends: { ...snapshot.config.directProvider.providerBackends },
     })),
     router: untrack(() => cloneRouter(snapshot.config.router)),
+    jevApiKeyDraft: '',
+    jevApiKeyClear: false,
   })
   const initialProfileDrafts = untrack(() => Object.fromEntries(
     snapshot.profiles.map((profile) => [profile.slug, draftProfile(profile)]),
@@ -128,6 +136,8 @@
       providerBackends: { ...document.directProvider.providerBackends },
     }
     global.router = cloneRouter(document.router)
+    global.jevApiKeyDraft = ''
+    global.jevApiKeyClear = false
     profileDrafts = Object.fromEntries(
       Object.entries(document.profiles).map(([slug, profile]) => [slug, draftProfileFromConfig(slug, profile)]),
     )
@@ -170,7 +180,15 @@
         providerBackends: { ...global.directProvider.providerBackends },
       },
       browserTabGc: { ...global.browserTabGc },
-      router: cloneRouter(global.router),
+      router: {
+        ...global.router,
+        providers: global.router.providers.map((provider) => ({ ...provider })),
+        ...(global.jevApiKeyClear
+          ? { jevApiKey: null }
+          : global.jevApiKeyDraft.trim()
+            ? { jevApiKey: global.jevApiKeyDraft.trim() }
+            : {}),
+      },
     }
     try {
       await actions.updateConfig(input)
@@ -370,7 +388,7 @@
     return Object.fromEntries(Object.entries(value).map(([provider, modes]) => [provider, [...modes]])) as Record<string, DashboardProviderExecutionMode[]>
   }
 
-  function cloneRouter(router: DashboardRouterConfig): DashboardRouterConfig {
+  function cloneRouter(router: DashboardRouterConfig): GlobalDraft['router'] {
     return { enabled: router.enabled, engine: router.engine, providers: router.providers.map((provider) => ({ ...provider })) }
   }
 
@@ -461,7 +479,13 @@
       <div class="settings-section-title"><div><h2>{t('semanticRouting')}</h2></div>{@render helpTooltip(t('routingLede'))}</div>
       <div class="form-stack">
         <div class="switch-field"><span><span class="switch-heading"><strong>{t('experimentalRouter')}</strong>{@render helpTooltip(t('routerEnableHelp'))}</span></span><label class="switch"><input type="checkbox" bind:checked={global.router.enabled} data-testid="config-router-enabled" /><span></span></label></div>
-        <div class="field"><div class="field-label-row"><label for="config-router-engine">{t('routerEngine')}</label></div><select id="config-router-engine" bind:value={global.router.engine} data-testid="config-router-engine"><option value="chrome-prompt-api">{t('chromePromptApiEngine')}</option><option value="spark-x2.5-4b-mlx">{t('sparkX25MlxEngine')}</option></select></div>
+        <div class="field"><div class="field-label-row"><label for="config-router-engine">{t('routerEngine')}</label></div><select id="config-router-engine" bind:value={global.router.engine} data-testid="config-router-engine"><option value="chrome-prompt-api">{t('chromePromptApiEngine')}</option><option value="spark-x2.5-4b-mlx">{t('sparkX25MlxEngine')}</option><option value="jev">{t('jevEngine')}</option></select></div>
+        {#if global.router.engine === 'jev'}
+        <div class="field"><div class="field-label-row"><label for="config-jev-api-key">{t('jevApiKey')}</label>{@render helpTooltip(snapshot.config.router.jevApiKeyConfigured ? t('jevApiKeyConfigured') : t('jevApiKeyNotConfigured'))}</div><input id="config-jev-api-key" type="password" bind:value={global.jevApiKeyDraft} disabled={global.jevApiKeyClear} autocomplete="off" spellcheck="false" placeholder={snapshot.config.router.jevApiKeyConfigured ? t('jevApiKeyPlaceholderConfigured') : t('jevApiKeyPlaceholderEmpty')} data-testid="config-jev-api-key" /></div>
+        {#if snapshot.config.router.jevApiKeyConfigured}
+        <label class="switch-field compact-field"><span>{t('jevApiKeyClear')}</span><label class="switch"><input type="checkbox" bind:checked={global.jevApiKeyClear} data-testid="config-jev-api-key-clear" /><span></span></label></label>
+        {/if}
+        {/if}
         <div class="field"><div class="field-label-row"><span>{t('routerProviders')}</span>{@render helpTooltip(t('routerProvidersHelp'))}</div></div>
         <div class="config-entry-list" data-testid="config-router-providers">
           {#each global.router.providers as provider, index (provider.id)}

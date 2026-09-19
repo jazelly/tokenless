@@ -319,8 +319,10 @@ export class TokenlessApplicationServices {
   }
 
   async configDocument(): Promise<DashboardConfigDocument> {
+    const config = await this.readConfig()
     return {
-      ...await this.readConfig(),
+      ...config,
+      router: publicRouterConfig(config.router),
       configPath: configPath(this.store.homeDir),
     }
   }
@@ -1172,7 +1174,17 @@ function publicConfig(config: TokenlessConfig) {
     outputSavings: config.outputSavings,
     g4f: config.g4f,
     directProvider: config.directProvider,
-    router: config.router,
+    router: publicRouterConfig(config.router),
+  }
+}
+
+/** Never sends the Jev API key itself back to the browser, only whether one is set. */
+function publicRouterConfig(router: TokenlessConfig['router']) {
+  return {
+    enabled: router.enabled,
+    engine: router.engine,
+    providers: router.providers,
+    jevApiKeyConfigured: router.jevApiKey !== null,
   }
 }
 

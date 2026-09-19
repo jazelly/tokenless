@@ -97,6 +97,7 @@ export class GeminiProvider extends BaseProvider<'gemini'> {
         'button[aria-label="Sign in"]',
         'button:has-text("Sign in")',
       ]),
+      capacityExhaustedTextPatterns: Object.freeze([]),
       blockerSelectors: Object.freeze([
         'iframe[src^="https://www.google.com/recaptcha/"][title="reCAPTCHA"]',
         'text=/rate limit|too many requests/i',

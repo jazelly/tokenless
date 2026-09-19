@@ -109,6 +109,7 @@ export class ChatGptProvider extends BaseProvider<'chatgpt'> {
         'button:has-text("Log in")',
         'button:has-text("Sign up")',
       ]),
+      capacityExhaustedTextPatterns: Object.freeze([]),
       blockerSelectors: Object.freeze([
         'iframe[src*="captcha"]',
         '[aria-label*="captcha" i]',

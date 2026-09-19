@@ -141,6 +141,8 @@ export type ProviderDomDefinition<TId extends ProviderId = ProviderId> = {
   readonly loginIndicators: readonly string[]
   readonly blockerSelectors: readonly string[]
   readonly busySelectors: readonly string[]
+  /** Regex source strings (case-insensitive) for this provider's own insufficient-credits wording, in addition to the generic phrasing every provider is already checked against. */
+  readonly capacityExhaustedTextPatterns: readonly string[]
   readonly interactionTimings: ProviderInteractionTimingPolicy
   readonly choiceAvailability: ProviderChoiceAvailabilityPolicy
   readonly capabilities: Readonly<Record<ProviderCapabilityId, ProviderCapabilityStrategy>>

@@ -77,6 +77,7 @@ export class DoubaoProvider extends BaseProvider<'doubao'> {
         'text=/受区域限制，请先登录再使用豆包/',
         'text=/^登录$/',
       ]),
+      capacityExhaustedTextPatterns: Object.freeze([]),
       blockerSelectors: Object.freeze([
         'iframe[src*="rmc.bytedance.com/verifycenter/captcha" i]',
         'iframe[src*="recaptcha" i]',

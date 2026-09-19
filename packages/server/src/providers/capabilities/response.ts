@@ -10,7 +10,6 @@ import type { CaptureVisibleOutput } from '../../output-savings/index.js'
 
 export const RESPONSE_CURSOR_SCHEMA = 'tokenless.provider.response-cursor.v2'
 const RESPONSE_CONFIRMATION_WINDOW_MS = 3_000
-const AGNES_INSUFFICIENT_CREDITS_PATTERN = /\binsufficient credits\b[\s\S]{0,240}\b(?:top up|try again)\b/iu
 
 const GENERATION_STOP_SELECTOR = [
   'button[data-testid="stop-button"]',
@@ -183,20 +182,6 @@ export async function readDomResponse(
     }
   }, provider.descriptor.id, { timeout: 5000 })
   const completeText = normalizeVisibleText(response.text)
-  if (provider.descriptor.id === 'agnes' && AGNES_INSUFFICIENT_CREDITS_PATTERN.test(completeText)) {
-    throw tokenlessError(
-      'provider_credits_exhausted',
-      'Agnes visibly reported insufficient credits; top up or wait for the provider credit reset before retrying.',
-      {
-        retryable: false,
-        details: {
-          family: 'plan_limit',
-          visibleProof: 'visible-agnes-insufficient-credits-text',
-          limitWindow: 'unknown',
-        },
-      },
-    )
-  }
   if (
     provider.descriptor.id === 'chatgpt' &&
     /^(?:chatgpt said:\s*)?the message you submitted was too long(?:[,.]|\s)/iu.test(completeText)

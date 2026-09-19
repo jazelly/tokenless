@@ -92,7 +92,75 @@ function resolveDefinition(name, arguments_) {
     }
   }
 
-  failUsage('suite must be managed-playwright, provider-fallback, web-ui-provider, or featurebench')
+  if (name === 'agnes-chat') {
+    if (arguments_.length !== 0) failUsage('agnes-chat does not accept arguments')
+    return {
+      testPath: 'test/live-agnes-chat.e2e.mjs',
+      environment: { TOKENLESS_LIVE_AGNES_GATE: '1' },
+    }
+  }
+
+  if (name === 'agnes-harness') {
+    if (arguments_.length !== 0) failUsage('agnes-harness does not accept arguments')
+    return {
+      testPath: 'test/live-agnes-harness.e2e.mjs',
+      environment: { TOKENLESS_LIVE_AGNES_GATE: '1' },
+    }
+  }
+
+  if (name === 'chatgpt-g4f-direct') {
+    if (arguments_.length !== 0) failUsage('chatgpt-g4f-direct does not accept arguments')
+    return {
+      testPath: 'test/live-chatgpt-g4f-direct.e2e.mjs',
+      environment: { TOKENLESS_LIVE_G4F_E2E_GATE: 'real-chatgpt-g4f' },
+    }
+  }
+
+  if (name === 'chatgpt-model-controls') {
+    if (arguments_.length !== 0) failUsage('chatgpt-model-controls does not accept arguments')
+    return {
+      testPath: 'test/live-chatgpt-model-controls.e2e.mjs',
+      environment: { TOKENLESS_LIVE_CHATGPT_CONTROLS: '1' },
+    }
+  }
+
+  if (name === 'deepseek-harness') {
+    if (arguments_.length !== 0) failUsage('deepseek-harness does not accept arguments')
+    if (!process.env.DEEPSEEK_API_KEY?.trim()) failUsage('deepseek-harness requires DEEPSEEK_API_KEY to already be set in your environment')
+    return {
+      testPath: 'test/live-deepseek-harness.e2e.mjs',
+      environment: { TOKENLESS_LIVE_DEEPSEEK_HARNESS_GATE: '1' },
+    }
+  }
+
+  if (name === 'g4f-guest') {
+    if (arguments_.length !== 0) failUsage('g4f-guest does not accept arguments')
+    return {
+      testPath: 'test/live-g4f-guest.e2e.mjs',
+      environment: { TOKENLESS_LIVE_G4F_GUEST_E2E_GATE: 'real-g4f-guest' },
+    }
+  }
+
+  if (name === 'g4f-image') {
+    if (arguments_.length !== 1) failUsage('g4f-image requires <real-g4f-image|real-chatgpt-g4f-image>')
+    const [gate] = arguments_
+    const supportedGates = new Set(['real-g4f-image', 'real-chatgpt-g4f-image'])
+    if (!supportedGates.has(gate)) failUsage(`g4f-image requires one of: ${[...supportedGates].join(', ')}`)
+    return {
+      testPath: 'test/live-g4f-image.e2e.mjs',
+      environment: { TOKENLESS_LIVE_G4F_IMAGE_E2E_GATE: gate },
+    }
+  }
+
+  if (name === 'responses-store') {
+    if (arguments_.length !== 0) failUsage('responses-store does not accept arguments')
+    return {
+      testPath: 'test/live-responses-store.e2e.mjs',
+      environment: { TOKENLESS_LIVE_RESPONSES_STORE: '1' },
+    }
+  }
+
+  failUsage('suite must be managed-playwright, provider-fallback, web-ui-provider, featurebench, agnes-chat, agnes-harness, chatgpt-g4f-direct, chatgpt-model-controls, deepseek-harness, g4f-guest, g4f-image, or responses-store')
 }
 
 function failUsage(message) {
@@ -101,5 +169,13 @@ function failUsage(message) {
   console.error('   or: node test/run-gated-e2e.mjs provider-fallback')
   console.error('   or: node test/run-gated-e2e.mjs web-ui-provider')
   console.error('   or: node test/run-gated-e2e.mjs featurebench <provider> <browser|direct>')
+  console.error('   or: node test/run-gated-e2e.mjs agnes-chat')
+  console.error('   or: node test/run-gated-e2e.mjs agnes-harness')
+  console.error('   or: node test/run-gated-e2e.mjs chatgpt-g4f-direct')
+  console.error('   or: node test/run-gated-e2e.mjs chatgpt-model-controls')
+  console.error('   or: node test/run-gated-e2e.mjs deepseek-harness  (requires DEEPSEEK_API_KEY in your environment)')
+  console.error('   or: node test/run-gated-e2e.mjs g4f-guest')
+  console.error('   or: node test/run-gated-e2e.mjs g4f-image <real-g4f-image|real-chatgpt-g4f-image>')
+  console.error('   or: node test/run-gated-e2e.mjs responses-store')
   process.exit(2)
 }
