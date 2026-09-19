@@ -1,5 +1,98 @@
 # tokenless
 
+## 0.7.0
+
+### Minor Changes
+
+- df65420: Replace the Dashboard overview with persisted provider, capability, outcome, execution-mode, and output-savings analytics.
+- ab73799: Allow API proxy execution mode preference to hold both `browser` and `direct`, tried in the configured order when a request does not pin one. Existing config files with the older single-mode `executionMode` value are read as that one mode, preserving the previous `enabled` setting.
+- a2dbf2f: Ship the initial SQLite schema migration with Tokenless API and Tokenless Harness. Upgrade the current unversioned database without replacing existing tables or data, record schema versions, and fail atomically on unsupported schemas.
+
+  随 Tokenless API 和 Tokenless Harness 发布初始 SQLite schema migration。在不替换已有表或数据的情况下接管当前无版本数据库，记录 schema 版本，并在遇到不支持的结构时原子失败。
+
+- 707a2e2: Add the local Spark MLX Front Door and semantic router engine.
+- 228e8f2: Add an experimental Monica browser provider. `tokenless/monica` submits prompts on monica.im through the visible composer (Enter-key submission) and reads assistant answers from the rendered markdown surface.
+- 8b215fd: Move conversation ordering to Tokenless Harness, remove Tokenless API chat/profile exclusion and automatic submitted-timeout replay, and retire unused CLI configuration and compatibility surfaces. Conflicting browser configuration and headless blockers now fail without automatically restarting the resident browser.
+
+  将 conversation 顺序控制交给 Tokenless Harness，移除 Tokenless API 的 chat/profile 独占和提交后超时自动重发，并删除无效的 CLI 配置及兼容入口。浏览器配置冲突与 headless blocker 现在会明确失败，不再自动重启 resident browser。
+
+- e014747: Unify Tokenless API updates across the CLI and macOS menu. Check the matching installation channel, preserve user configuration, and verify the newly installed daemon and database migration. Require confirmation for updates and support explicitly selected local release packages.
+
+  统一 Tokenless API CLI 与 macOS 菜单的更新入口。检查对应安装渠道，保留用户配置，并验证新安装的 daemon 和数据库 migration。更新需确认，并支持显式选择本地发布安装包。
+
+### Patch Changes
+
+- 0b40beb: Honor the selected managed profile in API requests so Terminal-Bench parent and child runs use the same provider router.
+
+  Allow the existing bounded tool-response correction to recognize protocol headers formatted with JSON whitespace.
+
+- 9b1aacc: Record observed provider model and effort controls at submission time and expose bounded action evidence for benchmark reports.
+- ca97a53: Bundle matching Tokenless API skills with npm and macOS releases, synchronize complete skill directories during install/setup/upgrade, and add a skill-only sync command with full doctor verification. Update the installation skill and shell installer to the current setup workflow.
+
+  随 npm 与 macOS 发布包分发配套 Tokenless API skills，在 install/setup/upgrade 中同步完整目录，并增加独立同步命令与 doctor 完整性检查。更新安装 skill 和 Shell 安装器以使用当前 setup 流程。
+
+- 2e6116e: Use numeric date ranges and compact provider and capability icons with accessible name tooltips in Dashboard analytics.
+- f099c29: Read ChatGPT thinking levels from the current account's power slider so Plus and Pro accounts expose and select their own available levels.
+- bae4d71: Select ChatGPT Latest and thinking effort through the current composer menu, and prevent prompt submission in Work conversations.
+- d05a81c: Support the ChatGPT Free chat composer when the newer Chat menu is absent.
+- 3b4ea36: Dismiss ChatGPT's conversation-history access warning without treating it as a model generation limit, allowing new Chat prompts and responses to complete.
+- 616f00d: Update ChatGPT model and thinking controls, and record the model identifier exposed on each assistant response.
+- d3d7321: Show every provider and individual capability in the Dashboard usage matrix, with compact cells, date-aware titles, and simpler English and Chinese help.
+- dff6809: Use persisted internal rate-limit rules for browser admission, Router fallback, and the Dashboard, with rolling-window usage and editable provider/request-type limits.
+- 9d3660c: Dispatch GitHub Copilot agent CLI tasks through its native cloud Agent when GitHub repository context is supplied. Require repository selection before submission and reject local Harness execution for explicitly selected GitHub Copilot agent tasks. The delegation entry point remains experimental pending fresh real-provider acceptance.
+- 8e43fc4: Show the main Dashboard charts first, remove Provider Panorama and text insights, and move chart explanations into accessible help tooltips.
+- 5f8e099: Align Dashboard header controls in one row, unify icons and values, and show token and status explanations in accessible tooltips.
+- d3b000f: Remove Puter from the supported provider catalog.
+- 8bcb195: Remove GLHF, TheB.AI, Fenay AI, and enterprise-only Blackbox AI from the supported provider catalog.
+- 6b33f7b: Fix reused Gemini conversations so each response read returns the current turn instead of a previous reply.
+
+  修复复用 Gemini conversation 时的 response 读取，确保每次返回当前 turn，而不是之前的回复。
+
+- af2665c: Repair Windows source-linked Tokenless API setup by invoking npm without a command shim, resolving pyenv-win's real uv executable, hiding persistent background process windows, draining CLI failures cleanly, and diagnosing native profiles through their configured browser.
+
+  修复 Windows 源码链接安装：不再通过命令 shim 调用 npm，解析 pyenv-win 的真实 uv 可执行文件，隐藏持久后台 daemon 和 service 子进程窗口，让 CLI 失败路径正常排空句柄，并通过已配置的浏览器诊断 native profile。
+
+- 1b5664e: Expose GitHub Copilot Ask/Agent modes, repository selection as native Projects, live model access requirements, and message token/account AI credit usage through the CLI and API.
+
+  通过 CLI 和 API 提供 GitHub Copilot Ask/Agent 模式、映射为原生 Project 的 repository 选择、实时模型权限、回复 token 及账户 AI credits 用量。
+
+- 5a75264: Add an experimental GitHub Copilot browser adapter with model selection, file uploads, conversation continuation, verified Harness Markdown tool round-trips, and draft attachment cleanup.
+
+  新增实验性 GitHub Copilot 网页适配器，支持模型选择、文件上传、连续对话、已验证的 Harness Markdown 工具往返和附件草稿清理。
+
+  Clarify that inline prompt files and files uploaded through the chat composer are separate inputs.
+
+  明确区分提示词中的文件内容与通过聊天输入框上传的附件。
+
+- 100034e: Reclaim idle browser work tabs with configurable retention and per-profile capacity, protect unfinished work, restore saved conversation URLs on continuation, and expose bilingual System settings and counters.
+- 394072d: Remove the per-profile work-tab cap so active browser tasks can run concurrently; continue reclaiming idle tabs after the configured retention window.
+- 9d3660c: Add experimental Lovable Browser mode for project creation and same-project follow-up through the selected managed profile. Show configured profile labels as display names in the Dashboard.
+- 17b9f7b: Bind managed Chromium profiles to configured browser colors through Chromium's native autogenerated-theme support.
+
+  通过 Chromium 原生自动主题支持，为 managed Chromium profile 绑定配置的浏览器颜色。
+
+- 74fd2bd: Add an English and Chinese Dashboard rate-limit table with provider, request-type, and rule-state filters, source dates, explicit unknown coverage, and proposed ChatGPT limits clearly marked as not enforced.
+- 001fce5: Reduce Dashboard rate-limit history reads so large conversation records do not repeatedly block the local API.
+- d065484: Keep Windows browser version and daemon build-info checks hidden so refreshing the Tokenless API tray or Dashboard does not flash terminal windows.
+
+  隐藏 Windows 浏览器版本检查和 daemon 构建信息检查的控制台窗口，避免刷新 Tokenless API 托盘或 Dashboard 时终端反复闪现。
+
+  Improve the source-linked Windows tray with live task and browser-profile status, clear native notifications, resilient startup refresh, and graceful single-instance replacement.
+
+  改进连接本地源码的 Windows 托盘：实时显示任务与浏览器 Profile 状态，提供清晰的原生通知，并增强启动刷新和单实例平滑替换的可靠性。
+
+- 3b6eae6: Reclaim unused Tokenless API work tabs after the idle timeout, including provider homepages and tabs left by failed, canceled, or input-only jobs. Active tasks and user pages remain protected, user interaction resets the idle timer, and one blank tab keeps the browser running.
+- caaebc6: Supervise all resident registered browser profiles, restore work-tab ownership across daemon restarts, recover known persisted conversations, recheck retained pages for idle state, and expose actual and untracked page counts.
+- 8a789df: Honor the OpenAI Responses `store` flag for the local response ledger. Default storage remains enabled; `store: false` disables ledger continuation for that response while ordinary job history and provider-side retention remain separate.
+- c1c7600: Share the Dashboard page components, styles, and profile picker with Design Atlas so Storybook previews use the same UI as the shipped application.
+- Clarify source checkout refresh commands, development-link verification, optional macOS app updates, and preservation of existing configuration and data in the bundled installation skill.
+
+  在内置安装 skill 中明确源码刷新命令、开发链接验证、可选 macOS app 更新，以及现有配置与数据的保留要求。
+
+- 4553135: Add experimental Agnes AI Browser Chat with visible citations, account inspection, document/image input, durable conversation reuse, and the Harness read-only attachment roundtrip. Preserve unknown Web quotas; upload Markdown bytes unchanged under a supported `.txt` filename.
+
+  新增实验性 Agnes AI Browser Chat 与可见引用、账号检查、文档/图片输入、持久化续聊及 Harness 只读附件闭环；保留网页额度未知状态，Markdown 内容不变并以网页支持的 `.txt` 文件名上传。
+
 ## 0.6.0
 
 ### Minor Changes
