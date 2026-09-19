@@ -422,6 +422,7 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
           { id: 'chatgpt', suitableTasks: 'Writing, editing, and tone-sensitive content' },
           { id: 'claude', suitableTasks: 'Coding and complex analysis' },
         ],
+        jevApiKey: null,
       })
       await page.reload({ waitUntil: 'networkidle' })
       await page.getByTestId('providers-view').waitFor()

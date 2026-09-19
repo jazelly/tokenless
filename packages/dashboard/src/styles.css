@@ -514,6 +514,9 @@ a.data-row:hover, button.data-row:hover { background: #faf9f7; }
 .router-run-card .inline-feedback, .router-result { margin-top: 12px; }
 .router-result h3 { margin-bottom: 8px; font-size: 13px; }
 .router-result pre { font-size: 13px; }
+.jev-history-list { display: grid; gap: 6px; margin-top: 8px; padding: 0; list-style: none; }
+.jev-history-list li { display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; padding: 8px 10px; border: 1px solid var(--line); border-radius: 7px; font-size: 13px; color: var(--muted); }
+.jev-history-list li > span:first-child { color: var(--ink); font-weight: 600; }
 .provider-detail-page { max-width: 980px; }
 .provider-back { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 22px; font-size: 13px; }
 .provider-detail-controls.disabled { background: #f8f7f4; }

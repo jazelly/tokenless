@@ -204,10 +204,30 @@ async function createPackedCliFixture() {
       cwd: path.join(root, 'node_modules', 'playwright-core'),
       encoding: 'utf8',
     }))
+    const impersPack = parsePackOutput(execDeclaredNpmSync(['pack', '--json', '--pack-destination', packDirectory], {
+      cwd: path.join(root, 'node_modules', 'impers'),
+      encoding: 'utf8',
+    }))
+    const koffiPack = parsePackOutput(execDeclaredNpmSync(['pack', '--json', '--pack-destination', packDirectory], {
+      cwd: path.join(root, 'node_modules', 'koffi'),
+      encoding: 'utf8',
+    }))
+    const koffiPlatformPack = parsePackOutput(execDeclaredNpmSync(['pack', '--json', '--pack-destination', packDirectory], {
+      cwd: path.join(root, 'node_modules', '@koromix', `koffi-${process.platform}-${process.arch}`),
+      encoding: 'utf8',
+    }))
+    const typesafeSdkPack = parsePackOutput(execDeclaredNpmSync(['pack', '--json', '--pack-destination', packDirectory], {
+      cwd: path.join(root, 'node_modules', '@typesafe-ai', 'sdk'),
+      encoding: 'utf8',
+    }))
     execDeclaredNpmSync([
       'install',
       path.join(packDirectory, cliPack.filename),
       path.join(packDirectory, playwrightPack.filename),
+      path.join(packDirectory, impersPack.filename),
+      path.join(packDirectory, koffiPack.filename),
+      path.join(packDirectory, koffiPlatformPack.filename),
+      path.join(packDirectory, typesafeSdkPack.filename),
       '--prefix', installDirectory,
       '--omit=optional',
       '--ignore-scripts',

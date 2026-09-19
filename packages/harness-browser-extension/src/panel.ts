@@ -1,3 +1,5 @@
+import { actionLabel, destination, getLanguage, originDisclosure, pairingRequested, proposedText, routeValue, stateLabel, t, tabAttachedLocally, type Language } from './i18n.js'
+
 type Stored = { daemonOrigin?: string; credential?: string }
 type Page = { tabId: number; origin: string; url: string; title: string; documentId: string; documentRevision: number }
 type Observation = {
@@ -32,6 +34,29 @@ type Proposal = {
 }
 type RunView = { runId: string; status: string; final?: { output: string }; error?: { message: string } }
 
+type ConnectionState =
+  | { kind: 'notPaired' }
+  | { kind: 'pairingRequested'; id: string }
+  | { kind: 'paired' }
+  | { kind: 'pairingExpiredOrRevoked' }
+  | { kind: 'pairingExpired' }
+  | { kind: 'credentialNeedsPairing' }
+  | { kind: 'error'; message: string }
+type RouteState = { kind: 'default' } | { kind: 'paired'; provider: string; profileId: string }
+type PageState = { kind: 'none' } | { kind: 'attached'; title: string; origin: string }
+type DisclosureState = { kind: 'default' } | { kind: 'origin'; origin: string }
+type InventoryState = { kind: 'none' } | { kind: 'empty' } | { kind: 'list'; controls: Observation['controls'] }
+type RunStatusState =
+  | { kind: 'noRun' }
+  | { kind: 'pairFirst' }
+  | { kind: 'pairAndAttach' }
+  | { kind: 'consentRequired' }
+  | { kind: 'enterTask' }
+  | { kind: 'selectOneFile' }
+  | { kind: 'tabAttached'; count: number }
+  | { kind: 'state'; state: string }
+  | { kind: 'error'; message: string }
+
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 const daemon = $<HTMLInputElement>('daemon')
 const connection = $('connection')
@@ -61,6 +86,15 @@ let stopped = true
 let detached = false
 const appliedActions = new Set<string>()
 
+let language: Language = 'en'
+let connectionState: ConnectionState = { kind: 'notPaired' }
+let routeState: RouteState = { kind: 'default' }
+let pageState: PageState = { kind: 'none' }
+let disclosureState: DisclosureState = { kind: 'default' }
+let inventoryState: InventoryState = { kind: 'none' }
+let runStatusState: RunStatusState = { kind: 'noRun' }
+
+$('settings').addEventListener('click', () => void chrome.runtime.openOptionsPage())
 $('pair').addEventListener('click', () => void pair())
 $('unpair').addEventListener('click', () => void unpair())
 $('refresh').addEventListener('click', () => void refreshConnection())
@@ -72,6 +106,9 @@ rejectButton.addEventListener('click', () => void decide(false))
 uploadFile.addEventListener('change', () => {
   if (proposal?.action === 'upload' && proposal.status === 'awaiting_approval') approveButton.disabled = uploadFile.files?.length !== 1
 })
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === 'local' && 'language' in changes) void applyLanguage()
+})
 
 void initialize()
 
@@ -79,7 +116,43 @@ async function initialize() {
   const stored = await chrome.storage.local.get<Stored>(['daemonOrigin', 'credential'])
   if (stored.daemonOrigin) daemon.value = stored.daemonOrigin
   credential = stored.credential ?? ''
+  await applyLanguage()
   await refreshConnection()
+}
+
+async function applyLanguage() {
+  language = await getLanguage()
+  document.documentElement.lang = language
+  document.title = t(language, 'docTitle')
+  $('eyebrow').textContent = t(language, 'eyebrow')
+  $('app-heading').textContent = t(language, 'appHeading')
+  $('connection-heading').textContent = t(language, 'connectionHeading')
+  $('daemon-label').textContent = t(language, 'daemonLabel')
+  $('pair').textContent = t(language, 'pairButton')
+  $('unpair').textContent = t(language, 'unpairButton')
+  $('refresh').textContent = t(language, 'refreshButton')
+  $('pairing-help').textContent = t(language, 'pairingHelp')
+  $('current-tab-heading').textContent = t(language, 'currentTabHeading')
+  $('consent-label').textContent = t(language, 'consentLabel')
+  $('attach').textContent = t(language, 'attachButton')
+  $('task-heading').textContent = t(language, 'taskHeading')
+  $('task-label').textContent = t(language, 'taskLabel')
+  task.placeholder = t(language, 'taskPlaceholder')
+  $('run').textContent = t(language, 'startRunButton')
+  $('cancel').textContent = t(language, 'cancelButton')
+  $('approval-heading').textContent = t(language, 'approvalHeading')
+  $('upload-label-text').textContent = t(language, 'uploadLabelText')
+  $('approve').textContent = t(language, 'approveButton')
+  $('reject').textContent = t(language, 'rejectButton')
+  $('privacy-heading').textContent = t(language, 'privacyHeading')
+  $('privacy-body').textContent = t(language, 'privacyBody')
+  renderConnection()
+  renderRoute()
+  renderPage()
+  renderDisclosure()
+  renderInventory()
+  renderRunStatus()
+  if (proposal) proposalText.textContent = proposalDescription(proposal)
 }
 
 async function pair() {
@@ -90,10 +163,10 @@ async function pair() {
       body: JSON.stringify({ extensionId: chrome.runtime.id, extensionVersion: chrome.runtime.getManifest().version }),
     }, false)
     await chrome.tabs.create({ url: response.dashboardUrl })
-    setConnection(`Pairing requested / 已请求配对 · ${response.pairingId}`)
+    setConnection({ kind: 'pairingRequested', id: response.pairingId })
     await pollPairing(response.pairingId, response.secret, Date.parse(response.expiresAt))
   } catch (error) {
-    setConnection(errorMessage(error))
+    setConnection({ kind: 'error', message: errorMessage(error) })
   }
 }
 
@@ -109,14 +182,14 @@ async function pollPairing(pairingId: string, secret: string, deadline: number) 
     if (result.state === 'approved' && result.credential) {
       credential = result.credential
       await chrome.storage.local.set({ credential })
-      setConnection('Paired / 已配对')
-      route.textContent = `Route / 路由：${result.provider ?? '—'} · ${result.profileId ?? '—'}`
+      setConnection({ kind: 'paired' })
+      setRoute({ kind: 'paired', provider: result.provider ?? '—', profileId: result.profileId ?? '—' })
       return
     }
-    setConnection('Pairing expired or revoked / 配对已过期或撤销')
+    setConnection({ kind: 'pairingExpiredOrRevoked' })
     return
   }
-  setConnection('Pairing expired / 配对已过期')
+  setConnection({ kind: 'pairingExpired' })
 }
 
 async function unpair() {
@@ -125,25 +198,25 @@ async function unpair() {
   } catch { /* local credential is still removed */ }
   credential = ''
   await chrome.storage.local.remove('credential')
-  setConnection('Not paired / 未配对')
-  route.textContent = 'Provider route is selected and approved in Dashboard. / Provider route 在 Dashboard 中选择并批准。'
+  setConnection({ kind: 'notPaired' })
+  setRoute({ kind: 'default' })
 }
 
 async function refreshConnection() {
-  if (!credential) return setConnection('Not paired / 未配对')
+  if (!credential) return setConnection({ kind: 'notPaired' })
   try {
     const value = await request<{ pairing: { provider?: string; profileId?: string } }>('/v1/harness/browser-extension/connection')
-    setConnection('Paired / 已配对')
-    route.textContent = `Route / 路由：${value.pairing.provider ?? '—'} · ${value.pairing.profileId ?? '—'}`
+    setConnection({ kind: 'paired' })
+    setRoute({ kind: 'paired', provider: value.pairing.provider ?? '—', profileId: value.pairing.profileId ?? '—' })
   } catch {
     credential = ''
     await chrome.storage.local.remove('credential')
-    setConnection('Credential needs pairing again / 凭证需要重新配对')
+    setConnection({ kind: 'credentialNeedsPairing' })
   }
 }
 
 async function observeTab() {
-  if (!credential) return setRunStatus('Pair the extension first / 请先配对扩展')
+  if (!credential) return setRunStatus({ kind: 'pairFirst' })
   try {
     const result = await chrome.runtime.sendMessage<{ tabId: number; observation: Observation; evidence: PrivateEvidence }>({ type: 'observe-active-tab' })
     const next = result.observation
@@ -154,24 +227,19 @@ async function observeTab() {
     consent.checked = false
     sessionId = `extension-session:${crypto.randomUUID().replaceAll('-', '')}`
     detached = false
-    pageStatus.textContent = `${next.page.title || 'Untitled'} · ${next.page.origin}`
-    disclosure.textContent = `Origin: ${next.page.origin}. Bounded page content is sent through the approved provider route after consent; full evidence remains in the local private bundle. / Origin：${next.page.origin}。同意后有界页面内容会经批准的 provider route 发送；完整证据只保留在本机私有证据包。`
-    inventory.textContent = next.controls.length === 0
-      ? 'No supported visible controls / 没有支持的可见控件'
-      : next.controls.map((control, index) => {
-        const state = control.role === 'radio' ? (control.checked ? 'selected' : 'not selected') : control.valuePresence
-        return `${index + 1}. ${control.label || control.name || 'Control'} · ${control.inputType} · ${control.actions.join('/')} · ${state}`
-      }).join('\n')
-    setRunStatus(`Tab attached locally · ${next.controls.length} control(s) / 标签页已在本地附着 · ${next.controls.length} 个控件`)
+    setPage({ kind: 'attached', title: next.page.title, origin: next.page.origin })
+    setDisclosure({ kind: 'origin', origin: next.page.origin })
+    setInventory(next.controls.length === 0 ? { kind: 'empty' } : { kind: 'list', controls: next.controls })
+    setRunStatus({ kind: 'tabAttached', count: next.controls.length })
   } catch (error) {
-    setRunStatus(errorMessage(error))
+    setRunStatus({ kind: 'error', message: errorMessage(error) })
   }
 }
 
 async function startRun() {
-  if (!credential || !observation || !selectedPage || !sessionId || !initialEvidence) return setRunStatus('Pair and attach a tab first / 请先配对并附着标签页')
-  if (!consent.checked) return setRunStatus('Consent is required before page content leaves the extension or full evidence is saved / 发送页面内容或保存完整证据前需要同意')
-  if (!task.value.trim()) return setRunStatus('Enter a task / 请输入任务')
+  if (!credential || !observation || !selectedPage || !sessionId || !initialEvidence) return setRunStatus({ kind: 'pairAndAttach' })
+  if (!consent.checked) return setRunStatus({ kind: 'consentRequired' })
+  if (!task.value.trim()) return setRunStatus({ kind: 'enterTask' })
   try {
     await saveOrigin()
     await request('/v1/harness/browser-extension/sessions', {
@@ -186,11 +254,11 @@ async function startRun() {
     detached = false
     appliedActions.clear()
     finalOutput.hidden = true
-    setRunStatus(stateLabel(started.status))
+    setRunStatus({ kind: 'state', state: started.status })
     void pollUntilTerminal()
     void actionLoop()
   } catch (error) {
-    setRunStatus(errorMessage(error))
+    setRunStatus({ kind: 'error', message: errorMessage(error) })
   }
 }
 
@@ -198,7 +266,7 @@ async function pollUntilTerminal() {
   while (!stopped && runId) {
     try {
       const view = await request<RunView>(`/v1/harness/browser-extension/runs/${encodeURIComponent(runId)}`)
-      setRunStatus(view.error ? errorMessage(new Error(view.error.message)) : stateLabel(view.status))
+      setRunStatus(view.error ? { kind: 'error', message: view.error.message } : { kind: 'state', state: view.status })
       if (view.final) {
         finalOutput.textContent = view.final.output
         finalOutput.hidden = false
@@ -210,7 +278,7 @@ async function pollUntilTerminal() {
         return
       }
     } catch (error) {
-      setRunStatus(errorMessage(error))
+      setRunStatus({ kind: 'error', message: errorMessage(error) })
       stopped = true
       return
     }
@@ -240,7 +308,7 @@ async function actionLoop() {
         if (next.status === 'applying' && !appliedActions.has(next.actionId)) await applyAction(next)
       }
     } catch (error) {
-      setRunStatus(errorMessage(error))
+      setRunStatus({ kind: 'error', message: errorMessage(error) })
     }
     await delay(400)
   }
@@ -250,14 +318,14 @@ async function decide(approved: boolean) {
   const frozen = proposal
   if (!frozen || frozen.status !== 'awaiting_approval') return
   if (approved && frozen.action === 'upload' && uploadFile.files?.length !== 1) {
-    return setRunStatus('Select exactly one file before approval / 批准前请选择一个文件')
+    return setRunStatus({ kind: 'selectOneFile' })
   }
   approveButton.disabled = true
   rejectButton.disabled = true
   void request(`/v1/harness/browser-extension/runs/${encodeURIComponent(frozen.runId)}/actions/${encodeURIComponent(frozen.actionId)}/decision`, {
     method: 'POST',
     body: JSON.stringify({ approved, callId: frozen.callId, argumentsDigest: frozen.argumentsDigest }),
-  }).catch((error) => setRunStatus(errorMessage(error)))
+  }).catch((error) => setRunStatus({ kind: 'error', message: errorMessage(error) }))
 }
 
 async function applyAction(action: Proposal) {
@@ -309,7 +377,7 @@ async function applyAction(action: Proposal) {
       method: 'POST', body: JSON.stringify(screenshot),
     })
   } catch (error) {
-    setRunStatus(errorMessage(error))
+    setRunStatus({ kind: 'error', message: errorMessage(error) })
   }
 }
 
@@ -320,7 +388,7 @@ async function cancelRun() {
     stopped = true
     await detachSession()
   } catch (error) {
-    setRunStatus(errorMessage(error))
+    setRunStatus({ kind: 'error', message: errorMessage(error) })
   }
 }
 
@@ -331,24 +399,12 @@ async function detachSession() {
 }
 
 function proposalDescription(value: Proposal) {
-  const target = value.target ? `${value.target.label || value.target.name || 'Control'} · ${value.target.inputType}` : value.page.origin
-  const detail = value.action === 'input' ? `\n\nProposed text / 拟填文本：${value.text ?? ''}`
-    : value.action === 'navigate' ? `\n\nDestination / 目标地址：${value.url ?? ''}`
-      : value.action === 'upload' ? '\n\nSelect one local file below. / 请在下方选择一个本地文件。'
+  const target = value.target ? `${value.target.label || value.target.name || t(language, 'control')} · ${value.target.inputType}` : value.page.origin
+  const detail = value.action === 'input' ? `\n\n${proposedText(language, value.text ?? '')}`
+    : value.action === 'navigate' ? `\n\n${destination(language, value.url ?? '')}`
+      : value.action === 'upload' ? `\n\n${t(language, 'selectFileBelow')}`
         : ''
-  return `${actionLabel(value.action)}\n${target}${detail}`
-}
-
-function actionLabel(action: Proposal['action']) {
-  const labels: Record<Proposal['action'], string> = {
-    input: 'Text input / 文本填写',
-    click: 'Button click / 按钮点击',
-    submit: 'Form submit / 表单提交',
-    radio: 'Radio selection / 单选项选择',
-    upload: 'File upload / 文件上传',
-    navigate: 'Page navigation / 页面导航',
-  }
-  return labels[action]
+  return `${actionLabel(language, value.action)}\n${target}${detail}`
 }
 
 async function saveOrigin() {
@@ -377,23 +433,58 @@ function normalizeOrigin(value: string) {
   return url.origin
 }
 
-function stateLabel(state: string) {
-  const labels: Record<string, string> = {
-    discovering_tools: 'Capturing page tools / 正在准备页面工具',
-    submitting_provider: 'Waiting for Harness Task Model / 正在等待 Harness Task Model',
-    running: 'Harness run is running / Harness run 正在运行',
-    waiting_for_approval: 'Waiting for action approval / 正在等待操作批准',
-    succeeded: 'Completed / 已完成',
-    failed: 'Failed / 失败',
-    cancelled: 'Cancelled / 已取消',
-  }
-  return labels[state] ?? `${state} / ${state}`
+function setConnection(state: ConnectionState) { connectionState = state; renderConnection() }
+function setRoute(state: RouteState) { routeState = state; renderRoute() }
+function setPage(state: PageState) { pageState = state; renderPage() }
+function setDisclosure(state: DisclosureState) { disclosureState = state; renderDisclosure() }
+function setInventory(state: InventoryState) { inventoryState = state; renderInventory() }
+function setRunStatus(state: RunStatusState) { runStatusState = state; renderRunStatus() }
+
+function renderConnection() {
+  const state = connectionState
+  connection.textContent = state.kind === 'notPaired' ? t(language, 'notPaired')
+    : state.kind === 'pairingRequested' ? pairingRequested(language, state.id)
+      : state.kind === 'paired' ? t(language, 'paired')
+        : state.kind === 'pairingExpiredOrRevoked' ? t(language, 'pairingExpiredOrRevoked')
+          : state.kind === 'pairingExpired' ? t(language, 'pairingExpired')
+            : state.kind === 'credentialNeedsPairing' ? t(language, 'credentialNeedsPairing')
+              : formatError(state.message)
 }
 
-function setConnection(value: string) { connection.textContent = value }
-function setRunStatus(value: string) { runStatus.textContent = value }
-function errorMessage(error: unknown) {
-  if (!(error instanceof Error)) return 'Request failed / 请求失败'
-  return error.message.includes(' / ') ? error.message : `${error.message} / 操作失败，请检查当前页面或连接。`
+function renderRoute() {
+  route.textContent = routeState.kind === 'default' ? t(language, 'routeDefault') : routeValue(language, routeState.provider, routeState.profileId)
 }
+
+function renderPage() {
+  pageStatus.textContent = pageState.kind === 'none' ? t(language, 'noTabAttached') : `${pageState.title || t(language, 'untitled')} · ${pageState.origin}`
+}
+
+function renderDisclosure() {
+  disclosure.textContent = disclosureState.kind === 'default' ? t(language, 'pageDisclosureDefault') : originDisclosure(language, disclosureState.origin)
+}
+
+function renderInventory() {
+  if (inventoryState.kind === 'none') { inventory.textContent = ''; return }
+  if (inventoryState.kind === 'empty') { inventory.textContent = t(language, 'noSupportedControls'); return }
+  inventory.textContent = inventoryState.controls.map((control, index) => {
+    const state = control.role === 'radio' ? (control.checked ? t(language, 'selected') : t(language, 'notSelected')) : control.valuePresence
+    return `${index + 1}. ${control.label || control.name || t(language, 'control')} · ${control.inputType} · ${control.actions.join('/')} · ${state}`
+  }).join('\n')
+}
+
+function renderRunStatus() {
+  const state = runStatusState
+  runStatus.textContent = state.kind === 'noRun' ? t(language, 'noRun')
+    : state.kind === 'pairFirst' ? t(language, 'pairFirst')
+      : state.kind === 'pairAndAttach' ? t(language, 'pairAndAttach')
+        : state.kind === 'consentRequired' ? t(language, 'consentRequired')
+          : state.kind === 'enterTask' ? t(language, 'enterTask')
+            : state.kind === 'selectOneFile' ? t(language, 'selectOneFile')
+              : state.kind === 'tabAttached' ? tabAttachedLocally(language, state.count)
+                : state.kind === 'state' ? stateLabel(language, state.state)
+                  : formatError(state.message)
+}
+
+function formatError(message: string) { return `${message} ${t(language, 'errorSuffix')}` }
+function errorMessage(error: unknown) { return error instanceof Error ? error.message : t(language, 'requestFailed') }
 function delay(milliseconds: number) { return new Promise((resolve) => setTimeout(resolve, milliseconds)) }

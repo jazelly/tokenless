@@ -29,21 +29,28 @@ Actions and turns inside one case keep the same Page Ref and target. This preser
 
 ## Idle Tab Collection
 
-After building the CLI, run the focused acceptance through ego-browser with the configured persistent profile. The lifecycle check uses production page allocation and collection; the conversation check sends three real ChatGPT turns and verifies the original conversation survives tab closure. It does not change the selected test home's configuration.
+`test/live-browser-tab-gc.e2e.mjs` registers all four checks below as `node:test` cases, gated behind `TOKENLESS_LIVE_TAB_GC_GATE=1` like the other live browser suites. Run the whole file, in order, against the configured persistent profile with:
+
+```bash
+npm run test:e2e:tab-gc
+```
+
+The lifecycle check uses production page allocation and collection; the released-work check confirms a status call and an abandoned draft are both reclaimed without ever reading a response; the conversation check sends three real ChatGPT turns and verifies the original conversation survives tab closure. None of these change the selected test home's configuration. With default settings, allow about eight minutes for the lifecycle and conversation checks together; observations use the configured retention and sweep intervals without shortening them.
+
+The fourth case, `verifyTabSupervision`, is the multi-profile/restart acceptance. It is explicitly scoped to the user's existing registered profiles and requires at least two signed-in ChatGPT profiles — it fails loudly (`assert.ok(profiles.length >= 2, ...)`) rather than skipping if that precondition isn't met. It checks automatic attachment, persisted target identity across a daemon restart, an unsent draft surviving the complete retention window, an idle-clock reset after reloading the same URL, subsequent collection after clearing the draft, and continuation in the second profile after collection. It never creates a profile or relaunches a browser.
+
+For ad-hoc manual runs (e.g. to pass a `residentBaseline` observed from an earlier daemon) each function is still directly importable and callable from an `ego-browser nodejs` REPL session:
 
 ```bash
 ego-browser nodejs <<'EOF'
 const repo = '/absolute/path/to/tokenless'
 const nodeExecutable = '/absolute/path/to/node'
 const packageRoot = repo + '/packages/cli'
-const { verifyTabGcLifecycle, verifyTabGcConversation } = await import(repo + '/test/live-browser-tab-gc.e2e.mjs')
+const { verifyTabGcLifecycle, verifyTabGcConversation, verifyTabSupervision } = await import(repo + '/test/live-browser-tab-gc.e2e.mjs')
 await verifyTabGcLifecycle({ packageRoot, log: cliLog })
 await verifyTabGcConversation({ packageRoot, nodeExecutable, log: cliLog })
+await verifyTabSupervision({ packageRoot, nodeExecutable, log: cliLog, residentBaseline })
 EOF
 ```
 
-Replace the two absolute paths above with the checkout and system Node executable. Keep the same packaged daemon running throughout the conversation check. With default settings, allow about eight minutes for both checks; observations use the configured retention and sweep intervals without shortening them.
-
-The multi-profile/restart acceptance is explicitly scoped to the user's existing registered profiles and requires at least two signed-in ChatGPT profiles. It checks automatic attachment, persisted target identity across a daemon restart, an unsent draft surviving the complete retention window, an idle-clock reset after reloading the same URL, subsequent collection after clearing the draft, and continuation in the second profile after collection. It never creates a profile or relaunches a browser.
-
-Invoke `verifyTabSupervision({ packageRoot, nodeExecutable, log: cliLog })` from the same ego-browser runtime. An optional `residentBaseline` containing freshly observed profile names and target IDs can additionally verify collection of the exact idle tabs left by an earlier daemon; these IDs are live observations, not provider fixtures.
+Replace the two absolute paths above with the checkout and system Node executable. An optional `residentBaseline` containing freshly observed profile names and target IDs can additionally verify collection of the exact idle tabs left by an earlier daemon; these IDs are live observations, not provider fixtures.

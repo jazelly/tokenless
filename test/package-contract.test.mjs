@@ -95,7 +95,7 @@ test('persistent config accepts only the current native browser and router shape
   try {
     const defaults = await runtime.readTokenlessConfig(homeDir)
     assert.deepEqual(defaults.outputSavings, { enabled: true })
-    assert.deepEqual(defaults.router, { enabled: false, engine: 'chrome-prompt-api', providers: [] })
+    assert.deepEqual(defaults.router, { enabled: false, engine: 'chrome-prompt-api', providers: [], jevApiKey: null })
     assert.equal(defaults.browser, 'chrome')
     assert.equal(Object.hasOwn(defaults, 'browserConnectionMode'), false)
     assert.equal(defaults.browserExecutablePath, null)
@@ -115,6 +115,7 @@ test('persistent config accepts only the current native browser and router shape
         { id: 'chatgpt', suitableTasks: 'Writing and editing' },
         { id: 'claude', suitableTasks: 'Coding and complex analysis' },
       ],
+      jevApiKey: null,
     }
     assert.deepEqual((await runtime.writeTokenlessConfig({ homeDir, router })).router, router)
     assert.deepEqual((await runtime.readTokenlessConfig(homeDir)).router, router)
@@ -387,7 +388,10 @@ test('workspace packages keep standalone product names', () => {
     './structured-json': './dist/src/structured-json.js',
     './dashboard': './dist/src/dashboard.js',
     './harness-sidecar': './dist/src/harness-sidecar.js',
+    './jev-router': './dist/src/jev-router.js',
+    './jev-router.js': './dist/src/jev-router.js',
     './i18n': './dist/src/i18n.js',
+    './database/*': './dist/src/database/*',
   })
   assert.equal(fs.existsSync(path.join(root, 'packages/extension')), false)
 })
@@ -406,10 +410,7 @@ test('CLI reports the installed package version through standard version flags',
 })
 
 test('CLI help separates canonical and advanced commands into described workflow groups', () => {
-  const result = spawnSync(process.execPath, [cliEntry, 'help'], {
-    cwd: root,
-    encoding: 'utf8',
-  })
+  const result = runCli(['help'])
   assert.equal(result.status, 0, result.stderr || result.stdout)
   assert.equal(result.stdout, '')
 
@@ -784,6 +785,7 @@ test('pure JS CLI packs, installs, and exposes executable runtime artifacts', as
   let impersTarball
   let koffiTarball
   let koffiPlatformTarball
+  let typesafeSdkTarball
   try {
     const universalPack = npmPack(cliDir, packDir)
     const playwrightCorePack = npmPack(path.join(root, 'node_modules', 'playwright-core'), packDir)
@@ -793,11 +795,13 @@ test('pure JS CLI packs, installs, and exposes executable runtime artifacts', as
       path.join(root, 'node_modules', '@koromix', `koffi-${process.platform}-${process.arch}`),
       packDir,
     )
+    const typesafeSdkPack = npmPack(path.join(root, 'node_modules', '@typesafe-ai', 'sdk'), packDir)
     universalTarball = path.join(packDir, universalPack.filename)
     playwrightCoreTarball = path.join(packDir, playwrightCorePack.filename)
     impersTarball = path.join(packDir, impersPack.filename)
     koffiTarball = path.join(packDir, koffiPack.filename)
     koffiPlatformTarball = path.join(packDir, koffiPlatformPack.filename)
+    typesafeSdkTarball = path.join(packDir, typesafeSdkPack.filename)
     assert.ok(universalPack.files.some((file) => file.path === 'dist/server/src/browser/index.js'))
     assert.ok(universalPack.files.some((file) => file.path === 'dist/server/src/browser/index.d.ts'))
     assert.ok(universalPack.files.some((file) => file.path === 'dist/server/src/entry.mjs'))
@@ -827,6 +831,7 @@ test('pure JS CLI packs, installs, and exposes executable runtime artifacts', as
       impersTarball,
       koffiTarball,
       koffiPlatformTarball,
+      typesafeSdkTarball,
       '--prefix',
       installDir,
       '--omit=optional',
@@ -915,8 +920,8 @@ test('pure JS CLI packs, installs, and exposes executable runtime artifacts', as
         assert.deepEqual(await response.json(), []);
         const database = new DatabaseSync(homeDir + '/tokenless.sqlite3', { readOnly: true });
         try {
-          assert.equal(database.prepare('PRAGMA user_version').get().user_version, 1);
-          assert.equal(database.prepare("SELECT COUNT(*) AS n FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").get().n, 9);
+          assert.equal(database.prepare('PRAGMA user_version').get().user_version, 2);
+          assert.equal(database.prepare("SELECT COUNT(*) AS n FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").get().n, 10);
         } finally { database.close(); }
         process.stdout.write('installed-migration-ready');
       } finally { await runtime.stopDaemon({ homeDir, daemonUrl }); }
@@ -982,10 +987,23 @@ function readJson(relativePath) {
   return JSON.parse(fs.readFileSync(path.join(root, relativePath), 'utf8'))
 }
 
+// Isolates runCli() from the real ~/.tokenless home: without this, calls that omit their own
+// `env` would inherit this machine's actual persisted language (e.g. zh-CN) and produce
+// localized output, breaking tests that assert English text.
+let defaultRunCliHome
+test.after(() => {
+  if (defaultRunCliHome) fs.rmSync(defaultRunCliHome, { recursive: true, force: true })
+})
 function runCli(args, options = {}) {
+  if (options.env === undefined) {
+    defaultRunCliHome ??= fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-runcli-'))
+  }
   return spawnSync(process.execPath, [cliEntry, ...args], {
     cwd: root,
     encoding: 'utf8',
+    ...(options.env === undefined
+      ? { env: { ...process.env, TOKENLESS_HOME: defaultRunCliHome, LC_ALL: 'en_US.UTF-8', LANG: 'en_US.UTF-8' } }
+      : {}),
     ...options,
   })
 }

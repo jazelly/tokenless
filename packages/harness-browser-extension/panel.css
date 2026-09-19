@@ -2,7 +2,7 @@
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; }
 main { padding: 16px; display: grid; gap: 12px; }
-.title-row { display: flex; justify-content: space-between; align-items: start; gap: 8px; }
+.title-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .eyebrow { margin: 0 0 4px; color: #58647a; font-size: 11px; letter-spacing: .04em; }
 h1, h2 { margin: 0; }
 h1 { font-size: 20px; }
@@ -19,6 +19,21 @@ button { border: 0; border-radius: 6px; padding: 8px 10px; font: inherit; font-w
 button.secondary, button.quiet { background: #eef1f7; color: #25334b; }
 button.quiet { padding: 5px 7px; font-size: 11px; }
 button:disabled { opacity: .5; cursor: not-allowed; }
+.icon-button {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  font-size: 17px;
+  line-height: 1;
+  background: #eef1f7;
+  color: #25334b;
+  border-radius: 8px;
+  transition: background-color .15s ease;
+}
+.icon-button:hover { background: #e1e6f2; }
 .button-row { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
 .status { margin: 0; font-weight: 600; }
 .muted { color: #67758c; font-size: 11px; }

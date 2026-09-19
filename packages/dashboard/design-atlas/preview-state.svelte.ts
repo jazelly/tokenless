@@ -117,6 +117,8 @@ export function createPreviewState(language: Language, designState: DesignState,
     disableOutputSavings: unavailable,
     clearOutputSavings: unavailable,
     uninstallOutputSavings: unavailable,
+    testJevSystemOne: unavailable,
+    getJevHistory: unavailable,
   }
 
   return { get snapshot() { return snapshot }, get toast() { return toast }, actions, notify }

@@ -36,6 +36,7 @@ export class HuggingChatProvider extends BaseProvider<'hugging-face'> {
       effortControlSelectors: Object.freeze([]),
       authIndicators: Object.freeze([]),
       loginIndicators: Object.freeze([]),
+      capacityExhaustedTextPatterns: Object.freeze([]),
       blockerSelectors: Object.freeze([]),
       busySelectors: Object.freeze([]),
       choiceAvailability: DEFAULT_CHOICE_AVAILABILITY,

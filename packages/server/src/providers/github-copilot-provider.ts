@@ -46,6 +46,7 @@ export class GitHubCopilotProvider extends BaseProvider<'github-copilot'> {
       effortControlSelectors: Object.freeze(['button[class*="ReasoningEffortPicker-module__menuButton"]']),
       authIndicators: Object.freeze(['button[aria-label*="Copilot Pro"]', 'button[data-login][class*="GlobalNavUserMenu-module__anchor"]']),
       loginIndicators: Object.freeze(['input#login_field', 'a[href^="/login"]']),
+      capacityExhaustedTextPatterns: Object.freeze([]),
       blockerSelectors: Object.freeze([]),
       busySelectors: Object.freeze(['form button:has(svg.octicon-square-fill)']),
       choiceAvailability: DEFAULT_CHOICE_AVAILABILITY,

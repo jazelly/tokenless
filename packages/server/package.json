@@ -16,6 +16,7 @@
     "lint": "tsc -b ../shared && tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@typesafe-ai/sdk": "^0.6.0",
     "impers": "0.1.0",
     "playwright-core": "1.61.1",
     "tokenless-internal-shared": "0.0.0"

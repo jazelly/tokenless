@@ -72,6 +72,7 @@ export class PerplexityProvider extends BaseProvider<'perplexity'> {
       loginIndicators: Object.freeze([
         'button:has-text("Sign In")',
       ]),
+      capacityExhaustedTextPatterns: Object.freeze([]),
       blockerSelectors: Object.freeze([
         'iframe[src*="recaptcha" i]',
         'iframe[src*="hcaptcha.com" i]',

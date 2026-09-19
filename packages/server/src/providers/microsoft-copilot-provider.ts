@@ -60,6 +60,7 @@ export class MicrosoftCopilotProvider extends BaseProvider<'microsoft-copilot'> 
         'button[title="Sign in with Apple"]',
         'button[title="Sign in with Google"]',
       ]),
+      capacityExhaustedTextPatterns: Object.freeze([]),
       blockerSelectors: Object.freeze([]),
       busySelectors: Object.freeze([
         'button[data-testid="stop-button"]',

@@ -78,6 +78,7 @@ export class KimiProvider extends BaseProvider<'kimi'> {
         'button:has-text("Sign in")',
         'button:has-text("Log in")',
       ]),
+      capacityExhaustedTextPatterns: Object.freeze([]),
       blockerSelectors: Object.freeze([
         'iframe[src*="recaptcha" i]',
         'iframe[src*="hcaptcha.com" i]',

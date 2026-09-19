@@ -14,8 +14,9 @@ import {
   type HarnessAiEngine,
 } from 'tokenless-internal-shared/harness-sidecar'
 import type { HarnessSidecarJsonValue } from 'tokenless-internal-shared/harness-sidecar'
+import { deriveJevHeuristicTitle, JEV_ENGINE_ID } from 'tokenless-internal-shared/jev-router'
 
-export type RouterEngineId = 'chrome-prompt-api' | typeof SPARK_X25_4B_MLX_ENGINE_ID
+export type RouterEngineId = 'chrome-prompt-api' | typeof SPARK_X25_4B_MLX_ENGINE_ID | typeof JEV_ENGINE_ID
 
 export const CHROME_PROMPT_API_MIN_MAJOR = 148
 export { ROUTER_TASK_TYPE_PATTERN } from 'tokenless-internal-shared/harness-sidecar'
@@ -116,6 +117,7 @@ export function createRouterAiEngine(engine: RouterEngineId): HarnessAiEngine {
 
 export function createRouterEngine(engine: RouterEngineId): RouterEngine {
   if (engine === SPARK_X25_4B_MLX_ENGINE_ID) return createSparkRouterEngine()
+  if (engine === JEV_ENGINE_ID) return createJevRouterEngine()
   if (engine !== 'chrome-prompt-api') throw new RouterEngineError('unsupported-engine')
 
   return {
@@ -238,6 +240,77 @@ function createSparkRouterEngine(): RouterEngine {
         responseSchema: HARNESS_TITLE_RESPONSE_SCHEMA,
       })
       return readRouterTitle(value)
+    },
+  }
+}
+
+/**
+ * Jev runs server-side (its API key must never reach the browser), so this
+ * engine calls Tokenless's own session-authenticated dashboard API instead of
+ * TypeSafe directly. Each mutation re-fetches a CSRF token first, mirroring
+ * DashboardClient's own per-call re-authentication.
+ */
+async function jevDashboardRequest<T>(path: string, method: 'GET' | 'POST', body?: unknown): Promise<T> {
+  let csrf = ''
+  if (method === 'POST') {
+    const session = await fetch('/dashboard-api/v1/session')
+    if (!session.ok) throw new RouterEngineError('unavailable', jevObservation())
+    csrf = ((await session.json()) as { csrf: string }).csrf
+  }
+  const response = await fetch(`/dashboard-api/v1${path}`, {
+    method,
+    headers: {
+      'content-type': 'application/json',
+      ...(method === 'POST' ? { 'x-tokenless-csrf': csrf } : {}),
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  })
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => null) as { error?: { message?: string } } | null
+    throw new Error(errorBody?.error?.message ?? `Jev request failed with HTTP ${response.status}.`)
+  }
+  return await response.json() as T
+}
+
+function jevObservation(): RouterEngineObservation {
+  return {
+    supported: true,
+    code: 'supported',
+    browserId: JEV_ENGINE_ID,
+    browserFamily: 'remote-server',
+    browserVersion: 'jev-latest',
+    minimumChromeMajor: 0,
+  }
+}
+
+function createJevRouterEngine(): RouterEngine {
+  return {
+    async inspect(_browserBinding) {
+      return jevObservation()
+    },
+
+    async availability(_browserBinding) {
+      const observation = jevObservation()
+      try {
+        await jevDashboardRequest('/jev/history', 'GET')
+      } catch {
+        throw new RouterEngineError('unavailable', observation)
+      }
+      return { observation, status: 'available' }
+    },
+
+    async route(task, providers, _browserBinding, callbacks) {
+      const observation = jevObservation()
+      callbacks.onObservation(observation)
+      callbacks.onAvailability('checking')
+      const { route } = await jevDashboardRequest<{ route: RouterResult, latencyMs: number }>('/jev/route', 'POST', { task, providers })
+      callbacks.onAvailability('available')
+      callbacks.onDownloadProgress(null)
+      return route
+    },
+
+    async title(task, _browserBinding) {
+      return deriveJevHeuristicTitle(task)
     },
   }
 }

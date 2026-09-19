@@ -68,6 +68,7 @@ export class MetaProvider extends BaseProvider<'meta'> {
         '[data-testid="user-menu-button"]',
       ]),
       loginIndicators: Object.freeze([]),
+      capacityExhaustedTextPatterns: Object.freeze([]),
       blockerSelectors: Object.freeze([
         'iframe[src*="recaptcha" i]',
         'iframe[src*="hcaptcha.com" i]',

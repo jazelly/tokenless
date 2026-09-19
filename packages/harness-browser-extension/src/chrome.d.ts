@@ -3,6 +3,7 @@ declare namespace chrome {
     const id: string
     function getManifest(): { version: string }
     function sendMessage<T = unknown>(message: unknown): Promise<T>
+    function openOptionsPage(): Promise<void>
     const onMessage: {
       addListener(listener: (message: unknown, sender: unknown) => void | Promise<unknown>): void
     }
@@ -12,6 +13,10 @@ declare namespace chrome {
       function get<T extends object>(keys: string[] | object): Promise<Partial<T>>
       function set(values: object): Promise<void>
       function remove(keys: string[] | string): Promise<void>
+    }
+    type StorageChange = { oldValue?: unknown; newValue?: unknown }
+    const onChanged: {
+      addListener(listener: (changes: Record<string, StorageChange>, areaName: string) => void): void
     }
   }
   namespace tabs {

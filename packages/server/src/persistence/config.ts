@@ -89,13 +89,15 @@ export type DirectProviderConfig = {
   providerBackends: Record<string, ProviderBackend>
 }
 
-export const ROUTER_ENGINES = Object.freeze(['chrome-prompt-api', 'spark-x2.5-4b-mlx'] as const)
+export const ROUTER_ENGINES = Object.freeze(['chrome-prompt-api', 'spark-x2.5-4b-mlx', 'jev'] as const)
 export type RouterEngine = typeof ROUTER_ENGINES[number]
 
 export type RouterConfig = {
   enabled: boolean
   engine: RouterEngine
   providers: RouterProviderRule[]
+  /** User-supplied TypeSafe API key for the Jev engine; null falls back to the server's own TYPESAFE_API_KEY env var. */
+  jevApiKey: string | null
 }
 
 export type RouterProviderRule = {
@@ -320,7 +322,7 @@ export async function writeTokenlessConfig({
       directProvider: directProvider === undefined
         ? current.directProvider
         : validateDirectProviderConfig(directProvider),
-      router: router === undefined ? current.router : validateRouterConfig(router),
+      router: router === undefined ? current.router : validateRouterConfig(router, current.router.jevApiKey),
     }
     await writeJsonAtomic(configPath(homeDir), config, 0o600)
     return config
@@ -525,9 +527,18 @@ function validateDirectProviderConfig(value: unknown): DirectProviderConfig {
 }
 
 function isRouterConfig(value: unknown): value is RouterConfig {
-  if (!isJsonRecord(value) || Object.keys(value).length !== 3 || !Array.isArray(value.providers)) return false
+  if (!isJsonRecord(value) || !Array.isArray(value.providers)) return false
+  const keyCount = Object.keys(value).length
+  // Config files written before jevApiKey existed have 3 keys; tolerate that shape so
+  // existing installs don't fail to read their persisted router config on upgrade.
+  if (keyCount !== 3 && keyCount !== 4) return false
   if (typeof value.enabled !== 'boolean' || !ROUTER_ENGINES.includes(value.engine as RouterEngine)) return false
+  if ('jevApiKey' in value && !isJevApiKey(value.jevApiKey)) return false
   return isRouterProviderRules(value.providers)
+}
+
+function isJevApiKey(value: unknown): value is string | null {
+  return value === null || (typeof value === 'string' && value.length <= 400)
 }
 
 function isRouterProviderRules(providers: unknown[]): providers is RouterProviderRule[] {
@@ -546,11 +557,19 @@ function normalizeRouterConfig(value: unknown): RouterConfig {
   return isRouterConfig(value) ? copyRouterConfig(value) : defaultRouterConfig()
 }
 
-function validateRouterConfig(value: unknown): RouterConfig {
+/**
+ * Validates a router config update. `jevApiKey` is write-only on the dashboard's read side
+ * (only a "configured" boolean is exposed there), so a client updating unrelated router
+ * fields (engine, enabled, providers) naturally omits it; that must preserve the
+ * already-persisted key rather than wiping it. An explicit `jevApiKey` (string or null)
+ * in the incoming payload still overwrites or clears it.
+ */
+function validateRouterConfig(value: unknown, currentJevApiKey: string | null): RouterConfig {
   if (!isRouterConfig(value)) {
     throw configError('tokenless_config_invalid', 'Invalid Tokenless router configuration.')
   }
-  return copyRouterConfig(value)
+  const copy = copyRouterConfig(value)
+  return isJsonRecord(value) && 'jevApiKey' in value ? copy : { ...copy, jevApiKey: currentJevApiKey }
 }
 
 function copyRouterConfig(value: RouterConfig): RouterConfig {
@@ -561,11 +580,12 @@ function copyRouterConfig(value: RouterConfig): RouterConfig {
       id: provider.id,
       suitableTasks: provider.suitableTasks.trim(),
     })),
+    jevApiKey: typeof value.jevApiKey === 'string' ? (value.jevApiKey.trim() || null) : null,
   }
 }
 
 function defaultRouterConfig(): RouterConfig {
-  return { enabled: false, engine: 'chrome-prompt-api', providers: [] }
+  return { enabled: false, engine: 'chrome-prompt-api', providers: [], jevApiKey: null }
 }
 
 function isOutputSavingsConfig(value: unknown): value is OutputSavingsConfig {
