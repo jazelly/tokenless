@@ -1,6 +1,6 @@
 # Provider icon sources
 
-Static copies used by the README provider list and Dashboard. The original set was retrieved on 2026-09-06. Provider names and artwork belong to their respective owners.
+Static copies used by the README provider list and Dashboard. The original set was retrieved on 2026-09-06; Lovable and Agnes AI were added from their official sources on 2026-09-19. Provider names and artwork belong to their respective owners.
 
 | Provider | Local file | Source |
 | --- | --- | --- |
@@ -19,6 +19,8 @@ Static copies used by the README provider list and Dashboard. The original set w
 | Meta AI | [meta.ico](meta.ico) | [Original asset](https://meta.ai/favicon.ico) |
 | Microsoft Copilot | [microsoft-copilot.ico](microsoft-copilot.ico) | [Original asset](https://copilot.microsoft.com/favicon.ico) |
 | GitHub Copilot | [github-copilot.svg](github-copilot.svg) | [Original asset](https://cdn.simpleicons.org/githubcopilot) |
+| Lovable | [lovable.svg](lovable.svg) | [Original asset](https://lovable.dev/favicon.svg) |
+| Agnes AI | [agnes.svg](agnes.svg) | [Original asset](https://app.agnes-ai.com/images/agnes-icon.svg) |
 
 ## Dashboard matrix additions
 
