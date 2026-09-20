@@ -7,63 +7,119 @@
     <link rel="stylesheet" href="panel.css">
   </head>
   <body>
-    <main>
-      <header class="title-row">
-        <div>
-          <p class="eyebrow" id="eyebrow"></p>
-          <h1 id="app-heading"></h1>
+    <main class="panel-shell">
+      <header class="panel-header">
+        <div class="brand-lockup">
+          <span class="brand-mark" aria-hidden="true">T</span>
+          <span class="brand-name">Tokenless Harness</span>
         </div>
-        <button id="settings" class="icon-button" type="button" aria-label="Settings" title="Settings">&#9881;</button>
+        <div class="header-actions">
+          <span id="connection-badge" class="connection-badge">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span id="connection" aria-live="polite"></span>
+          </span>
+          <button id="settings" class="icon-button" type="button" aria-label="Settings" title="Settings">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M12 8.25a3.75 3.75 0 1 0 0 7.5 3.75 3.75 0 0 0 0-7.5Zm8.2 3.75a6.2 6.2 0 0 0-.08-1l1.43-1.1-1.6-2.77-1.69.7a6.4 6.4 0 0 0-1.72-1L16.3 5h-3.2l-.24 1.83a6.4 6.4 0 0 0-1.72 1l-1.69-.7-1.6 2.77 1.43 1.1a6.2 6.2 0 0 0 0 2l-1.43 1.1 1.6 2.77 1.69-.7a6.4 6.4 0 0 0 1.72 1L13.1 19h3.2l.24-1.83a6.4 6.4 0 0 0 1.72-1l1.69.7 1.69.7 1.6-2.77-1.43-1.1c.05-.33.08-.66.08-1Z" />
+            </svg>
+          </button>
+        </div>
       </header>
 
-      <section class="card">
-        <h2 id="connection-heading"></h2>
-        <p id="connection" class="status"></p>
-        <label><span id="daemon-label"></span><input id="daemon" value="http://127.0.0.1:7331" autocomplete="off"></label>
-        <p id="route" class="muted"></p>
-        <div class="button-row">
-          <button id="pair" type="button"></button>
-          <button id="unpair" class="secondary" type="button"></button>
-          <button id="refresh" class="secondary" type="button"></button>
+      <section class="conversation" aria-labelledby="app-heading">
+        <div class="welcome">
+          <p class="eyebrow" id="eyebrow"></p>
+          <h1 id="app-heading"></h1>
+          <p id="welcome-body" class="welcome-body"></p>
         </div>
-        <p id="pairing-help" class="muted"></p>
-      </section>
 
-      <section class="card">
-        <h2 id="current-tab-heading"></h2>
-        <p id="page" class="status"></p>
-        <p id="origin" class="muted"></p>
-        <label class="checkbox"><input id="consent" type="checkbox"> <span id="consent-label"></span></label>
-        <button id="attach" type="button"></button>
-        <pre id="inventory" class="inventory" aria-live="polite"></pre>
-      </section>
+        <section id="approval" class="approval-panel" aria-labelledby="approval-heading" hidden>
+          <div class="panel-kicker">
+            <span id="approval-heading"></span>
+            <span class="approval-badge" aria-hidden="true">!</span>
+          </div>
+          <p id="proposal"></p>
+          <label id="upload-label" class="file-field" hidden>
+            <span id="upload-label-text"></span>
+            <input id="upload-file" name="uploadFile" type="file">
+          </label>
+          <div class="button-row">
+            <button id="approve" type="button"></button>
+            <button id="reject" class="secondary" type="button"></button>
+          </div>
+        </section>
 
-      <section class="card">
-        <h2 id="task-heading"></h2>
-        <label for="task"><span id="task-label"></span></label>
-        <textarea id="task" rows="3"></textarea>
-        <div class="button-row">
-          <button id="run" type="button"></button>
-          <button id="cancel" class="secondary" type="button"></button>
+        <section id="permission" class="permission-panel" aria-labelledby="permission-heading" hidden>
+          <div class="permission-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <path d="M12 3.25 19 6v5.25c0 4.37-2.63 7.95-7 9.5-4.37-1.55-7-5.13-7-9.5V6l7-2.75Z" />
+              <path d="m8.8 12 2.1 2.1 4.35-4.35" />
+            </svg>
+          </div>
+          <div class="permission-copy">
+            <h2 id="permission-heading"></h2>
+            <p id="permission-body"></p>
+          </div>
+          <div class="button-row permission-actions">
+            <button id="allow-access" type="button"></button>
+            <button id="not-now" class="quiet" type="button"></button>
+          </div>
+        </section>
+
+        <pre id="final" class="final-output" aria-live="polite" hidden></pre>
+
+        <div class="conversation-spacer"></div>
+
+        <div class="page-context" aria-live="polite">
+          <div class="context-copy">
+            <span class="context-dot" aria-hidden="true"></span>
+            <div>
+              <strong id="page"></strong>
+              <span id="origin" class="context-origin"></span>
+            </div>
+          </div>
+          <button id="attach" class="context-action" type="button" title="Refresh page context">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M20 11a8 8 0 0 0-14.9-3.9L3 10m0 0V5m0 5h5M4 13a8 8 0 0 0 14.9 3.9L21 14m0 0v5m0-5h-5" />
+            </svg>
+            <span id="attach-label"></span>
+          </button>
         </div>
-        <p id="run-status" class="status"></p>
-        <pre id="final" class="inventory" hidden></pre>
-      </section>
 
-      <section id="approval" class="card approval" hidden>
-        <h2 id="approval-heading"></h2>
-        <p id="proposal"></p>
-        <label id="upload-label" hidden><span id="upload-label-text"></span><input id="upload-file" type="file"></label>
-        <div class="button-row">
-          <button id="approve" type="button"></button>
-          <button id="reject" class="secondary" type="button"></button>
+        <form id="task-form" class="composer">
+          <label id="task-label" class="sr-only" for="task"></label>
+          <textarea id="task" name="taskPrompt" rows="3" autocomplete="off"></textarea>
+          <div class="composer-toolbar">
+            <div class="composer-meta">
+              <button id="privacy-toggle" class="toolbar-button" type="button" aria-expanded="false" aria-controls="privacy-popover">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17Zm0 4.25v.1m0 2.4v4.25" />
+                </svg>
+                <span id="privacy-heading"></span>
+              </button>
+              <div id="privacy-popover" class="privacy-popover" role="status" hidden>
+                <p id="privacy-body"></p>
+              </div>
+            </div>
+            <div class="composer-actions">
+              <kbd aria-hidden="true">↵</kbd>
+              <button id="run" class="send-button" type="submit" aria-label="Send">
+                <span id="run-label" class="sr-only"></span>
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="m5 12 14-7-3.5 14-3.25-5.75L5 12Z" />
+                  <path d="m12.25 13.25 3.5-2.25" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </form>
+
+        <div class="status-row">
+          <p id="run-status" class="run-status" aria-live="polite"></p>
+          <button id="cancel" class="quiet cancel-button" type="button" hidden></button>
         </div>
       </section>
 
-      <section class="disclosure">
-        <strong id="privacy-heading"></strong>
-        <p id="privacy-body"></p>
-      </section>
     </main>
     <script type="module" src="panel.js"></script>
   </body>

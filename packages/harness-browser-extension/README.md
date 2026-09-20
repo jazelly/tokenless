@@ -13,11 +13,12 @@ Load `dist/unpacked` with **Chrome → Extensions → Developer mode → Load un
 ## Use
 
 1. Start the configured Tokenless API daemon at `http://127.0.0.1:7331`.
-2. Open the extension side panel and choose **Pair in Dashboard**.
+2. Open the extension side panel, open **Settings**, and choose **Pair in Dashboard** under Connection.
 3. In the local Dashboard, verify the extension ID and approve one provider/profile route.
-4. Open a normal `http` or `https` page, choose **Attach**, and review the origin and bounded control inventory.
-5. Consent to the provider disclosure and private local evidence capture, enter a task, and approve each exact proposed action before it runs.
-6. For an upload proposal, choose exactly one local file in the side panel before approval.
+4. Open a normal `http` or `https` page and keep its tab selected.
+5. Enter a task in the side panel. The first send prepares the current page and asks for page access only when it is needed.
+6. Review the page origin and each exact proposed action, then approve or reject every action before it runs.
+7. For an upload proposal, choose exactly one local file in the side panel before approval.
 
 The V2 candidate exposes `browser_page_observe`, `browser_page_input`, `browser_page_click`, `browser_page_submit`, `browser_page_radio`, `browser_page_upload`, and `browser_page_navigate`. It does not run arbitrary JavaScript or accept selectors.
 
@@ -25,7 +26,8 @@ Full local evidence is written under the selected Tokenless API home's `harness-
 
 ## Repair and removal
 
-- If the tab, document, or daemon changes, attach the current page again and start a new run.
+- If the tab, document, or daemon changes, use **Refresh page context** in the side panel and start a new run.
+- Connection, language, and privacy details live under **Settings**; the side panel stays focused on the task.
 - **Unpair** revokes the extension-scoped credential. Removing the extension from Chrome removes its local credential copy.
 - A daemon restart discards the in-memory extension session and Harness run; the candidate does not replay page mutations.
 

@@ -1,4 +1,6 @@
-import { actionLabel, destination, getLanguage, originDisclosure, pairingRequested, proposedText, routeValue, stateLabel, t, tabAttachedLocally, type Language } from './i18n.js'
+import { actionLabel, destination, getLanguage, proposedText, stateLabel, t, tabAttachedLocally, type Language } from './i18n.js'
+
+const DEFAULT_DAEMON_ORIGIN = 'http://127.0.0.1:7331'
 
 type Stored = { daemonOrigin?: string; credential?: string }
 type Page = { tabId: number; origin: string; url: string; title: string; documentId: string; documentRevision: number }
@@ -36,20 +38,13 @@ type RunView = { runId: string; status: string; final?: { output: string }; erro
 
 type ConnectionState =
   | { kind: 'notPaired' }
-  | { kind: 'pairingRequested'; id: string }
   | { kind: 'paired' }
-  | { kind: 'pairingExpiredOrRevoked' }
-  | { kind: 'pairingExpired' }
   | { kind: 'credentialNeedsPairing' }
   | { kind: 'error'; message: string }
-type RouteState = { kind: 'default' } | { kind: 'paired'; provider: string; profileId: string }
 type PageState = { kind: 'none' } | { kind: 'attached'; title: string; origin: string }
-type DisclosureState = { kind: 'default' } | { kind: 'origin'; origin: string }
-type InventoryState = { kind: 'none' } | { kind: 'empty' } | { kind: 'list'; controls: Observation['controls'] }
 type RunStatusState =
   | { kind: 'noRun' }
   | { kind: 'pairFirst' }
-  | { kind: 'pairAndAttach' }
   | { kind: 'consentRequired' }
   | { kind: 'enterTask' }
   | { kind: 'selectOneFile' }
@@ -58,14 +53,16 @@ type RunStatusState =
   | { kind: 'error'; message: string }
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
-const daemon = $<HTMLInputElement>('daemon')
 const connection = $('connection')
-const route = $('route')
+const connectionBadge = $('connection-badge')
 const pageStatus = $('page')
-const disclosure = $('origin')
-const inventory = $('inventory')
-const consent = $<HTMLInputElement>('consent')
+const pageOrigin = $('origin')
+const contextDot = document.querySelector('.context-dot') as HTMLElement
+const attachButton = $<HTMLButtonElement>('attach')
+const taskForm = $<HTMLFormElement>('task-form')
 const task = $<HTMLTextAreaElement>('task')
+const runButton = $<HTMLButtonElement>('run')
+const cancelButton = $<HTMLButtonElement>('cancel')
 const runStatus = $('run-status')
 const finalOutput = $('final')
 const approval = $('approval')
@@ -74,8 +71,14 @@ const approveButton = $<HTMLButtonElement>('approve')
 const rejectButton = $<HTMLButtonElement>('reject')
 const uploadLabel = $('upload-label')
 const uploadFile = $<HTMLInputElement>('upload-file')
+const permission = $('permission')
+const allowAccessButton = $<HTMLButtonElement>('allow-access')
+const notNowButton = $<HTMLButtonElement>('not-now')
+const privacyToggle = $<HTMLButtonElement>('privacy-toggle')
+const privacyPopover = $('privacy-popover')
 
 let credential = ''
+let daemonOrigin = DEFAULT_DAEMON_ORIGIN
 let sessionId = ''
 let selectedPage: Page | undefined
 let observation: Observation | undefined
@@ -84,37 +87,77 @@ let runId = ''
 let proposal: Proposal | undefined
 let stopped = true
 let detached = false
+let consentGranted = false
 const appliedActions = new Set<string>()
 
 let language: Language = 'en'
 let connectionState: ConnectionState = { kind: 'notPaired' }
-let routeState: RouteState = { kind: 'default' }
 let pageState: PageState = { kind: 'none' }
-let disclosureState: DisclosureState = { kind: 'default' }
-let inventoryState: InventoryState = { kind: 'none' }
 let runStatusState: RunStatusState = { kind: 'noRun' }
 
-$('settings').addEventListener('click', () => void chrome.runtime.openOptionsPage())
-$('pair').addEventListener('click', () => void pair())
-$('unpair').addEventListener('click', () => void unpair())
-$('refresh').addEventListener('click', () => void refreshConnection())
-$('attach').addEventListener('click', () => void observeTab())
-$('run').addEventListener('click', () => void startRun())
-$('cancel').addEventListener('click', () => void cancelRun())
+$('settings').addEventListener('click', () => void openSettings())
+attachButton.addEventListener('click', () => void observeTab())
+taskForm.addEventListener('submit', (event) => {
+  event.preventDefault()
+  void startRun()
+})
+task.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault()
+    taskForm.requestSubmit()
+  }
+})
+cancelButton.addEventListener('click', () => void cancelRun())
+allowAccessButton.addEventListener('click', () => {
+  consentGranted = true
+  permission.hidden = true
+  void startRun()
+})
+notNowButton.addEventListener('click', () => {
+  permission.hidden = true
+  setRunStatus({ kind: 'noRun' })
+})
 approveButton.addEventListener('click', () => void decide(true))
 rejectButton.addEventListener('click', () => void decide(false))
 uploadFile.addEventListener('change', () => {
   if (proposal?.action === 'upload' && proposal.status === 'awaiting_approval') approveButton.disabled = uploadFile.files?.length !== 1
 })
+privacyToggle.addEventListener('click', () => {
+  const nextOpen = privacyPopover.hidden
+  privacyPopover.hidden = !nextOpen
+  privacyToggle.setAttribute('aria-expanded', String(nextOpen))
+})
+document.addEventListener('click', (event) => {
+  if (privacyPopover.hidden || !(event.target instanceof Node)) return
+  if (privacyPopover.contains(event.target) || privacyToggle.contains(event.target)) return
+  privacyPopover.hidden = true
+  privacyToggle.setAttribute('aria-expanded', 'false')
+})
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || privacyPopover.hidden) return
+  privacyPopover.hidden = true
+  privacyToggle.setAttribute('aria-expanded', 'false')
+  privacyToggle.focus()
+})
 chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName === 'local' && 'language' in changes) void applyLanguage()
+  if (areaName !== 'local') return
+  if ('language' in changes) void applyLanguage()
+  if ('credential' in changes) {
+    credential = typeof changes.credential.newValue === 'string' ? changes.credential.newValue : ''
+    void refreshConnection()
+  }
+  if ('daemonOrigin' in changes) {
+    const nextOrigin = changes.daemonOrigin.newValue
+    daemonOrigin = normalizeStoredOrigin(typeof nextOrigin === 'string' ? nextOrigin : undefined)
+    void refreshConnection()
+  }
 })
 
 void initialize()
 
 async function initialize() {
   const stored = await chrome.storage.local.get<Stored>(['daemonOrigin', 'credential'])
-  if (stored.daemonOrigin) daemon.value = stored.daemonOrigin
+  daemonOrigin = normalizeStoredOrigin(stored.daemonOrigin)
   credential = stored.credential ?? ''
   await applyLanguage()
   await refreshConnection()
@@ -126,88 +169,44 @@ async function applyLanguage() {
   document.title = t(language, 'docTitle')
   $('eyebrow').textContent = t(language, 'eyebrow')
   $('app-heading').textContent = t(language, 'appHeading')
-  $('connection-heading').textContent = t(language, 'connectionHeading')
-  $('daemon-label').textContent = t(language, 'daemonLabel')
-  $('pair').textContent = t(language, 'pairButton')
-  $('unpair').textContent = t(language, 'unpairButton')
-  $('refresh').textContent = t(language, 'refreshButton')
-  $('pairing-help').textContent = t(language, 'pairingHelp')
-  $('current-tab-heading').textContent = t(language, 'currentTabHeading')
-  $('consent-label').textContent = t(language, 'consentLabel')
-  $('attach').textContent = t(language, 'attachButton')
-  $('task-heading').textContent = t(language, 'taskHeading')
+  $('welcome-body').textContent = t(language, 'welcomeBody')
+  $('settings').setAttribute('aria-label', t(language, 'settingsButton'))
+  $('settings').setAttribute('title', t(language, 'settingsButton'))
   $('task-label').textContent = t(language, 'taskLabel')
   task.placeholder = t(language, 'taskPlaceholder')
-  $('run').textContent = t(language, 'startRunButton')
-  $('cancel').textContent = t(language, 'cancelButton')
-  $('approval-heading').textContent = t(language, 'approvalHeading')
-  $('upload-label-text').textContent = t(language, 'uploadLabelText')
-  $('approve').textContent = t(language, 'approveButton')
-  $('reject').textContent = t(language, 'rejectButton')
+  $('run-label').textContent = t(language, 'startRunButton')
+  runButton.setAttribute('aria-label', t(language, 'startRunButton'))
+  cancelButton.textContent = t(language, 'cancelButton')
+  $('attach-label').textContent = t(language, 'attachButton')
+  $('attach').setAttribute('title', t(language, 'attachButton'))
+  $('permission-heading').textContent = t(language, 'permissionHeading')
+  $('permission-body').textContent = t(language, 'permissionBody')
+  allowAccessButton.textContent = t(language, 'allowAccessButton')
+  notNowButton.textContent = t(language, 'notNowButton')
   $('privacy-heading').textContent = t(language, 'privacyHeading')
   $('privacy-body').textContent = t(language, 'privacyBody')
+  $('approval-heading').textContent = t(language, 'approvalHeading')
+  $('upload-label-text').textContent = t(language, 'uploadLabelText')
+  approveButton.textContent = t(language, 'approveButton')
+  rejectButton.textContent = t(language, 'rejectButton')
   renderConnection()
-  renderRoute()
   renderPage()
-  renderDisclosure()
-  renderInventory()
   renderRunStatus()
   if (proposal) proposalText.textContent = proposalDescription(proposal)
 }
 
-async function pair() {
-  try {
-    await saveOrigin()
-    const response = await request<{ pairingId: string; secret: string; dashboardUrl: string; expiresAt: string }>('/v1/harness/browser-extension/pairings', {
-      method: 'POST',
-      body: JSON.stringify({ extensionId: chrome.runtime.id, extensionVersion: chrome.runtime.getManifest().version }),
-    }, false)
-    await chrome.tabs.create({ url: response.dashboardUrl })
-    setConnection({ kind: 'pairingRequested', id: response.pairingId })
-    await pollPairing(response.pairingId, response.secret, Date.parse(response.expiresAt))
-  } catch (error) {
-    setConnection({ kind: 'error', message: errorMessage(error) })
-  }
-}
-
-async function pollPairing(pairingId: string, secret: string, deadline: number) {
-  while (Date.now() < deadline) {
-    await delay(1_200)
-    const result = await request<{ state: string; credential?: string; provider?: string; profileId?: string }>(
-      `/v1/harness/browser-extension/pairings/${encodeURIComponent(pairingId)}/poll`,
-      { method: 'POST', body: JSON.stringify({ secret }) },
-      false,
-    )
-    if (result.state === 'pending') continue
-    if (result.state === 'approved' && result.credential) {
-      credential = result.credential
-      await chrome.storage.local.set({ credential })
-      setConnection({ kind: 'paired' })
-      setRoute({ kind: 'paired', provider: result.provider ?? '—', profileId: result.profileId ?? '—' })
-      return
-    }
-    setConnection({ kind: 'pairingExpiredOrRevoked' })
-    return
-  }
-  setConnection({ kind: 'pairingExpired' })
-}
-
-async function unpair() {
-  try {
-    if (credential) await request('/v1/harness/browser-extension/connection', { method: 'DELETE' })
-  } catch { /* local credential is still removed */ }
-  credential = ''
-  await chrome.storage.local.remove('credential')
-  setConnection({ kind: 'notPaired' })
-  setRoute({ kind: 'default' })
+async function openSettings() {
+  await chrome.runtime.openOptionsPage()
 }
 
 async function refreshConnection() {
-  if (!credential) return setConnection({ kind: 'notPaired' })
+  if (!credential) {
+    setConnection({ kind: 'notPaired' })
+    return
+  }
   try {
-    const value = await request<{ pairing: { provider?: string; profileId?: string } }>('/v1/harness/browser-extension/connection')
+    await request('/v1/harness/browser-extension/connection')
     setConnection({ kind: 'paired' })
-    setRoute({ kind: 'paired', provider: value.pairing.provider ?? '—', profileId: value.pairing.profileId ?? '—' })
   } catch {
     credential = ''
     await chrome.storage.local.remove('credential')
@@ -216,7 +215,11 @@ async function refreshConnection() {
 }
 
 async function observeTab() {
-  if (!credential) return setRunStatus({ kind: 'pairFirst' })
+  if (!credential) {
+    setRunStatus({ kind: 'pairFirst' })
+    void openSettings()
+    return
+  }
   try {
     const result = await chrome.runtime.sendMessage<{ tabId: number; observation: Observation; evidence: PrivateEvidence }>({ type: 'observe-active-tab' })
     const next = result.observation
@@ -224,12 +227,11 @@ async function observeTab() {
     observation = next
     initialEvidence = result.evidence
     selectedPage = { tabId: result.tabId, ...next.page }
-    consent.checked = false
+    consentGranted = false
     sessionId = `extension-session:${crypto.randomUUID().replaceAll('-', '')}`
     detached = false
+    permission.hidden = true
     setPage({ kind: 'attached', title: next.page.title, origin: next.page.origin })
-    setDisclosure({ kind: 'origin', origin: next.page.origin })
-    setInventory(next.controls.length === 0 ? { kind: 'empty' } : { kind: 'list', controls: next.controls })
     setRunStatus({ kind: 'tabAttached', count: next.controls.length })
   } catch (error) {
     setRunStatus({ kind: 'error', message: errorMessage(error) })
@@ -237,17 +239,29 @@ async function observeTab() {
 }
 
 async function startRun() {
-  if (!credential || !observation || !selectedPage || !sessionId || !initialEvidence) return setRunStatus({ kind: 'pairAndAttach' })
-  if (!consent.checked) return setRunStatus({ kind: 'consentRequired' })
+  if (!credential) {
+    setRunStatus({ kind: 'pairFirst' })
+    void openSettings()
+    return
+  }
   if (!task.value.trim()) return setRunStatus({ kind: 'enterTask' })
+  if (!observation || !selectedPage || !sessionId || !initialEvidence) {
+    await observeTab()
+    if (!observation || !selectedPage || !sessionId || !initialEvidence) return
+  }
+  if (!consentGranted) {
+    permission.hidden = false
+    setRunStatus({ kind: 'consentRequired' })
+    return
+  }
   try {
-    await saveOrigin()
+    const currentSessionId = sessionId
     await request('/v1/harness/browser-extension/sessions', {
       method: 'POST',
-      body: JSON.stringify({ sessionId, page: selectedPage, observation, evidence: initialEvidence }),
+      body: JSON.stringify({ sessionId: currentSessionId, page: selectedPage, observation, evidence: initialEvidence }),
     })
     const started = await request<RunView>('/v1/harness/browser-extension/runs', {
-      method: 'POST', body: JSON.stringify({ sessionId, taskPrompt: task.value.trim() }),
+      method: 'POST', body: JSON.stringify({ sessionId: currentSessionId, taskPrompt: task.value.trim() }),
     })
     runId = started.runId
     stopped = false
@@ -275,6 +289,7 @@ async function pollUntilTerminal() {
         stopped = true
         approval.hidden = true
         await detachSession()
+        clearAttachedPage()
         return
       }
     } catch (error) {
@@ -386,7 +401,10 @@ async function cancelRun() {
   try {
     await request(`/v1/harness/browser-extension/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST', body: '{}' })
     stopped = true
+    approval.hidden = true
     await detachSession()
+    clearAttachedPage()
+    setRunStatus({ kind: 'state', state: 'cancelled' })
   } catch (error) {
     setRunStatus({ kind: 'error', message: errorMessage(error) })
   }
@@ -398,8 +416,18 @@ async function detachSession() {
   await request(`/v1/harness/browser-extension/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' }).catch(() => undefined)
 }
 
+function clearAttachedPage() {
+  observation = undefined
+  selectedPage = undefined
+  initialEvidence = undefined
+  sessionId = ''
+  consentGranted = false
+  permission.hidden = true
+  setPage({ kind: 'none' })
+}
+
 function proposalDescription(value: Proposal) {
-  const target = value.target ? `${value.target.label || value.target.name || t(language, 'control')} · ${value.target.inputType}` : value.page.origin
+  const target = value.target ? `${value.target.label || value.target.name || t(language, 'taskLabel')} · ${value.target.inputType}` : value.page.origin
   const detail = value.action === 'input' ? `\n\n${proposedText(language, value.text ?? '')}`
     : value.action === 'navigate' ? `\n\n${destination(language, value.url ?? '')}`
       : value.action === 'upload' ? `\n\n${t(language, 'selectFileBelow')}`
@@ -407,21 +435,19 @@ function proposalDescription(value: Proposal) {
   return `${actionLabel(language, value.action)}\n${target}${detail}`
 }
 
-async function saveOrigin() {
-  const normalized = normalizeOrigin(daemon.value)
-  daemon.value = normalized
-  await chrome.storage.local.set({ daemonOrigin: normalized })
-}
-
 async function request<T = unknown>(path: string, init: RequestInit | undefined = undefined, withCredential = true): Promise<T> {
   const headers = new Headers(init?.headers)
   headers.set('content-type', 'application/json')
   if (withCredential && credential) headers.set('authorization', `Bearer ${credential}`)
-  const response = await fetch(`${normalizeOrigin(daemon.value)}${path}`, { ...init, headers })
+  const response = await fetch(`${normalizeOrigin(daemonOrigin)}${path}`, { ...init, headers })
   if (response.status === 204) return null as T
   const body = await response.json().catch(() => null) as { error?: { message?: string } } | T | null
   if (!response.ok) throw new Error(body && typeof body === 'object' && 'error' in body ? body.error?.message ?? `HTTP ${response.status}` : `HTTP ${response.status}`)
   return body as T
+}
+
+function normalizeStoredOrigin(value: string | undefined) {
+  try { return normalizeOrigin(value ?? DEFAULT_DAEMON_ORIGIN) } catch { return DEFAULT_DAEMON_ORIGIN }
 }
 
 function normalizeOrigin(value: string) {
@@ -434,55 +460,44 @@ function normalizeOrigin(value: string) {
 }
 
 function setConnection(state: ConnectionState) { connectionState = state; renderConnection() }
-function setRoute(state: RouteState) { routeState = state; renderRoute() }
 function setPage(state: PageState) { pageState = state; renderPage() }
-function setDisclosure(state: DisclosureState) { disclosureState = state; renderDisclosure() }
-function setInventory(state: InventoryState) { inventoryState = state; renderInventory() }
 function setRunStatus(state: RunStatusState) { runStatusState = state; renderRunStatus() }
 
 function renderConnection() {
   const state = connectionState
   connection.textContent = state.kind === 'notPaired' ? t(language, 'notPaired')
-    : state.kind === 'pairingRequested' ? pairingRequested(language, state.id)
-      : state.kind === 'paired' ? t(language, 'paired')
-        : state.kind === 'pairingExpiredOrRevoked' ? t(language, 'pairingExpiredOrRevoked')
-          : state.kind === 'pairingExpired' ? t(language, 'pairingExpired')
-            : state.kind === 'credentialNeedsPairing' ? t(language, 'credentialNeedsPairing')
-              : formatError(state.message)
-}
-
-function renderRoute() {
-  route.textContent = routeState.kind === 'default' ? t(language, 'routeDefault') : routeValue(language, routeState.provider, routeState.profileId)
+    : state.kind === 'paired' ? t(language, 'paired')
+      : state.kind === 'credentialNeedsPairing' ? t(language, 'credentialNeedsPairing')
+        : formatError(state.message)
+  connectionBadge.classList.toggle('is-connected', state.kind === 'paired')
 }
 
 function renderPage() {
-  pageStatus.textContent = pageState.kind === 'none' ? t(language, 'noTabAttached') : `${pageState.title || t(language, 'untitled')} · ${pageState.origin}`
-}
-
-function renderDisclosure() {
-  disclosure.textContent = disclosureState.kind === 'default' ? t(language, 'pageDisclosureDefault') : originDisclosure(language, disclosureState.origin)
-}
-
-function renderInventory() {
-  if (inventoryState.kind === 'none') { inventory.textContent = ''; return }
-  if (inventoryState.kind === 'empty') { inventory.textContent = t(language, 'noSupportedControls'); return }
-  inventory.textContent = inventoryState.controls.map((control, index) => {
-    const state = control.role === 'radio' ? (control.checked ? t(language, 'selected') : t(language, 'notSelected')) : control.valuePresence
-    return `${index + 1}. ${control.label || control.name || t(language, 'control')} · ${control.inputType} · ${control.actions.join('/')} · ${state}`
-  }).join('\n')
+  if (pageState.kind === 'attached') {
+    pageStatus.textContent = pageState.title || t(language, 'untitled')
+    pageOrigin.textContent = pageState.origin
+  } else {
+    pageStatus.textContent = t(language, 'noTabAttached')
+    pageOrigin.textContent = ''
+  }
+  contextDot.classList.toggle('is-connected', pageState.kind === 'attached')
 }
 
 function renderRunStatus() {
   const state = runStatusState
+  const terminal = state.kind === 'state' && ['succeeded', 'failed', 'cancelled'].includes(state.state)
+  const active = state.kind === 'state' && !terminal
+  runButton.disabled = active
+  attachButton.disabled = active
+  cancelButton.hidden = !active
   runStatus.textContent = state.kind === 'noRun' ? t(language, 'noRun')
     : state.kind === 'pairFirst' ? t(language, 'pairFirst')
-      : state.kind === 'pairAndAttach' ? t(language, 'pairAndAttach')
-        : state.kind === 'consentRequired' ? t(language, 'consentRequired')
-          : state.kind === 'enterTask' ? t(language, 'enterTask')
-            : state.kind === 'selectOneFile' ? t(language, 'selectOneFile')
-              : state.kind === 'tabAttached' ? tabAttachedLocally(language, state.count)
-                : state.kind === 'state' ? stateLabel(language, state.state)
-                  : formatError(state.message)
+      : state.kind === 'consentRequired' ? t(language, 'consentRequired')
+        : state.kind === 'enterTask' ? t(language, 'enterTask')
+          : state.kind === 'selectOneFile' ? t(language, 'selectOneFile')
+            : state.kind === 'tabAttached' ? tabAttachedLocally(language, state.count)
+              : state.kind === 'state' ? stateLabel(language, state.state)
+                : formatError(state.message)
 }
 
 function formatError(message: string) { return `${message} ${t(language, 'errorSuffix')}` }

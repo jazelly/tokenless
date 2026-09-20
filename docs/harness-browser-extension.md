@@ -23,7 +23,7 @@ npm run build --workspace packages/harness-browser-extension
 1. Start the normally configured Tokenless API daemon on `http://127.0.0.1:7331`.
 2. Open `chrome://extensions`, enable **Developer mode**, and choose **Load unpacked**.
 3. Select `packages/harness-browser-extension/dist/unpacked`.
-4. Open the extension side panel and choose **Pair in Dashboard**.
+4. Open the extension side panel, open **Settings**, and choose **Pair in Dashboard** under Connection.
 5. Verify the exact extension ID in the local Dashboard, then select and approve one enabled provider/profile route.
 
 The issued credential is scoped to that extension identity and its own Harness sessions. It cannot call daemon control, change configuration, or access another caller's run.
@@ -31,12 +31,10 @@ The issued credential is scoped to that extension identity and its own Harness s
 ## Run on a page
 
 1. Open the real page you want to use and keep its tab selected.
-2. Choose **Attach or repair selected tab**.
-3. Check the exact origin and semantic control inventory.
-4. Read the provider disclosure, then explicitly consent before any bounded page content leaves the extension.
-5. Enter a natural-language task and start the Harness run.
-6. Review the exact action, target, text, or destination. For upload, choose one local file. Approve or reject each action separately.
-7. Confirm the intended visible result and the side panel's final output.
+2. Enter a natural-language task in the side panel and send it.
+3. The first send prepares the current page; review the exact origin and allow page access only when the inline prompt appears.
+4. Review the exact action, target, text, or destination. For upload, choose one local file. Approve or reject each action separately.
+5. Confirm the intended visible result and the side panel's final output.
 
 The candidate is not accepted until the user visually confirms the correct field changed on a user-selected real page and unrelated fields and tabs did not change.
 
@@ -51,7 +49,8 @@ The candidate is not accepted until the user visually confirms the correct field
 
 ## Repair, revoke, and uninstall
 
-- After any tab/document/origin change, select the page and attach it again.
+- After any tab/document/origin change, use **Refresh page context** in the side panel before starting another run.
+- Open **Settings** for connection, language, and privacy details; the side panel is reserved for the current task.
 - Use **Unpair** to revoke the credential before removing the extension.
 - Remove the unpacked extension from `chrome://extensions` when testing is complete.
 

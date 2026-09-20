@@ -23,7 +23,7 @@ npm run build --workspace packages/harness-browser-extension
 1. 在 `http://127.0.0.1:7331` 启动正常配置的 Tokenless API daemon。
 2. 打开 `chrome://extensions`，启用 **开发者模式**，选择 **加载已解压的扩展程序**。
 3. 选择 `packages/harness-browser-extension/dist/unpacked`。
-4. 打开 extension side panel，选择 **Pair in Dashboard**。
+4. 打开 extension side panel，进入 **设置**，在连接区域选择 **在 Dashboard 配对**。
 5. 在本地 Dashboard 核对确切的 extension ID，再选择并批准一个已启用的 provider/profile route。
 
 签发的 credential 只授权该 extension identity 及其自己的 Harness session；它不能调用 daemon control、修改配置或访问其他 caller 的 run。
@@ -31,12 +31,10 @@ npm run build --workspace packages/harness-browser-extension
 ## 在页面上运行
 
 1. 打开要使用的真实页面，并保持该 tab 被选中。
-2. 选择 **Attach or repair selected tab**。
-3. 检查确切 origin 与 semantic control inventory。
-4. 阅读 provider disclosure；任何有界页面内容离开扩展前必须明确同意。
-5. 输入自然语言任务并启动 Harness run。
-6. 检查确切 action、target、text 或 destination；upload 时选择一个本地文件。每个 action 单独批准或拒绝。
-7. 确认预期的可见结果与 side panel final output。
+2. 在 side panel 输入自然语言任务并发送。
+3. 第一次发送时会准备当前页面；检查确切 origin，只在 inline prompt 出现时允许页面访问。
+4. 检查确切 action、target、text 或 destination；upload 时选择一个本地文件。每个 action 单独批准或拒绝。
+5. 确认预期的可见结果与 side panel final output。
 
 只有用户在自己选择的真实页面目视确认正确字段被修改、无关字段和 tab 未变化，candidate 才算通过验收。
 
@@ -51,7 +49,8 @@ npm run build --workspace packages/harness-browser-extension
 
 ## 修复、撤销与卸载
 
-- Tab/document/origin 发生任何变化后，重新选择页面并再次附着。
+- Tab/document/origin 发生任何变化后，先使用 side panel 的 **刷新页面上下文**，再启动新的 run。
+- 连接、语言和隐私说明请进入 **设置**；side panel 只保留当前任务交互。
 - 移除扩展前先用 **Unpair** 撤销 credential。
 - 测试完成后，从 `chrome://extensions` 移除 unpacked extension。
 
