@@ -21,6 +21,8 @@ import {
   saveTerminalBenchSemanticManifest,
   TerminalBenchSemanticManifestError,
 } from './terminalbench-semantic-manifest.js'
+import { listJevHistory, runJevRoute, runJevSystemOne, type JevSystemOnePayload } from './jev.js'
+import type { HarnessFrontDoorProviderCandidate } from 'tokenless-internal-shared/harness-sidecar'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 type DashboardServerOptions = {
@@ -292,6 +294,40 @@ export class TokenlessDashboardServer {
     }
     if (method === 'POST' && url.pathname === '/dashboard-api/v1/runtime/quiesce') {
       this.writeJson(response, 200, await this.services.quiesceRuntime())
+      return true
+    }
+    if (method === 'GET' && url.pathname === '/dashboard-api/v1/jev/history') {
+      this.writeJson(response, 200, { history: listJevHistory() })
+      return true
+    }
+    if (method === 'POST' && url.pathname === '/dashboard-api/v1/jev/systemone') {
+      const body = await readJson<Partial<JevSystemOnePayload>>(request)
+      const systemOneFields = new Set(['state', 'questions', 'model'])
+      if (Object.keys(body).some((key) => !systemOneFields.has(key))) {
+        throw dashboardError('dashboard_json_invalid', 'Request body must be valid JSON: unknown field', 400)
+      }
+      if (!body.questions) throw dashboardError('dashboard_json_invalid', 'Request body must include "questions".', 400)
+      this.writeJson(response, 200, await runJevSystemOne({
+        state: body.state ?? null,
+        questions: body.questions,
+        ...(body.model ? { model: body.model } : {}),
+      }))
+      return true
+    }
+    if (method === 'POST' && url.pathname === '/dashboard-api/v1/jev/route') {
+      const body = await readJson<{ task?: unknown, providers?: unknown }>(request)
+      const routeFields = new Set(['task', 'providers'])
+      if (Object.keys(body).some((key) => !routeFields.has(key))) {
+        throw dashboardError('dashboard_json_invalid', 'Request body must be valid JSON: unknown field', 400)
+      }
+      if (typeof body.task !== 'string' || !body.task.trim()) {
+        throw dashboardError('dashboard_json_invalid', 'Request body must include a non-empty "task" string.', 400)
+      }
+      if (!Array.isArray(body.providers) || body.providers.length === 0) {
+        throw dashboardError('dashboard_json_invalid', 'Request body must include a non-empty "providers" array.', 400)
+      }
+      const { route, latencyMs } = await runJevRoute(body.task, body.providers as HarnessFrontDoorProviderCandidate[])
+      this.writeJson(response, 200, { route, latencyMs })
       return true
     }
     this.writeJson(response, 404, { error: { code: 'dashboard_route_not_found', message: 'Not found.' } })

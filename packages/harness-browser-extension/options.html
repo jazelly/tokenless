@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Tokenless Harness Settings</title>
+    <link rel="stylesheet" href="panel.css">
+  </head>
+  <body class="settings-body">
+    <main class="settings-shell">
+      <header class="settings-header">
+        <p class="eyebrow">TOKENLESS HARNESS</p>
+        <h1 id="settings-heading"></h1>
+        <p id="settings-subheading" class="settings-subheading"></p>
+      </header>
+
+      <section class="settings-section" aria-labelledby="connection-heading">
+        <div class="settings-section-header">
+          <div>
+            <h2 id="connection-heading"></h2>
+            <p id="connection-help" class="settings-help"></p>
+          </div>
+          <span id="connection" class="settings-status" aria-live="polite"></span>
+        </div>
+        <div class="settings-list">
+          <label class="settings-field">
+            <span id="daemon-label"></span>
+            <input id="daemon" name="daemonOrigin" type="url" value="http://127.0.0.1:7331" autocomplete="off">
+          </label>
+          <p id="route" class="settings-route"></p>
+        </div>
+        <div class="settings-actions">
+          <button id="pair" type="button"></button>
+          <button id="unpair" class="secondary" type="button"></button>
+          <button id="refresh" class="quiet" type="button"></button>
+        </div>
+        <p id="pairing-help" class="settings-help settings-help-bottom"></p>
+      </section>
+
+      <section class="settings-section" aria-labelledby="language-heading">
+        <div class="settings-section-header">
+          <div>
+            <h2 id="language-heading"></h2>
+            <p id="language-help" class="settings-help"></p>
+          </div>
+        </div>
+        <label class="settings-field">
+          <span id="language-label"></span>
+          <select id="language" name="language">
+            <option value="en">English</option>
+            <option value="zh">中文</option>
+          </select>
+        </label>
+      </section>
+
+      <section class="settings-section" aria-labelledby="privacy-heading">
+        <div class="settings-section-header">
+          <div>
+            <h2 id="privacy-heading"></h2>
+            <p id="privacy-body" class="settings-help"></p>
+          </div>
+        </div>
+        <ul class="settings-list settings-list-copy">
+          <li id="permission-summary"></li>
+          <li id="approval-summary"></li>
+          <li id="evidence-summary"></li>
+        </ul>
+      </section>
+    </main>
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

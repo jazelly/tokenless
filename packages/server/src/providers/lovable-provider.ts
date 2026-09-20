@@ -42,6 +42,7 @@ export class LovableProvider extends BaseProvider<'lovable'> {
       busySelectors: Object.freeze([
         '[data-testid="agent-message"]:not(:has([data-testid="agent-message-toolbar"]))',
       ]),
+      capacityExhaustedTextPatterns: Object.freeze([]),
       blockerSelectors: Object.freeze([]),
       fileInputSelectors: Object.freeze([]),
       fileUploadTriggerSelectors: Object.freeze([]),

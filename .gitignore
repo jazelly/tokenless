@@ -5,6 +5,7 @@ dist/
 packages/*/dist/
 apps/macos-menu/.build/
 /packages/dashboard/design-atlas-static/
+/packages/dashboard/design-system/
 *.tsbuildinfo
 /tokenless-beta
 /benchmarks/terminalbench/cache/

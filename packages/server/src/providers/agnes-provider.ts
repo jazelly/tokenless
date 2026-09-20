@@ -54,6 +54,7 @@ export class AgnesProvider extends BaseProvider<'agnes'> {
       effortControlSelectors: Object.freeze([]),
       authIndicators: Object.freeze(['.ant-dropdown-trigger:has(img[alt="avatar"])']),
       loginIndicators: Object.freeze([]),
+      capacityExhaustedTextPatterns: Object.freeze([]),
       blockerSelectors: Object.freeze([]),
       choiceAvailability: DEFAULT_CHOICE_AVAILABILITY,
       capabilities: providerCapabilities(),

@@ -13,6 +13,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/build.mjs",
+    "build:automation": "tsc -p tsconfig.json && TOKENLESS_EXTENSION_BUILD_VARIANT=automation node scripts/build.mjs",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "engines": {

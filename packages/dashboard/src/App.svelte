@@ -80,6 +80,8 @@
     disableOutputSavings: (announce = true) => perform(() => client.disableOutputSavings(), announce),
     clearOutputSavings: (announce = true) => perform(() => client.clearOutputSavings(), announce),
     uninstallOutputSavings: (announce = true) => perform(() => client.uninstallOutputSavings(), announce),
+    testJevSystemOne: (input) => client.testJevSystemOne(input),
+    getJevHistory: () => client.getJevHistory(),
   }
 
   $effect(() => {

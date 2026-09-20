@@ -8583,7 +8583,8 @@
             "type": "string",
             "enum": [
               "chrome-prompt-api",
-              "spark-x2.5-4b-mlx"
+              "spark-x2.5-4b-mlx",
+              "jev"
             ]
           },
           "providers": {
@@ -8592,12 +8593,16 @@
             "items": {
               "$ref": "#/components/schemas/RouterProviderRule"
             }
+          },
+          "jevApiKeyConfigured": {
+            "type": "boolean"
           }
         },
         "required": [
           "enabled",
           "engine",
-          "providers"
+          "providers",
+          "jevApiKeyConfigured"
         ],
         "additionalProperties": false
       },
@@ -8779,6 +8784,48 @@
           "headless"
         ]
       },
+      "ConfiguredRateLimitRule": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/ProviderId"
+          },
+          "requestType": {
+            "type": "string",
+            "enum": [
+              "submission",
+              "message",
+              "image",
+              "file"
+            ]
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "provider",
+              "profile"
+            ]
+          },
+          "windowSeconds": {
+            "type": "number"
+          },
+          "maxRequests": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "provider",
+          "requestType",
+          "scope",
+          "windowSeconds",
+          "maxRequests"
+        ],
+        "additionalProperties": false
+      },
       "DashboardConfig": {
         "type": "object",
         "properties": {
@@ -8874,6 +8921,12 @@
           },
           "browserTabGc": {
             "$ref": "#/components/schemas/BrowserTabGcConfig"
+          },
+          "rateLimits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConfiguredRateLimitRule"
+            }
           }
         },
         "required": [
@@ -8887,7 +8940,8 @@
           "outputSavings",
           "g4f",
           "directProvider",
-          "router"
+          "router",
+          "rateLimits"
         ],
         "additionalProperties": false
       },
@@ -9141,6 +9195,191 @@
         "required": ["schema", "generatedAt", "timeZone", "range", "profileId", "totals", "daily", "providers", "capabilities", "capabilityFamilies", "capabilityMatrix", "executionModes", "measurementCoverage"],
         "additionalProperties": false
       },
+      "DashboardRateLimitRule": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "providerLabel": {
+            "type": "string"
+          },
+          "requestType": {
+            "type": "string",
+            "enum": [
+              "message",
+              "image",
+              "file",
+              "shared"
+            ]
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "plans": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "modes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "scope": {
+            "type": "string"
+          },
+          "windowKind": {
+            "type": "string"
+          },
+          "windowSeconds": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "allowanceKind": {
+            "type": "string"
+          },
+          "allowanceDetails": {
+            "type": "object"
+          },
+          "count": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "unit": {
+            "type": "string"
+          },
+          "enforcement": {
+            "type": "string",
+            "enum": [
+              "preflight",
+              "non_numeric",
+              "enforced",
+              "unknown"
+            ]
+          },
+          "usage": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "profileId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "used": {
+                  "type": "number"
+                },
+                "remaining": {
+                  "type": "number"
+                },
+                "eligibleAt": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "profileId",
+                "used",
+                "remaining",
+                "eligibleAt"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                },
+                "retrievedAt": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "title",
+                "url",
+                "retrievedAt"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "id",
+          "provider",
+          "providerLabel",
+          "requestType",
+          "actions",
+          "plans",
+          "models",
+          "modes",
+          "scope",
+          "windowKind",
+          "windowSeconds",
+          "allowanceKind",
+          "count",
+          "unit",
+          "enforcement",
+          "sources"
+        ],
+        "additionalProperties": false
+      },
+      "DashboardRateLimits": {
+        "type": "object",
+        "properties": {
+          "revision": {
+            "type": "string"
+          },
+          "reviewedAt": {
+            "type": "string"
+          },
+          "reviewAfter": {
+            "type": "string"
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DashboardRateLimitRule"
+            }
+          }
+        },
+        "required": [
+          "revision",
+          "reviewedAt",
+          "reviewAfter",
+          "rules"
+        ],
+        "additionalProperties": false
+      },
       "DashboardSnapshot": {
         "type": "object",
         "properties": {
@@ -9188,6 +9427,9 @@
               "$ref": "#/components/schemas/Capability"
             }
           },
+          "rateLimits": {
+            "$ref": "#/components/schemas/DashboardRateLimits"
+          },
           "jobs": {
             "type": "array",
             "items": {
@@ -9213,6 +9455,7 @@
           "profiles",
           "providers",
           "capabilities",
+          "rateLimits",
           "jobs",
           "diagnostics"
         ],

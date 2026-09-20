@@ -88,6 +88,7 @@ export class GrokProvider extends BaseProvider<'grok'> {
         'div[data-testid="anon-paywall-sign-up-card"]',
         'button:has-text("Sign in")',
       ]),
+      capacityExhaustedTextPatterns: Object.freeze([]),
       blockerSelectors: Object.freeze([
         'div[data-testid="anon-paywall-sign-up-card"]',
         'text=/rate limit|too many requests/i',

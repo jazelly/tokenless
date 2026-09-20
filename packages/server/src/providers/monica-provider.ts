@@ -89,6 +89,7 @@ export class MonicaProvider extends BaseProvider<'monica'> {
         'text=Sign In',
         'text=Sign Up',
       ]),
+      capacityExhaustedTextPatterns: Object.freeze([]),
       blockerSelectors: Object.freeze([
         'text=/too many requests|rate limit|异常高的流量/i',
         'text=/该模型已下线|model.*offline/i',

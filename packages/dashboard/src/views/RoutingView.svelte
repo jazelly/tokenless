@@ -14,11 +14,14 @@
   } from '../router-engine.js'
   import {
     createHarnessFrontDoorSidecar,
+    HARNESS_SIDECAR_PROTOCOL,
     HarnessSidecarError,
     type HarnessFrontDoorResult,
   } from 'tokenless-internal-shared/harness-sidecar'
+  import { JEV_ENGINE_ID } from 'tokenless-internal-shared/jev-router'
   import type { DashboardActions, DashboardHarnessRunView, DashboardProvider, DashboardSnapshot } from '../types.js'
   import type {
+    DashboardJevHistoryEntry,
     DashboardTerminalBenchSemanticManifestEntry,
     DashboardTerminalBenchSemanticTasks,
   } from '../types.js'
@@ -47,7 +50,15 @@
   let formError = $state('')
   let running = $state(false)
   let result = $state<RouterResult | null>(null)
+  let resultLatencyMs = $state<number | null>(null)
   let frontDoorResult = $state<HarnessFrontDoorResult | null>(null)
+  let jevState = $state('{"document": "I was charged twice. Please fix this ASAP."}')
+  let jevQuestions = $state('{\n  "category": {\n    "type": "choice",\n    "instructions": "What is this ticket about?",\n    "criteria": { "billing": null, "technical": null, "other": null }\n  }\n}')
+  let jevRunning = $state(false)
+  let jevError = $state('')
+  let jevResult = $state<{ model: string, answers: unknown, usage: unknown, latencyMs: number } | null>(null)
+  let jevHistory = $state<DashboardJevHistoryEntry[]>([])
+  let jevHistoryLoaded = false
   let harnessRun = $state<DashboardHarnessRunView | null>(null)
   let startingHarnessRun = $state(false)
   let manifestBusy = $state(false)
@@ -74,7 +85,11 @@
   const displayedAvailability = $derived(!enabled ? 'disabled' : observedAvailabilityContext === availabilityContext ? availability : 'checking')
   const displayedAvailabilityError = $derived(enabled && observedAvailabilityContext === availabilityContext ? availabilityError : '')
   const displayedDownloadProgress = $derived(enabled && observedAvailabilityContext === availabilityContext ? downloadProgress : null)
-  const engineRequirement = $derived(engine === 'spark-x2.5-4b-mlx' ? t('sparkServerRequirement') : t('routerBrowserRequirement'))
+  const engineRequirement = $derived(
+    engine === 'spark-x2.5-4b-mlx' ? t('sparkServerRequirement')
+      : engine === JEV_ENGINE_ID ? t('jevServerRequirement')
+        : t('routerBrowserRequirement'),
+  )
   const providers = $derived(snapshot.providers.filter((provider) => provider.stage !== 'disabled' && provider.executionModes.includes('browser')))
   const candidates = $derived(buildProviderCandidates())
   const enabledProviderCount = $derived(providers.filter((provider) => providerState(provider)?.enabled === true).length)
@@ -314,6 +329,32 @@
     return invocationId === routeInvocationId && context === semanticContext
   }
 
+  /**
+   * Jev's typed judgments cannot generate free text, so it does not implement the
+   * generic HarnessAiEngine used by createRouterAiEngine/createHarnessFrontDoorSidecar.
+   * Title comes from a local heuristic (no network call) and route comes from the
+   * server-mediated Jev router engine; this assembles the same result shape the
+   * generic path returns so the rest of the view stays engine-agnostic.
+   */
+  async function runJevFrontDoor(taskPrompt: string, binding: RouterBrowserBinding): Promise<HarnessFrontDoorResult> {
+    const jevEngine = createRouterEngine(JEV_ENGINE_ID)
+    const title = await jevEngine.title(taskPrompt, binding)
+    const route = await jevEngine.route(taskPrompt, candidates, binding, {
+      onObservation(value) {
+        observation = value
+        observationBindingKey = availabilityContext
+      },
+      onAvailability(value) {
+        availability = value
+        observedAvailabilityContext = availabilityContext
+      },
+      onDownloadProgress(value) {
+        downloadProgress = value
+      },
+    })
+    return { protocol: HARNESS_SIDECAR_PROTOCOL, kind: 'front_door', engine: JEV_ENGINE_ID, title, route }
+  }
+
   async function run() {
     if (!enabled) {
       formError = t('routerDisabledError')
@@ -333,6 +374,7 @@
     }
     formError = ''
     result = null
+    resultLatencyMs = null
     frontDoorResult = null
     harnessRun = null
     running = true
@@ -341,15 +383,19 @@
     const requestedBindingKey = bindingKey(binding)
     const requestedContext = semanticContext
     const invocationId = ++routeInvocationId
+    const startedAt = performance.now()
     try {
-      const prepared = await createHarnessFrontDoorSidecar(createRouterAiEngine(engine)).prepare({
-        taskPrompt: task.trim(),
-        providers: candidates,
-        browserBinding: binding,
-      })
+      const prepared = engine === JEV_ENGINE_ID
+        ? await runJevFrontDoor(task.trim(), binding)
+        : await createHarnessFrontDoorSidecar(createRouterAiEngine(engine)).prepare({
+          taskPrompt: task.trim(),
+          providers: candidates,
+          browserBinding: binding,
+        })
       if (!routeInvocationMatches(invocationId, requestedContext)) return
       frontDoorResult = prepared
       result = prepared.route
+      resultLatencyMs = Math.round(performance.now() - startedAt)
     } catch (error) {
       if (!routeInvocationMatches(invocationId, requestedContext)) return
       if (error instanceof RouterEngineError) {
@@ -366,6 +412,7 @@
       }
     } finally {
       if (routeInvocationMatches(invocationId, requestedContext)) running = false
+      if (engine === JEV_ENGINE_ID) void loadJevHistory()
     }
   }
 
@@ -424,6 +471,54 @@
     }
   }
 
+  async function loadJevHistory() {
+    try {
+      jevHistory = await actions.getJevHistory()
+    } catch {
+      // History is a convenience display; a failed fetch just leaves the list empty.
+    }
+  }
+
+  async function runJevPlayground() {
+    let questions: Record<string, unknown>
+    try {
+      const parsed: unknown = JSON.parse(jevQuestions)
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object')
+      questions = parsed as Record<string, unknown>
+    } catch {
+      jevError = t('jevPlaygroundInvalidJson')
+      return
+    }
+    if (!jevState.trim()) {
+      jevError = t('jevPlaygroundStateRequired')
+      return
+    }
+    let state: unknown = jevState
+    try {
+      state = JSON.parse(jevState)
+    } catch {
+      // Plain text state is valid too; only JSON-looking input gets parsed.
+    }
+    jevError = ''
+    jevResult = null
+    jevRunning = true
+    try {
+      jevResult = await actions.testJevSystemOne({ state, questions })
+    } catch (error) {
+      jevError = error instanceof Error ? error.message : t('requestFailed')
+    } finally {
+      jevRunning = false
+      void loadJevHistory()
+    }
+  }
+
+  $effect(() => {
+    if (engine === JEV_ENGINE_ID && !jevHistoryLoaded) {
+      jevHistoryLoaded = true
+      void loadJevHistory()
+    }
+  })
+
   async function startHarnessRun() {
     if (!frontDoorResult || startingHarnessRun) return
     const profile = selectedProfileState()
@@ -467,6 +562,7 @@
       <select value={engine} disabled={busy || pendingEngine !== null} onchange={(event) => void changeEngine((event.currentTarget as HTMLSelectElement).value as RouterEngineId)} data-testid="router-engine">
         <option value="chrome-prompt-api">{t('chromePromptApiEngine')}</option>
         <option value="spark-x2.5-4b-mlx">{t('sparkX25MlxEngine')}</option>
+        <option value="jev">{t('jevEngine')}</option>
       </select>
       <small>{t('routerEngineHelp')}</small>
     </label>
@@ -500,11 +596,16 @@
     </ol>
     <p>{t('chromeModelVersionHelp')}</p>
   </section>
-  {:else}
+  {:else if engine === 'spark-x2.5-4b-mlx'}
   <section class="settings-section system-card router-setup" data-testid="router-spark-setup">
     <div class="settings-section-title"><div><h2>{t('sparkSetup')}</h2><p>{t('sparkSetupIntro')}</p></div></div>
     <p>{t('sparkSetupCommand')}</p>
     <p>{t('sparkSetupEndpoint')}</p>
+  </section>
+  {:else}
+  <section class="settings-section system-card router-setup" data-testid="router-jev-setup">
+    <div class="settings-section-title"><div><h2>{t('jevSetup')}</h2><p>{t('jevSetupIntro')}</p></div></div>
+    <p>{t('jevSetupNote')}</p>
   </section>
   {/if}
 
@@ -514,8 +615,41 @@
     {#if enabledProviderCount === 0}<div class="inline-feedback error" data-testid="router-provider-block">{t('routerNeedsEnabledProviders')}</div>
     {:else if candidates.length === 0}<div class="inline-feedback warning" data-testid="router-provider-block">{t('routerNeedsProviderRules')}</div>{/if}
     <div class="form-actions"><button class="button primary" type="button" disabled={!enabled || running || busy || displayedAvailability === 'checking' || displayedAvailability === 'unavailable' || displayedAvailability === 'unsupported' || displayedAvailability === 'blocked' || currentObservation?.supported === false || candidates.length === 0} onclick={run} data-testid="router-run">{running ? t('routerRunning') : t('runSemanticRouter')}</button></div>
-    {#if result}<div class="router-result" data-testid="router-result"><h3>{t('routerResult')}</h3><pre>{JSON.stringify(result, null, 2)}</pre><button class="button secondary" type="button" disabled={startingHarnessRun || busy} onclick={startHarnessRun} data-testid="harness-run">{startingHarnessRun ? t('harnessStarting') : t('startHarnessRun')}</button>{#if harnessRun}<p class="muted" data-testid="harness-run-status">{t('harnessRun')}: {harnessRun.runId} · {harnessRun.status}</p>{/if}</div>{/if}
+    {#if result}<div class="router-result" data-testid="router-result"><h3>{t('routerResult')}</h3>{#if resultLatencyMs !== null}<p class="muted" data-testid="router-latency">{t('routerLatency')}: {resultLatencyMs}ms</p>{/if}<pre>{JSON.stringify(result, null, 2)}</pre><button class="button secondary" type="button" disabled={startingHarnessRun || busy} onclick={startHarnessRun} data-testid="harness-run">{startingHarnessRun ? t('harnessStarting') : t('startHarnessRun')}</button>{#if harnessRun}<p class="muted" data-testid="harness-run-status">{t('harnessRun')}: {harnessRun.runId} · {harnessRun.status}</p>{/if}</div>{/if}
   </section>
+
+  {#if engine === JEV_ENGINE_ID}
+  <section class="settings-section system-card router-run-card" data-testid="jev-playground">
+    <div class="settings-section-title"><div><h2>{t('jevPlayground')}</h2><p>{t('jevPlaygroundHelp')}</p></div></div>
+    <label class="field"><span>{t('jevPlaygroundState')}</span><textarea bind:value={jevState} placeholder={t('jevPlaygroundStatePlaceholder')} data-testid="jev-playground-state"></textarea></label>
+    <label class="field"><span>{t('jevPlaygroundQuestions')}</span><textarea bind:value={jevQuestions} rows="8" data-testid="jev-playground-questions"></textarea></label>
+    {#if jevError}<div class="inline-feedback error" role="alert" data-testid="jev-playground-error">{jevError}</div>{/if}
+    <div class="form-actions"><button class="button primary" type="button" disabled={jevRunning || busy} onclick={runJevPlayground} data-testid="jev-playground-run">{jevRunning ? t('jevPlaygroundRunning') : t('jevPlaygroundRun')}</button></div>
+    {#if jevResult}
+      <div class="router-result" data-testid="jev-playground-result">
+        <h3>{t('jevPlaygroundResult')}</h3>
+        <p class="muted">{t('routerLatency')}: {jevResult.latencyMs}ms · {jevResult.model}</p>
+        <pre>{JSON.stringify({ answers: jevResult.answers, usage: jevResult.usage }, null, 2)}</pre>
+      </div>
+    {/if}
+    <h3>{t('jevPlaygroundHistory')}</h3>
+    {#if jevHistory.length === 0}
+      <p class="muted" data-testid="jev-playground-history-empty">{t('jevPlaygroundHistoryEmpty')}</p>
+    {:else}
+      <ul class="jev-history-list" data-testid="jev-playground-history">
+        {#each jevHistory as entry (entry.id)}
+          <li>
+            <span>{entry.kind}</span>
+            <span>{entry.model}</span>
+            <span>{entry.latencyMs}ms</span>
+            <span>{new Date(entry.at).toLocaleTimeString()}</span>
+            {#if entry.error}<span class="inline-feedback error">{t('jevPlaygroundHistoryError')}: {entry.error}</span>{/if}
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  </section>
+  {/if}
 
   <section class="settings-section system-card router-manifest-card" data-testid="semantic-manifest-card">
     <div class="settings-section-title"><div><h2>{t('routerSemanticManifest')}</h2><p>{t('routerSemanticManifestHelp')}</p></div></div>

@@ -59,6 +59,7 @@ export class ZaiProvider extends BaseProvider<'zai'> {
         'button:has-text("Continue with Email")',
         'button:has-text("Continue with Github")',
       ]),
+      capacityExhaustedTextPatterns: Object.freeze([]),
       blockerSelectors: Object.freeze([
         'iframe[src*="recaptcha" i]',
         'iframe[src*="hcaptcha.com" i]',

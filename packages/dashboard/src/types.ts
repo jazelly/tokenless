@@ -126,6 +126,30 @@ export type DashboardHarnessRunView = {
 
 export type DashboardHarnessIntervention = Record<string, unknown>
 
+export type DashboardJevSystemOneInput = {
+  state: unknown
+  questions: Record<string, unknown>
+  model?: string
+}
+
+export type DashboardJevSystemOneResult = {
+  model: string
+  answers: unknown
+  usage: unknown
+  latencyMs: number
+}
+
+export type DashboardJevHistoryEntry = {
+  id: string
+  kind: 'route' | 'systemone'
+  at: string
+  latencyMs: number
+  model: string
+  request: unknown
+  response: unknown
+  error: string | null
+}
+
 export type HarnessExtensionPairingRequest = {
   pairingId: string
   extensionId: string
@@ -172,6 +196,8 @@ export type DashboardActions = {
   disableOutputSavings: (announce?: boolean) => Promise<DashboardOutputSavingsState>
   clearOutputSavings: (announce?: boolean) => Promise<DashboardOutputSavingsState>
   uninstallOutputSavings: (announce?: boolean) => Promise<DashboardOutputSavingsState>
+  testJevSystemOne: (input: DashboardJevSystemOneInput) => Promise<DashboardJevSystemOneResult>
+  getJevHistory: () => Promise<DashboardJevHistoryEntry[]>
 }
 
 export type DashboardState = {

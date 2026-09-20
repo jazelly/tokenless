@@ -31,6 +31,9 @@ import type {
 } from 'tokenless-internal-shared/dashboard'
 import type {
   DashboardHarnessIntervention,
+  DashboardJevHistoryEntry,
+  DashboardJevSystemOneInput,
+  DashboardJevSystemOneResult,
   HarnessExtensionPairing,
   HarnessExtensionPairingRequest,
   DashboardHarnessRunInput,
@@ -246,6 +249,18 @@ export class DashboardClient {
 
   async quiesceRuntime(): Promise<DashboardRuntimeStatus> {
     return await this.requireResult(this.request<DashboardRuntimeStatus>('/runtime/quiesce', { method: 'POST' }))
+  }
+
+  async testJevSystemOne(input: DashboardJevSystemOneInput): Promise<DashboardJevSystemOneResult> {
+    return await this.requireResult(this.request<DashboardJevSystemOneResult>('/jev/systemone', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }))
+  }
+
+  async getJevHistory(): Promise<DashboardJevHistoryEntry[]> {
+    const result = await this.requireResult(this.request<{ history: DashboardJevHistoryEntry[] }>('/jev/history', { method: 'GET' }))
+    return result.history
   }
 
   private async requireResult<T>(result: Promise<T | null>): Promise<T> {

@@ -57,6 +57,7 @@ export class DirectOnlyG4fProvider extends BaseProvider<ProviderId> {
       effortControlSelectors: Object.freeze([]),
       authIndicators: Object.freeze([]),
       loginIndicators: Object.freeze([]),
+      capacityExhaustedTextPatterns: Object.freeze([]),
       blockerSelectors: Object.freeze([]),
       busySelectors: Object.freeze([]),
       choiceAvailability: DEFAULT_CHOICE_AVAILABILITY,

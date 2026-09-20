@@ -64,7 +64,7 @@ async function detectStructuredBlockers(
   const url = page.url()
   const navigation = provider.navigationPolicy.classify(url)
   const composerVisible = await anyVisible(page, provider.composerSelectors)
-  const domBlockers = await page.evaluate(({ composerSelectors, providerId }) => {
+  const domBlockers = await page.evaluate(({ composerSelectors, providerId, capacityPatterns }) => {
     type RawBlocker = {
       kind: 'challenge' | 'auth' | 'terminal'
       code: string
@@ -220,8 +220,33 @@ async function detectStructuredBlockers(
     if (planLimitBlocksComposer) {
       raw.push({ kind: 'terminal', code: 'provider_plan_limited', family: 'plan_limit', message: 'The provider is showing a visible plan or quota blocker.', proof: 'visible-plan-limit-text', limitWindow: 'unknown' })
     }
+    // Generic phrasing every provider is checked against, plus each provider's own
+    // known wording (declared in its capacityExhaustedTextPatterns), since a provider
+    // frequently only reveals this after the prompt has already been submitted.
+    const capacityPattern = new RegExp(
+      [
+        'insufficient credits', 'out of credits', 'no credits (?:left|remaining)',
+        "(?:run|ran) out of (?:credits|messages)", 'add(?:ing)? credits', 'buy (?:more )?credits',
+        'top[- ]up (?:your )?(?:credits|balance)',
+        ...capacityPatterns,
+      ].join('|'),
+      'i',
+    )
+    const visibleCapacitySurface = Array.from(document.body?.querySelectorAll('body, body *') ?? [])
+      .filter(isVisibleElement)
+      .find((element) => capacityPattern.test([
+        ownText(element),
+        element.getAttribute('aria-label'),
+      ].filter(Boolean).join(' ')))
+    const capacityBlocksComposer = visibleCapacitySurface !== undefined && (
+      !composerVisible ||
+      visibleCapacitySurface.closest('dialog, [role="dialog"], [role="alert"], [aria-modal="true"]') !== null
+    )
+    if (capacityBlocksComposer) {
+      raw.push({ kind: 'terminal', code: 'provider_credits_exhausted', family: 'plan_limit', message: 'The provider is showing a visible insufficient-credits blocker.', proof: 'visible-credits-exhausted-text' })
+    }
     return raw
-  }, { composerSelectors: provider.composerSelectors, providerId: provider.descriptor.id })
+  }, { composerSelectors: provider.composerSelectors, providerId: provider.descriptor.id, capacityPatterns: provider.capacityExhaustedTextPatterns })
 
   const selectorBlockers: VisibleBlocker[] = []
   for (const selector of provider.loginIndicators) {

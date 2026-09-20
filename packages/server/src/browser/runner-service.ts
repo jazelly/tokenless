@@ -1946,7 +1946,7 @@ function providerRejectionFallbackProof(
   const plan = request.fallback
   if (
     state.submitted === null ||
-    !['provider_rate_limited', 'provider_input_too_long'].includes(failure.code) ||
+    !['provider_rate_limited', 'provider_input_too_long', 'provider_credits_exhausted'].includes(failure.code) ||
     !failure.providerScoped ||
     hasVisibleResponse(state) ||
     !plan ||
@@ -1955,13 +1955,21 @@ function providerRejectionFallbackProof(
     plan.replay !== 'from_start' ||
     plan.alternatives.length === 0
   ) return null
-  return failure.code === 'provider_rate_limited' ? {
+  if (failure.code === 'provider_rate_limited') return {
     protocol: 'tokenless.provider-rate-limit-fallback.v1',
     provider: request.provider,
     code: 'provider_rate_limited',
     providerScoped: true,
     visibleResponse: false,
-  } : {
+  }
+  if (failure.code === 'provider_credits_exhausted') return {
+    protocol: 'tokenless.provider-credits-exhausted-fallback.v1',
+    provider: request.provider,
+    code: 'provider_credits_exhausted',
+    providerScoped: true,
+    visibleResponse: false,
+  }
+  return {
     protocol: 'tokenless.provider-input-limit-fallback.v1',
     provider: request.provider,
     code: 'provider_input_too_long',

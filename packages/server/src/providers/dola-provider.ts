@@ -78,6 +78,7 @@ export class DolaProvider extends BaseProvider<'dola'> {
         'button:has-text("Sign in")',
         'button:has-text("Continue with Google")',
       ]),
+      capacityExhaustedTextPatterns: Object.freeze([]),
       blockerSelectors: Object.freeze([
         'iframe[src*="recaptcha" i]',
         'iframe[src*="hcaptcha.com" i]',

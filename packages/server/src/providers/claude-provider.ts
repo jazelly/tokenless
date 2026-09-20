@@ -74,6 +74,7 @@ export class ClaudeProvider extends BaseProvider<'claude'> {
         'input[placeholder="Enter your email"]',
         'button:has-text("Continue")',
       ]),
+      capacityExhaustedTextPatterns: Object.freeze([]),
       blockerSelectors: Object.freeze([
         'iframe[src*="captcha"]',
         'iframe[src*="challenges.cloudflare.com"]',

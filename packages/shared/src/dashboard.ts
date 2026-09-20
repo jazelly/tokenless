@@ -85,10 +85,25 @@ export type DashboardRouterProviderRule = {
   suitableTasks: string
 }
 
+export type DashboardRouterEngine = 'chrome-prompt-api' | 'spark-x2.5-4b-mlx' | 'jev'
+
+/** Read shape: the Jev API key itself is write-only, so only whether one is set is exposed here. */
 export type DashboardRouterConfig = {
   enabled: boolean
-  engine: 'chrome-prompt-api' | 'spark-x2.5-4b-mlx'
+  engine: DashboardRouterEngine
   providers: DashboardRouterProviderRule[]
+  jevApiKeyConfigured: boolean
+}
+
+/**
+ * Write shape for PATCH /config. Omitting `jevApiKey` preserves whatever key is already
+ * persisted; passing a string sets it and passing null clears it.
+ */
+export type DashboardRouterConfigUpdate = {
+  enabled: boolean
+  engine: DashboardRouterEngine
+  providers: DashboardRouterProviderRule[]
+  jevApiKey?: string | null
 }
 
 export type DashboardTerminalBenchSemanticTask = {
@@ -198,7 +213,7 @@ export type DashboardConfigUpdate = {
   apiProxy?: DashboardApiProxyConfig
   g4f?: { enabled: boolean }
   directProvider?: DashboardDirectProviderConfig
-  router?: DashboardRouterConfig
+  router?: DashboardRouterConfigUpdate
 }
 
 export type DashboardSetupBrowserId = 'chrome' | 'brave' | 'cloak'

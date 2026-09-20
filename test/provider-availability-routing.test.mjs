@@ -380,6 +380,7 @@ test('Arena model comparison rejects unsupported surfaces and continuation befor
     assert.equal(jobCount(homeDir), 0)
     assert.equal(fs.existsSync(path.join(homeDir, 'tokenless.sqlite3')), true)
   } finally {
+    runCli(['daemon', 'stop', '--home', homeDir, '--daemon-url', daemonUrl, '--json'])
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
@@ -430,6 +431,7 @@ test('Arena search capabilities select Direct Search and reject incompatible sur
     assert.equal(jobCount(homeDir), 0)
     assert.equal(fs.existsSync(path.join(homeDir, 'tokenless.sqlite3')), true)
   } finally {
+    runCli(['daemon', 'stop', '--home', homeDir, '--daemon-url', daemonUrl, '--json'])
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
@@ -506,6 +508,7 @@ test('Arena image capabilities reject incompatible controls and missing source i
     assert.equal(jobCount(homeDir), 0)
     assert.equal(fs.existsSync(path.join(homeDir, 'tokenless.sqlite3')), true)
   } finally {
+    runCli(['daemon', 'stop', '--home', homeDir, '--daemon-url', daemonUrl, '--json'])
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
@@ -577,6 +580,7 @@ test('Arena website generation selects Direct Code and rejects incompatible cont
     assert.equal(jobCount(homeDir), 0)
     assert.equal(fs.existsSync(path.join(homeDir, 'tokenless.sqlite3')), true)
   } finally {
+    runCli(['daemon', 'stop', '--home', homeDir, '--daemon-url', daemonUrl, '--json'])
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
@@ -652,6 +656,7 @@ test('Arena agent execution rejects unsupported controls and capability combinat
     assert.equal(jobCount(homeDir), 0)
     assert.equal(fs.existsSync(path.join(homeDir, 'tokenless.sqlite3')), true)
   } finally {
+    runCli(['daemon', 'stop', '--home', homeDir, '--daemon-url', daemonUrl, '--json'])
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
@@ -742,6 +747,7 @@ test('Arena video generation rejects unsupported controls and capability combina
     assert.equal(jobCount(homeDir), 0)
     assert.equal(fs.existsSync(path.join(homeDir, 'tokenless.sqlite3')), true)
   } finally {
+    runCli(['daemon', 'stop', '--home', homeDir, '--daemon-url', daemonUrl, '--json'])
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
@@ -816,6 +822,7 @@ test('attachment media infers its semantic input capability', async () => {
     assert.deepEqual(payload.error.context.providers[0].missingCapabilities, ['image.input'])
     assert.equal(jobCount(homeDir), 0)
   } finally {
+    runCli(['daemon', 'stop', '--home', homeDir, '--daemon-url', daemonUrl, '--json'])
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
@@ -858,6 +865,7 @@ test('explicit semantic input requires a matching attachment MIME', async () => 
     }
     assert.equal(jobCount(homeDir), 0)
   } finally {
+    runCli(['daemon', 'stop', '--home', homeDir, '--daemon-url', daemonUrl, '--json'])
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
@@ -932,6 +940,7 @@ test('implicit run routing fails before daemon submission when no cached provide
     assert.match(payload.error.context.nextAction, /tokenless setup/)
     assert.equal(jobCount(homeDir), 0)
   } finally {
+    runCli(['daemon', 'stop', '--home', homeDir, '--daemon-url', daemonUrl, '--json'])
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })

@@ -444,9 +444,11 @@ test('SQLite completes current jobs and marks active jobs interrupted on reopen'
           'api_response_ledger',
           'dashboard_daily_capability_metrics',
           'dashboard_daily_metrics',
+          'harness_context_records',
           'jobs',
           'output_savings_events',
           'provider_projects',
+          'provider_rate_limit_attempts',
           'provider_statuses',
           'provider_task_conversations',
         ],
@@ -471,8 +473,8 @@ test('SQLite completes current jobs and marks active jobs interrupted on reopen'
       assert.deepEqual(
         database.prepare(
           "SELECT name FROM sqlite_schema WHERE type = 'index' AND name NOT LIKE 'sqlite_autoindex_%'",
-        ).all(),
-        [],
+        ).all().map((row) => String(row.name)),
+        ['provider_rate_limit_attempts_window'],
       )
     } finally {
       database.close()
