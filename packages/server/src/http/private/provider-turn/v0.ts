@@ -545,8 +545,10 @@ export class PrivateProviderTurnV0Adapter {
       if (result) return turnState({ ...base, lifecycle: 'succeeded', attachmentDelivery: { ...attachment, status: 'delivered' }, result })
     }
     const errorCode = jobErrorCode(job.error_json)
+    const errorMessage = jobErrorMessage(job.error_json)
     if (!delivered && errorCode.includes('upload')) return turnState({ ...base, lifecycle: 'failed', attachmentDelivery: { ...attachment, status: 'rejected' }, error: { code: 'upload_failed', message: 'The provider rejected the staged attachment.' } })
-    return turnState({ ...base, lifecycle: 'failed', attachmentDelivery: { ...attachment, status: delivered ? 'delivered' : 'pending' }, error: { code: errorCode.includes('submit') ? 'submission_failed' : errorCode.includes('provider') ? 'provider_unavailable' : 'response_failed', message: 'The provider turn did not produce a verifiable response.' } })
+    const projectedError = projectJobError(errorCode, errorMessage, delivered)
+    return turnState({ ...base, lifecycle: 'failed', attachmentDelivery: { ...attachment, status: delivered ? 'delivered' : 'pending' }, error: projectedError })
   }
 
   private cancellationProjection(turn: WebAiTurn): RequestCancellationTurn {
@@ -743,4 +745,32 @@ function jobErrorCode(value: unknown) {
   return value && typeof value === 'object' && !Array.isArray(value) && typeof (value as { code?: unknown }).code === 'string'
     ? (value as { code: string }).code.toLowerCase()
     : ''
+}
+
+function jobErrorMessage(value: unknown): string | null {
+  return value && typeof value === 'object' && !Array.isArray(value) && typeof (value as { message?: unknown }).message === 'string'
+    ? (value as { message: string }).message
+    : null
+}
+
+function projectJobError(errorCode: string, errorMessage: string | null, delivered: boolean): { code: string; message: string } {
+  if (errorCode === 'provider_capacity_unavailable') {
+    return { code: 'provider_capacity_unavailable', message: errorMessage ?? 'The provider capacity is currently unavailable.' }
+  }
+  if (errorCode === 'provider_rate_limited') {
+    return { code: 'provider_rate_limited', message: errorMessage ?? 'The provider is currently rate limited.' }
+  }
+  if (errorCode === 'provider_credits_exhausted') {
+    return { code: 'provider_credits_exhausted', message: errorMessage ?? 'The provider credits have been exhausted.' }
+  }
+  if (errorCode === 'provider_plan_limited') {
+    return { code: 'provider_plan_limited', message: errorMessage ?? 'The provider plan limit has been reached.' }
+  }
+  if (errorCode.includes('submit')) {
+    return { code: 'submission_failed', message: errorMessage ?? 'The provider turn did not produce a verifiable response.' }
+  }
+  if (errorCode.includes('provider')) {
+    return { code: 'provider_unavailable', message: errorMessage ?? 'The provider turn did not produce a verifiable response.' }
+  }
+  return { code: 'response_failed', message: errorMessage ?? 'The provider turn did not produce a verifiable response.' }
 }
