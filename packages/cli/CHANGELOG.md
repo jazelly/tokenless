@@ -1,5 +1,12 @@
 # tokenless
 
+## 0.7.1
+
+### Patch Changes
+
+- ce35e5a: Add the Jev smart-router engine (powered by the TypeSafe SDK) as an optional task router. When `router.enabled` is set with `router.engine: "jev"`, `router.providers`, and a `router.jevApiKey`, Tokenless can route a prompt to the best-suited configured provider based on each provider's declared `suitableTasks`. Adds a dashboard Routing view and `/dashboard-api/v1/jev/*` endpoints to run routing decisions and inspect their history.
+- ce35e5a: Restore the missing Lovable and Agnes provider icons (`assets/providers/lovable.svg`, `assets/providers/agnes.svg`) so both providers render correctly in the dashboard capability matrix and README provider tables.
+
 ## 0.7.0
 
 ### Minor Changes
